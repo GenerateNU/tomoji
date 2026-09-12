@@ -1,5 +1,5 @@
 {
-  "name": "tomoji-scaffold",
+  "name": "tomoji",
   "version": "0.1.0",
   "private": true,
   "scripts": {
@@ -11,7 +11,7 @@
     "typecheck": "next typegen && tsc --noEmit",
     "format": "oxfmt --write .",
     "format:check": "oxfmt --check .",
-    "test": "vitest run --passWithNoTests",
+    "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
     "ci": "bun run typecheck && bun run lint && bun run format:check && bun run test"

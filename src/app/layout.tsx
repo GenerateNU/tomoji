@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import { AuthKitProvider } from "@workos-inc/authkit-nextjs/components";
+import { ConvexClientProvider } from "@/components/convex-provider";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -22,7 +23,11 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html lang="en" className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}>
       <body className="min-h-full flex flex-col">
-        <AuthKitProvider>{children}</AuthKitProvider>
+        {/* AuthKitProvider must wrap ConvexClientProvider — the Convex
+            adapter calls useAuth()/useAccessToken() from AuthKit. */}
+        <AuthKitProvider>
+          <ConvexClientProvider>{children}</ConvexClientProvider>
+        </AuthKitProvider>
       </body>
     </html>
   );

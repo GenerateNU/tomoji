@@ -1,10 +1,10 @@
 {
   "$schema": "https://raw.githubusercontent.com/oxc-project/oxc/main/npm/oxfmt/configuration_schema.json",
   "ignorePatterns": [
-    "convex/_generated/**",
-    ".next/**",
-    "next-env.d.ts",
-    // Vendored by `convex ai-files install` and pinned in skills-lock.json.
+    "**/convex/_generated/**",
+    "**/.next/**",
+    "**/.turbo/**",
+    "**/next-env.d.ts",
     ".agents/**",
     ".claude/**"
   ]

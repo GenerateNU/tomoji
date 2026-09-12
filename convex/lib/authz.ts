@@ -5,8 +5,7 @@ import type { MutationCtx, QueryCtx } from "../_generated/server";
  * Returns the caller's identity, or throws if they are not signed in.
  *
  * Every public query/mutation that touches user data should start with this
- * rather than accepting a user id as an argument — an id from the client is a
- * claim, not proof.
+ * rather than accepting a user id as an argument.
  */
 export async function requireIdentity(ctx: QueryCtx | MutationCtx): Promise<UserIdentity> {
   const identity = await ctx.auth.getUserIdentity();

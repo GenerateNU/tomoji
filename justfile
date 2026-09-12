@@ -1,6 +1,6 @@
 # justfile
 
-# Show available commands
+# Show all available commands
 help:
     @just --list
 

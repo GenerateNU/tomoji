@@ -1,5 +1,5 @@
 import Image from "next/image";
-import { NavAuth } from "@/app/components/nav-auth";
+import { NavAuth } from "@/components/nav-auth";
 
 export default function Home() {
   return (

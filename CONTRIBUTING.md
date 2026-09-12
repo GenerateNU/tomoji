@@ -1,1 +1,1 @@
-# TODO: fill out instructions on how contributors can be onboarded/contribute to this project. 
+# TODO: fill out instructions on how contributors can be onboarded/contribute to this project.

@@ -19,6 +19,7 @@ This doc has two halves:
 | Tool | Why                                 | Install                                                                                                         |
 | ---- | ----------------------------------- | --------------------------------------------------------------------------------------------------------------- |
 | Bun  | Runtime and package manager (1.3.9) | [bun.sh](https://bun.sh)                                                                                        |
+| Node | v22 or newer — runs CLI tools       | [nodejs.org](https://nodejs.org)                                                                                |
 | Just | Command runner                      | mac `brew install just` · win `winget install Casey.Just` · [other](https://github.com/casey/just#installation) |
 
 > [!IMPORTANT]

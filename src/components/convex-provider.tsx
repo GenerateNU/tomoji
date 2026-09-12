@@ -12,7 +12,8 @@ const convex = new ConvexReactClient(process.env.NEXT_PUBLIC_CONVEX_URL!);
  */
 function useAuthFromWorkOS() {
   const { user, loading: userLoading } = useAuth();
-  const { getAccessToken, refresh, loading: tokenLoading } = useAccessToken();
+  const { getAccessToken, refresh } = useAccessToken();
+  const userId = user?.id ?? null;
 
   const fetchAccessToken = useCallback(
     async ({ forceRefreshToken }: { forceRefreshToken: boolean }) => {
@@ -31,11 +32,11 @@ function useAuthFromWorkOS() {
 
   return useMemo(
     () => ({
-      isLoading: userLoading || tokenLoading,
-      isAuthenticated: user != null,
+      isLoading: userLoading,
+      isAuthenticated: userId !== null,
       fetchAccessToken,
     }),
-    [userLoading, tokenLoading, user, fetchAccessToken],
+    [userLoading, userId, fetchAccessToken],
   );
 }
 

@@ -17,9 +17,7 @@ export function NavAuth() {
   if (user) {
     return (
       <div className="flex items-center gap-4">
-        <span className="text-sm text-zinc-600 dark:text-zinc-400">
-          {user.email}
-        </span>
+        <span className="text-sm text-zinc-600 dark:text-zinc-400">{user.email}</span>
         <form action={signOutAction}>
           <button
             type="submit"

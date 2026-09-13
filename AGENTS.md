@@ -21,3 +21,13 @@ Convex agent skills for common tasks can be installed by running
 `npx convex ai-files install`.
 
 <!-- convex-ai-end -->
+
+## Version control
+
+Follow the repository workflow in `CONTRIBUTING.md`:
+
+- Use Conventional Commit messages, for example `feat: add creator application form`,
+  `fix: correct org scoping on campaign list`, `docs: document convex env workflow`,
+  `chore: upgrade convex to 1.46`, or `test: cover requireIdentity deny case`.
+- Branch from `main` and keep each pull request small and focused.
+- Run `just ci` before pushing. CI must pass before merge.

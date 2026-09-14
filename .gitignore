@@ -48,3 +48,5 @@ package-lock.json
 # Keep the template — it documents required vars and holds no real values.
 !.env.template
 
+.idea/
+

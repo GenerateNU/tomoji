@@ -8,7 +8,9 @@
  * @module
  */
 
+import type * as campaigns from "../campaigns.js";
 import type * as lib_authz from "../lib/authz.js";
+import type * as models_campaigns from "../models/campaigns.js";
 import type * as users from "../users.js";
 
 import type {
@@ -18,7 +20,9 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  campaigns: typeof campaigns;
   "lib/authz": typeof lib_authz;
+  "models/campaigns": typeof models_campaigns;
   users: typeof users;
 }>;
 

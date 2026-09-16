@@ -2,9 +2,15 @@ import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { getAllActiveCompanyCampaigns, insertCompanyCampaign } from "./models/campaigns";
 
-// This projection is the public contract for campaigns browsed by anyone,
-// including signed-out visitors. New schema fields do not become public
-// automatically — add them here deliberately.
+/**
+ * Campaigns a company is currently accepting applications for, shaped for
+ * public browsing.
+ *
+ * Reads the wall clock to exclude expired campaigns, which means a subscribed
+ * client will not see a campaign disappear the instant its deadline passes —
+ * Convex re-runs a query when its data changes, and time passing is not a data
+ * change.
+ */
 export const companyActiveCampaigns = query({
   args: { companyId: v.id("companies") },
   returns: v.array(
@@ -43,13 +49,20 @@ export const companyActiveCampaigns = query({
   },
 });
 
-// TODO(auth): this mutation is intentionally unauthenticated for now — auth is
-// being added later. Until then any caller can create a campaign for any
-// company, attribute it to any createdBy, and set isVetted. Must not reach a
-// real deployment in this state.
 /**
- * Adds a campaign for a given company
+ * Adds a campaign for a given company.
  *
+ * TODO(auth): intentionally unauthenticated for now. Until auth lands, any
+ * caller can create a campaign for any company, attribute it to any
+ * `createdBy`, and set `isVetted`. Must not reach a real deployment in this
+ * state. `createdBy` should then be derived from the caller's company
+ * membership rather than accepted as an argument.
+ *
+ * Validation lives in `insertCompanyCampaign`, not here.
+ *
+ * @throws if `deadline` is in the past, if `maxOpenings` is not positive, or
+ * if `maxApplications` does not exceed `maxOpenings`.
+ * @returns the new campaign's id.
  */
 export const addCampaign = mutation({
   args: {

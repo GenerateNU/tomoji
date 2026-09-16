@@ -10,7 +10,7 @@ import type { MutationCtx, QueryCtx } from "../_generated/server";
  * @param companyId the id of the company whose active campaigns are being fetched
  * @param startDatetime the date and time that the deadline must be after
  *
- * @return 
+ * @return all active company campaigns.
  */
 export async function getAllActiveCompanyCampaigns(
   ctx: QueryCtx,
@@ -38,7 +38,7 @@ export async function insertCompanyCampaign(
   campaign: WithoutSystemFields<Doc<"campaigns">>,
 ): Promise<Id<"campaigns">> {
   if (campaign.deadline < Date.now()) {
-    throw new Error("Deadline must be in the future")
+    throw new Error("Deadline must be in the future");
   }
   if (campaign.maxOpenings <= 0) {
     throw new Error("Max Openings must be greater than 0");

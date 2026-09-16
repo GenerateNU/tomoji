@@ -43,6 +43,25 @@ export async function seedCompanyAndCreator(t: TestConvex) {
 export type CampaignOverrides = Partial<WithoutSystemFields<Doc<"campaigns">>>;
 
 /**
+ * FOR TESTING ONLY
+ *
+ * Rewrites an existing campaign's deadline, bypassing validation.
+ *
+ * `insertCompanyCampaign` refuses to create a campaign whose deadline is not
+ * strictly in the future, so a test needing an expired campaign — or one
+ * sitting exactly on the cutoff — cannot seed it directly. Create it with a
+ * valid future deadline and age it with this, which is how such a campaign
+ * comes about in production anyway: time passes.
+ */
+export async function setCampaignDeadline(
+  t: TestConvex,
+  campaignId: Id<"campaigns">,
+  deadline: number,
+): Promise<void> {
+  await t.run(async (ctx) => ctx.db.patch(campaignId, { deadline }));
+}
+
+/**
  * Seeds a campaign through the real `insertCompanyCampaign` model function.
  * `now` is explicit because the model function validates `deadline` against
  * the clock, and the two callers use different clocks.

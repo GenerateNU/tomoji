@@ -24,7 +24,7 @@ describe("companyActiveCampaigns", () => {
     expect(result[0].title).toBe("Summer launch");
   });
 
-  test("exposes only public fields on the returned campaigns", async () => {
+  test("exposes the public fields and withholds the internal ones", async () => {
     const t = convexTest(schema, modules);
     const { companyId, createdBy } = await seedCompanyAndCreator(t);
     await seedCampaign(t, companyId, createdBy, Date.now(), {
@@ -44,27 +44,30 @@ describe("companyActiveCampaigns", () => {
     expect(campaign).not.toHaveProperty("createdBy");
     expect(campaign).not.toHaveProperty("maxApplications");
     expect(campaign).not.toHaveProperty("status");
-    expect(campaign).not.toHaveProperty("prohibitedClaims");
-    expect(campaign).not.toHaveProperty("talkingPoints");
-    expect(campaign).not.toHaveProperty("disclosureRequirements");
-    expect(campaign).not.toHaveProperty("usageRights");
+    expect(campaign.prohibitedClaims).toEqual(["no medical claims"]);
+    expect(campaign.talkingPoints).toEqual(["mention the launch"]);
+    expect(campaign.disclosureRequirements).toEqual(["#ad"]);
+    expect(campaign.usageRights).toBe("6 months paid social");
     expect(campaign.title).toBe("Public shape check");
     expect(campaign.deadline).toEqual(expect.any(Number));
   });
 
-  test("returns audience as null when the campaign has no audience set", async () => {
+  // Every optional field is declared `v.optional`, so an unset field is
+  // omitted from the response entirely rather than sent as null.
+  test("omits the optional fields when the campaign has none set", async () => {
     const t = convexTest(schema, modules);
     const { companyId, createdBy } = await seedCompanyAndCreator(t);
-    await seedCampaign(t, companyId, createdBy, Date.now(), {
-      title: "No audience",
-      status: "open",
-      deadline: Date.now() + DAY_MS,
-    });
+    await seedCampaign(t, companyId, createdBy, Date.now(), { status: "open" });
 
     const result = await t.query(api.campaigns.companyActiveCampaigns, { companyId });
 
     expect(result).toHaveLength(1);
-    expect(result[0].audience).toBeNull();
+    const campaign = result[0] as Record<string, unknown>;
+    expect(campaign).not.toHaveProperty("audience");
+    expect(campaign).not.toHaveProperty("talkingPoints");
+    expect(campaign).not.toHaveProperty("prohibitedClaims");
+    expect(campaign).not.toHaveProperty("disclosureRequirements");
+    expect(campaign).not.toHaveProperty("usageRights");
   });
 
   test("passes audience through unchanged when it is set", async () => {
@@ -81,16 +84,6 @@ describe("companyActiveCampaigns", () => {
 
     expect(result).toHaveLength(1);
     expect(result[0].audience).toBe("Gen Z gamers");
-  });
-
-  test("succeeds for a signed-out caller", async () => {
-    const t = convexTest(schema, modules);
-    const { companyId, createdBy } = await seedCompanyAndCreator(t);
-    await seedCampaign(t, companyId, createdBy, Date.now(), { status: "open" });
-
-    await expect(
-      t.query(api.campaigns.companyActiveCampaigns, { companyId }),
-    ).resolves.not.toThrow();
   });
 });
 

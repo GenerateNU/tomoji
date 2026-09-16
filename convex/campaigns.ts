@@ -29,7 +29,11 @@ export const companyActiveCampaigns = query({
       isVetted: v.boolean(),
       maxOpenings: v.number(),
       deadline: v.number(),
-      audience: v.union(v.string(), v.null()),
+      audience: v.optional(v.string()),
+      talkingPoints: v.optional(v.array(v.string())),
+      prohibitedClaims: v.optional(v.array(v.string())),
+      disclosureRequirements: v.optional(v.array(v.string())),
+      usageRights: v.optional(v.string()),
     }),
   ),
   handler: async (ctx, args) => {
@@ -44,7 +48,11 @@ export const companyActiveCampaigns = query({
       isVetted: campaign.isVetted,
       maxOpenings: campaign.maxOpenings,
       deadline: campaign.deadline,
-      audience: campaign.audience ?? null,
+      audience: campaign.audience,
+      talkingPoints: campaign.talkingPoints,
+      prohibitedClaims: campaign.prohibitedClaims,
+      disclosureRequirements: campaign.disclosureRequirements,
+      usageRights: campaign.usageRights,
     }));
   },
 });

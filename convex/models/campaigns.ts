@@ -37,7 +37,7 @@ export async function insertCompanyCampaign(
   ctx: MutationCtx,
   campaign: WithoutSystemFields<Doc<"campaigns">>,
 ): Promise<Id<"campaigns">> {
-  if (campaign.deadline < Date.now()) {
+  if (campaign.deadline <= Date.now()) {
     throw new Error("Deadline must be in the future");
   }
   if (campaign.maxOpenings <= 0) {

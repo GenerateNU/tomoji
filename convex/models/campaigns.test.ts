@@ -3,7 +3,12 @@ import { convexTest } from "convex-test";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import schema from "../schema";
 import { getAllActiveCompanyCampaigns } from "./campaigns";
-import { DAY_MS, seedCampaign, seedCompanyAndCreator } from "../testing.helpers";
+import {
+  DAY_MS,
+  seedCampaign,
+  seedCompanyAndCreator,
+  setCampaignDeadline,
+} from "../testing.helpers";
 
 const modules = import.meta.glob("../**/*.ts");
 
@@ -52,15 +57,12 @@ describe("getAllActiveCompanyCampaigns", () => {
   test("excludes a campaign whose deadline is before now", async () => {
     const t = convexTest(schema, modules);
     const { companyId, createdBy } = await seedCompanyAndCreator(t);
-    // insertCompanyCampaign refuses to create a campaign whose deadline has
-    // already passed, so create it with a valid future deadline and then
-    // patch it directly to simulate one that has since expired.
     const campaignId = await seedCampaign(t, companyId, createdBy, NOW, {
       title: "Expired campaign",
       status: "open",
       deadline: NOW + DAY_MS,
     });
-    await t.run(async (ctx) => ctx.db.patch(campaignId, { deadline: NOW - DAY_MS }));
+    await setCampaignDeadline(t, campaignId, NOW - DAY_MS);
 
     const result = await t.run(async (ctx) => getAllActiveCompanyCampaigns(ctx, companyId, NOW));
 
@@ -70,11 +72,15 @@ describe("getAllActiveCompanyCampaigns", () => {
   test("excludes a campaign whose deadline equals now, but includes one at now + 1", async () => {
     const t = convexTest(schema, modules);
     const { companyId, createdBy } = await seedCompanyAndCreator(t);
-    await seedCampaign(t, companyId, createdBy, NOW, {
+    // A deadline of exactly NOW cannot be seeded — insertCompanyCampaign
+    // requires the deadline to be strictly in the future — so seed it valid
+    // and move it onto the cutoff.
+    const atCutoff = await seedCampaign(t, companyId, createdBy, NOW, {
       title: "Deadline exactly now",
       status: "open",
-      deadline: NOW,
+      deadline: NOW + DAY_MS,
     });
+    await setCampaignDeadline(t, atCutoff, NOW);
     await seedCampaign(t, companyId, createdBy, NOW, {
       title: "Deadline one ms after now",
       status: "open",

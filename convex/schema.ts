@@ -42,7 +42,7 @@ export default defineSchema({
     isVetted: v.boolean(),
     maxApplications: v.number(),
     maxOpenings: v.number(),
-    deadline: v.number(), // will be a timestamp
+    deadline: v.number(), // timestamp
     audience: v.optional(v.string()),
     talkingPoints: v.optional(v.array(v.string())),
     prohibitedClaims: v.optional(v.array(v.string())),

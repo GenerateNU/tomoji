@@ -1,30 +1,20 @@
-import { defineSchema, defineTable } from "convex/server";
-import { v } from "convex/values";
+import { defineSchema } from "convex/server";
+import { campaignCreatorsTable } from "./schemas/campaignCreators.schema";
+import { campaignsTable } from "./schemas/campaigns.schema";
+import { companiesTable } from "./schemas/companies.schema";
+import { companyUsersTable } from "./schemas/companyUsers.schema";
+import { creatorsTable } from "./schemas/creators.schema";
+import { postsTable } from "./schemas/posts.schema";
+import { submissionsTable } from "./schemas/submissions.schema";
+import { usersTable } from "./schemas/users.schema";
 
 export default defineSchema({
-  users: defineTable({
-    workosId: v.string(),
-    name: v.string(),
-    email: v.string(),
-    role: v.string(),
-    is_active: v.boolean(),
-    profilePicture: v.optional(v.string()),
-  }),
-  companyUsers: defineTable({
-    userId: v.string(),
-    companyId: v.string(),
-    role: v.string(),
-  }),
-  creators: defineTable({
-    userId: v.string(),
-    xId: v.string(),
-    githubLink: v.string(),
-    phoneNumber: v.optional(v.string()),
-  }),
-  companies: defineTable({
-    workosId: v.string(),
-    name: v.string(),
-    isActive: v.boolean(),
-    profilePicture: v.optional(v.string()),
-  }),
+  users: usersTable,
+  companyUsers: companyUsersTable,
+  creators: creatorsTable,
+  companies: companiesTable,
+  campaigns: campaignsTable,
+  campaignCreators: campaignCreatorsTable,
+  submissions: submissionsTable,
+  posts: postsTable,
 });

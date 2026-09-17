@@ -5,6 +5,7 @@ export const campaignCreatorsTable = defineTable({
   userId: v.id("users"),
   campaignId: v.id("campaigns"),
   stage: v.union(v.literal("pending"), v.literal("accepted"), v.literal("rejected")),
+  note: v.optional(v.string()),
   selectedAt: v.optional(v.number()),
   acceptedAt: v.optional(v.number()),
 })

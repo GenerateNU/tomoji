@@ -1,12 +1,12 @@
 import { defineSchema } from "convex/server";
-import { campaignCreatorsTable } from "./schemas/campaignCreators";
-import { campaignsTable } from "./schemas/campaigns";
-import { companiesTable } from "./schemas/companies";
-import { companyUsersTable } from "./schemas/companyUsers";
-import { creatorsTable } from "./schemas/creators";
-import { postsTable } from "./schemas/posts";
-import { submissionsTable } from "./schemas/submissions";
-import { usersTable } from "./schemas/users";
+import { campaignCreatorsTable } from "./schemas/campaignCreators.schema";
+import { campaignsTable } from "./schemas/campaigns.schema";
+import { companiesTable } from "./schemas/companies.schema";
+import { companyUsersTable } from "./schemas/companyUsers.schema";
+import { creatorsTable } from "./schemas/creators.schema";
+import { postsTable } from "./schemas/posts.schema";
+import { submissionsTable } from "./schemas/submissions.schema";
+import { usersTable } from "./schemas/users.schema";
 
 export default defineSchema({
   users: usersTable,

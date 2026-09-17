@@ -22,4 +22,4 @@ export const campaignsTable = defineTable({
   prohibitedClaims: v.optional(v.array(v.string())),
   disclosureRequirements: v.optional(v.array(v.string())),
   usageRights: v.optional(v.string()),
-}).index("by_company_status_and_deadline", ["companyId", "status", "deadline"]);
+}).index("by_companyId_status_and_deadline", ["companyId", "status", "deadline"]);

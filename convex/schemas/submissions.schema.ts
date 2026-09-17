@@ -13,4 +13,4 @@ export const submissionsTable = defineTable({
   reviewNote: v.optional(v.string()),
   reviewedBy: v.optional(v.id("companyUsers")),
   reviewedAt: v.optional(v.number()),
-}).index("by_creatorId", ["campaignCreatorId"]);
+}).index("by_campaignCreatorId", ["campaignCreatorId"]);

@@ -12,6 +12,7 @@ bd:
 
 # Everything CI runs — typecheck, lint, format, test. Run before you push.
 ci:
+    bun run format
     bun run ci
 
 # Run the test suite once
@@ -67,6 +68,10 @@ setup:
     bun install
     @bun scripts/setup.ts
 
-# Copy WORKOS_CLIENT_ID from .env.local to your Convex deployment (auth.config.ts reads it there)
+# Copy the WORKOS_* values from .env.local to your Convex deployment (Convex reads them there)
 convex-env:
     @bun scripts/set-convex-env.ts
+
+# Print the webhook URL to send a TL, who creates your WorkOS webhook
+webhook-url:
+    @echo "$(bunx convex env get CONVEX_SITE_URL)/workos/webhook"

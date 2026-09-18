@@ -70,23 +70,35 @@ there if you don't have one, then come back to the terminal.
 It then creates a Convex dev deployment **that is yours alone** and writes
 `CONVEX_DEPLOYMENT` and `NEXT_PUBLIC_CONVEX_URL` into your `.env.local`.
 
-It will then fail with `WORKOS_CLIENT_ID is not set on this Convex deployment`. That's
-expected — step 4 fixes it.
+It will then fail complaining about a missing environment variable. That's expected —
+step 4 fixes it.
+
+Now that your deployment exists, send a TL your webhook URL:
+
+```bash
+just webhook-url
+```
+
+They'll create the webhook in the WorkOS dashboard and send back a secret. Do this
+before step 4, you can't finish setup without it.
 
 > [!NOTE]
 > There is no localhost URL for the backend. Convex runs your `convex/` code in the cloud;
 > `just bd` is a file watcher that pushes changes up and streams logs back. Use
 > `just dashboard` to browse data and read logs.
 
-## Step 4 — Give Convex the WorkOS client id
+## Step 4 — Give Convex the WorkOS values
+
+Paste the secret from step 3 into `.env.local` as `WORKOS_WEBHOOK_SECRET`, then:
 
 ```bash
 just convex-env
 ```
 
-`convex/auth.config.ts` reads `WORKOS_CLIENT_ID` from the **Convex deployment**, not from
-`.env.local`. This copies it across. Restart `just bd` — it should now print
-`Convex functions ready!`.
+Convex reads `WORKOS_CLIENT_ID`, `WORKOS_API_KEY`, and `WORKOS_WEBHOOK_SECRET` from the
+deployment rather than `.env.local`, and this copies all three across.
+
+Restart `just bd` and it should print `Convex functions ready!`.
 
 ## Step 5 — Run the app
 
@@ -104,20 +116,27 @@ just fd         # http://localhost:3000
 
 1. Open http://localhost:3000 and click **Sign in**. You should land on a real WorkOS page.
 2. After signing in, your email should appear in the header.
-3. `just test` — 5 tests should pass.
+3. `just test` — the suite should pass.
 4. `just ci` — should exit clean.
 
 If all four work, you're set up.
 
 ## If something went wrong
 
-**`WORKOS_CLIENT_ID is not set on this Convex deployment`** — you skipped step 4. Run
-`just convex-env`.
+**`WORKOS_CLIENT_ID is not set` or `Missing environment variables: WORKOS_WEBHOOK_SECRET`**
+— you skipped step 4, or never got a secret from a TL. Run `just convex-env`; it tells you
+which one is missing.
 
 **Signed in, but the app can't read your identity** — the token's `iss` doesn't match
 `convex/auth.config.ts`. Paste the access token into [jwt.io](https://jwt.io) and compare
 `iss` against `https://api.workos.com/user_management/<WORKOS_CLIENT_ID>`. Convex fails this
 check silently, returning `null` rather than raising.
+
+**Signed in, but you have no `users` row.** Account data arrives by WorkOS webhook, not at
+sign-in, so this means the webhook isn't reaching your deployment. Check the WorkOS
+dashboard's webhook delivery log first — it shows the response your endpoint gave. A 401
+means your `WORKOS_WEBHOOK_SECRET` doesn't match that webhook; nothing at all means the URL
+points somewhere else. Your `users` table stays empty either way.
 
 **`Module has no exported member` from `convex/_generated`** — generated types are stale.
 Make sure `just bd` is running.
@@ -144,9 +163,7 @@ chore: upgrade convex to 1.46
 test: cover requireIdentity deny case
 ```
 
-Branch from `main`, open a PR, get one approval, squash merge. CI must pass before merge —
-it runs `bun run ci` on every PR, the same script `just ci` wraps. See
-[`.github/workflows/ci.yml`](.github/workflows/ci.yml).
+Branch from `main`, open a PR, get one approval, squash merge. CI must pass before merge.
 
 > [!IMPORTANT]
 > Keep PRs small and focused. If a ticket looks like more than one to two weeks of work,

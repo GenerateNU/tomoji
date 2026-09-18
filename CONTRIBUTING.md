@@ -151,6 +151,8 @@ with `--frozen-lockfile`. Run `bun install` and commit the lockfile.
 
 # Part 2 — Working here
 
+For backend codebase conventions, see [docs/BACKEND.md](docs/BACKEND.md).
+
 ## Version control
 
 [Conventional Commits](https://www.conventionalcommits.org/):

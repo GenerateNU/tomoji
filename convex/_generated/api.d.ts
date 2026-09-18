@@ -8,15 +8,14 @@
  * @module
  */
 
+import type * as auth from "../auth.js";
+import type * as http from "../http.js";
 import type * as lib_authz from "../lib/authz.js";
-import type * as schemas_campaignCreators from "../schemas/campaignCreators.js";
-import type * as schemas_campaigns from "../schemas/campaigns.js";
-import type * as schemas_companies from "../schemas/companies.js";
-import type * as schemas_companyUsers from "../schemas/companyUsers.js";
-import type * as schemas_creators from "../schemas/creators.js";
-import type * as schemas_posts from "../schemas/posts.js";
-import type * as schemas_submissions from "../schemas/submissions.js";
-import type * as schemas_users from "../schemas/users.js";
+import type * as lib_errors from "../lib/errors.js";
+import type * as lib_functions from "../lib/functions.js";
+import type * as lib_identity from "../lib/identity.js";
+import type * as models_users from "../models/users.js";
+import type * as tests_helpers from "../tests/helpers.js";
 import type * as users from "../users.js";
 
 import type {
@@ -26,15 +25,14 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  auth: typeof auth;
+  http: typeof http;
   "lib/authz": typeof lib_authz;
-  "schemas/campaignCreators": typeof schemas_campaignCreators;
-  "schemas/campaigns": typeof schemas_campaigns;
-  "schemas/companies": typeof schemas_companies;
-  "schemas/companyUsers": typeof schemas_companyUsers;
-  "schemas/creators": typeof schemas_creators;
-  "schemas/posts": typeof schemas_posts;
-  "schemas/submissions": typeof schemas_submissions;
-  "schemas/users": typeof schemas_users;
+  "lib/errors": typeof lib_errors;
+  "lib/functions": typeof lib_functions;
+  "lib/identity": typeof lib_identity;
+  "models/users": typeof models_users;
+  "tests/helpers": typeof tests_helpers;
   users: typeof users;
 }>;
 
@@ -64,4 +62,6 @@ export declare const internal: FilterApi<
   FunctionReference<any, "internal">
 >;
 
-export declare const components: {};
+export declare const components: {
+  workOSAuthKit: import("@convex-dev/workos-authkit/_generated/component.js").ComponentApi<"workOSAuthKit">;
+};

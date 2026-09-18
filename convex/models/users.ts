@@ -1,0 +1,161 @@
+import type { UserIdentity } from "convex/server";
+import type { Doc, Id } from "../_generated/dataModel";
+import type { MutationCtx, QueryCtx } from "../_generated/server";
+import { requireIdentity } from "../lib/authz";
+import { apiError } from "../lib/errors";
+import { findOrgId } from "../lib/identity";
+import type { companyRole } from "../schemas/companyUsers.schema";
+import type { Infer } from "convex/values";
+
+export async function byWorkosId(
+  ctx: QueryCtx | MutationCtx,
+  workosId: string,
+): Promise<Doc<"users"> | null> {
+  return await ctx.db
+    .query("users")
+    .withIndex("by_workosId", (q) => q.eq("workosId", workosId))
+    .unique();
+}
+
+export type WorkosProfile = {
+  workosId: string;
+  email: string;
+  name?: string;
+  profilePicture?: string;
+};
+
+export async function upsertUser(ctx: MutationCtx, profile: WorkosProfile): Promise<Id<"users">> {
+  const existing = await byWorkosId(ctx, profile.workosId);
+  const name = profile.name ?? existing?.name ?? profile.email;
+  const profilePicture = profile.profilePicture ?? existing?.profilePicture;
+
+  if (existing === null) {
+    const userId = await ctx.db.insert("users", {
+      workosId: profile.workosId,
+      name,
+      email: profile.email,
+      role: "creator",
+      isActive: true,
+      profilePicture,
+    });
+    await ctx.db.insert("creators", { userId });
+    return userId;
+  }
+
+  await ctx.db.patch(existing._id, { name, email: profile.email, profilePicture });
+  return existing._id;
+}
+
+export async function deactivateUser(ctx: MutationCtx, workosId: string): Promise<void> {
+  const user = await byWorkosId(ctx, workosId);
+  if (user !== null) {
+    await ctx.db.patch(user._id, { isActive: false });
+  }
+}
+
+async function companyByWorkosId(ctx: MutationCtx, orgId: string) {
+  return await ctx.db
+    .query("companies")
+    .withIndex("by_workosId", (q) => q.eq("workosId", orgId))
+    .unique();
+}
+
+export type MembershipEvent = {
+  workosUserId: string;
+  organizationId: string;
+  organizationName: string;
+  role: Infer<typeof companyRole>;
+};
+
+export async function applyMembership(ctx: MutationCtx, event: MembershipEvent): Promise<void> {
+  const user = await byWorkosId(ctx, event.workosUserId);
+  if (user === null) return;
+
+  const existingCompany = await companyByWorkosId(ctx, event.organizationId);
+  const companyId =
+    existingCompany?._id ??
+    (await ctx.db.insert("companies", {
+      workosId: event.organizationId,
+      name: event.organizationName,
+      isActive: true,
+    }));
+
+  const membership = await ctx.db
+    .query("companyUsers")
+    .withIndex("by_userId_and_companyId", (q) =>
+      q.eq("userId", user._id).eq("companyId", companyId),
+    )
+    .unique();
+
+  if (membership === null) {
+    await ctx.db.insert("companyUsers", { userId: user._id, companyId, role: event.role });
+  } else if (membership.role !== event.role) {
+    await ctx.db.patch(membership._id, { role: event.role });
+  }
+
+  if (user.role === "creator") {
+    await ctx.db.patch(user._id, { role: "company" });
+  }
+}
+
+export async function removeMembership(
+  ctx: MutationCtx,
+  event: { workosUserId: string; organizationId: string },
+): Promise<void> {
+  const user = await byWorkosId(ctx, event.workosUserId);
+  const company = await companyByWorkosId(ctx, event.organizationId);
+  if (user === null || company === null) return;
+
+  const membership = await ctx.db
+    .query("companyUsers")
+    .withIndex("by_userId_and_companyId", (q) =>
+      q.eq("userId", user._id).eq("companyId", company._id),
+    )
+    .unique();
+  if (membership !== null) {
+    await ctx.db.delete(membership._id);
+  }
+
+  const remaining = await ctx.db
+    .query("companyUsers")
+    .withIndex("by_userId", (q) => q.eq("userId", user._id))
+    .first();
+
+  if (remaining === null && user.role === "company") {
+    await ctx.db.patch(user._id, { role: "creator" });
+    const profile = await ctx.db
+      .query("creators")
+      .withIndex("by_userId", (q) => q.eq("userId", user._id))
+      .unique();
+    if (profile === null) {
+      await ctx.db.insert("creators", { userId: user._id });
+    }
+  }
+}
+
+export async function requireUser(
+  ctx: QueryCtx | MutationCtx,
+): Promise<{ identity: UserIdentity; user: Doc<"users"> }> {
+  const identity = await requireIdentity(ctx);
+  const user = await byWorkosId(ctx, identity.subject);
+
+  if (user === null) {
+    throw apiError("not_synced");
+  }
+  if (!user.isActive) {
+    throw apiError("account_deactivated");
+  }
+  return { identity, user };
+}
+
+export async function requireRole(
+  ctx: QueryCtx | MutationCtx,
+  role: Doc<"users">["role"],
+): Promise<{ identity: UserIdentity; user: Doc<"users">; orgId: string | null }> {
+  const { identity, user } = await requireUser(ctx);
+
+  if (user.role !== role) {
+    throw apiError("forbidden", { requiredRole: role });
+  }
+  return { identity, user, orgId: findOrgId(identity) };
+}

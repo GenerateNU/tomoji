@@ -6,10 +6,6 @@ import { useCallback, useMemo } from "react";
 
 const convex = new ConvexReactClient(process.env.NEXT_PUBLIC_CONVEX_URL!);
 
-/**
- * Adapts WorkOS AuthKit to the shape ConvexProviderWithAuth expects:
- * `{ isLoading, isAuthenticated, fetchAccessToken }`.
- */
 function useAuthFromWorkOS() {
   const { user, loading: userLoading } = useAuth();
   const { getAccessToken, refresh } = useAccessToken();
@@ -18,12 +14,9 @@ function useAuthFromWorkOS() {
   const fetchAccessToken = useCallback(
     async ({ forceRefreshToken }: { forceRefreshToken: boolean }) => {
       try {
-        // getAccessToken() already refreshes when the token is stale; refresh()
-        // forces one, which is what Convex wants after a 401.
         const token = forceRefreshToken ? await refresh() : await getAccessToken();
         return token ?? null;
       } catch {
-        // Convex treats null as "not signed in" and will retry later.
         return null;
       }
     },

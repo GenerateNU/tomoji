@@ -1,51 +1,54 @@
 import { v } from "convex/values";
 import { query } from "./_generated/server";
-import { orgIdFrom, requireIdentity } from "./lib/authz";
+import { requireIdentity } from "./lib/authz";
+import { apiError } from "./lib/errors";
+import { findOrgId, toCompanyRole } from "./lib/identity";
+import { byWorkosId } from "./models/users";
+import { companyRole } from "./schemas/companyUsers.schema";
 
-/**
- * Smoke test for the WorkOS -> Convex auth bridge.
- *
- * Returns null when nobody is signed in. Once signed in it returns the
- * identity Convex derived from the WorkOS access token — if this returns a
- * real subject, `convex/auth.config.ts` and `ConvexProviderWithAuth` are
- * wired correctly.
- */
+const identityFields = {
+  synced: v.literal(true),
+  userId: v.id("users"),
+  name: v.string(),
+  email: v.string(),
+};
+
+const meResult = v.union(
+  v.object({ synced: v.literal(false) }),
+  v.object({ ...identityFields, role: v.literal("creator") }),
+  v.object({ ...identityFields, role: v.literal("operator") }),
+  v.object({
+    ...identityFields,
+    role: v.literal("company"),
+    orgId: v.string(),
+    companyRole,
+  }),
+);
+
 export const me = query({
   args: {},
-  returns: v.union(
-    v.null(),
-    v.object({
-      subject: v.string(),
-      tokenIdentifier: v.string(),
-      issuer: v.string(),
-      email: v.union(v.string(), v.null()),
-      orgId: v.union(v.string(), v.null()),
-    }),
-  ),
-  handler: async (ctx) => {
-    const identity = await ctx.auth.getUserIdentity();
-    if (identity === null) {
-      return null;
-    }
-    return {
-      subject: identity.subject,
-      tokenIdentifier: identity.tokenIdentifier,
-      issuer: identity.issuer,
-      email: identity.email ?? null,
-      orgId: orgIdFrom(identity),
-    };
-  },
-});
-
-/**
- * Same data, but throws for signed-out callers. Exists to exercise
- * `requireIdentity` — the shape every real query will use.
- */
-export const requireMe = query({
-  args: {},
-  returns: v.object({ subject: v.string() }),
+  returns: meResult,
   handler: async (ctx) => {
     const identity = await requireIdentity(ctx);
-    return { subject: identity.subject };
+    const user = await byWorkosId(ctx, identity.subject);
+
+    // `synced: false` is the window before the WorkOS webhook has landed.
+    if (user === null) return { synced: false as const };
+
+    const base = {
+      synced: true as const,
+      userId: user._id,
+      name: user.name,
+      email: user.email,
+    };
+
+    if (user.role !== "company") return { ...base, role: user.role };
+
+    const orgId = findOrgId(identity);
+    if (orgId === null) {
+      throw apiError("misconfigured", { reason: "company account has no organization" });
+    }
+
+    return { ...base, role: "company" as const, orgId, companyRole: toCompanyRole(identity.role) };
   },
 });

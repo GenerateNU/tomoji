@@ -11,14 +11,16 @@ convex/
   schema.ts            assembles the tables
   schemas/             one file per table: fields + indexes
   <domain>.ts          route layer: args, returns, calls models/
-  models/<domain>.ts   data layer: queries, writes, business rules
+  models/<domain>.ts   data layer: db reads/writes, business rules
   lib/                 shared utilities: errors, auth helpers, function builders
-  tests/               mirrors the source tree
+  tests/               unit/integration tests, file structure mirrors the source tree
   auth.ts              WorkOS webhook handlers
   http.ts              HTTP routes, currently only used for webhooks
 ```
 
 **Keep route files thin.** They should validate arguments and delegate the actual work to the model layer. Anything that interacts with the database belongs in `models/`. This makes the logic easier to test directly and allows it to be reused by other routes without creating circular imports.
+
+**Keep dependencies flowing in one direction:** `<domain>.ts` → `models/`. Models should never import from route files or call routes through `ctx.runQuery(api.…)`. If a model seems to need something from a route, that usually means the logic belongs lower in the stack and should be moved into the model layer. Models can depend on other models when needed, such as the creators model reading from users, as long as those dependencies stay acyclic.
 
 ## Queries, mutations, and actions
 
@@ -59,7 +61,7 @@ Default to internal for anything that is not intentionally part of the public AP
 | `companyQuery` / `companyMutation`   | a company user     | `ctx.user`, `ctx.orgId` |
 | `operatorQuery` / `operatorMutation` | a Tomoji operator  | `ctx.user`              |
 
-Use these instead of the raw `query` and `mutation` functions when you can. **Choosing the correct builder should handle the authorization for the route.** If you find yourself manually checking a user's role inside the handler, there is probably a better builder for that route.
+Use these instead of the raw `query` and `mutation` functions. It proves the caller is signed in, synced, active, and of the right account type. Note that additional access checks may be necessary to ensure that sensitive company data is not leaked.
 
 Authorization should always happen on the server. Never accept a `userId` from the client to determine what someone is allowed to do. Derive the caller's identity from `ctx` instead.
 
@@ -76,7 +78,7 @@ Only add a new error code when the caller would actually respond to it different
 - **Do not repeat the domain name.** Use `campaigns.create`, not `campaigns.createCampaign`. The namespace already tells us it is a campaign.
 - **Use standard CRUD names:** `get`, `list`, `create`, `update`, and `remove`.
 - Use **`me` when the row represents the current caller**, such as `creators.me`.
-- Use **an optional ID when the caller owns the resource but may access others they own**, such as `companies.get({ companyId? })`. Omitting the ID means "my own."
+- Use **an optional ID when the caller owns the resource but may access others they own**. For example, `companies.get` takes an optional `companyId` and omitting it means "my own."
 
 A route should only get its own name when it returns or does something meaningfully different. If two routes only differ based on who is calling them, they should usually be one route because the builder already captures the caller type.
 

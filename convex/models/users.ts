@@ -6,6 +6,8 @@ import { apiError } from "../lib/errors";
 import { findOrgId } from "../lib/identity";
 import type { companyRole } from "../schemas/companyUsers.schema";
 import type { Infer } from "convex/values";
+import { companyByWorkosId } from "./companies";
+import { getByUserIdAndCompanyId } from "./companyUsers";
 
 export async function byWorkosId(
   ctx: QueryCtx | MutationCtx,
@@ -53,13 +55,6 @@ export async function deactivateUser(ctx: MutationCtx, workosId: string): Promis
   }
 }
 
-async function companyByWorkosId(ctx: MutationCtx, orgId: string) {
-  return await ctx.db
-    .query("companies")
-    .withIndex("by_workosId", (q) => q.eq("workosId", orgId))
-    .unique();
-}
-
 export type MembershipEvent = {
   workosUserId: string;
   organizationId: string;
@@ -101,12 +96,7 @@ export async function applyMembership(ctx: MutationCtx, event: MembershipEvent):
       isActive: true,
     }));
 
-  const membership = await ctx.db
-    .query("companyUsers")
-    .withIndex("by_userId_and_companyId", (q) =>
-      q.eq("userId", user._id).eq("companyId", companyId),
-    )
-    .unique();
+  const membership = await getByUserIdAndCompanyId(ctx, user._id, companyId);
 
   if (membership === null) {
     await ctx.db.insert("companyUsers", { userId: user._id, companyId, role: event.role });
@@ -127,12 +117,7 @@ export async function removeMembership(
   const company = await companyByWorkosId(ctx, event.organizationId);
   if (user === null || company === null) return;
 
-  const membership = await ctx.db
-    .query("companyUsers")
-    .withIndex("by_userId_and_companyId", (q) =>
-      q.eq("userId", user._id).eq("companyId", company._id),
-    )
-    .unique();
+  const membership = await getByUserIdAndCompanyId(ctx, user._id, company._id);
   if (membership !== null) {
     await ctx.db.delete(membership._id);
   }

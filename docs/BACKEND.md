@@ -61,7 +61,7 @@ Default to internal for anything that is not intentionally part of the public AP
 | `companyQuery` / `companyMutation`   | a company user     | `ctx.user`, `ctx.orgId` |
 | `operatorQuery` / `operatorMutation` | a Tomoji operator  | `ctx.user`              |
 
-Use these instead of the raw `query` and `mutation` functions. It proves the caller is signed in, synced, active, and of the right account type. Note that additional access checks may be necessary to ensure that sensitive company data is not leaked.
+Use these instead of the raw `query` and `mutation` functions. It proves the caller is signed in, synced, active, and of the right account type. Note that additional access checks may be necessary to ensure that sensitive company/creator data is not leaked beyond role checks.
 
 Authorization should always happen on the server. Never accept a `userId` from the client to determine what someone is allowed to do. Derive the caller's identity from `ctx` instead.
 

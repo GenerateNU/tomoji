@@ -8,6 +8,7 @@ import {
   removeMembership,
   requireRole,
   requireUser,
+  syncMembership,
   upsertUser,
 } from "../../models/users";
 import schema from "../../schema";
@@ -113,21 +114,6 @@ describe("applyMembership", () => {
     expect(memberships[0]?.role).toBe("admin");
   });
 
-  test("ignores an event for a user who has not synced yet", async () => {
-    const t = convexTest(schema, modules);
-    await t.run(async (ctx) => {
-      await applyMembership(ctx, {
-        workosUserId: "nobody",
-        organizationId: "org_acme",
-        organizationName: "Acme",
-        role: "member",
-      });
-    });
-
-    const companies = await t.run(async (ctx) => await ctx.db.query("companies").collect());
-    expect(companies).toHaveLength(0);
-  });
-
   test("does not demote an operator who joins a company", async () => {
     const t = convexTest(schema, modules);
     await seedUser(t, { subject: "u10" });
@@ -226,5 +212,101 @@ describe("requireUser / requireRole", () => {
 
     expect(result.user.role).toBe("company");
     expect(result.orgId).toBe("org_acme");
+  });
+});
+
+describe("out-of-order webhook delivery", () => {
+  test("a membership arriving before the user is not silently dropped", async () => {
+    const t = convexTest(schema, modules);
+
+    // WorkOS gives no cross-topic ordering guarantee, so the membership event
+    // can beat user.created. Throwing is what makes WorkOS retry it.
+    await expectApiError(
+      () =>
+        t.run(async (ctx) => {
+          await applyMembership(ctx, {
+            workosUserId: "u18",
+            organizationId: "org_acme",
+            organizationName: "Acme",
+            role: "admin",
+          });
+        }),
+      "not_synced",
+    );
+
+    // On retry, after user.created has landed, it applies.
+    await seedUser(t, { subject: "u18" });
+    await t.run(async (ctx) => {
+      await applyMembership(ctx, {
+        workosUserId: "u18",
+        organizationId: "org_acme",
+        organizationName: "Acme",
+        role: "admin",
+      });
+    });
+
+    const user = await t.run(async (ctx) => await byWorkosId(ctx, "u18"));
+    const memberships = await t.run(async (ctx) => await ctx.db.query("companyUsers").collect());
+    expect(user?.role).toBe("company");
+    expect(memberships).toHaveLength(1);
+  });
+});
+
+describe("syncMembership", () => {
+  test("a pending invitation grants no access", async () => {
+    const t = convexTest(schema, modules);
+    await seedUser(t, { subject: "u19" });
+    await t.run(async (ctx) => {
+      await syncMembership(ctx, {
+        workosUserId: "u19",
+        organizationId: "org_acme",
+        organizationName: "Acme",
+        role: "admin",
+        status: "pending",
+      });
+    });
+
+    const user = await t.run(async (ctx) => await byWorkosId(ctx, "u19"));
+    const memberships = await t.run(async (ctx) => await ctx.db.query("companyUsers").collect());
+    expect(user?.role).toBe("creator");
+    expect(memberships).toHaveLength(0);
+  });
+
+  test("deactivation revokes access", async () => {
+    const t = convexTest(schema, modules);
+    await seedUser(t, { subject: "u20", org: { id: "org_acme" } });
+
+    // WorkOS deactivates by flipping status to inactive — no deleted event fires.
+    await t.run(async (ctx) => {
+      await syncMembership(ctx, {
+        workosUserId: "u20",
+        organizationId: "org_acme",
+        organizationName: "Acme",
+        role: "member",
+        status: "inactive",
+      });
+    });
+
+    const user = await t.run(async (ctx) => await byWorkosId(ctx, "u20"));
+    const memberships = await t.run(async (ctx) => await ctx.db.query("companyUsers").collect());
+    expect(user?.role).toBe("creator");
+    expect(memberships).toHaveLength(0);
+  });
+
+  test("an active membership grants access", async () => {
+    const t = convexTest(schema, modules);
+    await seedUser(t, { subject: "u21" });
+    await t.run(async (ctx) => {
+      await syncMembership(ctx, {
+        workosUserId: "u21",
+        organizationId: "org_acme",
+        organizationName: "Acme",
+        role: "admin",
+        status: "active",
+      });
+    });
+
+    const user = await t.run(async (ctx) => await byWorkosId(ctx, "u21"));
+    expect(user?.role).toBe("company");
   });
 });

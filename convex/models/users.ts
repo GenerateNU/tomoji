@@ -67,9 +67,30 @@ export type MembershipEvent = {
   role: Infer<typeof companyRole>;
 };
 
+/**
+ * Routes a membership event by status. WorkOS deactivates a membership by
+ * flipping it to `inactive` rather than deleting it, so no `deleted` event
+ * fires — without this, deprovisioned users keep company access.
+ */
+export async function syncMembership(
+  ctx: MutationCtx,
+  event: MembershipEvent & { status: string },
+): Promise<void> {
+  if (event.status !== "active") {
+    await removeMembership(ctx, {
+      workosUserId: event.workosUserId,
+      organizationId: event.organizationId,
+    });
+    return;
+  }
+  await applyMembership(ctx, event);
+}
+
 export async function applyMembership(ctx: MutationCtx, event: MembershipEvent): Promise<void> {
   const user = await byWorkosId(ctx, event.workosUserId);
-  if (user === null) return;
+  if (user === null) {
+    throw apiError("not_synced", { workosUserId: event.workosUserId });
+  }
 
   const existingCompany = await companyByWorkosId(ctx, event.organizationId);
   const companyId =

@@ -76,11 +76,24 @@ Only add a new error code when the caller would actually respond to it different
 ## Naming routes
 
 - **Do not repeat the domain name.** Use `campaigns.create`, not `campaigns.createCampaign`. The namespace already tells us it is a campaign.
-- **Use standard CRUD names:** `get`, `list`, `create`, `update`, and `remove`.
+- **Use standard CRUD names:** `get`, `list`, `create`, `update`, and `remove`. It has to be `remove` rather than `delete`, which is a reserved word and cannot be an export name.
 - Use **`me` when the row represents the current caller**, such as `creators.me`.
 - Use **an optional ID when the caller owns the resource but may access others they own**. For example, `companies.get` takes an optional `companyId` and omitting it means "my own."
 
 A route should only get its own name when it returns or does something meaningfully different. If two routes only differ based on who is calling them, they should usually be one route because the builder already captures the caller type.
+
+## Naming model functions
+
+Model functions are imported directly, so their names should make sense on their own at the import site. This is different from routes, where the filename already provides the domain. For example, a `create` route in `campaigns.ts` would call a model function named `createCampaign`.
+
+| Prefix                            | Returns                 | Use when                                                             |
+| --------------------------------- | ----------------------- | -------------------------------------------------------------------- |
+| `get…`                            | the row, or `null`      | it is normal for the row not to exist and the caller can handle that |
+| `list…`                           | an array or page        | reading multiple rows                                                |
+| `require…`                        | the row, or throws      | the row must exist for the operation to continue (e.x. auth)         |
+| `create…` / `update…` / `remove…` | the result of the write | creating, updating, or removing a row                                |
+
+Use the table name as the subject of the function instead of introducing a different term for the same thing. This keeps naming consistent from the schema to the model and route layers. Only add `By<Field>` when the table supports multiple lookups and the function name would otherwise be unclear. In most cases, the arguments already make it obvious what field is being matched.
 
 ## Tests
 

@@ -57,6 +57,7 @@ export const me = query({
   },
 });
 
+/** Lists users for operators with optional role filtering and cursor pagination. */
 export const list = operatorQuery({
   args: {
     role: v.optional(userRole),

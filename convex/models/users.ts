@@ -19,6 +19,7 @@ export async function getUserByWorkosId(
     .unique();
 }
 
+/** Returns one cursor-paginated page of users, optionally restricted to a role. */
 export async function listUsers(
   ctx: QueryCtx,
   options: { role?: Doc<"users">["role"]; paginationOpts: PaginationOptions },

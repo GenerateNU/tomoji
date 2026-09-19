@@ -190,3 +190,79 @@ describe("creators.get", () => {
     await expectApiError(() => asOperator.query(api.creators.get, { creatorId }), "forbidden");
   });
 });
+
+describe("creators.update", () => {
+  test("updates the authenticated creator's profile", async () => {
+    const t = convexTest(schema, modules);
+    const asCreator = await seedUser(t, {
+      subject: "creator_update",
+      email: "creator@example.com",
+    });
+
+    const profile = await asCreator.mutation(api.creators.update, {
+      xId: "creator_x",
+      githubLink: "https://github.com/creator",
+      phoneNumber: "+15555550123",
+    });
+
+    expect(profile).toMatchObject({
+      name: "creator@example.com",
+      email: "creator@example.com",
+      xId: "creator_x",
+      githubLink: "https://github.com/creator",
+      phoneNumber: "+15555550123",
+    });
+  });
+
+  test("clears profile fields when passed null", async () => {
+    const t = convexTest(schema, modules);
+    const asCreator = await seedUser(t, { subject: "creator_update_clear" });
+    await asCreator.mutation(api.creators.update, {
+      xId: "creator_x",
+      githubLink: "https://github.com/creator",
+      phoneNumber: "+15555550123",
+    });
+
+    const profile = await asCreator.mutation(api.creators.update, {
+      xId: null,
+      githubLink: null,
+      phoneNumber: null,
+    });
+
+    expect(profile).not.toHaveProperty("xId");
+    expect(profile).not.toHaveProperty("githubLink");
+    expect(profile).not.toHaveProperty("phoneNumber");
+  });
+
+  test("rejects a signed-out caller", async () => {
+    const t = convexTest(schema, modules);
+
+    await expectApiError(
+      () => t.mutation(api.creators.update, { xId: "signed_out" }),
+      "not_authenticated",
+    );
+  });
+
+  test("rejects a company caller", async () => {
+    const t = convexTest(schema, modules);
+    const asCompany = await seedUser(t, {
+      subject: "creator_update_company",
+      org: { id: "org_creator_update" },
+    });
+
+    await expectApiError(
+      () => asCompany.mutation(api.creators.update, { xId: "company" }),
+      "forbidden",
+    );
+  });
+
+  test("rejects an operator caller", async () => {
+    const t = convexTest(schema, modules);
+    const asOperator = await seedOperator(t, "creator_update_operator");
+
+    await expectApiError(
+      () => asOperator.mutation(api.creators.update, { xId: "operator" }),
+      "forbidden",
+    );
+  });
+});

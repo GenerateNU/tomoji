@@ -6,8 +6,10 @@ import { apiError } from "../lib/errors";
 import { findOrgId } from "../lib/identity";
 import type { companyRole } from "../schemas/companyUsers.schema";
 import type { Infer } from "convex/values";
+import { getCompanyByWorkosId } from "./companies";
+import { getCompanyUser } from "./companyUsers";
 
-export async function byWorkosId(
+export async function getUserByWorkosId(
   ctx: QueryCtx | MutationCtx,
   workosId: string,
 ): Promise<Doc<"users"> | null> {
@@ -25,7 +27,7 @@ export type WorkosProfile = {
 };
 
 export async function upsertUser(ctx: MutationCtx, profile: WorkosProfile): Promise<Id<"users">> {
-  const existing = await byWorkosId(ctx, profile.workosId);
+  const existing = await getUserByWorkosId(ctx, profile.workosId);
   const name = profile.name ?? existing?.name ?? profile.email;
   const profilePicture = profile.profilePicture ?? existing?.profilePicture;
 
@@ -47,17 +49,10 @@ export async function upsertUser(ctx: MutationCtx, profile: WorkosProfile): Prom
 }
 
 export async function deactivateUser(ctx: MutationCtx, workosId: string): Promise<void> {
-  const user = await byWorkosId(ctx, workosId);
+  const user = await getUserByWorkosId(ctx, workosId);
   if (user !== null) {
     await ctx.db.patch(user._id, { isActive: false });
   }
-}
-
-async function companyByWorkosId(ctx: MutationCtx, orgId: string) {
-  return await ctx.db
-    .query("companies")
-    .withIndex("by_workosId", (q) => q.eq("workosId", orgId))
-    .unique();
 }
 
 export type MembershipEvent = {
@@ -87,12 +82,12 @@ export async function syncMembership(
 }
 
 export async function applyMembership(ctx: MutationCtx, event: MembershipEvent): Promise<void> {
-  const user = await byWorkosId(ctx, event.workosUserId);
+  const user = await getUserByWorkosId(ctx, event.workosUserId);
   if (user === null) {
     throw apiError("not_synced", { workosUserId: event.workosUserId });
   }
 
-  const existingCompany = await companyByWorkosId(ctx, event.organizationId);
+  const existingCompany = await getCompanyByWorkosId(ctx, event.organizationId);
   const companyId =
     existingCompany?._id ??
     (await ctx.db.insert("companies", {
@@ -101,12 +96,7 @@ export async function applyMembership(ctx: MutationCtx, event: MembershipEvent):
       isActive: true,
     }));
 
-  const membership = await ctx.db
-    .query("companyUsers")
-    .withIndex("by_userId_and_companyId", (q) =>
-      q.eq("userId", user._id).eq("companyId", companyId),
-    )
-    .unique();
+  const membership = await getCompanyUser(ctx, user._id, companyId);
 
   if (membership === null) {
     await ctx.db.insert("companyUsers", { userId: user._id, companyId, role: event.role });
@@ -123,16 +113,11 @@ export async function removeMembership(
   ctx: MutationCtx,
   event: { workosUserId: string; organizationId: string },
 ): Promise<void> {
-  const user = await byWorkosId(ctx, event.workosUserId);
-  const company = await companyByWorkosId(ctx, event.organizationId);
+  const user = await getUserByWorkosId(ctx, event.workosUserId);
+  const company = await getCompanyByWorkosId(ctx, event.organizationId);
   if (user === null || company === null) return;
 
-  const membership = await ctx.db
-    .query("companyUsers")
-    .withIndex("by_userId_and_companyId", (q) =>
-      q.eq("userId", user._id).eq("companyId", company._id),
-    )
-    .unique();
+  const membership = await getCompanyUser(ctx, user._id, company._id);
   if (membership !== null) {
     await ctx.db.delete(membership._id);
   }
@@ -158,7 +143,7 @@ export async function requireUser(
   ctx: QueryCtx | MutationCtx,
 ): Promise<{ identity: UserIdentity; user: Doc<"users"> }> {
   const identity = await requireIdentity(ctx);
-  const user = await byWorkosId(ctx, identity.subject);
+  const user = await getUserByWorkosId(ctx, identity.subject);
 
   if (user === null) {
     throw apiError("not_synced");

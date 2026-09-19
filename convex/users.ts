@@ -3,7 +3,7 @@ import { query } from "./_generated/server";
 import { requireIdentity } from "./lib/authz";
 import { apiError } from "./lib/errors";
 import { findOrgId, toCompanyRole } from "./lib/identity";
-import { byWorkosId } from "./models/users";
+import { getUserByWorkosId } from "./models/users";
 import { companyRole } from "./schemas/companyUsers.schema";
 
 const identityFields = {
@@ -30,7 +30,7 @@ export const me = query({
   returns: meResult,
   handler: async (ctx) => {
     const identity = await requireIdentity(ctx);
-    const user = await byWorkosId(ctx, identity.subject);
+    const user = await getUserByWorkosId(ctx, identity.subject);
 
     // `synced: false` is the window before the WorkOS webhook has landed.
     if (user === null) return { synced: false as const };

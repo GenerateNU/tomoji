@@ -3,7 +3,7 @@ import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
 import {
   applyMembership,
-  byWorkosId,
+  getUserByWorkosId,
   deactivateUser,
   removeMembership,
   requireRole,
@@ -41,7 +41,7 @@ describe("upsertUser", () => {
     const t = convexTest(schema, modules);
     await seedUser(t, { subject: "u3", email: "dev@example.com" });
 
-    const user = await t.run(async (ctx) => await byWorkosId(ctx, "u3"));
+    const user = await t.run(async (ctx) => await getUserByWorkosId(ctx, "u3"));
     expect(user?.name).toBe("dev@example.com");
   });
 
@@ -49,12 +49,12 @@ describe("upsertUser", () => {
     const t = convexTest(schema, modules);
     await seedUser(t, { subject: "u4" });
     await t.run(async (ctx) => {
-      const user = await byWorkosId(ctx, "u4");
+      const user = await getUserByWorkosId(ctx, "u4");
       await ctx.db.patch(user!._id, { role: "operator" });
       await upsertUser(ctx, { workosId: "u4", email: "u4@example.com" });
     });
 
-    const user = await t.run(async (ctx) => await byWorkosId(ctx, "u4"));
+    const user = await t.run(async (ctx) => await getUserByWorkosId(ctx, "u4"));
     expect(user?.role).toBe("operator");
   });
 
@@ -66,7 +66,7 @@ describe("upsertUser", () => {
       await upsertUser(ctx, { workosId: "u5", email: "u5@example.com" });
     });
 
-    const user = await t.run(async (ctx) => await byWorkosId(ctx, "u5"));
+    const user = await t.run(async (ctx) => await getUserByWorkosId(ctx, "u5"));
     expect(user?.isActive).toBe(false);
   });
 });
@@ -76,7 +76,7 @@ describe("applyMembership", () => {
     const t = convexTest(schema, modules);
     await seedUser(t, { subject: "u6", org: { id: "org_acme", name: "Acme Inc" } });
 
-    const user = await t.run(async (ctx) => await byWorkosId(ctx, "u6"));
+    const user = await t.run(async (ctx) => await getUserByWorkosId(ctx, "u6"));
     const companies = await t.run(async (ctx) => await ctx.db.query("companies").collect());
     const memberships = await t.run(async (ctx) => await ctx.db.query("companyUsers").collect());
 
@@ -118,7 +118,7 @@ describe("applyMembership", () => {
     const t = convexTest(schema, modules);
     await seedUser(t, { subject: "u10" });
     await t.run(async (ctx) => {
-      const user = await byWorkosId(ctx, "u10");
+      const user = await getUserByWorkosId(ctx, "u10");
       await ctx.db.patch(user!._id, { role: "operator" });
       await applyMembership(ctx, {
         workosUserId: "u10",
@@ -128,7 +128,7 @@ describe("applyMembership", () => {
       });
     });
 
-    const user = await t.run(async (ctx) => await byWorkosId(ctx, "u10"));
+    const user = await t.run(async (ctx) => await getUserByWorkosId(ctx, "u10"));
     expect(user?.role).toBe("operator");
   });
 });
@@ -142,7 +142,7 @@ describe("removeMembership", () => {
         await removeMembership(ctx, { workosUserId: "u11", organizationId: "org_acme" }),
     );
 
-    const user = await t.run(async (ctx) => await byWorkosId(ctx, "u11"));
+    const user = await t.run(async (ctx) => await getUserByWorkosId(ctx, "u11"));
     const memberships = await t.run(async (ctx) => await ctx.db.query("companyUsers").collect());
 
     expect(user?.role).toBe("creator");
@@ -158,7 +158,7 @@ describe("removeMembership", () => {
         await removeMembership(ctx, { workosUserId: "u12", organizationId: "org_acme" }),
     );
 
-    const user = await t.run(async (ctx) => await byWorkosId(ctx, "u12"));
+    const user = await t.run(async (ctx) => await getUserByWorkosId(ctx, "u12"));
     expect(user?.role).toBe("company");
   });
 });
@@ -169,7 +169,7 @@ describe("deactivateUser", () => {
     await seedUser(t, { subject: "u13" });
     await t.run(async (ctx) => await deactivateUser(ctx, "u13"));
 
-    const user = await t.run(async (ctx) => await byWorkosId(ctx, "u13"));
+    const user = await t.run(async (ctx) => await getUserByWorkosId(ctx, "u13"));
     expect(user).not.toBeNull();
     expect(user?.isActive).toBe(false);
   });
@@ -245,7 +245,7 @@ describe("out-of-order webhook delivery", () => {
       });
     });
 
-    const user = await t.run(async (ctx) => await byWorkosId(ctx, "u18"));
+    const user = await t.run(async (ctx) => await getUserByWorkosId(ctx, "u18"));
     const memberships = await t.run(async (ctx) => await ctx.db.query("companyUsers").collect());
     expect(user?.role).toBe("company");
     expect(memberships).toHaveLength(1);
@@ -266,7 +266,7 @@ describe("syncMembership", () => {
       });
     });
 
-    const user = await t.run(async (ctx) => await byWorkosId(ctx, "u19"));
+    const user = await t.run(async (ctx) => await getUserByWorkosId(ctx, "u19"));
     const memberships = await t.run(async (ctx) => await ctx.db.query("companyUsers").collect());
     expect(user?.role).toBe("creator");
     expect(memberships).toHaveLength(0);
@@ -287,7 +287,7 @@ describe("syncMembership", () => {
       });
     });
 
-    const user = await t.run(async (ctx) => await byWorkosId(ctx, "u20"));
+    const user = await t.run(async (ctx) => await getUserByWorkosId(ctx, "u20"));
     const memberships = await t.run(async (ctx) => await ctx.db.query("companyUsers").collect());
     expect(user?.role).toBe("creator");
     expect(memberships).toHaveLength(0);
@@ -306,7 +306,7 @@ describe("syncMembership", () => {
       });
     });
 
-    const user = await t.run(async (ctx) => await byWorkosId(ctx, "u21"));
+    const user = await t.run(async (ctx) => await getUserByWorkosId(ctx, "u21"));
     expect(user?.role).toBe("company");
   });
 });

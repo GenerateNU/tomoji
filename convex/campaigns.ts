@@ -4,12 +4,11 @@ import { companyMutation } from "./lib/functions";
 import schema from "./schema";
 
 /**
- * Adds a campaign for a given company.
+ * Creates a campaign for the caller's company.
  *
- * @throws `invalid_state` if `deadline` is in the past, if `maxOpenings` is
- * not positive, if `maxApplications` is below `maxOpenings`, or if `status`
- * is `closed`.
- * @returns the new campaign's id.
+ * @returns the id of the newly created campaign.
+ * @throws `forbidden` if the caller does not have permission to create campaigns.
+ * @throws `invalid_state` if the campaign cannot be created with the requested values.
  */
 export const create = companyMutation({
   args: schema.doc("campaigns").omit("_id", "_creationTime", "companyId", "createdBy").fields,

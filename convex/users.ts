@@ -25,6 +25,12 @@ const meResult = v.union(
   }),
 );
 
+/**
+ * Returns the account and organization the current credentials are acting as.
+ *
+ * @throws not_authenticated if the credentials are missing or invalid
+ * @throws misconfigured if a company account has no organization
+ */
 export const me = query({
   args: {},
   returns: meResult,

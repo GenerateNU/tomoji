@@ -15,6 +15,10 @@ ci:
     bun run format
     bun run ci
 
+# Print the deployed API surface — what is public, what is internal
+api:
+    @bun scripts/api-surface.ts
+
 # Run the test suite once
 test:
     bun run test

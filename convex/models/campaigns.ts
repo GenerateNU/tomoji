@@ -4,15 +4,13 @@ import type { MutationCtx } from "../_generated/server";
 import { apiError } from "../lib/errors";
 
 /**
- * Creates a campaign and returns its id.
+ * Creates a campaign for the caller's company.
  *
- * @param ctx service for convex mutation functions
- * @param campaign the campaign object with at least all required fields
- *
- * @return the campaignId of the new campaign
- * @throws `invalid_state` if `deadline` is in the past, if `maxOpenings` is
- * not positive, if `maxApplications` is below `maxOpenings`, or if `status`
- * is `closed`.
+ * @returns the id of the newly created campaign.
+ * @throws `invalid_state` if the deadline has passed, `maxOpenings` is not
+ * positive, `maxApplications` is less than `maxOpenings`, or the campaign is
+ * created with a `closed` status.
+ * @throws `forbidden` if the caller is not a member of a company.
  */
 export async function createCampaign(
   ctx: MutationCtx,
@@ -29,7 +27,7 @@ export async function createCampaign(
       reason: "max_applications_below_max_openings",
     });
   }
-  if (campaign.status == "closed") {
+  if (campaign.status === "closed") {
     throw apiError("invalid_state", { reason: "campaign_cannot_be_created_closed" });
   }
 

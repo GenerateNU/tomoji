@@ -41,6 +41,7 @@
     "convex-test": "^0.0.58",
     "eslint": "^9",
     "eslint-config-next": "16.3.5",
+    "eslint-plugin-jsdoc": "^64.5.3",
     "oxfmt": "^0.67.0",
     "oxlint": "^1.82.0",
     "shadcn": "^4.21.0",

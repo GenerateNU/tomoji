@@ -1,4 +1,5 @@
 import { defineSchema } from "convex/server";
+import { auditLogTable } from "./schemas/auditLog.schema";
 import { campaignCreatorsTable } from "./schemas/campaignCreators.schema";
 import { campaignsTable } from "./schemas/campaigns.schema";
 import { companiesTable } from "./schemas/companies.schema";
@@ -17,4 +18,5 @@ export default defineSchema({
   campaignCreators: campaignCreatorsTable,
   submissions: submissionsTable,
   posts: postsTable,
+  auditLog: auditLogTable,
 });

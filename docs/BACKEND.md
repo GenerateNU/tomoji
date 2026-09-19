@@ -48,7 +48,7 @@ Keep the database work in a single mutation near the end whenever possible so th
 
 Default to internal for anything that is not intentionally part of the public API. This includes webhook helpers, functions called by actions, and scheduled jobs. A function should be public because we intentionally chose to expose it, not simply because we forgot to make it internal.
 
-`bunx convex function-spec` shows what is actually deployed and whether each function is public or internal. It is worth checking before opening a PR.
+`just api` shows what is actually deployed and whether each function is public or internal. It is worth checking before opening a PR.
 
 ## Authorization
 
@@ -72,6 +72,60 @@ Throw `apiError(code, detail)` from `lib/errors.ts` instead of using `new Error(
 Convex redacts normal error messages in production, so the client would only receive `"Server Error"` and the useful message would be lost.
 
 Only add a new error code when the caller would actually respond to it differently. For example, `not_found` intentionally covers both "this doesn't exist" and "this isn't yours." The client should not be able to distinguish between those cases.
+
+## Agent-native API
+
+Tomoji exposes the same dashboard actions to agents that it exposes to users. A user can generate a scoped API key, install our published skill, and let their agent use the same routes and permissions as the UI. We should not maintain a separate agent API. If an agent needs functionality that the UI cannot access, the two surfaces have started to drift.
+
+The skill is generated from the routes themselves. `bunx convex function-spec` already gives us each route's arguments, return type, and whether it reads or writes. What it cannot tell an agent is when or why the route should be used, which is what the doc comment is for.
+
+A public route is not finished until someone who has never seen the codebase can understand when to call it and what to expect.
+
+### Doc comments
+
+Every public route needs a doc comment. ESLint enforces this, so your editor will flag a missing comment while you work, and `just ci` will fail without one.
+
+These comments are **API documentation for whoever is calling the route**, whether that is a frontend engineer or an agent. They should explain what the route is for, anything important the caller should know before using it, and any errors they may need to handle.
+
+Leave out implementation details that do not help the caller use the route, such as why the code is structured a certain way, which model function it calls, or how validation works internally. Argument names and types are already included in the generated spec, so there is no need to repeat them with `@param`.
+
+### Tags
+
+Prose explains what a route is for. Tags capture behavior that an agent needs to understand in a structured way.
+
+| Tag                   | Use                                                      |
+| --------------------- | -------------------------------------------------------- |
+| `@confirm`            | the agent must get explicit user approval before calling |
+| `@permission <scope>` | only when the inferred permission is not correct         |
+| `@see <route>`        | a prerequisite or related route in another domain        |
+| `@throws <code>`      | an error the caller can meaningfully respond to          |
+
+Use `@throws` only for failures where the caller would do something differently, such as retrying, asking for different input, requesting permission, or stopping the workflow. It does not need to list every internal error.
+
+````ts
+/**
+ * Creates a campaign for the caller's company.
+ *
+ * @confirm
+ * @throws invalid_state if the campaign cannot be created with these values
+ * @throws forbidden if the caller cannot create campaigns for this company
+ */
+
+## Audit log
+
+Every mutation records one entry, named after the route that ran:
+
+```ts
+await logAction(ctx, {
+  action: "campaigns.create",
+  targetTable: "campaigns",
+  targetId: campaignId,
+});
+````
+
+Call it from the route, not the model. Models are also called by webhook handlers where there is no acting user, and the log records intent — `campaigns.create` is something a person did, `createCampaign` is a mechanism.
+
+`logAction` reads the caller from `ctx.user`, which every `*Mutation` builder supplies, so nothing else needs passing. It also writes `viaApiKey`, which is unset today and will be filled in by the builder once agents authenticate with API keys — call sites will not change.
 
 ## Naming routes
 

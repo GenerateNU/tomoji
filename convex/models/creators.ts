@@ -1,3 +1,4 @@
+import type { PaginationOptions, PaginationResult } from "convex/server";
 import { v, type Infer } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
@@ -57,6 +58,21 @@ export async function requireCreatorProfile(
   }
 
   return toCreatorProfile(user, creator);
+}
+
+/** Returns one cursor-paginated page of active creator profiles. */
+export async function listCreators(
+  ctx: QueryCtx,
+  options: { paginationOpts: PaginationOptions },
+): Promise<PaginationResult<CreatorProfile>> {
+  const users = await ctx.db
+    .query("users")
+    .withIndex("by_role_and_isActive", (q) => q.eq("role", "creator").eq("isActive", true))
+    .paginate(options.paginationOpts);
+
+  // Convex has no joins, so hydrate only the bounded page returned above.
+  const page = await Promise.all(users.page.map((user) => requireCreatorProfile(ctx, user)));
+  return { ...users, page };
 }
 
 /** Updates the editable fields in a creator's own profile and returns the complete profile. */

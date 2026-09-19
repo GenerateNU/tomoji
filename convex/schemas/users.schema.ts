@@ -12,4 +12,5 @@ export const usersTable = defineTable({
   profilePicture: v.optional(v.string()),
 })
   .index("by_workosId", ["workosId"])
-  .index("by_role", ["role"]);
+  .index("by_role", ["role"])
+  .index("by_role_and_isActive", ["role", "isActive"]);

@@ -3,12 +3,13 @@ import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
 import {
   getCreatorByUserId,
+  listCreators,
   requireCreatorProfile,
   updateCreatorProfile,
 } from "../../models/creators";
-import { getUserByWorkosId } from "../../models/users";
+import { deactivateUser, getUserByWorkosId } from "../../models/users";
 import schema from "../../schema";
-import { expectApiError, seedUser } from "../helpers";
+import { expectApiError, seedOperator, seedUser } from "../helpers";
 
 const modules = import.meta.glob("../../**/*.ts");
 
@@ -64,6 +65,65 @@ describe("requireCreatorProfile", () => {
         }),
       "not_found",
     );
+  });
+});
+
+describe("listCreators", () => {
+  test("returns full creator profiles", async () => {
+    const t = convexTest(schema, modules);
+    await seedUser(t, { subject: "model_creator_list", email: "creator@example.com" });
+    const creatorId = await t.run(async (ctx) => {
+      const user = await getUserByWorkosId(ctx, "model_creator_list");
+      if (user === null) throw new Error("expected seeded user");
+      const creator = await getCreatorByUserId(ctx, user._id);
+      if (creator === null) throw new Error("expected seeded creator");
+      await ctx.db.patch("users", user._id, {
+        name: "Creator Name",
+        profilePicture: "https://example.com/profile.png",
+      });
+      await updateCreatorProfile(ctx, user, {
+        xId: "creator_x",
+        githubLink: "https://github.com/creator",
+        phoneNumber: "+15555550123",
+      });
+      return creator._id;
+    });
+
+    const result = await t.run(async (ctx) =>
+      listCreators(ctx, { paginationOpts: { cursor: null, numItems: 10 } }),
+    );
+
+    expect(result.page).toEqual([
+      {
+        creatorId,
+        name: "Creator Name",
+        email: "creator@example.com",
+        profilePicture: "https://example.com/profile.png",
+        xId: "creator_x",
+        githubLink: "https://github.com/creator",
+        phoneNumber: "+15555550123",
+      },
+    ]);
+  });
+
+  test("excludes inactive and non-creator accounts", async () => {
+    const t = convexTest(schema, modules);
+    await seedUser(t, { subject: "model_creator_list_active" });
+    await seedUser(t, { subject: "model_creator_list_inactive" });
+    await t.run(async (ctx) => deactivateUser(ctx, "model_creator_list_inactive"));
+    await seedUser(t, {
+      subject: "model_creator_list_company",
+      org: { id: "org_model_creator_list" },
+    });
+    await seedOperator(t, "model_creator_list_operator");
+
+    const result = await t.run(async (ctx) =>
+      listCreators(ctx, { paginationOpts: { cursor: null, numItems: 10 } }),
+    );
+
+    expect(result.page.map((creator) => creator.email)).toEqual([
+      "model_creator_list_active@example.com",
+    ]);
   });
 });
 

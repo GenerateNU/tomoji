@@ -80,3 +80,66 @@ describe("creators.me", () => {
     await expectApiError(() => asOperator.query(api.creators.me, {}), "forbidden");
   });
 });
+
+describe("creators.list", () => {
+  test("rejects a signed-out caller", async () => {
+    const t = convexTest(schema, modules);
+
+    await expectApiError(
+      () => t.query(api.creators.list, { paginationOpts: { cursor: null, numItems: 10 } }),
+      "not_authenticated",
+    );
+  });
+
+  test("rejects a creator caller", async () => {
+    const t = convexTest(schema, modules);
+    const asCreator = await seedUser(t, { subject: "creator_list_creator" });
+
+    await expectApiError(
+      () =>
+        asCreator.query(api.creators.list, {
+          paginationOpts: { cursor: null, numItems: 10 },
+        }),
+      "forbidden",
+    );
+  });
+
+  test("rejects an operator caller", async () => {
+    const t = convexTest(schema, modules);
+    const asOperator = await seedOperator(t, "creator_list_operator");
+
+    await expectApiError(
+      () =>
+        asOperator.query(api.creators.list, {
+          paginationOpts: { cursor: null, numItems: 10 },
+        }),
+      "forbidden",
+    );
+  });
+
+  test("lists creators across cursor-based pages for a company", async () => {
+    const t = convexTest(schema, modules);
+    const asCompany = await seedUser(t, {
+      subject: "creator_list_company",
+      org: { id: "org_creator_list" },
+    });
+    await seedUser(t, { subject: "creator_list_1", email: "one@example.com" });
+    await seedUser(t, { subject: "creator_list_2", email: "two@example.com" });
+
+    const firstPage = await asCompany.query(api.creators.list, {
+      paginationOpts: { cursor: null, numItems: 1 },
+    });
+    const secondPage = await asCompany.query(api.creators.list, {
+      paginationOpts: { cursor: firstPage.continueCursor, numItems: 1 },
+    });
+
+    expect(firstPage.page).toHaveLength(1);
+    expect(firstPage.isDone).toBe(false);
+    expect(secondPage.page).toHaveLength(1);
+    expect(secondPage.isDone).toBe(true);
+    expect([...firstPage.page, ...secondPage.page].map((creator) => creator.email)).toEqual([
+      "one@example.com",
+      "two@example.com",
+    ]);
+  });
+});

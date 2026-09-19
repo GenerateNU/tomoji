@@ -3,9 +3,9 @@ import { convexTest } from "convex-test";
 import type { FunctionArgs } from "convex/server";
 import { describe, expect, test } from "vitest";
 import { api } from "../_generated/api";
-import { companyByWorkosId } from "../models/companies";
-import { getByUserIdAndCompanyId } from "../models/companyUsers";
-import { byWorkosId, upsertUser } from "../models/users";
+import { getCompanyByWorkosId } from "../models/companies";
+import { getCompanyUser } from "../models/companyUsers";
+import { getUserByWorkosId, upsertUser } from "../models/users";
 import schema from "../schema";
 import { expectApiError, seedUser, workosIdentity, type TestConvex } from "./helpers";
 
@@ -31,7 +31,7 @@ function createArgs(overrides: Partial<CreateArgs> = {}): CreateArgs {
 async function seedOrphanedCompanyUser(t: TestConvex, subject: string, orgId: string) {
   await t.run(async (ctx) => {
     await upsertUser(ctx, { workosId: subject, email: `${subject}@example.com` });
-    const user = await byWorkosId(ctx, subject);
+    const user = await getUserByWorkosId(ctx, subject);
     await ctx.db.patch(user!._id, { role: "company" });
   });
   return t.withIdentity(workosIdentity({ subject, org_id: orgId }));
@@ -63,9 +63,9 @@ describe("campaigns.create", () => {
     const id = await asMember.mutation(api.campaigns.create, createArgs());
     const stored = await t.run(async (ctx) => await ctx.db.get(id));
     const { companyId, membershipId } = await t.run(async (ctx) => {
-      const user = await byWorkosId(ctx, "cc2");
-      const company = await companyByWorkosId(ctx, "org_acme");
-      const membership = await getByUserIdAndCompanyId(ctx, user!._id, company!._id);
+      const user = await getUserByWorkosId(ctx, "cc2");
+      const company = await getCompanyByWorkosId(ctx, "org_acme");
+      const membership = await getCompanyUser(ctx, user!._id, company!._id);
       return { companyId: company!._id, membershipId: membership!._id };
     });
 
@@ -136,7 +136,7 @@ describe("campaigns.create", () => {
     const t = convexTest(schema, modules);
     const asUser = await seedUser(t, { subject: "cc8" });
     await t.run(async (ctx) => {
-      const user = await byWorkosId(ctx, "cc8");
+      const user = await getUserByWorkosId(ctx, "cc8");
       await ctx.db.patch(user!._id, { role: "operator" });
     });
 

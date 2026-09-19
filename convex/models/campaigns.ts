@@ -11,9 +11,10 @@ import { apiError } from "../lib/errors";
  *
  * @return the campaignId of the new campaign
  * @throws `invalid_state` if `deadline` is in the past, if `maxOpenings` is
- * not positive, or if `maxApplications` does not exceed `maxOpenings`.
+ * not positive, if `maxApplications` is below `maxOpenings`, or if `status`
+ * is `closed`.
  */
-export async function insertCompanyCampaign(
+export async function createCampaign(
   ctx: MutationCtx,
   campaign: WithoutSystemFields<Doc<"campaigns">>,
 ): Promise<Id<"campaigns">> {
@@ -23,10 +24,14 @@ export async function insertCompanyCampaign(
   if (campaign.maxOpenings <= 0) {
     throw apiError("invalid_state", { reason: "max_openings_not_positive" });
   }
-  if (campaign.maxApplications <= campaign.maxOpenings) {
+  if (campaign.maxApplications < campaign.maxOpenings) {
     throw apiError("invalid_state", {
-      reason: "max_applications_not_above_max_openings",
+      reason: "max_applications_below_max_openings",
     });
   }
+  if (campaign.status == "closed") {
+    throw apiError("invalid_state", { reason: "campaign_cannot_be_created_closed" });
+  }
+
   return await ctx.db.insert("campaigns", campaign);
 }

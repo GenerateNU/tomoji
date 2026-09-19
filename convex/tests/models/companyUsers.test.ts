@@ -1,9 +1,9 @@
 /// <reference types="vite/client" />
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
-import { companyByWorkosId } from "../../models/companies";
-import { getByUserIdAndCompanyId, requireMembership } from "../../models/companyUsers";
-import { byWorkosId, removeMembership } from "../../models/users";
+import { getCompanyByWorkosId } from "../../models/companies";
+import { getCompanyUser, requireMembership } from "../../models/companyUsers";
+import { getUserByWorkosId, removeMembership } from "../../models/users";
 import schema from "../../schema";
 import { expectApiError, seedUser, type TestConvex } from "../helpers";
 
@@ -11,21 +11,19 @@ const modules = import.meta.glob("../../**/*.ts");
 
 async function idsFor(t: TestConvex, subject: string, orgId: string) {
   return await t.run(async (ctx) => {
-    const user = await byWorkosId(ctx, subject);
-    const company = await companyByWorkosId(ctx, orgId);
+    const user = await getUserByWorkosId(ctx, subject);
+    const company = await getCompanyByWorkosId(ctx, orgId);
     return { userId: user!._id, companyId: company!._id };
   });
 }
 
-describe("getByUserIdAndCompanyId", () => {
+describe("getCompanyUser", () => {
   test("returns the membership row for a member", async () => {
     const t = convexTest(schema, modules);
     await seedUser(t, { subject: "cu1", org: { id: "org_acme" } });
     const { userId, companyId } = await idsFor(t, "cu1", "org_acme");
 
-    const membership = await t.run(
-      async (ctx) => await getByUserIdAndCompanyId(ctx, userId, companyId),
-    );
+    const membership = await t.run(async (ctx) => await getCompanyUser(ctx, userId, companyId));
 
     expect(membership?.userId).toBe(userId);
     expect(membership?.companyId).toBe(companyId);
@@ -40,7 +38,7 @@ describe("getByUserIdAndCompanyId", () => {
     const { companyId: otherCompanyId } = await idsFor(t, "cu3", "org_other");
 
     const membership = await t.run(
-      async (ctx) => await getByUserIdAndCompanyId(ctx, userId, otherCompanyId),
+      async (ctx) => await getCompanyUser(ctx, userId, otherCompanyId),
     );
 
     expect(membership).toBeNull();
@@ -55,9 +53,7 @@ describe("getByUserIdAndCompanyId", () => {
         await removeMembership(ctx, { workosUserId: "cu4", organizationId: "org_acme" }),
     );
 
-    const membership = await t.run(
-      async (ctx) => await getByUserIdAndCompanyId(ctx, userId, companyId),
-    );
+    const membership = await t.run(async (ctx) => await getCompanyUser(ctx, userId, companyId));
 
     expect(membership).toBeNull();
   });
@@ -70,7 +66,7 @@ describe("getByUserIdAndCompanyId", () => {
     const { companyId: otherCompanyId } = await idsFor(t, "cu5", "org_other");
 
     const membership = await t.run(
-      async (ctx) => await getByUserIdAndCompanyId(ctx, userId, otherCompanyId),
+      async (ctx) => await getCompanyUser(ctx, userId, otherCompanyId),
     );
 
     expect(membership?.companyId).toBe(otherCompanyId);
@@ -84,9 +80,7 @@ describe("requireMembership", () => {
     const { userId, companyId } = await idsFor(t, "cu6", "org_acme");
 
     const membership = await t.run(async (ctx) => await requireMembership(ctx, userId, "org_acme"));
-    const expected = await t.run(
-      async (ctx) => await getByUserIdAndCompanyId(ctx, userId, companyId),
-    );
+    const expected = await t.run(async (ctx) => await getCompanyUser(ctx, userId, companyId));
 
     expect(membership.companyId).toBe(companyId);
     expect(membership.role).toBe("admin");
@@ -96,7 +90,7 @@ describe("requireMembership", () => {
   test("rejects an org whose company row has not synced", async () => {
     const t = convexTest(schema, modules);
     await seedUser(t, { subject: "cu7" });
-    const user = await t.run(async (ctx) => await byWorkosId(ctx, "cu7"));
+    const user = await t.run(async (ctx) => await getUserByWorkosId(ctx, "cu7"));
 
     await expectApiError(
       () => t.run(async (ctx) => await requireMembership(ctx, user!._id, "org_ghost")),

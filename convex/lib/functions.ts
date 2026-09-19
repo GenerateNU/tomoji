@@ -3,6 +3,7 @@ import { mutation, query } from "../_generated/server";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { requireRole, requireUser } from "../models/users";
 import { apiError } from "./errors";
+import { requireMembership } from "../models/companyUsers";
 
 /**
  * Function builders that enforce the caller's account type before the handler
@@ -25,7 +26,8 @@ export async function companyContext(ctx: Ctx) {
   if (orgId === null) {
     throw apiError("misconfigured", { reason: "company account has no organization" });
   }
-  return { identity, user, orgId };
+  const membership = await requireMembership(ctx, user._id, orgId);
+  return { identity, user, orgId, membership };
 }
 
 export async function creatorContext(ctx: Ctx) {

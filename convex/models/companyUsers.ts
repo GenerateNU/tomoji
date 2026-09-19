@@ -1,10 +1,9 @@
 import { apiError } from "../lib/errors";
 import { Doc, Id } from "../_generated/dataModel";
 import { MutationCtx, QueryCtx } from "../_generated/server";
-import { companyByWorkosId } from "./companies";
+import { getCompanyByWorkosId } from "./companies";
 
-/** Nullable membership lookup. Callers that treat absence as normal use this. */
-export async function getByUserIdAndCompanyId(
+export async function getCompanyUser(
   ctx: QueryCtx | MutationCtx,
   userId: Id<"users">,
   companyId: Id<"companies">,
@@ -25,11 +24,11 @@ export async function requireMembership(
   userId: Id<"users">,
   orgId: string,
 ): Promise<Doc<"companyUsers">> {
-  const company = await companyByWorkosId(ctx, orgId);
+  const company = await getCompanyByWorkosId(ctx, orgId);
   if (company === null) {
     throw apiError("not_synced", { orgId });
   }
-  const membership = await getByUserIdAndCompanyId(ctx, userId, company._id);
+  const membership = await getCompanyUser(ctx, userId, company._id);
   if (membership === null) {
     throw apiError("forbidden");
   }

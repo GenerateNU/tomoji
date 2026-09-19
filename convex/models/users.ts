@@ -1,4 +1,4 @@
-import type { UserIdentity } from "convex/server";
+import type { PaginationOptions, PaginationResult, UserIdentity } from "convex/server";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { requireIdentity } from "../lib/authz";
@@ -17,6 +17,21 @@ export async function getUserByWorkosId(
     .query("users")
     .withIndex("by_workosId", (q) => q.eq("workosId", workosId))
     .unique();
+}
+
+export async function listUsers(
+  ctx: QueryCtx,
+  options: { role?: Doc<"users">["role"]; paginationOpts: PaginationOptions },
+): Promise<PaginationResult<Doc<"users">>> {
+  const role = options.role;
+  if (role === undefined) {
+    return await ctx.db.query("users").paginate(options.paginationOpts);
+  }
+
+  return await ctx.db
+    .query("users")
+    .withIndex("by_role", (q) => q.eq("role", role))
+    .paginate(options.paginationOpts);
 }
 
 export type WorkosProfile = {

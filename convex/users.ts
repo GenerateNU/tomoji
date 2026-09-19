@@ -1,10 +1,14 @@
+import { paginationOptsValidator, paginationResultValidator } from "convex/server";
 import { v } from "convex/values";
 import { query } from "./_generated/server";
 import { requireIdentity } from "./lib/authz";
 import { apiError } from "./lib/errors";
+import { operatorQuery } from "./lib/functions";
 import { findOrgId, toCompanyRole } from "./lib/identity";
-import { getUserByWorkosId } from "./models/users";
+import { getUserByWorkosId, listUsers } from "./models/users";
+import schema from "./schema";
 import { companyRole } from "./schemas/companyUsers.schema";
+import { userRole } from "./schemas/users.schema";
 
 const identityFields = {
   synced: v.literal(true),
@@ -50,5 +54,16 @@ export const me = query({
     }
 
     return { ...base, role: "company" as const, orgId, companyRole: toCompanyRole(identity.role) };
+  },
+});
+
+export const list = operatorQuery({
+  args: {
+    role: v.optional(userRole),
+    paginationOpts: paginationOptsValidator,
+  },
+  returns: paginationResultValidator(schema.doc("users")),
+  handler: async (ctx, args) => {
+    return await listUsers(ctx, args);
   },
 });

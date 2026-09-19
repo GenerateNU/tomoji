@@ -3,7 +3,7 @@ import type { UserIdentity } from "convex/server";
 import type { Infer } from "convex/values";
 import { expect } from "vitest";
 import type { ApiErrorCode } from "../lib/errors";
-import { applyMembership, upsertUser } from "../models/users";
+import { applyMembership, getUserByWorkosId, upsertUser } from "../models/users";
 import type { companyRole } from "../schemas/companyUsers.schema";
 
 export type TestConvex = ReturnType<typeof convexTest>;
@@ -53,4 +53,15 @@ export async function seedUser(t: TestConvex, opts: SeedOptions) {
   return t.withIdentity(
     workosIdentity({ subject: opts.subject, org_id: opts.org?.id, role: opts.org?.role }),
   );
+}
+
+/** Seeds an operator and returns a client carrying the matching token. */
+export async function seedOperator(t: TestConvex, subject: string) {
+  const asOperator = await seedUser(t, { subject });
+  await t.run(async (ctx) => {
+    const user = await getUserByWorkosId(ctx, subject);
+    if (user === null) throw new Error("expected seeded user");
+    await ctx.db.patch(user._id, { role: "operator" });
+  });
+  return asOperator;
 }

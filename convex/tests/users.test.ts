@@ -3,7 +3,7 @@ import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
 import { api } from "../_generated/api";
 import schema from "../schema";
-import { expectApiError, seedUser, workosIdentity } from "./helpers";
+import { expectApiError, seedOperator, seedUser, workosIdentity } from "./helpers";
 
 const modules = import.meta.glob("../**/*.ts");
 
@@ -51,5 +51,78 @@ describe("users.me", () => {
 
     expect(me.orgId).toBe("org_acme");
     expect(me.companyRole).toBe("admin");
+  });
+});
+
+describe("users.list", () => {
+  test("rejects a signed-out caller", async () => {
+    const t = convexTest(schema, modules);
+
+    await expectApiError(
+      () => t.query(api.users.list, { paginationOpts: { cursor: null, numItems: 10 } }),
+      "not_authenticated",
+    );
+  });
+
+  test("rejects a creator caller", async () => {
+    const t = convexTest(schema, modules);
+    const asCreator = await seedUser(t, { subject: "list_creator" });
+
+    await expectApiError(
+      () => asCreator.query(api.users.list, { paginationOpts: { cursor: null, numItems: 10 } }),
+      "forbidden",
+    );
+  });
+
+  test("rejects a company caller", async () => {
+    const t = convexTest(schema, modules);
+    const asCompany = await seedUser(t, {
+      subject: "list_company",
+      org: { id: "org_list" },
+    });
+
+    await expectApiError(
+      () => asCompany.query(api.users.list, { paginationOpts: { cursor: null, numItems: 10 } }),
+      "forbidden",
+    );
+  });
+
+  test("lists users across cursor-based pages", async () => {
+    const t = convexTest(schema, modules);
+    const asOperator = await seedOperator(t, "list_operator");
+    await seedUser(t, { subject: "list_creator_1" });
+    await seedUser(t, { subject: "list_creator_2" });
+
+    const firstPage = await asOperator.query(api.users.list, {
+      paginationOpts: { cursor: null, numItems: 2 },
+    });
+    const secondPage = await asOperator.query(api.users.list, {
+      paginationOpts: { cursor: firstPage.continueCursor, numItems: 2 },
+    });
+
+    expect(firstPage.page).toHaveLength(2);
+    expect(firstPage.isDone).toBe(false);
+    expect(secondPage.page).toHaveLength(1);
+    expect(secondPage.isDone).toBe(true);
+    expect([...firstPage.page, ...secondPage.page].map((user) => user.workosId).sort()).toEqual([
+      "list_creator_1",
+      "list_creator_2",
+      "list_operator",
+    ]);
+  });
+
+  test("optionally filters users by role", async () => {
+    const t = convexTest(schema, modules);
+    const asOperator = await seedOperator(t, "filter_operator");
+    await seedUser(t, { subject: "filter_creator" });
+    await seedUser(t, { subject: "filter_company", org: { id: "org_filter" } });
+
+    const result = await asOperator.query(api.users.list, {
+      role: "creator",
+      paginationOpts: { cursor: null, numItems: 10 },
+    });
+
+    expect(result.page.map((user) => user.workosId)).toEqual(["filter_creator"]);
+    expect(result.isDone).toBe(true);
   });
 });

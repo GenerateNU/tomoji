@@ -7,7 +7,7 @@ import { getCompanyByWorkosId } from "../models/companies";
 import { getCompanyUser } from "../models/companyUsers";
 import { getUserByWorkosId, upsertUser } from "../models/users";
 import schema from "../schema";
-import { expectApiError, seedUser, workosIdentity, type TestConvex } from "./helpers";
+import { expectApiError, seedOperator, seedUser, workosIdentity, type TestConvex } from "./helpers";
 
 const modules = import.meta.glob("../**/*.ts");
 
@@ -134,13 +134,12 @@ describe("campaigns.create", () => {
 
   test("rejects an operator", async () => {
     const t = convexTest(schema, modules);
-    const asUser = await seedUser(t, { subject: "cc8" });
-    await t.run(async (ctx) => {
-      const user = await getUserByWorkosId(ctx, "cc8");
-      await ctx.db.patch(user!._id, { role: "operator" });
-    });
+    const asOperator = await seedOperator(t, "cc8");
 
-    await expectApiError(() => asUser.mutation(api.campaigns.create, createArgs()), "forbidden");
+    await expectApiError(
+      () => asOperator.mutation(api.campaigns.create, createArgs()),
+      "forbidden",
+    );
   });
 
   test("rejects a company caller whose org has not synced", async () => {

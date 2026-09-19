@@ -95,3 +95,21 @@ export async function updateCreatorProfile(
   await ctx.db.patch("creators", creator._id, patch);
   return toCreatorProfile(user, { ...creator, ...patch });
 }
+
+/** Returns a visible creator profile by creator ID or throws when it is unavailable. */
+export async function requireCreatorProfileById(
+  ctx: QueryCtx | MutationCtx,
+  creatorId: Id<"creators">,
+): Promise<CreatorProfile> {
+  const creator = await ctx.db.get("creators", creatorId);
+  if (creator === null) {
+    throw apiError("not_found", { resource: "creator" });
+  }
+
+  const user = await ctx.db.get("users", creator.userId);
+  if (user === null || !user.isActive || user.role !== "creator") {
+    throw apiError("not_found", { resource: "creator" });
+  }
+
+  return toCreatorProfile(user, creator);
+}

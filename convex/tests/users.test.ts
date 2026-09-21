@@ -111,6 +111,33 @@ describe("users.list", () => {
     ]);
   });
 
+  test("returns complete user documents from later pages using only the cursor", async () => {
+    const t = convexTest(schema, modules);
+    const asOperator = await seedOperator(t, "later_page_operator");
+    await seedUser(t, {
+      subject: "later_page_creator",
+      email: "later-page@example.com",
+    });
+
+    const { continueCursor } = await asOperator.query(api.users.list, {
+      paginationOpts: { cursor: null, numItems: 1 },
+    });
+    const secondPage = await asOperator.query(api.users.list, {
+      paginationOpts: { cursor: continueCursor, numItems: 1 },
+    });
+
+    expect(secondPage.page).toEqual([
+      expect.objectContaining({
+        workosId: "later_page_creator",
+        name: "later-page@example.com",
+        email: "later-page@example.com",
+        role: "creator",
+        isActive: true,
+      }),
+    ]);
+    expect(secondPage.isDone).toBe(true);
+  });
+
   test("optionally filters users by role", async () => {
     const t = convexTest(schema, modules);
     const asOperator = await seedOperator(t, "filter_operator");

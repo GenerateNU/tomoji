@@ -69,8 +69,8 @@ describe("requireCompany", () => {
     await t.run(async (ctx) => await ctx.db.delete(companyId));
 
     await expectApiError(
-        () => t.run(async (ctx) => await requireCompany(ctx, companyId)),
-        "not_found",
+      () => t.run(async (ctx) => await requireCompany(ctx, companyId)),
+      "not_found",
     );
   });
 });
@@ -114,8 +114,8 @@ describe("updateCompany", () => {
     const t = convexTest(schema, modules);
     const companyId = await insertCompany(t, "org_up", "Before");
     await t.run(
-        async (ctx) =>
-            await updateCompany(ctx, companyId, { profilePicture: "https://example.com/logo.png" }),
+      async (ctx) =>
+        await updateCompany(ctx, companyId, { profilePicture: "https://example.com/logo.png" }),
     );
 
     await t.run(async (ctx) => await updateCompany(ctx, companyId, { name: "After" }));
@@ -131,8 +131,8 @@ describe("updateCompany", () => {
     const companyId = await insertCompany(t, "org_blank", "Keep");
 
     await expectApiError(
-        () => t.run(async (ctx) => await updateCompany(ctx, companyId, { name: "   " })),
-        "invalid_state",
+      () => t.run(async (ctx) => await updateCompany(ctx, companyId, { name: "   " })),
+      "invalid_state",
     );
     expect((await companyRow(t, companyId))?.name).toBe("Keep");
   });
@@ -143,9 +143,11 @@ describe("listCompanies", () => {
     const t = convexTest(schema, modules);
     for (const n of [1, 2, 3]) await insertCompany(t, `org_${n}`);
 
-    const first = await t.run(async (ctx) => await listCompanies(ctx, { cursor: null, numItems: 2 }));
+    const first = await t.run(
+      async (ctx) => await listCompanies(ctx, { cursor: null, numItems: 2 }),
+    );
     const second = await t.run(
-        async (ctx) => await listCompanies(ctx, { cursor: first.continueCursor, numItems: 2 }),
+      async (ctx) => await listCompanies(ctx, { cursor: first.continueCursor, numItems: 2 }),
     );
 
     expect(first.isDone).toBe(false);

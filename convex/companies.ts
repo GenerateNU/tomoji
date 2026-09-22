@@ -1,18 +1,13 @@
 import { paginationOptsValidator, paginationResultValidator } from "convex/server";
 import { v } from "convex/values";
 import {
-    authedQuery,
-    companyContext,
-    companyMutation,
-    operatorMutation,
-    operatorQuery,
+  authedQuery,
+  companyContext,
+  companyMutation,
+  operatorMutation,
+  operatorQuery,
 } from "./lib/functions";
-import {
-    createCompany,
-    listCompanies,
-    requireCompany,
-    updateCompany,
-} from "./models/companies";
+import { createCompany, listCompanies, requireCompany, updateCompany } from "./models/companies";
 import schema from "./schema";
 
 /**
@@ -24,15 +19,15 @@ import schema from "./schema";
  * company user.
  */
 export const get = authedQuery({
-    args: { companyId: v.optional(v.id("companies")) },
-    returns: schema.doc("companies"),
-    handler: async (ctx, args) => {
-        if (args.companyId !== undefined) {
-            return await requireCompany(ctx, args.companyId);
-        }
-        const { membership } = await companyContext(ctx);
-        return await requireCompany(ctx, membership.companyId);
-    },
+  args: { companyId: v.optional(v.id("companies")) },
+  returns: schema.doc("companies"),
+  handler: async (ctx, args) => {
+    if (args.companyId !== undefined) {
+      return await requireCompany(ctx, args.companyId);
+    }
+    const { membership } = await companyContext(ctx);
+    return await requireCompany(ctx, membership.companyId);
+  },
 });
 
 /**
@@ -41,17 +36,17 @@ export const get = authedQuery({
  * @throws `invalid_state` if `name` is blank.
  */
 export const update = companyMutation({
-    args: {
-        name: v.optional(v.string()),
-        profilePicture: v.optional(v.string()),
-    },
-    returns: v.null(),
-    handler: async (ctx, args) => {
-        //TODO: Optional: restrict to company admins.
-        // if (ctx.membership.role !== "admin") throw apiError("forbidden", { requiredCompanyRole: "admin" });
-        await updateCompany(ctx, ctx.membership.companyId, args);
-        return null;
-    },
+  args: {
+    name: v.optional(v.string()),
+    profilePicture: v.optional(v.string()),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    //TODO: Optional: restrict to company admins.
+    // if (ctx.membership.role !== "admin") throw apiError("forbidden", { requiredCompanyRole: "admin" });
+    await updateCompany(ctx, ctx.membership.companyId, args);
+    return null;
+  },
 });
 
 /**
@@ -61,18 +56,18 @@ export const update = companyMutation({
  * @throws `invalid_state` if `name` or `workosId` is blank.
  */
 export const create = operatorMutation({
-    args: { workosId: v.string(), name: v.string() },
-    returns: v.id("companies"),
-    handler: async (ctx, args) => {
-        return await createCompany(ctx, args);
-    },
+  args: { workosId: v.string(), name: v.string() },
+  returns: v.id("companies"),
+  handler: async (ctx, args) => {
+    return await createCompany(ctx, args);
+  },
 });
 
 /** Lists all companies for operators with cursor pagination. */
 export const list = operatorQuery({
-    args: { paginationOpts: paginationOptsValidator },
-    returns: paginationResultValidator(schema.doc("companies")),
-    handler: async (ctx, args) => {
-        return await listCompanies(ctx, args.paginationOpts);
-    },
+  args: { paginationOpts: paginationOptsValidator },
+  returns: paginationResultValidator(schema.doc("companies")),
+  handler: async (ctx, args) => {
+    return await listCompanies(ctx, args.paginationOpts);
+  },
 });

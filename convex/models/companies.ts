@@ -1,7 +1,7 @@
 import type { MutationCtx, QueryCtx } from "../_generated/server";
-import {apiError} from "../lib/errors";
-import {Doc, Id} from "../_generated/dataModel";
-import {PaginationOptions, PaginationResult} from "convex/server";
+import { apiError } from "../lib/errors";
+import { Doc, Id } from "../_generated/dataModel";
+import { PaginationOptions, PaginationResult } from "convex/server";
 
 export async function getCompanyByWorkosId(ctx: MutationCtx | QueryCtx, orgId: string) {
   return await ctx.db
@@ -12,8 +12,8 @@ export async function getCompanyByWorkosId(ctx: MutationCtx | QueryCtx, orgId: s
 
 /** Returns the company, or throws `not_found` if it does not exist. */
 export async function requireCompany(
-    ctx: MutationCtx | QueryCtx,
-    companyId: Id<"companies">,
+  ctx: MutationCtx | QueryCtx,
+  companyId: Id<"companies">,
 ): Promise<Doc<"companies">> {
   const company = await ctx.db.get(companyId);
   if (company === null) {
@@ -24,8 +24,8 @@ export async function requireCompany(
 
 /** Returns one cursor-paginated page of companies. */
 export async function listCompanies(
-    ctx: QueryCtx,
-    paginationOpts: PaginationOptions,
+  ctx: QueryCtx,
+  paginationOpts: PaginationOptions,
 ): Promise<PaginationResult<Doc<"companies">>> {
   return await ctx.db.query("companies").paginate(paginationOpts);
 }
@@ -46,8 +46,8 @@ function normalizeCompanyName(name: string): string {
  * @throws `conflict` if a company already exists for `workosId`.
  */
 export async function createCompany(
-    ctx: MutationCtx,
-    company: { workosId: string; name: string },
+  ctx: MutationCtx,
+  company: { workosId: string; name: string },
 ): Promise<Id<"companies">> {
   const workosId = company.workosId.trim();
   if (workosId.length === 0) {
@@ -70,9 +70,9 @@ export async function createCompany(
  * @throws `invalid_state` if `name` is provided but blank.
  */
 export async function updateCompany(
-    ctx: MutationCtx,
-    companyId: Id<"companies">,
-    fields: { name?: string; profilePicture?: string },
+  ctx: MutationCtx,
+  companyId: Id<"companies">,
+  fields: { name?: string; profilePicture?: string },
 ): Promise<void> {
   const patch: Partial<Pick<Doc<"companies">, "name" | "profilePicture">> = {};
   if (fields.name !== undefined) patch.name = normalizeCompanyName(fields.name);

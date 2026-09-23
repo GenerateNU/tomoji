@@ -1,7 +1,9 @@
 import type { PaginationOptions, PaginationResult } from "convex/server";
+import { v, type Infer } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { apiError } from "../lib/errors";
+import { companyRole } from "../schemas/companyUsers.schema";
 import { getCompanyByWorkosId } from "./companies";
 
 export async function getCompanyUser(
@@ -15,16 +17,28 @@ export async function getCompanyUser(
     .unique();
 }
 
-export type CompanyMember = {
-  membershipId: Id<"companyUsers">;
-  userId: Id<"users">;
-  role: Doc<"companyUsers">["role"];
-  name: string;
-  email: string;
-  profilePicture?: string;
-};
+/**
+ * A company member as returned to the client.
+ * Deliberately narrower than the `users` document, which also holds `workosId`, `isActive`,
+ * and the account-level `role`.
+ */
+export const companyMember = v.object({
+  membershipId: v.id("companyUsers"),
+  userId: v.id("users"),
+  role: companyRole,
+  name: v.string(),
+  email: v.string(),
+  profilePicture: v.optional(v.string()),
+});
 
-/** Returns one page of a company's members, joined with their user profile. */
+export type CompanyMember = Infer<typeof companyMember>;
+
+/**
+ * Returns one page of a company's active members, joined with their user
+ * profile.
+ * Members whose user is deactivated are left out, as are memberships
+ * whose user row is missing.
+ */
 export async function listCompanyUsers(
   ctx: QueryCtx,
   companyId: Id<"companies">,
@@ -38,8 +52,6 @@ export async function listCompanyUsers(
   const members = await Promise.all(
     result.page.map(async (membership): Promise<CompanyMember | null> => {
       const user = await ctx.db.get(membership.userId);
-      // Users are never deleted, only deactivated, so a missing user means a
-      // dangling membership row. Drop it rather than failing the whole page.
       if (user === null) {
         console.error("dangling companyUsers row", {
           membershipId: membership._id,
@@ -47,6 +59,8 @@ export async function listCompanyUsers(
         });
         return null;
       }
+      // A deactivated account is treated as deleted.
+      if (!user.isActive) return null;
       return {
         membershipId: membership._id,
         userId: user._id,

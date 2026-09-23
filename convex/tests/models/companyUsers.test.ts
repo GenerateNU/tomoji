@@ -230,15 +230,15 @@ describe("listCompanyUsers", () => {
     logged.mockRestore();
   });
 
-  test("still lists a deactivated member", async () => {
-    // Pins current behavior. Flip this if deactivated members should be hidden.
+  test("leaves out a deactivated member", async () => {
     const t = convexTest(schema, modules);
-    await seedUser(t, { subject: "cu21", org: { id: "org_acme" } });
-    const { userId, companyId } = await idsFor(t, "cu21", "org_acme");
+    await seedUser(t, { subject: "cu21", email: "active@acme.com", org: { id: "org_acme" } });
+    await seedUser(t, { subject: "cu22", org: { id: "org_acme" } });
+    const { userId, companyId } = await idsFor(t, "cu22", "org_acme");
     await t.run(async (ctx) => await ctx.db.patch(userId, { isActive: false }));
 
     const { page } = await listPage(t, companyId);
 
-    expect(page.map((m) => m.userId)).toEqual([userId]);
+    expect(page.map((m) => m.email)).toEqual(["active@acme.com"]);
   });
 });

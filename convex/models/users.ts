@@ -19,19 +19,37 @@ export async function getUserByWorkosId(
     .unique();
 }
 
-/** Returns one cursor-paginated page of users, optionally restricted to a role. */
+/** Returns a paginated user page, excluding inactive accounts unless explicitly included. */
 export async function listUsers(
   ctx: QueryCtx,
-  options: { role?: Doc<"users">["role"]; paginationOpts: PaginationOptions },
+  options: {
+    role?: Doc<"users">["role"];
+    includeInactive?: boolean;
+    paginationOpts: PaginationOptions;
+  },
 ): Promise<PaginationResult<Doc<"users">>> {
   const role = options.role;
+  if (options.includeInactive === true) {
+    if (role === undefined) {
+      return await ctx.db.query("users").paginate(options.paginationOpts);
+    }
+
+    return await ctx.db
+      .query("users")
+      .withIndex("by_role", (q) => q.eq("role", role))
+      .paginate(options.paginationOpts);
+  }
+
   if (role === undefined) {
-    return await ctx.db.query("users").paginate(options.paginationOpts);
+    return await ctx.db
+      .query("users")
+      .withIndex("by_isActive", (q) => q.eq("isActive", true))
+      .paginate(options.paginationOpts);
   }
 
   return await ctx.db
     .query("users")
-    .withIndex("by_role", (q) => q.eq("role", role))
+    .withIndex("by_role_and_isActive", (q) => q.eq("role", role).eq("isActive", true))
     .paginate(options.paginationOpts);
 }
 

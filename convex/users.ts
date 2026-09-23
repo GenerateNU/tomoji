@@ -57,10 +57,11 @@ export const me = query({
   },
 });
 
-/** Lists users for operators with optional role filtering and cursor pagination. */
+/** Lists active users for operators, with optional role and inactive-account inclusion. */
 export const list = operatorQuery({
   args: {
     role: v.optional(userRole),
+    includeInactive: v.optional(v.boolean()),
     paginationOpts: paginationOptsValidator,
   },
   returns: paginationResultValidator(schema.doc("users")),

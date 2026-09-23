@@ -13,4 +13,5 @@ export const usersTable = defineTable({
 })
   .index("by_workosId", ["workosId"])
   .index("by_role", ["role"])
+  .index("by_isActive", ["isActive"])
   .index("by_role_and_isActive", ["role", "isActive"]);

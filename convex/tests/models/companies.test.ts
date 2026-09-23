@@ -136,6 +136,21 @@ describe("updateCompany", () => {
     );
     expect((await companyRow(t, companyId))?.name).toBe("Keep");
   });
+
+  test("rejects a blank profile picture and leaves the row unchanged", async () => {
+    const t = convexTest(schema, modules);
+    const companyId = await insertCompany(t, "org_pic");
+    await t.run(
+      async (ctx) =>
+        await updateCompany(ctx, companyId, { profilePicture: "https://example.com/logo.png" }),
+    );
+
+    await expectApiError(
+      () => t.run(async (ctx) => await updateCompany(ctx, companyId, { profilePicture: "  " })),
+      "invalid_state",
+    );
+    expect((await companyRow(t, companyId))?.profilePicture).toBe("https://example.com/logo.png");
+  });
 });
 
 describe("listCompanies", () => {
@@ -144,10 +159,13 @@ describe("listCompanies", () => {
     for (const n of [1, 2, 3]) await insertCompany(t, `org_${n}`);
 
     const first = await t.run(
-      async (ctx) => await listCompanies(ctx, { cursor: null, numItems: 2 }),
+      async (ctx) => await listCompanies(ctx, { paginationOpts: { cursor: null, numItems: 2 } }),
     );
     const second = await t.run(
-      async (ctx) => await listCompanies(ctx, { cursor: first.continueCursor, numItems: 2 }),
+      async (ctx) =>
+        await listCompanies(ctx, {
+          paginationOpts: { cursor: first.continueCursor, numItems: 2 },
+        }),
     );
 
     expect(first.isDone).toBe(false);
@@ -157,5 +175,24 @@ describe("listCompanies", () => {
       "org_2",
       "org_3",
     ]);
+  });
+
+  test("includes inactive companies unless filtered by isActive", async () => {
+    const t = convexTest(schema, modules);
+    await insertCompany(t, "org_active");
+    const inactiveId = await insertCompany(t, "org_inactive");
+    await t.run(async (ctx) => await ctx.db.patch(inactiveId, { isActive: false }));
+    const list = async (isActive?: boolean) =>
+      await t.run(
+        async (ctx) =>
+          await listCompanies(ctx, { isActive, paginationOpts: { cursor: null, numItems: 10 } }),
+      );
+
+    expect((await list()).page.map((c) => c.workosId).sort()).toEqual([
+      "org_active",
+      "org_inactive",
+    ]);
+    expect((await list(true)).page.map((c) => c.workosId)).toEqual(["org_active"]);
+    expect((await list(false)).page.map((c) => c.workosId)).toEqual(["org_inactive"]);
   });
 });

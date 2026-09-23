@@ -9,7 +9,6 @@ import {
   seedOperator,
   seedUser,
   seedWrongOrgCaller,
-  workosIdentity,
   type TestConvex,
 } from "./helpers";
 
@@ -24,39 +23,21 @@ async function companyFor(t: TestConvex, orgId: string) {
 }
 
 describe("companies.get", () => {
-  test("with no id, returns the caller's own company", async () => {
+  test("lets an operator read a company without its workos id", async () => {
     const t = convexTest(schema, modules);
-    const asMember = await seedUser(t, { subject: "g1", org: { id: "org_acme", name: "Acme" } });
-
-    const company = await asMember.query(api.companies.get, {});
-
-    expect(company).toMatchObject({ workosId: "org_acme", name: "Acme" });
-  });
-
-  test("with no id, uses the org on the current token for a multi-company user", async () => {
-    const t = convexTest(schema, modules);
-    await seedUser(t, { subject: "g2", org: { id: "org_a", name: "A" } });
-    const asB = await seedUser(t, { subject: "g2", org: { id: "org_b", name: "B" } });
-
-    const company = await asB.query(api.companies.get, {});
-
-    expect(company.name).toBe("B");
-  });
-
-  test("with an id, lets any signed-in user read that company", async () => {
-    const t = convexTest(schema, modules);
-    await seedUser(t, { subject: "g3", org: { id: "org_acme" } });
-    const asCreator = await seedUser(t, { subject: "g4" });
+    const asOperator = await seedOperator(t, "g1");
+    await seedUser(t, { subject: "g2", org: { id: "org_acme", name: "Acme" } });
     const { _id: companyId } = await companyFor(t, "org_acme");
 
-    const company = await asCreator.query(api.companies.get, { companyId });
+    const company = await asOperator.query(api.companies.get, { companyId });
 
-    expect(company._id).toBe(companyId);
+    expect(company).toMatchObject({ _id: companyId, name: "Acme", isActive: true });
+    expect(company).not.toHaveProperty("workosId");
   });
 
-  test("with an id, throws not_found for a company that no longer exists", async () => {
+  test("throws not_found for a company that no longer exists", async () => {
     const t = convexTest(schema, modules);
-    const asCreator = await seedUser(t, { subject: "g5" });
+    const asOperator = await seedOperator(t, "g3");
     const companyId = await t.run(async (ctx) => {
       const id = await ctx.db.insert("companies", {
         workosId: "org_gone",
@@ -67,35 +48,32 @@ describe("companies.get", () => {
       return id;
     });
 
-    await expectApiError(() => asCreator.query(api.companies.get, { companyId }), "not_found");
+    await expectApiError(() => asOperator.query(api.companies.get, { companyId }), "not_found");
   });
 
-  test("with no id, rejects a creator", async () => {
+  test("rejects a creator", async () => {
     const t = convexTest(schema, modules);
-    const asCreator = await seedUser(t, { subject: "g6" });
+    await seedUser(t, { subject: "g4", org: { id: "org_acme" } });
+    const asCreator = await seedUser(t, { subject: "g5" });
+    const { _id: companyId } = await companyFor(t, "org_acme");
 
-    await expectApiError(() => asCreator.query(api.companies.get, {}), "forbidden");
+    await expectApiError(() => asCreator.query(api.companies.get, { companyId }), "forbidden");
   });
 
-  test("with no id, rejects an operator", async () => {
+  test("rejects a company user, even for their own company", async () => {
     const t = convexTest(schema, modules);
-    const asOperator = await seedOperator(t, "g7");
+    const asMember = await seedUser(t, { subject: "g6", org: { id: "org_acme" } });
+    const { _id: companyId } = await companyFor(t, "org_acme");
 
-    await expectApiError(() => asOperator.query(api.companies.get, {}), "forbidden");
-  });
-
-  test("with no id, rejects a company token that carries no organization", async () => {
-    const t = convexTest(schema, modules);
-    await seedUser(t, { subject: "g8", org: { id: "org_acme" } });
-    const asNoOrg = t.withIdentity(workosIdentity({ subject: "g8" }));
-
-    await expectApiError(() => asNoOrg.query(api.companies.get, {}), "misconfigured");
+    await expectApiError(() => asMember.query(api.companies.get, { companyId }), "forbidden");
   });
 
   test("rejects a signed-out caller", async () => {
     const t = convexTest(schema, modules);
+    await seedUser(t, { subject: "g7", org: { id: "org_acme" } });
+    const { _id: companyId } = await companyFor(t, "org_acme");
 
-    await expectApiError(() => t.query(api.companies.get, {}), "not_authenticated");
+    await expectApiError(() => t.query(api.companies.get, { companyId }), "not_authenticated");
   });
 });
 
@@ -216,16 +194,30 @@ describe("companies.create", () => {
 });
 
 describe("companies.list", () => {
-  test("lets an operator list every company", async () => {
+  test("lets an operator list every company without workos ids", async () => {
     const t = convexTest(schema, modules);
     const asOperator = await seedOperator(t, "l1");
-    await seedUser(t, { subject: "l2", org: { id: "org_a" } });
-    await seedUser(t, { subject: "l3", org: { id: "org_b" } });
+    await seedUser(t, { subject: "l2", org: { id: "org_a", name: "A" } });
+    await seedUser(t, { subject: "l3", org: { id: "org_b", name: "B" } });
 
     const result = await asOperator.query(api.companies.list, firstPage);
 
-    expect(result.page.map((c) => c.workosId).sort()).toEqual(["org_a", "org_b"]);
+    expect(result.page.map((c) => c.name).sort()).toEqual(["A", "B"]);
+    expect(result.page.every((c) => !("workosId" in c))).toBe(true);
     expect(result.isDone).toBe(true);
+  });
+
+  test("passes the isActive filter through to the model", async () => {
+    const t = convexTest(schema, modules);
+    const asOperator = await seedOperator(t, "l6");
+    await seedUser(t, { subject: "l7", org: { id: "org_active", name: "Active" } });
+    await seedUser(t, { subject: "l8", org: { id: "org_inactive", name: "Inactive" } });
+    const { _id: inactiveId } = await companyFor(t, "org_inactive");
+    await t.run(async (ctx) => await ctx.db.patch(inactiveId, { isActive: false }));
+
+    const result = await asOperator.query(api.companies.list, { ...firstPage, isActive: true });
+
+    expect(result.page.map((c) => c.name)).toEqual(["Active"]);
   });
 
   test("rejects a creator", async () => {

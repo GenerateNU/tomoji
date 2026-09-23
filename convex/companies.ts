@@ -1,39 +1,41 @@
 import { paginationOptsValidator, paginationResultValidator } from "convex/server";
-import { v } from "convex/values";
-import {
-  authedQuery,
-  companyContext,
-  companyMutation,
-  operatorMutation,
-  operatorQuery,
-} from "./lib/functions";
+import { v, type Infer } from "convex/values";
+import type { Doc } from "./_generated/dataModel";
+import { companyMutation, operatorMutation, operatorQuery } from "./lib/functions";
 import { createCompany, listCompanies, requireCompany, updateCompany } from "./models/companies";
 import schema from "./schema";
 
+/** A company as returned to operators. `workosId` is internal and left out. */
+const companyView = schema.doc("companies").omit("workosId");
+
 /**
- * Gets a company by id, or the caller's company (found via caller's current token - users can belong to more than one company)
- * when `companyId` is omitted.
+ * Picks fields explicitly so `workosId`, or any field added later, is only
+ * exposed on purpose. The returns validator rejects extra fields.
+ */
+function toCompanyView(company: Doc<"companies">): Infer<typeof companyView> {
+  const { _id, _creationTime, name, isActive, profilePicture } = company;
+  return { _id, _creationTime, name, isActive, profilePicture };
+}
+
+/**
+ * Gets a company by id. Operator-only for now: companies must never see other
+ * companies, and what creators may see is still undecided.
  *
  * @throws `not_found` if `companyId` does not exist.
- * @throws `forbidden` if `companyId` is omitted and the caller is not a
- * company user.
  */
-export const get = authedQuery({
-  args: { companyId: v.optional(v.id("companies")) },
-  returns: schema.doc("companies"),
+export const get = operatorQuery({
+  args: { companyId: v.id("companies") },
+  returns: companyView,
   handler: async (ctx, args) => {
-    if (args.companyId !== undefined) {
-      return await requireCompany(ctx, args.companyId);
-    }
-    const { membership } = await companyContext(ctx);
-    return await requireCompany(ctx, membership.companyId);
+    return toCompanyView(await requireCompany(ctx, args.companyId));
   },
 });
 
 /**
- * Updates the caller's company.
+ * Updates the caller's company. Open to any member for now; restricting it
+ * to company admins is tracked in a follow-up ticket.
  *
- * @throws `invalid_state` if `name` is blank.
+ * @throws `invalid_state` if `name` or `profilePicture` is blank.
  */
 export const update = companyMutation({
   args: {
@@ -42,8 +44,6 @@ export const update = companyMutation({
   },
   returns: v.null(),
   handler: async (ctx, args) => {
-    //TODO: Optional: restrict to company admins.
-    // if (ctx.membership.role !== "admin") throw apiError("forbidden", { requiredCompanyRole: "admin" });
     await updateCompany(ctx, ctx.membership.companyId, args);
     return null;
   },
@@ -63,11 +63,18 @@ export const create = operatorMutation({
   },
 });
 
-/** Lists all companies for operators with cursor pagination. */
+/**
+ * Lists companies for operators with cursor pagination. Includes inactive
+ * companies unless `isActive` is given.
+ */
 export const list = operatorQuery({
-  args: { paginationOpts: paginationOptsValidator },
-  returns: paginationResultValidator(schema.doc("companies")),
+  args: {
+    isActive: v.optional(v.boolean()),
+    paginationOpts: paginationOptsValidator,
+  },
+  returns: paginationResultValidator(companyView),
   handler: async (ctx, args) => {
-    return await listCompanies(ctx, args.paginationOpts);
+    const result = await listCompanies(ctx, args);
+    return { ...result, page: result.page.map(toCompanyView) };
   },
 });

@@ -17,6 +17,7 @@ import type * as lib_authz from "../lib/authz.js";
 import type * as lib_errors from "../lib/errors.js";
 import type * as lib_functions from "../lib/functions.js";
 import type * as lib_identity from "../lib/identity.js";
+import type * as lib_validation from "../lib/validation.js";
 import type * as models_campaigns from "../models/campaigns.js";
 import type * as models_companies from "../models/companies.js";
 import type * as models_companyUsers from "../models/companyUsers.js";
@@ -40,6 +41,7 @@ declare const fullApi: ApiFromModules<{
   "lib/errors": typeof lib_errors;
   "lib/functions": typeof lib_functions;
   "lib/identity": typeof lib_identity;
+  "lib/validation": typeof lib_validation;
   "models/campaigns": typeof models_campaigns;
   "models/companies": typeof models_companies;
   "models/companyUsers": typeof models_companyUsers;

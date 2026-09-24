@@ -106,6 +106,55 @@ describe("listCreators", () => {
     ]);
   });
 
+  test("paginates complete creator profiles using the returned cursor", async () => {
+    const t = convexTest(schema, modules);
+    await seedUser(t, {
+      subject: "model_creator_page_1",
+      email: "page-one@example.com",
+    });
+    await seedUser(t, {
+      subject: "model_creator_page_2",
+      email: "page-two@example.com",
+    });
+    const [firstCreatorId, secondCreatorId] = await t.run(async (ctx) => {
+      const firstUser = await getUserByWorkosId(ctx, "model_creator_page_1");
+      const secondUser = await getUserByWorkosId(ctx, "model_creator_page_2");
+      if (firstUser === null || secondUser === null) throw new Error("expected seeded users");
+      const firstCreator = await getCreatorByUserId(ctx, firstUser._id);
+      const secondCreator = await getCreatorByUserId(ctx, secondUser._id);
+      if (firstCreator === null || secondCreator === null) {
+        throw new Error("expected seeded creators");
+      }
+      return [firstCreator._id, secondCreator._id] as const;
+    });
+
+    const firstPage = await t.run(async (ctx) =>
+      listCreators(ctx, { paginationOpts: { cursor: null, numItems: 1 } }),
+    );
+    const secondPage = await t.run(async (ctx) =>
+      listCreators(ctx, {
+        paginationOpts: { cursor: firstPage.continueCursor, numItems: 1 },
+      }),
+    );
+
+    expect(firstPage.page).toEqual([
+      {
+        creatorId: firstCreatorId,
+        name: "page-one@example.com",
+        email: "page-one@example.com",
+      },
+    ]);
+    expect(firstPage.isDone).toBe(false);
+    expect(secondPage.page).toEqual([
+      {
+        creatorId: secondCreatorId,
+        name: "page-two@example.com",
+        email: "page-two@example.com",
+      },
+    ]);
+    expect(secondPage.isDone).toBe(true);
+  });
+
   test("excludes inactive and non-creator accounts", async () => {
     const t = convexTest(schema, modules);
     await seedUser(t, { subject: "model_creator_list_active" });

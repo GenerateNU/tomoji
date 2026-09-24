@@ -32,7 +32,7 @@ async function seedOrphanedCompanyUser(t: TestConvex, subject: string, orgId: st
   await t.run(async (ctx) => {
     await upsertUser(ctx, { workosId: subject, email: `${subject}@example.com` });
     const user = await getUserByWorkosId(ctx, subject);
-    await ctx.db.patch(user!._id, { role: "company" });
+    await ctx.db.patch("users", user!._id, { role: "company" });
   });
   return t.withIdentity(workosIdentity({ subject, org_id: orgId }));
 }
@@ -44,7 +44,7 @@ describe("campaigns.create", () => {
     const args = createArgs();
 
     const id = await asMember.mutation(api.campaigns.create, args);
-    const stored = await t.run(async (ctx) => await ctx.db.get(id));
+    const stored = await t.run(async (ctx) => await ctx.db.get("campaigns", id));
 
     expect(stored?.title).toBe(args.title);
     expect(stored?.description).toBe(args.description);
@@ -61,7 +61,7 @@ describe("campaigns.create", () => {
     // companyId/createdBy aren't in the arg validator, so a client cannot
     // supply them — this pins that the route derives them server-side.
     const id = await asMember.mutation(api.campaigns.create, createArgs());
-    const stored = await t.run(async (ctx) => await ctx.db.get(id));
+    const stored = await t.run(async (ctx) => await ctx.db.get("campaigns", id));
     const { companyId, membershipId } = await t.run(async (ctx) => {
       const user = await getUserByWorkosId(ctx, "cc2");
       const company = await getCompanyByWorkosId(ctx, "org_acme");
@@ -85,7 +85,7 @@ describe("campaigns.create", () => {
     });
 
     const id = await asMember.mutation(api.campaigns.create, args);
-    const stored = await t.run(async (ctx) => await ctx.db.get(id));
+    const stored = await t.run(async (ctx) => await ctx.db.get("campaigns", id));
 
     expect(stored?.audience).toBe(args.audience);
     expect(stored?.talkingPoints).toEqual(args.talkingPoints);
@@ -102,7 +102,7 @@ describe("campaigns.create", () => {
     const args = createArgs({ status: "open", isVetted: true });
 
     const id = await asMember.mutation(api.campaigns.create, args);
-    const stored = await t.run(async (ctx) => await ctx.db.get(id));
+    const stored = await t.run(async (ctx) => await ctx.db.get("campaigns", id));
 
     expect(stored?.status).toBe("open");
     expect(stored?.isVetted).toBe(true);

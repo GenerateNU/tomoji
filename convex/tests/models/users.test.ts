@@ -50,7 +50,7 @@ describe("upsertUser", () => {
     await seedUser(t, { subject: "u4" });
     await t.run(async (ctx) => {
       const user = await getUserByWorkosId(ctx, "u4");
-      await ctx.db.patch(user!._id, { role: "operator" });
+      await ctx.db.patch("users", user!._id, { role: "operator" });
       await upsertUser(ctx, { workosId: "u4", email: "u4@example.com" });
     });
 
@@ -119,7 +119,7 @@ describe("applyMembership", () => {
     await seedUser(t, { subject: "u10" });
     await t.run(async (ctx) => {
       const user = await getUserByWorkosId(ctx, "u10");
-      await ctx.db.patch(user!._id, { role: "operator" });
+      await ctx.db.patch("users", user!._id, { role: "operator" });
       await applyMembership(ctx, {
         workosUserId: "u10",
         organizationId: "org_acme",

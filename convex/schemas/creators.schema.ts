@@ -1,6 +1,12 @@
 import { defineTable } from "convex/server";
 import { v } from "convex/values";
 
+export const creatorProfileUpdate = v.object({
+  xId: v.optional(v.union(v.string(), v.null())),
+  githubLink: v.optional(v.union(v.string(), v.null())),
+  phoneNumber: v.optional(v.union(v.string(), v.null())),
+});
+
 export const creatorsTable = defineTable({
   userId: v.id("users"),
   xId: v.optional(v.string()),

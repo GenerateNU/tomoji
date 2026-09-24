@@ -2,7 +2,7 @@
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
 import { api } from "../_generated/api";
-import { getCreatorByUserId } from "../models/creators";
+import { getCreatorByUserId, updateCreatorProfile } from "../models/creators";
 import { getUserByWorkosId } from "../models/users";
 import schema from "../schema";
 import { expectApiError, seedOperator, seedUser } from "./helpers";
@@ -28,11 +28,11 @@ describe("creators.me", () => {
       const creator = await getCreatorByUserId(ctx, user._id);
       if (creator === null) throw new Error("expected seeded creator");
 
-      await ctx.db.patch(user._id, {
+      await ctx.db.patch("users", user._id, {
         name: "Creator Name",
         profilePicture: "https://example.com/profile.png",
       });
-      await ctx.db.patch(creator._id, {
+      await updateCreatorProfile(ctx, user, {
         xId: "creator_x",
         githubLink: "https://github.com/creator",
         phoneNumber: "+15555550123",

@@ -65,3 +65,13 @@ export async function seedOperator(t: TestConvex, subject: string) {
   });
   return asOperator;
 }
+
+/**
+ * Seeds a member of `org_acme` and returns a client whose token claims
+ * `org_other`, an org they do not belong to.
+ */
+export async function seedWrongOrgCaller(t: TestConvex) {
+  await seedUser(t, { subject: "outsider", org: { id: "org_acme" } });
+  await seedUser(t, { subject: "insider", org: { id: "org_other", name: "Other" } });
+  return t.withIdentity(workosIdentity({ subject: "outsider", org_id: "org_other" }));
+}

@@ -79,5 +79,5 @@ export async function updateCompany(
   if (fields.profilePicture !== undefined) {
     patch.profilePicture = requireNonBlank(fields.profilePicture, "profile_picture");
   }
-  await ctx.db.patch(companyId, patch);
+  await ctx.db.patch("companies", companyId, patch);
 }

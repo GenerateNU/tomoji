@@ -51,7 +51,7 @@ export async function listCompanyUsers(
 
   const members = await Promise.all(
     result.page.map(async (membership): Promise<CompanyMember | null> => {
-      const user = await ctx.db.get(membership.userId);
+      const user = await ctx.db.get("users", membership.userId);
       if (user === null) {
         console.error("dangling companyUsers row", {
           membershipId: membership._id,

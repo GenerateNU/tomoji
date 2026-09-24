@@ -1,8 +1,23 @@
-import type { Infer } from "convex/values";
+import { v, type Infer } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { apiError } from "../lib/errors";
-import { creatorProfile, creatorProfileUpdate } from "../schemas/creators.schema";
+
+export const creatorProfile = v.object({
+  creatorId: v.id("creators"),
+  name: v.string(),
+  email: v.string(),
+  profilePicture: v.optional(v.string()),
+  xId: v.optional(v.string()),
+  githubLink: v.optional(v.string()),
+  phoneNumber: v.optional(v.string()),
+});
+
+export const creatorProfileUpdate = v.object({
+  xId: v.optional(v.union(v.string(), v.null())),
+  githubLink: v.optional(v.union(v.string(), v.null())),
+  phoneNumber: v.optional(v.union(v.string(), v.null())),
+});
 
 export type CreatorProfile = Infer<typeof creatorProfile>;
 export type CreatorProfileUpdate = Infer<typeof creatorProfileUpdate>;

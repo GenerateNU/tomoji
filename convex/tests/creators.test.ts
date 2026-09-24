@@ -63,6 +63,20 @@ describe("creators.me", () => {
     expect(profile).not.toHaveProperty("phoneNumber");
   });
 
+  test("reports a missing creator profile", async () => {
+    const t = convexTest(schema, modules);
+    const asCreator = await seedUser(t, { subject: "creator_me_missing" });
+    await t.run(async (ctx) => {
+      const user = await getUserByWorkosId(ctx, "creator_me_missing");
+      if (user === null) throw new Error("expected seeded user");
+      const creator = await getCreatorByUserId(ctx, user._id);
+      if (creator === null) throw new Error("expected seeded creator");
+      await ctx.db.delete("creators", creator._id);
+    });
+
+    await expectApiError(() => asCreator.query(api.creators.me, {}), "not_found");
+  });
+
   test("rejects a company caller", async () => {
     const t = convexTest(schema, modules);
     const asCompany = await seedUser(t, {

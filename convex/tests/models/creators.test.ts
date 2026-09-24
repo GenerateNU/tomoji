@@ -1,11 +1,7 @@
 /// <reference types="vite/client" />
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
-import {
-  getCreatorByUserId,
-  requireCreatorProfile,
-  updateCreatorProfile,
-} from "../../models/creators";
+import { getCreatorByUserId, updateCreatorProfile } from "../../models/creators";
 import { getUserByWorkosId } from "../../models/users";
 import schema from "../../schema";
 import { expectApiError, seedUser } from "../helpers";
@@ -40,30 +36,6 @@ describe("getCreatorByUserId", () => {
     });
 
     expect(creator).toBeNull();
-  });
-});
-
-describe("requireCreatorProfile", () => {
-  test("reports a missing creator profile", async () => {
-    const t = convexTest(schema, modules);
-    await seedUser(t, { subject: "model_creator_profile_missing" });
-    await t.run(async (ctx) => {
-      const user = await getUserByWorkosId(ctx, "model_creator_profile_missing");
-      if (user === null) throw new Error("expected seeded user");
-      const creator = await getCreatorByUserId(ctx, user._id);
-      if (creator === null) throw new Error("expected seeded creator");
-      await ctx.db.delete("creators", creator._id);
-    });
-
-    await expectApiError(
-      () =>
-        t.run(async (ctx) => {
-          const user = await getUserByWorkosId(ctx, "model_creator_profile_missing");
-          if (user === null) throw new Error("expected seeded user");
-          return await requireCreatorProfile(ctx, user);
-        }),
-      "not_found",
-    );
   });
 });
 
@@ -124,8 +96,9 @@ describe("updateCreatorProfile", () => {
     const result = await t.run(async (ctx) => {
       const user = await getUserByWorkosId(ctx, "model_creator_update_empty");
       if (user === null) throw new Error("expected seeded user");
-      const before = await requireCreatorProfile(ctx, user);
-      const after = await updateCreatorProfile(ctx, user, {});
+      const before = await getCreatorByUserId(ctx, user._id);
+      await updateCreatorProfile(ctx, user, {});
+      const after = await getCreatorByUserId(ctx, user._id);
       return { before, after };
     });
 

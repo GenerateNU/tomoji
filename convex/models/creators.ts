@@ -33,27 +33,6 @@ export async function getCreatorByUserId(
     .unique();
 }
 
-/** Returns all user-facing creator profile fields or throws when the profile does not exist. */
-export async function requireCreatorProfile(
-  ctx: QueryCtx | MutationCtx,
-  user: Doc<"users">,
-): Promise<CreatorProfile> {
-  const creator = await getCreatorByUserId(ctx, user._id);
-  if (creator === null) {
-    throw apiError("not_found", { resource: "creator" });
-  }
-
-  return {
-    creatorId: creator._id,
-    name: user.name,
-    email: user.email,
-    profilePicture: user.profilePicture,
-    xId: creator.xId,
-    githubLink: creator.githubLink,
-    phoneNumber: creator.phoneNumber,
-  };
-}
-
 /** Updates the editable fields in a creator's own profile and returns the complete profile. */
 export async function updateCreatorProfile(
   ctx: MutationCtx,
@@ -72,5 +51,14 @@ export async function updateCreatorProfile(
   if ("phoneNumber" in updates) patch.phoneNumber = updates.phoneNumber ?? undefined;
 
   await ctx.db.patch("creators", creator._id, patch);
-  return await requireCreatorProfile(ctx, user);
+  const updatedCreator = { ...creator, ...patch };
+  return {
+    creatorId: updatedCreator._id,
+    name: user.name,
+    email: user.email,
+    profilePicture: user.profilePicture,
+    xId: updatedCreator.xId,
+    githubLink: updatedCreator.githubLink,
+    phoneNumber: updatedCreator.phoneNumber,
+  };
 }

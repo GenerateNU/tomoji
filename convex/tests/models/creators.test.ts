@@ -44,24 +44,6 @@ describe("getCreatorByUserId", () => {
 });
 
 describe("requireCreatorProfile", () => {
-  test("rejects a non-creator profile request", async () => {
-    const t = convexTest(schema, modules);
-    await seedUser(t, {
-      subject: "model_company",
-      org: { id: "org_model_creator" },
-    });
-
-    await expectApiError(
-      () =>
-        t.run(async (ctx) => {
-          const user = await getUserByWorkosId(ctx, "model_company");
-          if (user === null) throw new Error("expected seeded user");
-          return await requireCreatorProfile(ctx, user);
-        }),
-      "forbidden",
-    );
-  });
-
   test("reports a missing creator profile", async () => {
     const t = convexTest(schema, modules);
     await seedUser(t, { subject: "model_creator_profile_missing" });

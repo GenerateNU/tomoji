@@ -38,10 +38,6 @@ export async function requireCreatorProfile(
   ctx: QueryCtx | MutationCtx,
   user: Doc<"users">,
 ): Promise<CreatorProfile> {
-  if (user.role !== "creator") {
-    throw apiError("forbidden", { requiredRole: "creator" });
-  }
-
   const creator = await getCreatorByUserId(ctx, user._id);
   if (creator === null) {
     throw apiError("not_found", { resource: "creator" });

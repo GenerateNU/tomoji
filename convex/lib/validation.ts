@@ -1,8 +1,9 @@
 import { apiError } from "./errors";
 
 /**
- * Returns `value` trimmed, or throws `invalid_state` with reason
- * `<field>_blank` if nothing is left after trimming.
+ * Returns `value` trimmed
+ * @throws `invalid_state` with reason `<field>_blank` if nothing is left after
+ * trimming.
  */
 export function requireNonBlank(value: string, field: string): string {
   const trimmed = value.trim();

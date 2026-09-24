@@ -16,7 +16,7 @@ export async function requireCompany(
   ctx: MutationCtx | QueryCtx,
   companyId: Id<"companies">,
 ): Promise<Doc<"companies">> {
-  const company = await ctx.db.get(companyId);
+  const company = await ctx.db.get("companies", companyId);
   if (company === null) {
     throw apiError("not_found", { companyId });
   }

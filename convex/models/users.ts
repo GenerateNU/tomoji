@@ -60,14 +60,14 @@ export async function upsertUser(ctx: MutationCtx, profile: WorkosProfile): Prom
     return userId;
   }
 
-  await ctx.db.patch(existing._id, { name, email: profile.email, profilePicture });
+  await ctx.db.patch("users", existing._id, { name, email: profile.email, profilePicture });
   return existing._id;
 }
 
 export async function deactivateUser(ctx: MutationCtx, workosId: string): Promise<void> {
   const user = await getUserByWorkosId(ctx, workosId);
   if (user !== null) {
-    await ctx.db.patch(user._id, { isActive: false });
+    await ctx.db.patch("users", user._id, { isActive: false });
   }
 }
 
@@ -117,11 +117,11 @@ export async function applyMembership(ctx: MutationCtx, event: MembershipEvent):
   if (membership === null) {
     await ctx.db.insert("companyUsers", { userId: user._id, companyId, role: event.role });
   } else if (membership.role !== event.role) {
-    await ctx.db.patch(membership._id, { role: event.role });
+    await ctx.db.patch("companyUsers", membership._id, { role: event.role });
   }
 
   if (user.role === "creator") {
-    await ctx.db.patch(user._id, { role: "company" });
+    await ctx.db.patch("users", user._id, { role: "company" });
   }
 }
 
@@ -135,7 +135,7 @@ export async function removeMembership(
 
   const membership = await getCompanyUser(ctx, user._id, company._id);
   if (membership !== null) {
-    await ctx.db.delete(membership._id);
+    await ctx.db.delete("companyUsers", membership._id);
   }
 
   const remaining = await ctx.db
@@ -144,7 +144,7 @@ export async function removeMembership(
     .first();
 
   if (remaining === null && user.role === "company") {
-    await ctx.db.patch(user._id, { role: "creator" });
+    await ctx.db.patch("users", user._id, { role: "creator" });
     const profile = await ctx.db
       .query("creators")
       .withIndex("by_userId", (q) => q.eq("userId", user._id))

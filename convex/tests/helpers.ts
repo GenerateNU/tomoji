@@ -61,7 +61,7 @@ export async function seedOperator(t: TestConvex, subject: string) {
   await t.run(async (ctx) => {
     const user = await getUserByWorkosId(ctx, subject);
     if (user === null) throw new Error("expected seeded user");
-    await ctx.db.patch(user._id, { role: "operator" });
+    await ctx.db.patch("users", user._id, { role: "operator" });
   });
   return asOperator;
 }

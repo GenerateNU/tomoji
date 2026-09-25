@@ -44,7 +44,7 @@ describe("createCampaign", () => {
     const owner = await seedOwner(t, "ca1");
 
     const id = await t.run(async (ctx) => await createCampaign(ctx, campaignDoc(owner)));
-    const stored = await t.run(async (ctx) => await ctx.db.get(id));
+    const stored = await t.run(async (ctx) => await ctx.db.get("campaigns", id));
 
     expect(stored).not.toBeNull();
     expect(stored?.title).toBe("Spring launch");
@@ -65,7 +65,7 @@ describe("createCampaign", () => {
     });
 
     const id = await t.run(async (ctx) => await createCampaign(ctx, doc));
-    const stored = await t.run(async (ctx) => await ctx.db.get(id));
+    const stored = await t.run(async (ctx) => await ctx.db.get("campaigns", id));
 
     expect(stored?.audience).toBe(doc.audience);
     expect(stored?.talkingPoints).toEqual(doc.talkingPoints);
@@ -79,7 +79,7 @@ describe("createCampaign", () => {
     const owner = await seedOwner(t, "ca3");
 
     const id = await t.run(async (ctx) => await createCampaign(ctx, campaignDoc(owner)));
-    const stored = await t.run(async (ctx) => await ctx.db.get(id));
+    const stored = await t.run(async (ctx) => await ctx.db.get("campaigns", id));
 
     expect(stored?.audience).toBeUndefined();
     expect(stored?.talkingPoints).toBeUndefined();
@@ -148,7 +148,7 @@ describe("createCampaign", () => {
     const doc = campaignDoc(owner, { maxOpenings: 3, maxApplications: 3 });
 
     const id = await t.run(async (ctx) => await createCampaign(ctx, doc));
-    const stored = await t.run(async (ctx) => await ctx.db.get(id));
+    const stored = await t.run(async (ctx) => await ctx.db.get("campaigns", id));
 
     expect(stored).not.toBeNull();
     expect(stored?.maxOpenings).toBe(3);

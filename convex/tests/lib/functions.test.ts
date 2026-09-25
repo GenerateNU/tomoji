@@ -21,7 +21,7 @@ async function signedIn(
   if (opts.promoteTo || opts.deactivate) {
     await t.run(async (ctx) => {
       const user = await getUserByWorkosId(ctx, subject);
-      await ctx.db.patch(user!._id, {
+      await ctx.db.patch("users", user!._id, {
         ...(opts.promoteTo ? { role: opts.promoteTo } : {}),
         ...(opts.deactivate ? { isActive: false } : {}),
       });
@@ -80,7 +80,7 @@ describe("companyContext", () => {
     await t.run(async (ctx) => {
       await upsertUser(ctx, { workosId: "u10", email: "u10@example.com" });
       const user = await getUserByWorkosId(ctx, "u10");
-      await ctx.db.patch(user!._id, { role: "company" });
+      await ctx.db.patch("users", user!._id, { role: "company" });
     });
     const as = t.withIdentity(workosIdentity({ subject: "u10", org_id: "org_ghost" }));
 

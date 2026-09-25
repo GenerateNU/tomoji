@@ -214,6 +214,26 @@ describe("creators.update", () => {
     });
   });
 
+  test("preserves omitted fields in a partial update", async () => {
+    const t = convexTest(schema, modules);
+    const asCreator = await seedUser(t, { subject: "creator_update_partial" });
+    await asCreator.mutation(api.creators.update, {
+      xId: "creator_x",
+      githubLink: "https://github.com/creator",
+      phoneNumber: "+15555550123",
+    });
+
+    const profile = await asCreator.mutation(api.creators.update, {
+      xId: "updated_creator_x",
+    });
+
+    expect(profile).toMatchObject({
+      xId: "updated_creator_x",
+      githubLink: "https://github.com/creator",
+      phoneNumber: "+15555550123",
+    });
+  });
+
   test("clears profile fields when passed null", async () => {
     const t = convexTest(schema, modules);
     const asCreator = await seedUser(t, { subject: "creator_update_clear" });

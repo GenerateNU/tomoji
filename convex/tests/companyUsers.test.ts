@@ -2,6 +2,7 @@
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
 import { api } from "../_generated/api";
+import { removeMembership } from "../models/users";
 import schema from "../schema";
 import { expectApiError, seedOperator, seedUser, seedWrongOrgCaller } from "./helpers";
 
@@ -28,9 +29,16 @@ describe("companyUsers.list", () => {
     ]);
   });
 
-  test("lists the company on the current token for a multi-company user", async () => {
+  test("lists the new company's members after the previous membership is removed", async () => {
     const t = convexTest(schema, modules);
     await seedUser(t, { subject: "cu4", org: { id: "org_a" } });
+    await t.run(
+      async (ctx) =>
+        await removeMembership(ctx, {
+          workosUserId: "cu4",
+          organizationId: "org_a",
+        }),
+    );
     await seedUser(t, { subject: "cu5", email: "b@b.com", org: { id: "org_b" } });
     const asB = await seedUser(t, { subject: "cu4", org: { id: "org_b" } });
 

@@ -79,10 +79,12 @@ describe("listCreators", () => {
       const creator = await getCreatorByUserId(ctx, user._id);
       if (creator === null) throw new Error("expected seeded creator");
       await ctx.db.patch("users", user._id, {
-        name: "Creator Name",
+        firstName: "Creator",
+        lastName: "Name",
         profilePicture: "https://example.com/profile.png",
       });
       await updateCreatorProfile(ctx, user, {
+        username: "creator_name",
         xId: "creator_x",
         githubLink: "https://github.com/creator",
         phoneNumber: "+15555550123",
@@ -97,6 +99,7 @@ describe("listCreators", () => {
     expect(result.page).toEqual([
       {
         creatorId,
+        username: "creator_name",
         name: "Creator Name",
         email: "creator@example.com",
         profilePicture: "https://example.com/profile.png",
@@ -141,6 +144,7 @@ describe("listCreators", () => {
     expect(firstPage.page).toEqual([
       {
         creatorId: firstCreatorId,
+        username: expect.stringMatching(/^creator_.+/),
         name: "page-one@example.com",
         email: "page-one@example.com",
       },
@@ -149,6 +153,7 @@ describe("listCreators", () => {
     expect(secondPage.page).toEqual([
       {
         creatorId: secondCreatorId,
+        username: expect.stringMatching(/^creator_.+/),
         name: "page-two@example.com",
         email: "page-two@example.com",
       },
@@ -277,10 +282,12 @@ describe("requireCreatorProfileById", () => {
       const creator = await getCreatorByUserId(ctx, user._id);
       if (creator === null) throw new Error("expected seeded creator");
       await ctx.db.patch("users", user._id, {
-        name: "Creator Name",
+        firstName: "Creator",
+        lastName: "Name",
         profilePicture: "https://example.com/profile.png",
       });
       await updateCreatorProfile(ctx, user, {
+        username: "creator_name",
         xId: "creator_x",
         githubLink: "https://github.com/creator",
         phoneNumber: "+15555550123",
@@ -293,6 +300,7 @@ describe("requireCreatorProfileById", () => {
 
     expect(result.profile).toEqual({
       creatorId: result.creatorId,
+      username: "creator_name",
       name: "Creator Name",
       email: "creator@example.com",
       profilePicture: "https://example.com/profile.png",
@@ -347,7 +355,7 @@ describe("requireCreatorProfileById", () => {
     const creatorId = await t.run(async (ctx) => {
       const user = await getUserByWorkosId(ctx, "model_creator_get_company");
       if (user === null) throw new Error("expected seeded user");
-      return await ctx.db.insert("creators", { userId: user._id });
+      return await ctx.db.insert("creators", { userId: user._id, username: "non_creator" });
     });
 
     await expectApiError(

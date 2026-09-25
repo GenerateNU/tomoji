@@ -6,9 +6,7 @@ import schema from "./schema";
 /**
  * Adds a campaign for a given company.
  *
- * @throws `invalid_state` if `deadline` is in the past, if `maxOpenings` is
- * not positive, if `maxApplications` is below `maxOpenings`, or if `status`
- * is `closed`.
+ * @throws `invalid_state` for an invalid budget or schedule.
  * @returns the new campaign's id.
  */
 export const create = companyMutation({

@@ -5,7 +5,8 @@ export const userRole = v.union(v.literal("creator"), v.literal("company"), v.li
 
 export const usersTable = defineTable({
   workosId: v.string(),
-  name: v.string(),
+  firstName: v.string(),
+  lastName: v.string(),
   email: v.string(),
   role: userRole,
   isActive: v.boolean(),

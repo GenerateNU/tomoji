@@ -29,10 +29,12 @@ describe("creators.me", () => {
       if (creator === null) throw new Error("expected seeded creator");
 
       await ctx.db.patch("users", user._id, {
-        name: "Creator Name",
+        firstName: "Creator",
+        lastName: "Name",
         profilePicture: "https://example.com/profile.png",
       });
       await updateCreatorProfile(ctx, user, {
+        username: "creator_name",
         xId: "creator_x",
         githubLink: "https://github.com/creator",
         phoneNumber: "+15555550123",
@@ -42,6 +44,7 @@ describe("creators.me", () => {
 
     expect(await asCreator.query(api.creators.me, {})).toEqual({
       creatorId,
+      username: "creator_name",
       name: "Creator Name",
       email: "creator@example.com",
       profilePicture: "https://example.com/profile.png",
@@ -162,6 +165,7 @@ describe("creators.get", () => {
 
     expect(await asCompany.query(api.creators.get, { creatorId })).toEqual({
       creatorId,
+      username: expect.stringMatching(/^creator_.+/),
       name: "target@example.com",
       email: "target@example.com",
     });
@@ -192,6 +196,16 @@ describe("creators.get", () => {
 });
 
 describe("creators.update", () => {
+  test("updates the username and preserves it when a later update omits it", async () => {
+    const t = convexTest(schema, modules);
+    const asCreator = await seedUser(t, { subject: "creator_username" });
+
+    const updated = await asCreator.mutation(api.creators.update, { username: "ada" });
+    expect(updated.username).toBe("ada");
+    await asCreator.mutation(api.creators.update, { xId: "ada_x" });
+    expect((await asCreator.query(api.creators.me, {})).username).toBe("ada");
+  });
+
   test("updates the authenticated creator's profile", async () => {
     const t = convexTest(schema, modules);
     const asCreator = await seedUser(t, {

@@ -1,16 +1,37 @@
 import { defineTable } from "convex/server";
 import { v } from "convex/values";
 
-export const submissionsTable = defineTable({
-  campaignCreatorId: v.id("campaignCreators"),
-  status: v.union(
-    v.literal("draft"),
-    v.literal("pending"),
-    v.literal("accepted"),
-    v.literal("rejected"),
-    v.literal("needsRevision"),
-  ),
+export const submissionStatus = v.union(
+  v.literal("pending"),
+  v.literal("approved"),
+  v.literal("changesRequested"),
+);
+
+const submissionFields = {
+  assignmentId: v.id("assignments"),
+  draftUrl: v.string(),
+  draftDescription: v.string(),
+  status: submissionStatus,
   reviewNote: v.optional(v.string()),
-  reviewedBy: v.optional(v.id("companyUsers")),
-  reviewedAt: v.optional(v.number()),
-}).index("by_campaignCreatorId", ["campaignCreatorId"]);
+};
+
+// No review yet, an AI review, or an attributed human review. A human ID cannot
+// be attached to an AI review, and a recorded review always has a timestamp.
+export const submissionsTable = defineTable(
+  v.union(
+    v.object({ ...submissionFields, status: v.literal("pending") }),
+    v.object({
+      ...submissionFields,
+      reviewerType: v.literal("ai"),
+      reviewedAt: v.number(), // Unix milliseconds.
+    }),
+    v.object({
+      ...submissionFields,
+      reviewerType: v.literal("companyUser"),
+      reviewedBy: v.id("companyUsers"),
+      reviewedAt: v.number(), // Unix milliseconds.
+    }),
+  ),
+)
+  .index("by_assignmentId", ["assignmentId"])
+  .index("by_reviewedBy", ["reviewedBy"]);

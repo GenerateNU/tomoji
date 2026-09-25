@@ -4,33 +4,26 @@ import type { MutationCtx } from "../_generated/server";
 import { apiError } from "../lib/errors";
 
 /**
- * Creates a campaign and returns its id.
+ * Creates a campaign brief with its budget and schedule.
  *
- * @param ctx service for convex mutation functions
- * @param campaign the campaign object with at least all required fields
- *
- * @return the campaignId of the new campaign
- * @throws `invalid_state` if `deadline` is in the past, if `maxOpenings` is
- * not positive, if `maxApplications` is below `maxOpenings`, or if `status`
- * is `closed`.
+ * @throws `invalid_state` for an invalid budget, nonfinite timestamps,
+ * or an end before the start.
  */
 export async function createCampaign(
   ctx: MutationCtx,
   campaign: WithoutSystemFields<Doc<"campaigns">>,
 ): Promise<Id<"campaigns">> {
-  if (campaign.deadline <= Date.now()) {
-    throw apiError("invalid_state", { reason: "deadline_in_past" });
+  if (!Number.isSafeInteger(campaign.budgetCents) || campaign.budgetCents < 0) {
+    throw apiError("invalid_state", { reason: "invalid_budget" });
   }
-  if (campaign.maxOpenings <= 0) {
-    throw apiError("invalid_state", { reason: "max_openings_not_positive" });
+  if (
+    !Number.isFinite(campaign.startsAt) ||
+    (campaign.endsAt !== undefined && !Number.isFinite(campaign.endsAt))
+  ) {
+    throw apiError("invalid_state", { reason: "invalid_schedule" });
   }
-  if (campaign.maxApplications < campaign.maxOpenings) {
-    throw apiError("invalid_state", {
-      reason: "max_applications_below_max_openings",
-    });
-  }
-  if (campaign.status == "closed") {
-    throw apiError("invalid_state", { reason: "campaign_cannot_be_created_closed" });
+  if (campaign.endsAt !== undefined && campaign.endsAt < campaign.startsAt) {
+    throw apiError("invalid_state", { reason: "end_before_start" });
   }
 
   return await ctx.db.insert("campaigns", campaign);

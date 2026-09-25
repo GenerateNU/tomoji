@@ -37,12 +37,43 @@ describe("upsertUser", () => {
     expect(users).toHaveLength(1);
   });
 
-  test("falls back to the email when WorkOS has no name", async () => {
+  test("stores empty name parts when WorkOS has no name", async () => {
     const t = convexTest(schema, modules);
     await seedUser(t, { subject: "u3", email: "dev@example.com" });
 
     const user = await t.run(async (ctx) => await getUserByWorkosId(ctx, "u3"));
-    expect(user?.name).toBe("dev@example.com");
+    expect(user).toMatchObject({ firstName: "", lastName: "" });
+    expect(user).not.toHaveProperty("name");
+  });
+
+  test("syncs separate name parts and keeps the creator username stable", async () => {
+    const t = convexTest(schema, modules);
+    const result = await t.run(async (ctx) => {
+      const userId = await upsertUser(ctx, {
+        workosId: "named_creator",
+        email: "original@example.com",
+        firstName: "Ada",
+        lastName: "Lovelace",
+      });
+      const before = await ctx.db
+        .query("creators")
+        .withIndex("by_userId", (q) => q.eq("userId", userId))
+        .unique();
+      await upsertUser(ctx, {
+        workosId: "named_creator",
+        email: "updated@example.com",
+        firstName: "Augusta Ada",
+      });
+      const after = await ctx.db
+        .query("creators")
+        .withIndex("by_userId", (q) => q.eq("userId", userId))
+        .unique();
+      return { user: await ctx.db.get("users", userId), before, after };
+    });
+
+    expect(result.user).toMatchObject({ firstName: "Augusta Ada", lastName: "Lovelace" });
+    expect(result.before?.username).toMatch(/^creator_.+/);
+    expect(result.after?.username).toBe(result.before?.username);
   });
 
   test("does not overwrite a promotion to operator", async () => {
@@ -114,6 +145,35 @@ describe("applyMembership", () => {
     expect(memberships[0]?.role).toBe("admin");
   });
 
+  test("rejects joining a second company and preserves the original membership", async () => {
+    const t = convexTest(schema, modules);
+    await seedUser(t, { subject: "single_company", org: { id: "org_acme", role: "admin" } });
+    const before = await t.run(async (ctx) => await ctx.db.query("companyUsers").take(2));
+
+    await expectApiError(
+      () =>
+        t.run(
+          async (ctx) =>
+            await applyMembership(ctx, {
+              workosUserId: "single_company",
+              organizationId: "org_other",
+              organizationName: "Other",
+              role: "member",
+            }),
+        ),
+      "conflict",
+    );
+
+    const after = await t.run(async (ctx) => ({
+      memberships: await ctx.db.query("companyUsers").take(2),
+      companies: await ctx.db.query("companies").take(2),
+      user: await getUserByWorkosId(ctx, "single_company"),
+    }));
+    expect(after.memberships).toEqual(before);
+    expect(after.companies).toHaveLength(1);
+    expect(after.user?.role).toBe("company");
+  });
+
   test("does not demote an operator who joins a company", async () => {
     const t = convexTest(schema, modules);
     await seedUser(t, { subject: "u10" });
@@ -149,13 +209,13 @@ describe("removeMembership", () => {
     expect(memberships).toHaveLength(0);
   });
 
-  test("keeps the company role while another membership remains", async () => {
+  test("ignores a removal event for another company", async () => {
     const t = convexTest(schema, modules);
     await seedUser(t, { subject: "u12", org: { id: "org_acme" } });
-    await seedUser(t, { subject: "u12", org: { id: "org_other" } });
+    await seedUser(t, { subject: "u12_other", org: { id: "org_other" } });
     await t.run(
       async (ctx) =>
-        await removeMembership(ctx, { workosUserId: "u12", organizationId: "org_acme" }),
+        await removeMembership(ctx, { workosUserId: "u12", organizationId: "org_other" }),
     );
 
     const user = await t.run(async (ctx) => await getUserByWorkosId(ctx, "u12"));

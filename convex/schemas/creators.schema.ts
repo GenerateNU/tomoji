@@ -3,6 +3,7 @@ import { v } from "convex/values";
 
 export const creatorsTable = defineTable({
   userId: v.id("users"),
+  username: v.string(),
   xId: v.optional(v.string()),
   githubLink: v.optional(v.string()),
   phoneNumber: v.optional(v.string()),

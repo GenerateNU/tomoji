@@ -7,7 +7,7 @@ import { findOrgId } from "../lib/identity";
 import type { companyRole } from "../schemas/companyUsers.schema";
 import type { Infer } from "convex/values";
 import { getCompanyByWorkosId } from "./companies";
-import { getCompanyUser } from "./companyUsers";
+import { getCompanyUser, getCompanyUserByUserId } from "./companyUsers";
 
 export async function getUserByWorkosId(
   ctx: QueryCtx | MutationCtx,
@@ -56,29 +56,41 @@ export async function listUsers(
 export type WorkosProfile = {
   workosId: string;
   email: string;
-  name?: string;
+  firstName?: string | null;
+  lastName?: string | null;
   profilePicture?: string;
 };
 
 export async function upsertUser(ctx: MutationCtx, profile: WorkosProfile): Promise<Id<"users">> {
   const existing = await getUserByWorkosId(ctx, profile.workosId);
-  const name = profile.name ?? existing?.name ?? profile.email;
+  const firstName =
+    profile.firstName === undefined ? (existing?.firstName ?? "") : (profile.firstName ?? "");
+  const lastName =
+    profile.lastName === undefined ? (existing?.lastName ?? "") : (profile.lastName ?? "");
   const profilePicture = profile.profilePicture ?? existing?.profilePicture;
 
   if (existing === null) {
     const userId = await ctx.db.insert("users", {
       workosId: profile.workosId,
-      name,
+      firstName,
+      lastName,
       email: profile.email,
       role: "creator",
       isActive: true,
       profilePicture,
     });
-    await ctx.db.insert("creators", { userId });
+    // Stable, editable initial username; do not expose an email or WorkOS identifier.
+    // Custom usernames are not required to be unique.
+    await ctx.db.insert("creators", { userId, username: `creator_${userId}` });
     return userId;
   }
 
-  await ctx.db.patch("users", existing._id, { name, email: profile.email, profilePicture });
+  await ctx.db.patch("users", existing._id, {
+    firstName,
+    lastName,
+    email: profile.email,
+    profilePicture,
+  });
   return existing._id;
 }
 
@@ -122,6 +134,11 @@ export async function applyMembership(ctx: MutationCtx, event: MembershipEvent):
   }
 
   const existingCompany = await getCompanyByWorkosId(ctx, event.organizationId);
+  const membership = await getCompanyUserByUserId(ctx, user._id);
+  if (membership !== null && membership.companyId !== existingCompany?._id) {
+    throw apiError("conflict", { reason: "user already belongs to a company" });
+  }
+
   const companyId =
     existingCompany?._id ??
     (await ctx.db.insert("companies", {
@@ -129,8 +146,6 @@ export async function applyMembership(ctx: MutationCtx, event: MembershipEvent):
       name: event.organizationName,
       isActive: true,
     }));
-
-  const membership = await getCompanyUser(ctx, user._id, companyId);
 
   if (membership === null) {
     await ctx.db.insert("companyUsers", { userId: user._id, companyId, role: event.role });
@@ -156,10 +171,7 @@ export async function removeMembership(
     await ctx.db.delete("companyUsers", membership._id);
   }
 
-  const remaining = await ctx.db
-    .query("companyUsers")
-    .withIndex("by_userId", (q) => q.eq("userId", user._id))
-    .first();
+  const remaining = await getCompanyUserByUserId(ctx, user._id);
 
   if (remaining === null && user.role === "company") {
     await ctx.db.patch("users", user._id, { role: "creator" });
@@ -168,7 +180,7 @@ export async function removeMembership(
       .withIndex("by_userId", (q) => q.eq("userId", user._id))
       .unique();
     if (profile === null) {
-      await ctx.db.insert("creators", { userId: user._id });
+      await ctx.db.insert("creators", { userId: user._id, username: `creator_${user._id}` });
     }
   }
 }

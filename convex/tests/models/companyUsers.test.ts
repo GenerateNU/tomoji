@@ -79,11 +79,18 @@ describe("getCompanyUser", () => {
     expect(membership).toBeNull();
   });
 
-  test("scopes the lookup to the requested company for a user in two orgs", async () => {
+  test("finds only the new company after the previous membership is removed", async () => {
     const t = convexTest(schema, modules);
     await seedUser(t, { subject: "cu5", org: { id: "org_acme" } });
+    await t.run(
+      async (ctx) =>
+        await removeMembership(ctx, {
+          workosUserId: "cu5",
+          organizationId: "org_acme",
+        }),
+    );
     await seedUser(t, { subject: "cu5", org: { id: "org_other" } });
-    const { userId } = await idsFor(t, "cu5", "org_acme");
+    const { userId, companyId: previousCompanyId } = await idsFor(t, "cu5", "org_acme");
     const { companyId: otherCompanyId } = await idsFor(t, "cu5", "org_other");
 
     const membership = await t.run(
@@ -91,6 +98,9 @@ describe("getCompanyUser", () => {
     );
 
     expect(membership?.companyId).toBe(otherCompanyId);
+    expect(
+      await t.run(async (ctx) => await getCompanyUser(ctx, userId, previousCompanyId)),
+    ).toBeNull();
   });
 });
 
@@ -131,9 +141,16 @@ describe("requireMembership", () => {
     );
   });
 
-  test("returns the org-specific membership for a user in two orgs", async () => {
+  test("uses the new company role after the previous membership is removed", async () => {
     const t = convexTest(schema, modules);
     await seedUser(t, { subject: "cu10", org: { id: "org_acme", role: "member" } });
+    await t.run(
+      async (ctx) =>
+        await removeMembership(ctx, {
+          workosUserId: "cu10",
+          organizationId: "org_acme",
+        }),
+    );
     await seedUser(t, { subject: "cu10", org: { id: "org_other", role: "admin" } });
     const { userId } = await idsFor(t, "cu10", "org_other");
 
@@ -142,6 +159,10 @@ describe("requireMembership", () => {
     );
 
     expect(membership.role).toBe("admin");
+    await expectApiError(
+      () => t.run(async (ctx) => await requireMembership(ctx, userId, "org_acme")),
+      "forbidden",
+    );
   });
 });
 
@@ -176,7 +197,7 @@ describe("listCompanyUsers", () => {
         membershipId: membership!._id,
         userId,
         role: "admin",
-        name: "admin@acme.com", // upsertUser falls back to email when no name is given
+        name: "admin@acme.com", // Display names fall back to email when no name parts are given.
         email: "admin@acme.com",
       },
     ]);

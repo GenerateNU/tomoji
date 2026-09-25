@@ -2,7 +2,7 @@
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
 import { api } from "../_generated/api";
-import { deactivateUser } from "../models/users";
+import { deactivateUser, upsertUser } from "../models/users";
 import schema from "../schema";
 import { expectApiError, seedOperator, seedUser, workosIdentity } from "./helpers";
 
@@ -42,6 +42,29 @@ describe("users.me", () => {
 
     expect(me.role).toBe("creator");
     expect(me.email).toBe("dev@example.com");
+    expect(me.name).toBe("dev@example.com");
+    expect(me.firstName).toBe("");
+    expect(me.lastName).toBe("");
+  });
+
+  test("returns name parts and a derived display name", async () => {
+    const t = convexTest(schema, modules);
+    const asUser = await seedUser(t, { subject: "named_user" });
+    await t.run(
+      async (ctx) =>
+        await upsertUser(ctx, {
+          workosId: "named_user",
+          email: "ada@example.com",
+          firstName: "Ada",
+          lastName: "Lovelace",
+        }),
+    );
+
+    expect(synced(await asUser.query(api.users.me, {}))).toMatchObject({
+      name: "Ada Lovelace",
+      firstName: "Ada",
+      lastName: "Lovelace",
+    });
   });
 
   test("surfaces the org and company role for a company account", async () => {
@@ -164,7 +187,8 @@ describe("users.list", () => {
     expect(secondPage.page).toEqual([
       expect.objectContaining({
         workosId: "later_page_creator",
-        name: "later-page@example.com",
+        firstName: "",
+        lastName: "",
         email: "later-page@example.com",
         role: "creator",
         isActive: true,

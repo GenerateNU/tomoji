@@ -2,6 +2,7 @@
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
 import { api } from "../_generated/api";
+import { deactivateUser } from "../models/users";
 import schema from "../schema";
 import { expectApiError, seedOperator, seedUser, workosIdentity } from "./helpers";
 
@@ -111,6 +112,40 @@ describe("users.list", () => {
     ]);
   });
 
+  test("excludes inactive accounts by default", async () => {
+    const t = convexTest(schema, modules);
+    const asOperator = await seedOperator(t, "active_default_operator");
+    await seedUser(t, { subject: "active_default_creator" });
+    await seedUser(t, { subject: "inactive_default_creator" });
+    await t.run(async (ctx) => await deactivateUser(ctx, "inactive_default_creator"));
+
+    const result = await asOperator.query(api.users.list, {
+      paginationOpts: { cursor: null, numItems: 10 },
+    });
+
+    expect(result.page.map((user) => user.workosId).sort()).toEqual([
+      "active_default_creator",
+      "active_default_operator",
+    ]);
+  });
+
+  test("includes inactive accounts when requested", async () => {
+    const t = convexTest(schema, modules);
+    const asOperator = await seedOperator(t, "include_inactive_operator");
+    await seedUser(t, { subject: "include_inactive_creator" });
+    await t.run(async (ctx) => await deactivateUser(ctx, "include_inactive_creator"));
+
+    const result = await asOperator.query(api.users.list, {
+      includeInactive: true,
+      paginationOpts: { cursor: null, numItems: 10 },
+    });
+
+    expect(result.page.map((user) => user.workosId).sort()).toEqual([
+      "include_inactive_creator",
+      "include_inactive_operator",
+    ]);
+  });
+
   test("returns complete user documents from later pages using only the cursor", async () => {
     const t = convexTest(schema, modules);
     const asOperator = await seedOperator(t, "later_page_operator");
@@ -142,6 +177,8 @@ describe("users.list", () => {
     const t = convexTest(schema, modules);
     const asOperator = await seedOperator(t, "filter_operator");
     await seedUser(t, { subject: "filter_creator" });
+    await seedUser(t, { subject: "filter_inactive_creator" });
+    await t.run(async (ctx) => await deactivateUser(ctx, "filter_inactive_creator"));
     await seedUser(t, { subject: "filter_company", org: { id: "org_filter" } });
 
     const result = await asOperator.query(api.users.list, {
@@ -151,5 +188,24 @@ describe("users.list", () => {
 
     expect(result.page.map((user) => user.workosId)).toEqual(["filter_creator"]);
     expect(result.isDone).toBe(true);
+  });
+
+  test("includes inactive accounts within a role filter when requested", async () => {
+    const t = convexTest(schema, modules);
+    const asOperator = await seedOperator(t, "filter_inactive_operator");
+    await seedUser(t, { subject: "filter_active_creator" });
+    await seedUser(t, { subject: "filter_requested_inactive_creator" });
+    await t.run(async (ctx) => await deactivateUser(ctx, "filter_requested_inactive_creator"));
+
+    const result = await asOperator.query(api.users.list, {
+      role: "creator",
+      includeInactive: true,
+      paginationOpts: { cursor: null, numItems: 10 },
+    });
+
+    expect(result.page.map((user) => user.workosId).sort()).toEqual([
+      "filter_active_creator",
+      "filter_requested_inactive_creator",
+    ]);
   });
 });

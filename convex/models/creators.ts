@@ -22,6 +22,19 @@ export const creatorProfileUpdate = v.object({
 export type CreatorProfile = Infer<typeof creatorProfile>;
 export type CreatorProfileUpdate = Infer<typeof creatorProfileUpdate>;
 
+/** Combines matching user and creator documents into the user-facing creator profile. */
+function toCreatorProfile(user: Doc<"users">, creator: Doc<"creators">): CreatorProfile {
+  return {
+    creatorId: creator._id,
+    name: user.name,
+    email: user.email,
+    profilePicture: user.profilePicture,
+    xId: creator.xId,
+    githubLink: creator.githubLink,
+    phoneNumber: creator.phoneNumber,
+  };
+}
+
 /** Finds the creator row associated with a user. */
 export async function getCreatorByUserId(
   ctx: QueryCtx | MutationCtx,
@@ -31,6 +44,19 @@ export async function getCreatorByUserId(
     .query("creators")
     .withIndex("by_userId", (q) => q.eq("userId", userId))
     .unique();
+}
+
+/** Returns the complete creator profile or throws when its data is missing. */
+export async function requireCreatorProfile(
+  ctx: QueryCtx | MutationCtx,
+  user: Doc<"users">,
+): Promise<CreatorProfile> {
+  const creator = await getCreatorByUserId(ctx, user._id);
+  if (creator === null) {
+    throw apiError("not_found", { resource: "creator" });
+  }
+
+  return toCreatorProfile(user, creator);
 }
 
 /** Updates the editable fields in a creator's own profile and returns the complete profile. */
@@ -51,14 +77,5 @@ export async function updateCreatorProfile(
   if ("phoneNumber" in updates) patch.phoneNumber = updates.phoneNumber ?? undefined;
 
   await ctx.db.patch("creators", creator._id, patch);
-  const updatedCreator = { ...creator, ...patch };
-  return {
-    creatorId: updatedCreator._id,
-    name: user.name,
-    email: user.email,
-    profilePicture: user.profilePicture,
-    xId: updatedCreator.xId,
-    githubLink: updatedCreator.githubLink,
-    phoneNumber: updatedCreator.phoneNumber,
-  };
+  return toCreatorProfile(user, { ...creator, ...patch });
 }

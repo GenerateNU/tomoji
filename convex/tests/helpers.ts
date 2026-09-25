@@ -2,7 +2,9 @@ import type { convexTest } from "convex-test";
 import type { UserIdentity } from "convex/server";
 import type { Infer } from "convex/values";
 import { expect } from "vitest";
+import type { Id } from "../_generated/dataModel";
 import type { ApiErrorCode } from "../lib/errors";
+import { getCreatorByUserId } from "../models/creators";
 import { applyMembership, getUserByWorkosId, upsertUser } from "../models/users";
 import type { companyRole } from "../schemas/companyUsers.schema";
 
@@ -53,6 +55,18 @@ export async function seedUser(t: TestConvex, opts: SeedOptions) {
   return t.withIdentity(
     workosIdentity({ subject: opts.subject, org_id: opts.org?.id, role: opts.org?.role }),
   );
+}
+
+/** Seeds a creator account and returns its creator document ID. */
+export async function seedCreatorId(t: TestConvex, subject: string): Promise<Id<"creators">> {
+  await seedUser(t, { subject });
+  return await t.run(async (ctx) => {
+    const user = await getUserByWorkosId(ctx, subject);
+    if (user === null) throw new Error("expected seeded user");
+    const creator = await getCreatorByUserId(ctx, user._id);
+    if (creator === null) throw new Error("expected seeded creator");
+    return creator._id;
+  });
 }
 
 /** Seeds an operator and returns a client carrying the matching token. */

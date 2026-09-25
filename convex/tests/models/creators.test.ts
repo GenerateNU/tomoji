@@ -5,6 +5,7 @@ import {
   getCreatorByUserId,
   listCreators,
   requireCreatorProfile,
+  requireCreatorProfileById,
   updateCreatorProfile,
 } from "../../models/creators";
 import { deactivateUser, getUserByWorkosId } from "../../models/users";
@@ -260,6 +261,97 @@ describe("updateCreatorProfile", () => {
           if (user === null) throw new Error("expected seeded user");
           return await updateCreatorProfile(ctx, user, { xId: "missing" });
         }),
+      "not_found",
+    );
+  });
+});
+
+describe("requireCreatorProfileById", () => {
+  test("returns all user-facing fields for an active creator", async () => {
+    const t = convexTest(schema, modules);
+    await seedUser(t, { subject: "model_creator_get", email: "creator@example.com" });
+
+    const result = await t.run(async (ctx) => {
+      const user = await getUserByWorkosId(ctx, "model_creator_get");
+      if (user === null) throw new Error("expected seeded user");
+      const creator = await getCreatorByUserId(ctx, user._id);
+      if (creator === null) throw new Error("expected seeded creator");
+      await ctx.db.patch("users", user._id, {
+        name: "Creator Name",
+        profilePicture: "https://example.com/profile.png",
+      });
+      await updateCreatorProfile(ctx, user, {
+        xId: "creator_x",
+        githubLink: "https://github.com/creator",
+        phoneNumber: "+15555550123",
+      });
+      return {
+        creatorId: creator._id,
+        profile: await requireCreatorProfileById(ctx, creator._id),
+      };
+    });
+
+    expect(result.profile).toEqual({
+      creatorId: result.creatorId,
+      name: "Creator Name",
+      email: "creator@example.com",
+      profilePicture: "https://example.com/profile.png",
+      xId: "creator_x",
+      githubLink: "https://github.com/creator",
+      phoneNumber: "+15555550123",
+    });
+  });
+
+  test("reports a missing creator", async () => {
+    const t = convexTest(schema, modules);
+    await seedUser(t, { subject: "model_creator_get_missing" });
+    const creatorId = await t.run(async (ctx) => {
+      const user = await getUserByWorkosId(ctx, "model_creator_get_missing");
+      if (user === null) throw new Error("expected seeded user");
+      const creator = await getCreatorByUserId(ctx, user._id);
+      if (creator === null) throw new Error("expected seeded creator");
+      await ctx.db.delete("creators", creator._id);
+      return creator._id;
+    });
+
+    await expectApiError(
+      () => t.run(async (ctx) => await requireCreatorProfileById(ctx, creatorId)),
+      "not_found",
+    );
+  });
+
+  test("hides a creator whose user is inactive", async () => {
+    const t = convexTest(schema, modules);
+    await seedUser(t, { subject: "model_creator_get_inactive" });
+    const creatorId = await t.run(async (ctx) => {
+      const user = await getUserByWorkosId(ctx, "model_creator_get_inactive");
+      if (user === null) throw new Error("expected seeded user");
+      const creator = await getCreatorByUserId(ctx, user._id);
+      if (creator === null) throw new Error("expected seeded creator");
+      await deactivateUser(ctx, "model_creator_get_inactive");
+      return creator._id;
+    });
+
+    await expectApiError(
+      () => t.run(async (ctx) => await requireCreatorProfileById(ctx, creatorId)),
+      "not_found",
+    );
+  });
+
+  test("hides a creator row attached to a non-creator user", async () => {
+    const t = convexTest(schema, modules);
+    await seedUser(t, {
+      subject: "model_creator_get_company",
+      org: { id: "org_model_creator_get" },
+    });
+    const creatorId = await t.run(async (ctx) => {
+      const user = await getUserByWorkosId(ctx, "model_creator_get_company");
+      if (user === null) throw new Error("expected seeded user");
+      return await ctx.db.insert("creators", { userId: user._id });
+    });
+
+    await expectApiError(
+      () => t.run(async (ctx) => await requireCreatorProfileById(ctx, creatorId)),
       "not_found",
     );
   });

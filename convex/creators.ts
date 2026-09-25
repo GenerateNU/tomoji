@@ -1,11 +1,13 @@
 import { paginationOptsValidator, paginationResultValidator } from "convex/server";
 import { v } from "convex/values";
-import { companyQuery, creatorQuery } from "./lib/functions";
+import { companyQuery, creatorMutation, creatorQuery } from "./lib/functions";
 import {
   creatorProfile,
+  creatorProfileUpdate,
   listCreators,
   requireCreatorProfile,
   requireCreatorProfileById,
+  updateCreatorProfile,
 } from "./models/creators";
 
 /** Returns all user-facing fields in the authenticated creator's profile. */
@@ -32,5 +34,14 @@ export const get = companyQuery({
   returns: creatorProfile,
   handler: async (ctx, args) => {
     return await requireCreatorProfileById(ctx, args.creatorId);
+  },
+});
+
+/** Updates the authenticated creator's editable profile fields. */
+export const update = creatorMutation({
+  args: creatorProfileUpdate.fields,
+  returns: creatorProfile,
+  handler: async (ctx, args) => {
+    return await updateCreatorProfile(ctx, ctx.user, args);
   },
 });

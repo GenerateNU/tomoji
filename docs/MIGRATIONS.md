@@ -11,18 +11,21 @@ alone does not run a migration.
 
 Use your personal development deployment configured in `.env.local`
 (`CONVEX_DEPLOYMENT=dev:...`), without a deployment-key override. The current schema
-requires `firstName` and `lastName` and does not accept legacy `users.name`.
-User sync and the name backfill use the account email for a missing or blank
-first name and `""` for a missing last name. Creator `username` remains optional.
+is a temporary compatibility stage: `users.name`, `firstName`, and `lastName` are
+optional so both old and migrated records are accepted. Profile response
+validators also allow missing name parts while the migration is in progress.
+User sync and the name backfill still write name parts, using the account email
+for a missing or blank first name and `""` for a missing last name. Creator
+`username` remains optional.
 
-Existing incompatible records must be converted under a compatible deployment
-before the strict schema can deploy. The retained backfills do not bypass schema
-validation. For empty or already compatible databases, install dependencies and
-deploy normally with `just bd` or `bunx convex dev --once`.
+Deploy this compatible backend first, then run and verify the backfills. A future
+PR will make `firstName` and `lastName` required and remove legacy `name` after
+every affected development deployment has migrated. Schema validation remains
+enabled throughout; no record deletion is needed.
 
-These backfills cover users and creators. Any populated legacy workflow tables
-need a separate conversion plan. Preserve a snapshot before migrating data you
-need to keep.
+These steps assume only users and creators are populated and workflow tables are
+empty. Populated legacy workflow tables need a separate conversion plan.
+Preserve a snapshot before migrating data you need to keep.
 
 Username lookups use the normalized value in the `by_username` index. Before
 enabling these checks on a populated deployment, ensure existing nonblank
@@ -49,11 +52,16 @@ paths. Both transformations are safe to rerun and preserve already migrated data
 
 ## Run migrations
 
-After deploying the code, run the registered migrations in order:
+Install dependencies, then deploy the compatible backend and wait for a successful
+deployment before running the registered migrations:
 
 ```bash
+bunx convex dev --once
 bunx convex run --deployment dev migrations/runner:runAll
 ```
+
+Alternatively, use `just bd` to deploy and watch the backend, and run the migration
+command in a second terminal after deployment succeeds.
 
 `runAll` runs the user-name backfill first, then the creator-username backfill.
 It skips completed migrations and resumes interrupted ones.
@@ -123,6 +131,22 @@ users should have a nonblank `firstName`, a string `lastName` (possibly `""`), a
 no legacy `name`. Scanned creator profiles should have a username and no exact
 `creator_<userId>` value remaining. New profiles can still be created without a
 username afterward.
+
+Repeat deployment, migration, and verification for each teammate's personal
+development database. Keep the compatibility fields until all affected databases
+pass these checks; tightening the schema belongs in the follow-up PR.
+
+## Troubleshooting deployment
+
+- A missing `migrations` export from `runner.ts` is a code-version mismatch,
+  separate from schema validation. Use a consistent checkout: `runner.ts` must
+  export the shared `migrations` instance, and dated filenames and imports must
+  match the checked-in version. Changing the users schema does not fix this
+  import error.
+- A validation error for legacy `users.name` or missing `firstName`/`lastName`
+  means the compatibility schema is not being deployed. Check the branch and
+  schema before rerunning deployment; backfills cannot run until their compatible
+  code is deployed.
 
 ## Add a migration
 

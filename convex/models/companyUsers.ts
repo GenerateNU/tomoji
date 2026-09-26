@@ -37,8 +37,8 @@ export const companyMember = v.object({
   membershipId: v.id("companyUsers"),
   userId: v.id("users"),
   role: companyRole,
-  firstName: v.string(),
-  lastName: v.string(),
+  firstName: v.optional(v.string()),
+  lastName: v.optional(v.string()),
   email: v.string(),
   profilePicture: v.optional(v.string()),
 });

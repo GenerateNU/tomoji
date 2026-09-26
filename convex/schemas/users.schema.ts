@@ -5,8 +5,10 @@ export const userRole = v.union(v.literal("creator"), v.literal("company"), v.li
 
 export const usersTable = defineTable({
   workosId: v.string(),
-  firstName: v.string(), // Nonblank; enforced by the model.
-  lastName: v.string(), // May be empty.
+  // Temporary compatibility until all existing users have been migrated.
+  name: v.optional(v.string()),
+  firstName: v.optional(v.string()), // New writes enforce a nonblank value.
+  lastName: v.optional(v.string()), // New writes may use an empty string.
   email: v.string(),
   role: userRole,
   isActive: v.boolean(),

@@ -21,14 +21,14 @@ convex/
   http.ts              HTTP routes, currently only used for webhooks
 ```
 
-**Keep route files thin.** They should validate arguments and delegate the actual work to the model layer. Anything that interacts with the database belongs in `models/`. This makes the logic easier to test directly and allows it to be reused by other routes without creating circular imports.
+**Keep route files thin.** They should validate arguments and delegate the actual work to the model layer. Database access and business rules for application routes belong in `models/`. This makes the logic easier to test directly and allows it to be reused by other routes without creating circular imports. One-time migration logic lives in `migrations/` instead.
 
 **Keep dependencies flowing in one direction:** `<domain>.ts` → `models/`. Models should never import from route files or call routes through `ctx.runQuery(api.…)`. If a model seems to need something from a route, that usually means the logic belongs lower in the stack and should be moved into the model layer. Models can depend on other models when needed, such as the creators model reading from users, as long as those dependencies stay acyclic.
 
-Migration definitions use the shared `migrations` instance in
-`migrations/runner.ts` and delegate transformations to `models/`.
-Register dated migration functions in
-`migrations/runner.ts` in execution order. See [Database migrations](MIGRATIONS.md)
+Each dated migration file contains its transformation logic, helpers, and types,
+using the shared `migrations` instance in `migrations/runner.ts`. Migrations can
+reuse model helpers for shared domain rules. Register dated migration functions
+in `migrations/runner.ts` in execution order. See [Database migrations](MIGRATIONS.md)
 for running, checking, and adding migrations.
 
 ## Queries, mutations, and actions

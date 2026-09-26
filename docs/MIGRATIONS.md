@@ -2,8 +2,8 @@
 
 Migrations are defined in dated files under [convex/migrations/](../convex/migrations/)
 and registered in [runner.ts](../convex/migrations/runner.ts), which also exports
-the shared `migrations` instance. Transformations live in
-[convex/models/migrations.ts](../convex/models/migrations.ts).
+the shared `migrations` instance. Each dated file contains its migration-specific
+transformation logic, helpers, and types.
 The runner processes records in batches and tracks progress; deploying the code
 alone does not run a migration.
 
@@ -129,7 +129,8 @@ username afterward.
 1. Add a `YYYY_MM_DD_migration_title.ts` file in `convex/migrations/`. Use
    underscores because Convex module paths do not allow hyphens. Import the
    shared `migrations` instance from `./runner` and export a
-   `migrations.define(...)` definition. Keep transformation logic in `models/`.
+   `migrations.define(...)` definition. Keep its transformation logic, helpers,
+   and types in the same dated file. Reuse model helpers for shared domain rules.
 2. Register its generated `internal` function reference in the `runAll` list in
    `runner.ts`, after any migrations it depends on. The list defines execution
    order; filenames alone do not register or order migrations.

@@ -18,7 +18,6 @@ import type * as lib_authz from "../lib/authz.js";
 import type * as lib_errors from "../lib/errors.js";
 import type * as lib_functions from "../lib/functions.js";
 import type * as lib_identity from "../lib/identity.js";
-import type * as lib_migrations from "../lib/migrations.js";
 import type * as lib_validation from "../lib/validation.js";
 import type * as migrations_2026_09_26_backfill_creator_usernames from "../migrations/2026_09_26_backfill_creator_usernames.js";
 import type * as migrations_2026_09_26_backfill_user_names from "../migrations/2026_09_26_backfill_user_names.js";
@@ -49,7 +48,6 @@ declare const fullApi: ApiFromModules<{
   "lib/errors": typeof lib_errors;
   "lib/functions": typeof lib_functions;
   "lib/identity": typeof lib_identity;
-  "lib/migrations": typeof lib_migrations;
   "lib/validation": typeof lib_validation;
   "migrations/2026_09_26_backfill_creator_usernames": typeof migrations_2026_09_26_backfill_creator_usernames;
   "migrations/2026_09_26_backfill_user_names": typeof migrations_2026_09_26_backfill_user_names;

@@ -25,8 +25,9 @@ convex/
 
 **Keep dependencies flowing in one direction:** `<domain>.ts` → `models/`. Models should never import from route files or call routes through `ctx.runQuery(api.…)`. If a model seems to need something from a route, that usually means the logic belongs lower in the stack and should be moved into the model layer. Models can depend on other models when needed, such as the creators model reading from users, as long as those dependencies stay acyclic.
 
-Migration definitions use the shared component setup in `lib/migrations.ts` and
-delegate transformations to `models/`. Register dated migration functions in
+Migration definitions use the shared `migrations` instance in
+`migrations/runner.ts` and delegate transformations to `models/`.
+Register dated migration functions in
 `migrations/runner.ts` in execution order. See [Database migrations](MIGRATIONS.md)
 for running, checking, and adding migrations.
 

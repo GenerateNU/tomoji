@@ -1,5 +1,5 @@
-import { migrations } from "../lib/migrations";
 import { migrateCreatorUsername } from "../models/migrations";
+import { migrations } from "./runner";
 
 export const backfillCreatorUsernames = migrations.define({
   table: "creators",

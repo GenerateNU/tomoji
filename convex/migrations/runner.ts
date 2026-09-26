@@ -1,5 +1,8 @@
-import { internal } from "../_generated/api";
-import { migrations } from "../lib/migrations";
+import { Migrations } from "@convex-dev/migrations";
+import { components, internal } from "../_generated/api";
+import { internalMutation } from "../_generated/server";
+
+export const migrations = new Migrations(components.migrations, { internalMutation });
 
 export const run = migrations.runner();
 

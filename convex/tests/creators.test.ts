@@ -221,14 +221,35 @@ describe("creators.get", () => {
 });
 
 describe("creators.update", () => {
-  test("trims the username and preserves it when a later update omits it", async () => {
+  test("normalizes the username and allows equivalent updates by its owner", async () => {
     const t = convexTest(schema, modules);
     const asCreator = await seedUser(t, { subject: "creator_username" });
 
-    const updated = await asCreator.mutation(api.creators.update, { username: "  ada  " });
+    const updated = await asCreator.mutation(api.creators.update, { username: "  AdA  " });
     expect(updated.username).toBe("ada");
+    expect((await asCreator.mutation(api.creators.update, { username: "ada" })).username).toBe(
+      "ada",
+    );
+    expect((await asCreator.mutation(api.creators.update, { username: " ADA " })).username).toBe(
+      "ada",
+    );
     await asCreator.mutation(api.creators.update, { xId: "ada_x" });
     expect((await asCreator.query(api.creators.me, {})).username).toBe("ada");
+  });
+
+  test("returns conflict for a taken username without applying other profile edits", async () => {
+    const t = convexTest(schema, modules);
+    const asOwner = await seedUser(t, { subject: "route_username_owner" });
+    const asClaimant = await seedUser(t, { subject: "route_username_claimant" });
+    await asOwner.mutation(api.creators.update, { username: "ada" });
+    const before = await asClaimant.query(api.creators.me, {});
+
+    await expectApiError(
+      () => asClaimant.mutation(api.creators.update, { username: "ada", xId: "changed_x" }),
+      "conflict",
+    );
+
+    expect(await asClaimant.query(api.creators.me, {})).toEqual(before);
   });
 
   test("updates the authenticated creator's profile", async () => {

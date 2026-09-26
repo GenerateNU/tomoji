@@ -7,4 +7,6 @@ export const creatorsTable = defineTable({
   xId: v.optional(v.string()),
   githubLink: v.optional(v.string()),
   phoneNumber: v.optional(v.string()),
-}).index("by_userId", ["userId"]);
+})
+  .index("by_userId", ["userId"])
+  .index("by_username", ["username"]);

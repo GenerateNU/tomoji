@@ -51,8 +51,11 @@ manage their own separate data.
   use the account email when the selected first name is missing or blank, and
   `""` for a missing last name. Legacy `users.name` is not part of the active schema.
 - `username` is optional. New creator profiles can exist without it. The
-  profile-update model trims supplied usernames and rejects blank values; it
-  does not enforce username uniqueness.
+  profile-update model trims and lowercases supplied usernames and rejects blank
+  values. Profile updates and the username backfill use the `by_username` index
+  in the same mutation as the write, returning `conflict` when another creator
+  owns the normalized value. The model enforces uniqueness; the index itself is
+  not a unique constraint.
 - Timestamps such as `startsAt`, `deadline`, `offerExpiresAt`, and `offerAcceptedAt`
   are Unix milliseconds. Monetary fields use cents; `cpmRateCents` is cents per
   1,000 eligible views. Assignment compensation is stored separately from editable
@@ -116,7 +119,12 @@ runs can resume. Deploying the code alone does not execute these backfills.
   removes the legacy `name` field. It falls back to the account email when the
   selected first name is missing or blank.
 - `backfillCreatorUsernames` fills missing usernames with `creator_<userId>` and
-  preserves existing values. It does not change new-account creation behavior.
+  preserves existing values. Generated values use the same normalization and
+  uniqueness check as profile updates; a collision returns `conflict`. It does
+  not change new-account creation behavior.
 
 Both backfills preserve document IDs. Before making username required in a future
 change, update write paths, backfill existing records, and verify the data.
+Before enabling normalized username lookups on an existing database, ensure all
+nonblank usernames are trimmed and lowercase and resolve duplicate values. The
+missing-username backfill does not normalize existing choices.

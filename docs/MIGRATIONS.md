@@ -22,6 +22,11 @@ These backfills cover users and creators. Any populated legacy workflow tables
 need a separate conversion plan. Preserve a snapshot before migrating data you
 need to keep.
 
+Username lookups use the normalized value in the `by_username` index. Before
+enabling these checks on a populated deployment, ensure existing nonblank
+usernames are trimmed and lowercase and resolve duplicate values. The backfill
+only fills missing usernames; it does not normalize or rename existing choices.
+
 ## Run a migration
 
 After its code is deployed, run an exported migration by name:
@@ -39,8 +44,11 @@ Available migrations:
   or whitespace-only, it uses the account email. It removes legacy `name` and
   uses `""` for a missing last name.
 - `backfillCreatorUsernames` fills missing usernames with `creator_<userId>` and
-  preserves existing values, including empty strings. It does not change signup
-  behavior or make username required.
+  preserves existing values, including empty strings. New values are trimmed and
+  lowercased and checked through `by_username` in the same mutation as the write,
+  using the same model validation as profile updates. If another creator owns
+  that value, the migration fails with `conflict`. The index is not itself a
+  unique constraint. This does not change signup behavior or make username required.
 
 Both preserve document IDs and relationships. To run them in order:
 

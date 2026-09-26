@@ -2,6 +2,7 @@ import { components } from "../_generated/api";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx } from "../_generated/server";
 import { requireNonBlank } from "../lib/validation";
+import { requireAvailableCreatorUsername } from "./creators";
 
 export type UserFields = Pick<
   Doc<"users">,
@@ -70,5 +71,10 @@ export async function migrateCreatorUsername(
   creator: Doc<"creators">,
 ): Promise<void> {
   if (creator.username !== undefined) return;
-  await ctx.db.patch("creators", creator._id, { username: `creator_${creator.userId}` });
+  const username = await requireAvailableCreatorUsername(
+    ctx,
+    creator._id,
+    `creator_${creator.userId}`,
+  );
+  await ctx.db.patch("creators", creator._id, { username });
 }

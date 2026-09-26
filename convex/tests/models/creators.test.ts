@@ -191,6 +191,64 @@ describe("listCreators", () => {
 });
 
 describe("updateCreatorProfile", () => {
+  test.each([true, false])(
+    "rejects a username owned by another creator (active: %j) without changing either profile",
+    async (isActive) => {
+      const t = convexTest(schema, modules);
+      await seedUser(t, { subject: "username_owner" });
+      await seedUser(t, { subject: "username_claimant" });
+      const { owner, claimant, beforeOwner, beforeClaimant } = await t.run(async (ctx) => {
+        const owner = await getUserByWorkosId(ctx, "username_owner");
+        const claimant = await getUserByWorkosId(ctx, "username_claimant");
+        if (owner === null || claimant === null) throw new Error("expected seeded users");
+        await updateCreatorProfile(ctx, owner, { username: "ada" });
+        await updateCreatorProfile(ctx, claimant, { username: "grace", xId: "original_x" });
+        if (!isActive) await deactivateUser(ctx, "username_owner");
+        return {
+          owner,
+          claimant,
+          beforeOwner: await getCreatorByUserId(ctx, owner._id),
+          beforeClaimant: await getCreatorByUserId(ctx, claimant._id),
+        };
+      });
+
+      await expectApiError(
+        () =>
+          t.run(async (ctx) =>
+            updateCreatorProfile(ctx, claimant, { username: "  ADA  ", xId: "changed_x" }),
+          ),
+        "conflict",
+      );
+
+      expect(await t.run(async (ctx) => getCreatorByUserId(ctx, owner._id))).toEqual(beforeOwner);
+      expect(await t.run(async (ctx) => getCreatorByUserId(ctx, claimant._id))).toEqual(
+        beforeClaimant,
+      );
+    },
+  );
+
+  test("makes the old username available after its owner renames", async () => {
+    const t = convexTest(schema, modules);
+    await seedUser(t, { subject: "renaming_owner" });
+    await seedUser(t, { subject: "new_username_owner" });
+
+    const profiles = await t.run(async (ctx) => {
+      const owner = await getUserByWorkosId(ctx, "renaming_owner");
+      const claimant = await getUserByWorkosId(ctx, "new_username_owner");
+      if (owner === null || claimant === null) throw new Error("expected seeded users");
+      await updateCreatorProfile(ctx, owner, { username: "ada" });
+      await updateCreatorProfile(ctx, owner, { username: "augusta" });
+      await updateCreatorProfile(ctx, claimant, { username: "  ADA  " });
+      return {
+        owner: await getCreatorByUserId(ctx, owner._id),
+        claimant: await getCreatorByUserId(ctx, claimant._id),
+      };
+    });
+
+    expect(profiles.owner?.username).toBe("augusta");
+    expect(profiles.claimant?.username).toBe("ada");
+  });
+
   test.each(["", "   ", "\t\n"])(
     "rejects blank username %j without changing the profile",
     async (username) => {

@@ -65,7 +65,8 @@ export type WorkosProfile = {
 export async function upsertUser(ctx: MutationCtx, profile: WorkosProfile): Promise<Id<"users">> {
   const existing = await getUserByWorkosId(ctx, profile.workosId);
   const firstName = requireNonBlank(
-    profile.firstName === undefined ? (existing?.firstName ?? "") : (profile.firstName ?? ""),
+    (profile.firstName === undefined ? existing?.firstName : profile.firstName)?.trim() ||
+      profile.email,
     "firstName",
   );
   const lastName =

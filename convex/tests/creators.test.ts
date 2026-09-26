@@ -15,13 +15,12 @@ describe("creators.me", () => {
     { firstName: "Ada", lastName: "Lovelace" },
   ])("preserves separate name parts %j through a creator profile update", async (names) => {
     const t = convexTest(schema, modules);
-    const asCreator = await seedUser(t, { subject: "creator_names" });
+    const asCreator = await seedUser(t, { subject: "creator_names", ...names });
     const creatorId = await t.run(async (ctx) => {
       const user = await getUserByWorkosId(ctx, "creator_names");
       if (user === null) throw new Error("expected seeded user");
       const creator = await getCreatorByUserId(ctx, user._id);
       if (creator === null) throw new Error("expected seeded creator");
-      await ctx.db.patch("users", user._id, names);
       return creator._id;
     });
     const expected = { creatorId, email: "creator_names@example.com", ...names };
@@ -45,6 +44,8 @@ describe("creators.me", () => {
     const asCreator = await seedUser(t, {
       subject: "creator_me",
       email: "creator@example.com",
+      firstName: "Creator",
+      lastName: "Name",
     });
     const creatorId = await t.run(async (ctx) => {
       const user = await getUserByWorkosId(ctx, "creator_me");
@@ -53,8 +54,6 @@ describe("creators.me", () => {
       if (creator === null) throw new Error("expected seeded creator");
 
       await ctx.db.patch("users", user._id, {
-        firstName: "Creator",
-        lastName: "Name",
         profilePicture: "https://example.com/profile.png",
       });
       await updateCreatorProfile(ctx, user, {

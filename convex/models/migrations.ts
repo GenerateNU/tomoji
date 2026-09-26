@@ -28,12 +28,13 @@ export function normalizeLegacyUser(
   const lastName = user.lastName ?? source?.lastName;
   const hasNameParts = typeof firstName === "string" || typeof lastName === "string";
   // Legacy names cannot be reliably split. Keep them intact unless authoritative
-  // parts exist. An email used as a legacy name cannot supply a valid first name.
+  // parts exist. If no usable name remains, use the account email below.
   const legacyName = user.name === user.email ? "" : (user.name ?? "");
+  const selectedFirstName = firstName ?? (hasNameParts ? "" : legacyName);
 
   return {
     workosId: user.workosId,
-    firstName: requireNonBlank(firstName ?? (hasNameParts ? "" : legacyName), "firstName"),
+    firstName: requireNonBlank(selectedFirstName.trim() || user.email, "firstName"),
     lastName: lastName ?? "",
     email: user.email,
     role: user.role,
@@ -47,8 +48,12 @@ export async function migrateUserNames(
   ctx: MutationCtx,
   user: LegacyUserFields & { _id: Id<"users"> },
 ): Promise<void> {
-  if (user.name === undefined && user.firstName !== undefined && user.lastName !== undefined) {
-    requireNonBlank(user.firstName, "firstName");
+  if (
+    user.name === undefined &&
+    user.firstName !== undefined &&
+    user.firstName.trim().length > 0 &&
+    user.lastName !== undefined
+  ) {
     return;
   }
   const source: CachedNameParts | null =

@@ -177,6 +177,30 @@ describe("identity schema migrations", () => {
     });
   });
 
+  test("backfills an existing blank first name without changing the username or identity", async () => {
+    const t = setup();
+    await t.run(async (ctx) => {
+      const userId = await ctx.db.insert("users", {
+        workosId: "workos_blank_name",
+        firstName: "   ",
+        lastName: "",
+        email: "fallback@example.com",
+        role: "creator",
+        isActive: true,
+      });
+      await ctx.db.insert("creators", { userId, username: "chosen_username" });
+    });
+    const before = await readIdentityRows(t);
+
+    await runIdentityMigrations(t);
+
+    const after = await readIdentityRows(t);
+    expect(after.users).toEqual([{ ...before.users[0], firstName: "fallback@example.com" }]);
+    expect(after.creators).toEqual(before.creators);
+    await runIdentityMigrations(t);
+    expect(await readIdentityRows(t)).toEqual(after);
+  });
+
   test.each(["my_custom_username", "creator_existing_id", ""])(
     "preserves migrated name parts and username %j",
     async (username) => {

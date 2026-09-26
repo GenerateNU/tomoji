@@ -10,8 +10,8 @@ alone does not run a migration.
 Use your personal development deployment configured in `.env.local`
 (`CONVEX_DEPLOYMENT=dev:...`), without a deployment-key override. The current schema
 requires `firstName` and `lastName` and does not accept legacy `users.name`.
-The user model rejects blank first names; an empty last name is allowed.
-Creator `username` remains optional.
+User sync and the name backfill use the account email for a missing or blank
+first name and `""` for a missing last name. Creator `username` remains optional.
 
 Existing incompatible records must be converted under a compatible deployment
 before the strict schema can deploy. The retained backfills do not bypass schema
@@ -35,9 +35,9 @@ Available migrations:
 
 - `backfillUserNames` preserves existing name parts, fills missing parts from
   cached WorkOS data, and retains a whole legacy name as `firstName` only when no
-  split name parts are available. It removes legacy `name` and uses `""` for a
-  missing last name. It fails if the resulting first name is blank; it does not
-  invent a replacement for a present but invalid first name.
+  split name parts are available. If the selected first name is missing, empty,
+  or whitespace-only, it uses the account email. It removes legacy `name` and
+  uses `""` for a missing last name.
 - `backfillCreatorUsernames` fills missing usernames with `creator_<userId>` and
   preserves existing values, including empty strings. It does not change signup
   behavior or make username required.

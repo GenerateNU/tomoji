@@ -2,7 +2,7 @@
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
 import { api } from "../_generated/api";
-import { deactivateUser, getUserByWorkosId, upsertUser } from "../models/users";
+import { deactivateUser, getUserByWorkosId } from "../models/users";
 import schema from "../schema";
 import { expectApiError, seedOperator, seedUser, workosIdentity } from "./helpers";
 
@@ -27,11 +27,10 @@ describe("users.me", () => {
     { firstName: "Ada", lastName: "Lovelace" },
   ])("returns a synced user with separate name parts %j", async (names) => {
     const t = convexTest(schema, modules);
-    const asUser = await seedUser(t, { subject: "user_names" });
+    const asUser = await seedUser(t, { subject: "user_names", ...names });
     const userId = await t.run(async (ctx) => {
       const user = await getUserByWorkosId(ctx, "user_names");
       if (user === null) throw new Error("expected seeded user");
-      await ctx.db.patch("users", user._id, names);
       return user._id;
     });
 
@@ -58,36 +57,20 @@ describe("users.me", () => {
 
   test("returns a creator once synced", async () => {
     const t = convexTest(schema, modules);
-    const asUser = await seedUser(t, { subject: "user_2", email: "dev@example.com" });
+    const asUser = await seedUser(t, {
+      subject: "user_2",
+      email: "dev@example.com",
+      firstName: "Ada",
+      lastName: "Lovelace",
+    });
 
     const me = synced(await asUser.query(api.users.me, {}));
 
     expect(me.role).toBe("creator");
     expect(me.email).toBe("dev@example.com");
     expect(me).not.toHaveProperty("name");
-    expect(me.firstName).toBe("Test");
-    expect(me.lastName).toBe("");
-  });
-
-  test("returns separate name parts without a combined name", async () => {
-    const t = convexTest(schema, modules);
-    const asUser = await seedUser(t, { subject: "named_user" });
-    await t.run(
-      async (ctx) =>
-        await upsertUser(ctx, {
-          workosId: "named_user",
-          email: "ada@example.com",
-          firstName: "Ada",
-          lastName: "Lovelace",
-        }),
-    );
-
-    const me = synced(await asUser.query(api.users.me, {}));
-    expect(me).toMatchObject({
-      firstName: "Ada",
-      lastName: "Lovelace",
-    });
-    expect(me).not.toHaveProperty("name");
+    expect(me.firstName).toBe("Ada");
+    expect(me.lastName).toBe("Lovelace");
   });
 
   test("surfaces the org and company role for a company account", async () => {

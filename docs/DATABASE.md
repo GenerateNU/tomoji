@@ -47,9 +47,9 @@ manage their own separate data.
 - Indexes support lookups such as membership by user, campaigns by company, and
   applications by opportunity/status. They are **not unique constraints**; models
   must enforce uniqueness where required. Full index definitions live beside each table.
-- `firstName` and `lastName` are required strings. The user model rejects blank or
-  whitespace-only first names; an empty last name is allowed. Legacy `users.name`
-  is not part of the active schema.
+- `firstName` and `lastName` are required strings. User sync and the name backfill
+  use the account email when the selected first name is missing or blank, and
+  `""` for a missing last name. Legacy `users.name` is not part of the active schema.
 - `username` is optional. New creator profiles can exist without it. The
   profile-update model trims supplied usernames and rejects blank values; it
   does not enforce username uniqueness.
@@ -113,7 +113,8 @@ runs can resume. Deploying the code alone does not execute these backfills.
 - Add `"reset": true` to restart from the beginning, including records added after
   an earlier completed run.
 - `backfillUserNames` fills missing name parts from available identity data and
-  removes the legacy `name` field. It fails if the resulting first name is blank.
+  removes the legacy `name` field. It falls back to the account email when the
+  selected first name is missing or blank.
 - `backfillCreatorUsernames` fills missing usernames with `creator_<userId>` and
   preserves existing values. It does not change new-account creation behavior.
 

@@ -53,16 +53,22 @@ describe("normalizeLegacyUser", () => {
   });
 
   test.each([undefined, "", "   ", legacyUser.email])(
-    "rejects a legacy name %j when no valid first name is available",
+    "uses email when legacy name %j cannot supply a first name",
     (name) => {
-      expect(() => normalizeLegacyUser({ ...legacyUser, name })).toThrow(/firstName_blank/);
+      expect(normalizeLegacyUser({ ...legacyUser, name })).toMatchObject({
+        firstName: legacyUser.email,
+        lastName: "",
+      });
     },
   );
 
-  test.each(["", "   "])("rejects an existing blank first name %j", (firstName) => {
-    expect(() => normalizeLegacyUser({ ...legacyUser, firstName, lastName: "" })).toThrow(
-      /firstName_blank/,
-    );
+  test.each(["", "   "])("uses email for an existing blank first name %j", (firstName) => {
+    expect(
+      normalizeLegacyUser(
+        { ...legacyUser, firstName, lastName: "" },
+        { firstName: "Source", lastName: "Family" },
+      ),
+    ).toMatchObject({ firstName: legacyUser.email, lastName: "" });
   });
 
   test("preserves identity, permissions, inactivity, and profile while omitting system fields", () => {

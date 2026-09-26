@@ -72,15 +72,18 @@ describe("requireCreatorProfile", () => {
 describe("listCreators", () => {
   test("returns full creator profiles", async () => {
     const t = convexTest(schema, modules);
-    await seedUser(t, { subject: "model_creator_list", email: "creator@example.com" });
+    await seedUser(t, {
+      subject: "model_creator_list",
+      email: "creator@example.com",
+      firstName: "Creator",
+      lastName: "Name",
+    });
     const creatorId = await t.run(async (ctx) => {
       const user = await getUserByWorkosId(ctx, "model_creator_list");
       if (user === null) throw new Error("expected seeded user");
       const creator = await getCreatorByUserId(ctx, user._id);
       if (creator === null) throw new Error("expected seeded creator");
       await ctx.db.patch("users", user._id, {
-        firstName: "Creator",
-        lastName: "Name",
         profilePicture: "https://example.com/profile.png",
       });
       await updateCreatorProfile(ctx, user, {
@@ -116,10 +119,14 @@ describe("listCreators", () => {
     await seedUser(t, {
       subject: "model_creator_page_1",
       email: "page-one@example.com",
+      firstName: "Ada",
+      lastName: "Lovelace",
     });
     await seedUser(t, {
       subject: "model_creator_page_2",
       email: "page-two@example.com",
+      firstName: "Grace",
+      lastName: "Hopper",
     });
     const [firstCreatorId, secondCreatorId] = await t.run(async (ctx) => {
       const firstUser = await getUserByWorkosId(ctx, "model_creator_page_1");
@@ -145,8 +152,8 @@ describe("listCreators", () => {
     expect(firstPage.page).toEqual([
       {
         creatorId: firstCreatorId,
-        firstName: "Test",
-        lastName: "",
+        firstName: "Ada",
+        lastName: "Lovelace",
         email: "page-one@example.com",
       },
     ]);
@@ -154,8 +161,8 @@ describe("listCreators", () => {
     expect(secondPage.page).toEqual([
       {
         creatorId: secondCreatorId,
-        firstName: "Test",
-        lastName: "",
+        firstName: "Grace",
+        lastName: "Hopper",
         email: "page-two@example.com",
       },
     ]);
@@ -296,7 +303,12 @@ describe("updateCreatorProfile", () => {
 describe("requireCreatorProfileById", () => {
   test("returns all user-facing fields for an active creator", async () => {
     const t = convexTest(schema, modules);
-    await seedUser(t, { subject: "model_creator_get", email: "creator@example.com" });
+    await seedUser(t, {
+      subject: "model_creator_get",
+      email: "creator@example.com",
+      firstName: "Creator",
+      lastName: "Name",
+    });
 
     const result = await t.run(async (ctx) => {
       const user = await getUserByWorkosId(ctx, "model_creator_get");
@@ -304,8 +316,6 @@ describe("requireCreatorProfileById", () => {
       const creator = await getCreatorByUserId(ctx, user._id);
       if (creator === null) throw new Error("expected seeded creator");
       await ctx.db.patch("users", user._id, {
-        firstName: "Creator",
-        lastName: "Name",
         profilePicture: "https://example.com/profile.png",
       });
       await updateCreatorProfile(ctx, user, {

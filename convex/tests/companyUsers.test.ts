@@ -19,11 +19,11 @@ describe("companyUsers.list", () => {
     const asCompany = await seedUser(t, {
       subject: "member_names",
       org: { id: "org_names" },
+      ...names,
     });
     const userId = await t.run(async (ctx) => {
       const user = await getUserByWorkosId(ctx, "member_names");
       if (user === null) throw new Error("expected seeded user");
-      await ctx.db.patch("users", user._id, names);
       return user._id;
     });
 

@@ -21,7 +21,7 @@ manage their own separate data.
 | `applications`  | A creator's application, note, status, and optional offer expiry/acceptance timestamps.                                                        | `opportunityId` → `opportunities`; `creatorId` → `creators`.                    |
 | `assignments`   | A creator's engagement on an opportunity, including agreed compensation, review setting, and status.                                           | `opportunityId` → `opportunities`; `creatorId` → `creators`.                    |
 | `submissions`   | Draft URL/description, review status, optional review note, and review attribution.                                                            | `assignmentId` → `assignments`; human `reviewedBy` → `companyUsers`.            |
-| `posts`         | Published URL, posting time, verification flag, engagement counts, and last update time.                                                       | `submissionId` → `submissions`.                                                 |
+| `posts`         | Published URL, posting time, verification flag, optional engagement counts, and optional metrics update time.                                  | `submissionId` → `submissions`.                                                 |
 | `disputes`      | Assignment dispute: reason, description, resolution flag, and optional resolution.                                                             | `assignmentId` → `assignments`; `openedBy` and optional `resolvedBy` → `users`. |
 
 ## Relationships
@@ -60,6 +60,10 @@ manage their own separate data.
   are Unix milliseconds. Monetary fields use cents; `cpmRateCents` is cents per
   1,000 eligible views. Assignment compensation is stored separately from editable
   opportunity defaults.
+- Post metrics (`likes`, `comments`, `reposts`, and `views`) are optional. A missing
+  metric means unavailable or not yet fetched; `0` means a measured zero.
+  Optional `metricsUpdatedAt` records when metrics were last refreshed, in Unix
+  milliseconds. `submissionId`, `url`, `postedAt`, and `isVerified` remain required.
 - Campaign creation requires a nonnegative safe-integer `budgetCents`, finite
   timestamps, and an `endsAt` strictly after `startsAt` when provided. Workflow
   money/count fields currently use `v.number()`; their range rules and transactional

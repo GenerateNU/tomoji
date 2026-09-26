@@ -6,9 +6,9 @@ export const postsTable = defineTable({
   url: v.string(),
   postedAt: v.number(), // Unix milliseconds.
   isVerified: v.boolean(),
-  likes: v.number(),
-  comments: v.number(),
-  reposts: v.number(),
-  views: v.number(),
-  lastUpdatedAt: v.number(), // Unix milliseconds.
+  likes: v.optional(v.number()),
+  comments: v.optional(v.number()),
+  reposts: v.optional(v.number()),
+  views: v.optional(v.number()),
+  metricsUpdatedAt: v.optional(v.number()), // Unix milliseconds.
 }).index("by_submissionId", ["submissionId"]);

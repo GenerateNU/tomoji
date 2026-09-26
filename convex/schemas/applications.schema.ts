@@ -16,6 +16,7 @@ export const applicationsTable = defineTable({
   creatorId: v.id("creators"),
   note: v.string(),
   status: applicationStatus,
+  offerSentAt: v.optional(v.number()), // Unix milliseconds.
   offerExpiresAt: v.optional(v.number()), // Unix milliseconds.
   offerAcceptedAt: v.optional(v.number()), // Unix milliseconds.
 })

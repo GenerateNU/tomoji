@@ -18,7 +18,7 @@ manage their own separate data.
 | `companyUsers`  | Company membership and the member's `admin` or `member` role.                                                                                  | `userId` → `users`; `companyId` → `companies`.                                  |
 | `campaigns`     | Campaign brief: title, objective, product, audience, description, budget, and schedule.                                                        | `companyId` → `companies`; `createdBy` → `companyUsers`.                        |
 | `opportunities` | A campaign's creator opening: eligibility, application/slot limits, deadline, content requirements, default compensation, and review settings. | `campaignId` → `campaigns`; `createdBy` → `companyUsers`.                       |
-| `applications`  | A creator's application, note, status, and optional offer expiry/acceptance timestamps.                                                        | `opportunityId` → `opportunities`; `creatorId` → `creators`.                    |
+| `applications`  | A creator's application, note, status, and optional offer sent/expiry/acceptance timestamps.                                                   | `opportunityId` → `opportunities`; `creatorId` → `creators`.                    |
 | `assignments`   | A creator's engagement on an opportunity, including agreed compensation, review setting, and status.                                           | `opportunityId` → `opportunities`; `creatorId` → `creators`.                    |
 | `submissions`   | Draft URL/description, review status, optional review note, and review attribution.                                                            | `assignmentId` → `assignments`; human `reviewedBy` → `companyUsers`.            |
 | `posts`         | Published URL, posting time, verification flag, optional engagement counts, and optional metrics update time.                                  | `submissionId` → `submissions`.                                                 |
@@ -56,10 +56,11 @@ manage their own separate data.
   in the same mutation as the write. Profile updates return `conflict` when another
   creator owns the normalized value; the backfill retries with a new random value.
   The model enforces uniqueness; the index itself is not a unique constraint.
-- Timestamps such as `startsAt`, `deadline`, `offerExpiresAt`, and `offerAcceptedAt`
-  are Unix milliseconds. Monetary fields use cents; `cpmRateCents` is cents per
-  1,000 eligible views. Assignment compensation is stored separately from editable
-  opportunity defaults.
+- Timestamps such as `startsAt`, `deadline`, `offerSentAt`, `offerExpiresAt`, and
+  `offerAcceptedAt` are Unix milliseconds. Optional `offerSentAt` records when an
+  offer was sent; absent means no send time was recorded. Monetary fields use
+  cents; `cpmRateCents` is cents per 1,000 eligible views. Assignment compensation
+  is stored separately from editable opportunity defaults.
 - Post metrics (`likes`, `comments`, `reposts`, and `views`) are optional. A missing
   metric means unavailable or not yet fetched; `0` means a measured zero.
   Optional `metricsUpdatedAt` records when metrics were last refreshed, in Unix

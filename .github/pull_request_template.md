@@ -50,9 +50,9 @@ Related to #
 
 - [ ] None, this PR is complete and production-ready
 - [ ] The following items are intentionally deferred:
-    - ***
-    - ***
-    - ***
+  - ***
+  - ***
+  - ***
 
 ### Code Quality
 

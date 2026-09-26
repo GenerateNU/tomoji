@@ -8,7 +8,7 @@ import { describe, expect, test } from "vitest";
 import { components, internal } from "../_generated/api";
 import schema from "../schema";
 
-// The temporary migration schema accepts existing documents and their replacements.
+// Legacy backfills must run before the strict schema is deployed.
 const transitionSchema = defineSchema({
   ...schema.tables,
   users: defineTable(
@@ -80,6 +80,8 @@ describe("identity schema migrations", () => {
         const userId = await ctx.db.insert("users", {
           workosId,
           email: `${workosId}@example.com`,
+          firstName: "Creator",
+          lastName: "",
           role: "creator",
           isActive: true,
         });
@@ -182,7 +184,7 @@ describe("identity schema migrations", () => {
       await t.run(async (ctx) => {
         const userId = await ctx.db.insert("users", {
           workosId: "workos_current",
-          firstName: "",
+          firstName: "Chosen",
           lastName: "Chosen Name",
           email: "current@example.com",
           role: "creator",

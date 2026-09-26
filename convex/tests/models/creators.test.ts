@@ -145,7 +145,7 @@ describe("listCreators", () => {
     expect(firstPage.page).toEqual([
       {
         creatorId: firstCreatorId,
-        firstName: "",
+        firstName: "Test",
         lastName: "",
         email: "page-one@example.com",
       },
@@ -154,7 +154,7 @@ describe("listCreators", () => {
     expect(secondPage.page).toEqual([
       {
         creatorId: secondCreatorId,
-        firstName: "",
+        firstName: "Test",
         lastName: "",
         email: "page-two@example.com",
       },

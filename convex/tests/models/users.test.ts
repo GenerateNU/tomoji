@@ -17,6 +17,100 @@ import { expectApiError, seedUser, workosIdentity } from "../helpers";
 const modules = import.meta.glob("../../**/*.ts");
 
 describe("upsertUser", () => {
+  test.each([undefined, null, "", "   ", "\t\n"])(
+    "rejects missing or blank firstName %j without creating an account",
+    async (firstName) => {
+      const t = convexTest(schema, modules);
+
+      await expectApiError(
+        () =>
+          t.run(async (ctx) =>
+            upsertUser(ctx, {
+              workosId: "invalid_first_name",
+              email: "invalid@example.com",
+              firstName,
+            }),
+          ),
+        "invalid_state",
+      );
+
+      expect(await t.run(async (ctx) => ctx.db.query("users").take(1))).toEqual([]);
+      expect(await t.run(async (ctx) => ctx.db.query("creators").take(1))).toEqual([]);
+    },
+  );
+
+  test.each([null, "", "   ", "\t\n"])(
+    "rejects an explicit blank firstName update %j without changing the account",
+    async (firstName) => {
+      const t = convexTest(schema, modules);
+      const userId = await t.run(async (ctx) =>
+        upsertUser(ctx, {
+          workosId: "existing_first_name",
+          email: "original@example.com",
+          firstName: "Ada",
+          lastName: "Lovelace",
+        }),
+      );
+      const before = await t.run(async (ctx) => ctx.db.get("users", userId));
+
+      await expectApiError(
+        () =>
+          t.run(async (ctx) =>
+            upsertUser(ctx, {
+              workosId: "existing_first_name",
+              email: "updated@example.com",
+              firstName,
+              lastName: "Changed",
+            }),
+          ),
+        "invalid_state",
+      );
+
+      expect(await t.run(async (ctx) => ctx.db.get("users", userId))).toEqual(before);
+    },
+  );
+
+  test("preserves the existing firstName when an update omits it", async () => {
+    const t = convexTest(schema, modules);
+    const userId = await t.run(async (ctx) =>
+      upsertUser(ctx, {
+        workosId: "preserved_first_name",
+        email: "original@example.com",
+        firstName: "Ada",
+      }),
+    );
+
+    await t.run(async (ctx) =>
+      upsertUser(ctx, {
+        workosId: "preserved_first_name",
+        email: "updated@example.com",
+      }),
+    );
+
+    expect(await t.run(async (ctx) => ctx.db.get("users", userId))).toMatchObject({
+      firstName: "Ada",
+      lastName: "",
+      email: "updated@example.com",
+    });
+  });
+
+  test("accepts an empty lastName with a nonblank firstName", async () => {
+    const t = convexTest(schema, modules);
+    const userId = await t.run(async (ctx) =>
+      upsertUser(ctx, {
+        workosId: "single_name",
+        email: "single@example.com",
+        firstName: "Cher",
+        lastName: "",
+      }),
+    );
+
+    expect(await t.run(async (ctx) => ctx.db.get("users", userId))).toMatchObject({
+      firstName: "Cher",
+      lastName: "",
+    });
+  });
+
   test("creates a creator with a profile row and no generated username", async () => {
     const t = convexTest(schema, modules);
     await seedUser(t, { subject: "u1" });
@@ -37,15 +131,6 @@ describe("upsertUser", () => {
 
     const users = await t.run(async (ctx) => await ctx.db.query("users").collect());
     expect(users).toHaveLength(1);
-  });
-
-  test("stores empty name parts when WorkOS has no name", async () => {
-    const t = convexTest(schema, modules);
-    await seedUser(t, { subject: "u3", email: "dev@example.com" });
-
-    const user = await t.run(async (ctx) => await getUserByWorkosId(ctx, "u3"));
-    expect(user).toMatchObject({ firstName: "", lastName: "" });
-    expect(user).not.toHaveProperty("name");
   });
 
   test("syncs separate name parts and preserves a chosen creator username", async () => {

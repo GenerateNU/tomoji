@@ -29,7 +29,11 @@ function createArgs(overrides: Partial<CreateArgs> = {}): CreateArgs {
 
 async function seedOrphanedCompanyUser(t: TestConvex, subject: string, orgId: string) {
   await t.run(async (ctx) => {
-    await upsertUser(ctx, { workosId: subject, email: `${subject}@example.com` });
+    await upsertUser(ctx, {
+      workosId: subject,
+      email: `${subject}@example.com`,
+      firstName: "Test",
+    });
     const user = await getUserByWorkosId(ctx, subject);
     await ctx.db.patch("users", user!._id, { role: "company" });
   });

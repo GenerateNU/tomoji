@@ -78,7 +78,7 @@ describe("companyContext", () => {
   test("rejects an org whose company row has not synced", async () => {
     const t = convexTest(schema, modules);
     await t.run(async (ctx) => {
-      await upsertUser(ctx, { workosId: "u10", email: "u10@example.com" });
+      await upsertUser(ctx, { workosId: "u10", email: "u10@example.com", firstName: "Test" });
       const user = await getUserByWorkosId(ctx, "u10");
       await ctx.db.patch("users", user!._id, { role: "company" });
     });

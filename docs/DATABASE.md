@@ -47,9 +47,12 @@ manage their own separate data.
 - Indexes support lookups such as membership by user, campaigns by company, and
   applications by opportunity/status. They are **not unique constraints**; models
   must enforce uniqueness where required. Full index definitions live beside each table.
-- `firstName`, `lastName`, and `username` are optional for now. New creator profiles
-  can exist without a username. The profile-update model trims supplied usernames
-  and rejects blank values; it does not enforce username uniqueness.
+- `firstName` and `lastName` are required strings. The user model rejects blank or
+  whitespace-only first names; an empty last name is allowed. Legacy `users.name`
+  is not part of the active schema.
+- `username` is optional. New creator profiles can exist without it. The
+  profile-update model trims supplied usernames and rejects blank values; it
+  does not enforce username uniqueness.
 - Timestamps such as `startsAt`, `deadline`, `offerExpiresAt`, and `offerAcceptedAt`
   are Unix milliseconds. Monetary fields use cents; `cpmRateCents` is cents per
   1,000 eligible views. Assignment compensation is stored separately from editable
@@ -88,6 +91,11 @@ authorization rules, and state transitions still need to be implemented.
 
 ## Migrations
 
+See [Database migrations](MIGRATIONS.md) for commands and completion checks.
+Existing records with legacy `users.name` or missing required name fields must
+be converted under a compatible deployment before the current schema can deploy.
+Keeping backfill functions does not bypass schema validation.
+
 Migrations are registered in [convex/migrations.ts](../convex/migrations.ts), with
 transformation logic in [convex/models/migrations.ts](../convex/models/migrations.ts).
 After deploying the migration code to your development deployment, run:
@@ -105,11 +113,9 @@ runs can resume. Deploying the code alone does not execute these backfills.
 - Add `"reset": true` to restart from the beginning, including records added after
   an earlier completed run.
 - `backfillUserNames` fills missing name parts from available identity data and
-  removes the legacy `name` field.
+  removes the legacy `name` field. It fails if the resulting first name is blank.
 - `backfillCreatorUsernames` fills missing usernames with `creator_<userId>` and
   preserves existing values. It does not change new-account creation behavior.
 
-Both backfills preserve document IDs. Before requiring currently optional fields,
-update write paths to supply them, backfill existing records, and verify the data.
-If legacy records cannot pass a new schema, first deploy a transitional schema
-that accepts both shapes, migrate the data, then remove the legacy shape.
+Both backfills preserve document IDs. Before making username required in a future
+change, update write paths, backfill existing records, and verify the data.

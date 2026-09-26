@@ -22,31 +22,27 @@ function asCompany<T extends { synced: boolean }>(
 }
 
 describe("users.me", () => {
-  test.each([{}, { firstName: "Ada" }, { lastName: "Lovelace" }])(
-    "returns a synced user with optional name parts %j",
-    async (names) => {
-      const t = convexTest(schema, modules);
-      const asUser = await seedUser(t, { subject: "optional_user_names" });
-      const userId = await t.run(async (ctx) => {
-        const user = await getUserByWorkosId(ctx, "optional_user_names");
-        if (user === null) throw new Error("expected seeded user");
-        await ctx.db.patch("users", user._id, {
-          firstName: undefined,
-          lastName: undefined,
-          ...names,
-        });
-        return user._id;
-      });
+  test.each([
+    { firstName: "Ada", lastName: "" },
+    { firstName: "Ada", lastName: "Lovelace" },
+  ])("returns a synced user with separate name parts %j", async (names) => {
+    const t = convexTest(schema, modules);
+    const asUser = await seedUser(t, { subject: "user_names" });
+    const userId = await t.run(async (ctx) => {
+      const user = await getUserByWorkosId(ctx, "user_names");
+      if (user === null) throw new Error("expected seeded user");
+      await ctx.db.patch("users", user._id, names);
+      return user._id;
+    });
 
-      expect(await asUser.query(api.users.me, {})).toEqual({
-        synced: true,
-        userId,
-        role: "creator",
-        email: "optional_user_names@example.com",
-        ...names,
-      });
-    },
-  );
+    expect(await asUser.query(api.users.me, {})).toEqual({
+      synced: true,
+      userId,
+      role: "creator",
+      email: "user_names@example.com",
+      ...names,
+    });
+  });
 
   test("rejects a signed-out caller", async () => {
     const t = convexTest(schema, modules);
@@ -69,7 +65,7 @@ describe("users.me", () => {
     expect(me.role).toBe("creator");
     expect(me.email).toBe("dev@example.com");
     expect(me).not.toHaveProperty("name");
-    expect(me.firstName).toBe("");
+    expect(me.firstName).toBe("Test");
     expect(me.lastName).toBe("");
   });
 
@@ -214,7 +210,7 @@ describe("users.list", () => {
     expect(secondPage.page).toEqual([
       expect.objectContaining({
         workosId: "later_page_creator",
-        firstName: "",
+        firstName: "Test",
         lastName: "",
         email: "later-page@example.com",
         role: "creator",

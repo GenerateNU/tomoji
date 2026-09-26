@@ -4,6 +4,7 @@ import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { requireIdentity } from "../lib/authz";
 import { apiError } from "../lib/errors";
 import { findOrgId } from "../lib/identity";
+import { requireNonBlank } from "../lib/validation";
 import type { companyRole } from "../schemas/companyUsers.schema";
 import type { Infer } from "convex/values";
 import { getCompanyByWorkosId } from "./companies";
@@ -63,8 +64,10 @@ export type WorkosProfile = {
 
 export async function upsertUser(ctx: MutationCtx, profile: WorkosProfile): Promise<Id<"users">> {
   const existing = await getUserByWorkosId(ctx, profile.workosId);
-  const firstName =
-    profile.firstName === undefined ? (existing?.firstName ?? "") : (profile.firstName ?? "");
+  const firstName = requireNonBlank(
+    profile.firstName === undefined ? (existing?.firstName ?? "") : (profile.firstName ?? ""),
+    "firstName",
+  );
   const lastName =
     profile.lastName === undefined ? (existing?.lastName ?? "") : (profile.lastName ?? "");
   const profilePicture = profile.profilePicture ?? existing?.profilePicture;

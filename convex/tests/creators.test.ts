@@ -10,33 +10,29 @@ import { expectApiError, seedCreatorId, seedOperator, seedUser } from "./helpers
 const modules = import.meta.glob("../**/*.ts");
 
 describe("creators.me", () => {
-  test.each([{}, { firstName: "Ada" }, { lastName: "Lovelace" }])(
-    "preserves optional name parts %j through a creator profile update",
-    async (names) => {
-      const t = convexTest(schema, modules);
-      const asCreator = await seedUser(t, { subject: "optional_creator_names" });
-      const creatorId = await t.run(async (ctx) => {
-        const user = await getUserByWorkosId(ctx, "optional_creator_names");
-        if (user === null) throw new Error("expected seeded user");
-        const creator = await getCreatorByUserId(ctx, user._id);
-        if (creator === null) throw new Error("expected seeded creator");
-        await ctx.db.patch("users", user._id, {
-          firstName: undefined,
-          lastName: undefined,
-          ...names,
-        });
-        return creator._id;
-      });
-      const expected = { creatorId, email: "optional_creator_names@example.com", ...names };
+  test.each([
+    { firstName: "Ada", lastName: "" },
+    { firstName: "Ada", lastName: "Lovelace" },
+  ])("preserves separate name parts %j through a creator profile update", async (names) => {
+    const t = convexTest(schema, modules);
+    const asCreator = await seedUser(t, { subject: "creator_names" });
+    const creatorId = await t.run(async (ctx) => {
+      const user = await getUserByWorkosId(ctx, "creator_names");
+      if (user === null) throw new Error("expected seeded user");
+      const creator = await getCreatorByUserId(ctx, user._id);
+      if (creator === null) throw new Error("expected seeded creator");
+      await ctx.db.patch("users", user._id, names);
+      return creator._id;
+    });
+    const expected = { creatorId, email: "creator_names@example.com", ...names };
 
-      expect(await asCreator.query(api.creators.me, {})).toEqual(expected);
-      expect(await asCreator.mutation(api.creators.update, { username: "ada" })).toEqual({
-        ...expected,
-        username: "ada",
-      });
-      expect(await asCreator.query(api.creators.me, {})).toEqual({ ...expected, username: "ada" });
-    },
-  );
+    expect(await asCreator.query(api.creators.me, {})).toEqual(expected);
+    expect(await asCreator.mutation(api.creators.update, { username: "ada" })).toEqual({
+      ...expected,
+      username: "ada",
+    });
+    expect(await asCreator.query(api.creators.me, {})).toEqual({ ...expected, username: "ada" });
+  });
 
   test("rejects a signed-out caller", async () => {
     const t = convexTest(schema, modules);
@@ -195,7 +191,7 @@ describe("creators.get", () => {
 
     expect(await asCompany.query(api.creators.get, { creatorId })).toEqual({
       creatorId,
-      firstName: "",
+      firstName: "Test",
       lastName: "",
       email: "target@example.com",
     });
@@ -250,7 +246,7 @@ describe("creators.update", () => {
     });
 
     expect(profile).toMatchObject({
-      firstName: "",
+      firstName: "Test",
       lastName: "",
       email: "creator@example.com",
       xId: "creator_x",

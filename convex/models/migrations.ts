@@ -1,6 +1,7 @@
 import { components } from "../_generated/api";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx } from "../_generated/server";
+import { requireNonBlank } from "../lib/validation";
 
 export type UserFields = Pick<
   Doc<"users">,
@@ -27,12 +28,12 @@ export function normalizeLegacyUser(
   const lastName = user.lastName ?? source?.lastName;
   const hasNameParts = typeof firstName === "string" || typeof lastName === "string";
   // Legacy names cannot be reliably split. Keep them intact unless authoritative
-  // parts exist. A legacy email-as-name becomes empty name parts.
+  // parts exist. An email used as a legacy name cannot supply a valid first name.
   const legacyName = user.name === user.email ? "" : (user.name ?? "");
 
   return {
     workosId: user.workosId,
-    firstName: firstName ?? (hasNameParts ? "" : legacyName),
+    firstName: requireNonBlank(firstName ?? (hasNameParts ? "" : legacyName), "firstName"),
     lastName: lastName ?? "",
     email: user.email,
     role: user.role,
@@ -41,12 +42,13 @@ export function normalizeLegacyUser(
   };
 }
 
-/** Run under the transitional schema, before requiring the new name fields. */
+/** Run under a compatible legacy schema before deploying required name fields. */
 export async function migrateUserNames(
   ctx: MutationCtx,
   user: LegacyUserFields & { _id: Id<"users"> },
 ): Promise<void> {
   if (user.name === undefined && user.firstName !== undefined && user.lastName !== undefined) {
+    requireNonBlank(user.firstName, "firstName");
     return;
   }
   const source: CachedNameParts | null =

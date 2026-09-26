@@ -41,6 +41,7 @@ export async function seedUser(t: TestConvex, opts: SeedOptions) {
     await upsertUser(ctx, {
       workosId: opts.subject,
       email: opts.email ?? `${opts.subject}@example.com`,
+      firstName: "Test",
     });
     if (opts.org) {
       await applyMembership(ctx, {

@@ -8,8 +8,8 @@ import { requireNonBlank } from "../lib/validation";
 export const creatorProfile = v.object({
   creatorId: v.id("creators"),
   username: v.optional(v.string()),
-  firstName: v.optional(v.string()),
-  lastName: v.optional(v.string()),
+  firstName: v.string(),
+  lastName: v.string(),
   email: v.string(),
   profilePicture: v.optional(v.string()),
   xId: v.optional(v.string()),

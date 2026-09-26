@@ -15,14 +15,6 @@ export const authKit = new AuthKit<DataModel>(components.workOSAuthKit, {
   ],
 });
 
-type WorkosName = { name: string | null; firstName: string | null; lastName: string | null };
-
-function displayName(user: WorkosName) {
-  if (user.name) return user.name;
-  const parts = [user.firstName, user.lastName].filter(Boolean);
-  return parts.length > 0 ? parts.join(" ") : undefined;
-}
-
 type WorkosMembership = {
   userId: string;
   organizationId: string;
@@ -46,7 +38,8 @@ export const { authKitEvent } = authKit.events({
     await upsertUser(ctx, {
       workosId: event.data.id,
       email: event.data.email,
-      name: displayName(event.data),
+      firstName: event.data.firstName,
+      lastName: event.data.lastName,
       profilePicture: event.data.profilePictureUrl ?? undefined,
     });
   },
@@ -54,7 +47,8 @@ export const { authKitEvent } = authKit.events({
     await upsertUser(ctx, {
       workosId: event.data.id,
       email: event.data.email,
-      name: displayName(event.data),
+      firstName: event.data.firstName,
+      lastName: event.data.lastName,
       profilePicture: event.data.profilePictureUrl ?? undefined,
     });
   },

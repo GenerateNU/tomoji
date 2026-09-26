@@ -13,7 +13,8 @@ import { userRole } from "./schemas/users.schema";
 const identityFields = {
   synced: v.literal(true),
   userId: v.id("users"),
-  name: v.string(),
+  firstName: v.optional(v.string()),
+  lastName: v.optional(v.string()),
   email: v.string(),
 };
 
@@ -42,7 +43,8 @@ export const me = query({
     const base = {
       synced: true as const,
       userId: user._id,
-      name: user.name,
+      firstName: user.firstName,
+      lastName: user.lastName,
       email: user.email,
     };
 

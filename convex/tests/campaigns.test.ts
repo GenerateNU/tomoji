@@ -17,20 +17,23 @@ type CreateArgs = FunctionArgs<typeof api.campaigns.create>;
 function createArgs(overrides: Partial<CreateArgs> = {}): CreateArgs {
   return {
     title: "Spring launch",
-    description: "Short-form video for the spring launch.",
-    format: "video",
-    status: "draft",
-    isVetted: false,
-    maxApplications: 10,
-    maxOpenings: 3,
-    deadline: Date.now() + HOUR,
+    objective: "Introduce the new skincare range",
+    product: "Daily moisturizer",
+    audience: "Gen Z skincare enthusiasts",
+    description: "Campaign supporting the spring launch.",
+    budgetCents: 250_000,
+    startsAt: Date.now() + HOUR,
     ...overrides,
   };
 }
 
 async function seedOrphanedCompanyUser(t: TestConvex, subject: string, orgId: string) {
   await t.run(async (ctx) => {
-    await upsertUser(ctx, { workosId: subject, email: `${subject}@example.com` });
+    await upsertUser(ctx, {
+      workosId: subject,
+      email: `${subject}@example.com`,
+      firstName: "Test",
+    });
     const user = await getUserByWorkosId(ctx, subject);
     await ctx.db.patch("users", user!._id, { role: "company" });
   });
@@ -48,9 +51,11 @@ describe("campaigns.create", () => {
 
     expect(stored?.title).toBe(args.title);
     expect(stored?.description).toBe(args.description);
-    expect(stored?.format).toBe(args.format);
-    expect(stored?.maxOpenings).toBe(args.maxOpenings);
-    expect(stored?.deadline).toBe(args.deadline);
+    expect(stored?.objective).toBe(args.objective);
+    expect(stored?.product).toBe(args.product);
+    expect(stored?.audience).toBe(args.audience);
+    expect(stored?.budgetCents).toBe(args.budgetCents);
+    expect(stored?.startsAt).toBe(args.startsAt);
   });
 
   test("derives the company from the caller's membership, not the client", async () => {
@@ -73,45 +78,21 @@ describe("campaigns.create", () => {
     expect(stored?.createdBy).toBe(membershipId);
   });
 
-  test("persists the optional brief fields", async () => {
+  test("persists the optional campaign end time", async () => {
     const t = convexTest(schema, modules);
     const asMember = await seedUser(t, { subject: "cc4", org: { id: "org_acme" } });
-    const args = createArgs({
-      audience: "Gen Z skincare enthusiasts",
-      talkingPoints: ["Vegan formula", "Cruelty-free"],
-      prohibitedClaims: ["Medical claims"],
-      disclosureRequirements: ["#ad"],
-      usageRights: "90 days paid usage",
-    });
+    const args = createArgs({ endsAt: Date.now() + 2 * HOUR });
 
     const id = await asMember.mutation(api.campaigns.create, args);
     const stored = await t.run(async (ctx) => await ctx.db.get("campaigns", id));
 
-    expect(stored?.audience).toBe(args.audience);
-    expect(stored?.talkingPoints).toEqual(args.talkingPoints);
-    expect(stored?.prohibitedClaims).toEqual(args.prohibitedClaims);
-    expect(stored?.disclosureRequirements).toEqual(args.disclosureRequirements);
-    expect(stored?.usageRights).toBe(args.usageRights);
+    expect(stored?.endsAt).toBe(args.endsAt);
   });
 
-  test("accepts an open, vetted campaign from a member", async () => {
-    // Pins current behavior: status/isVetted are caller-supplied. Revisit if
-    // these become server-controlled.
-    const t = convexTest(schema, modules);
-    const asMember = await seedUser(t, { subject: "cc5", org: { id: "org_acme" } });
-    const args = createArgs({ status: "open", isVetted: true });
-
-    const id = await asMember.mutation(api.campaigns.create, args);
-    const stored = await t.run(async (ctx) => await ctx.db.get("campaigns", id));
-
-    expect(stored?.status).toBe("open");
-    expect(stored?.isVetted).toBe(true);
-  });
-
-  test("rejects a deadline in the past", async () => {
+  test("rejects a fractional budget without creating a campaign", async () => {
     const t = convexTest(schema, modules);
     const asMember = await seedUser(t, { subject: "cc6", org: { id: "org_acme" } });
-    const args = createArgs({ deadline: Date.now() - HOUR });
+    const args = createArgs({ budgetCents: 0.5 });
 
     await expectApiError(() => asMember.mutation(api.campaigns.create, args), "invalid_state");
 

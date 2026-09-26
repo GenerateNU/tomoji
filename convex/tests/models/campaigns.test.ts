@@ -27,149 +27,94 @@ function campaignDoc(
   return {
     ...owner,
     title: "Spring launch",
-    description: "Short-form video for the spring launch.",
-    format: "video",
-    status: "draft",
-    isVetted: false,
-    maxApplications: 10,
-    maxOpenings: 3,
-    deadline: Date.now() + HOUR,
+    objective: "Introduce the new skincare range",
+    product: "Daily moisturizer",
+    audience: "Gen Z skincare enthusiasts",
+    description: "Campaign supporting the spring launch.",
+    budgetCents: 250_000,
+    startsAt: Date.now() + HOUR,
     ...overrides,
   };
 }
 
 describe("createCampaign", () => {
-  test("stores a campaign and returns its id", async () => {
+  test("stores the campaign brief, budget, and schedule", async () => {
     const t = convexTest(schema, modules);
     const owner = await seedOwner(t, "ca1");
+    const doc = campaignDoc(owner);
 
-    const id = await t.run(async (ctx) => await createCampaign(ctx, campaignDoc(owner)));
+    const id = await t.run(async (ctx) => await createCampaign(ctx, doc));
     const stored = await t.run(async (ctx) => await ctx.db.get("campaigns", id));
 
-    expect(stored).not.toBeNull();
-    expect(stored?.title).toBe("Spring launch");
-    expect(stored?.companyId).toBe(owner.companyId);
-    expect(stored?.createdBy).toBe(owner.createdBy);
-    expect(stored?.status).toBe("draft");
+    expect(stored).toMatchObject(doc);
+    expect(stored?.endsAt).toBeUndefined();
   });
 
-  test("persists the optional brief fields", async () => {
+  test("persists an optional end time one millisecond after the start", async () => {
     const t = convexTest(schema, modules);
     const owner = await seedOwner(t, "ca2");
-    const doc = campaignDoc(owner, {
-      audience: "Gen Z skincare enthusiasts",
-      talkingPoints: ["Vegan formula", "Cruelty-free"],
-      prohibitedClaims: ["Medical claims"],
-      disclosureRequirements: ["#ad"],
-      usageRights: "90 days paid usage",
-    });
+    const startsAt = Date.now() + HOUR;
+    const doc = campaignDoc(owner, { startsAt, endsAt: startsAt + 1 });
 
     const id = await t.run(async (ctx) => await createCampaign(ctx, doc));
     const stored = await t.run(async (ctx) => await ctx.db.get("campaigns", id));
 
-    expect(stored?.audience).toBe(doc.audience);
-    expect(stored?.talkingPoints).toEqual(doc.talkingPoints);
-    expect(stored?.prohibitedClaims).toEqual(doc.prohibitedClaims);
-    expect(stored?.disclosureRequirements).toEqual(doc.disclosureRequirements);
-    expect(stored?.usageRights).toBe(doc.usageRights);
+    expect(stored?.endsAt).toBe(doc.endsAt);
   });
 
-  test("leaves the optional brief fields unset when they are omitted", async () => {
+  test("allows a campaign to start in the past with a zero budget", async () => {
     const t = convexTest(schema, modules);
     const owner = await seedOwner(t, "ca3");
-
-    const id = await t.run(async (ctx) => await createCampaign(ctx, campaignDoc(owner)));
-    const stored = await t.run(async (ctx) => await ctx.db.get("campaigns", id));
-
-    expect(stored?.audience).toBeUndefined();
-    expect(stored?.talkingPoints).toBeUndefined();
-    expect(stored?.usageRights).toBeUndefined();
-  });
-
-  test("rejects a deadline in the past", async () => {
-    const t = convexTest(schema, modules);
-    const owner = await seedOwner(t, "ca4");
-    const doc = campaignDoc(owner, { deadline: Date.now() - HOUR });
-
-    await expectApiError(
-      () => t.run(async (ctx) => await createCampaign(ctx, doc)),
-      "invalid_state",
-    );
-  });
-
-  test("rejects a deadline that has already been reached", async () => {
-    const t = convexTest(schema, modules);
-    const owner = await seedOwner(t, "ca5");
-    const deadline = Date.now();
-    const doc = campaignDoc(owner, { deadline });
-
-    await expectApiError(
-      () => t.run(async (ctx) => await createCampaign(ctx, doc)),
-      "invalid_state",
-    );
-  });
-
-  test("rejects zero openings", async () => {
-    const t = convexTest(schema, modules);
-    const owner = await seedOwner(t, "ca6");
-    const doc = campaignDoc(owner, { maxOpenings: 0, maxApplications: 5 });
-
-    await expectApiError(
-      () => t.run(async (ctx) => await createCampaign(ctx, doc)),
-      "invalid_state",
-    );
-  });
-
-  test("rejects a negative number of openings", async () => {
-    const t = convexTest(schema, modules);
-    const owner = await seedOwner(t, "ca7");
-    const doc = campaignDoc(owner, { maxOpenings: -1, maxApplications: 5 });
-
-    await expectApiError(
-      () => t.run(async (ctx) => await createCampaign(ctx, doc)),
-      "invalid_state",
-    );
-  });
-
-  test("rejects max applications below max openings", async () => {
-    const t = convexTest(schema, modules);
-    const owner = await seedOwner(t, "ca9");
-    const doc = campaignDoc(owner, { maxOpenings: 5, maxApplications: 2 });
-
-    await expectApiError(
-      () => t.run(async (ctx) => await createCampaign(ctx, doc)),
-      "invalid_state",
-    );
-  });
-
-  test("accepts max applications equal to max openings", async () => {
-    const t = convexTest(schema, modules);
-    const owner = await seedOwner(t, "ca11");
-    const doc = campaignDoc(owner, { maxOpenings: 3, maxApplications: 3 });
+    const doc = campaignDoc(owner, { startsAt: Date.now() - HOUR, budgetCents: 0 });
 
     const id = await t.run(async (ctx) => await createCampaign(ctx, doc));
     const stored = await t.run(async (ctx) => await ctx.db.get("campaigns", id));
 
-    expect(stored).not.toBeNull();
-    expect(stored?.maxOpenings).toBe(3);
-    expect(stored?.maxApplications).toBe(3);
+    expect(stored).toMatchObject(doc);
   });
 
-  test("rejects a campaign created as closed", async () => {
+  test("rejects an end equal to the start without writing a campaign", async () => {
     const t = convexTest(schema, modules);
-    const owner = await seedOwner(t, "ca12");
-    const doc = campaignDoc(owner, { status: "closed" });
+    const owner = await seedOwner(t, "ca4");
+    const startsAt = Date.now() + HOUR;
+    const doc = campaignDoc(owner, { startsAt, endsAt: startsAt });
 
     await expectApiError(
       () => t.run(async (ctx) => await createCampaign(ctx, doc)),
       "invalid_state",
     );
+
+    const campaigns = await t.run(async (ctx) => await ctx.db.query("campaigns").collect());
+    expect(campaigns).toHaveLength(0);
   });
 
-  test("does not write a row when validation fails", async () => {
+  test.each([-1, 0.5, Number.MAX_SAFE_INTEGER + 1, Number.NaN, Number.POSITIVE_INFINITY])(
+    "rejects invalid budget %s without writing a campaign",
+    async (budgetCents) => {
+      const t = convexTest(schema, modules);
+      const owner = await seedOwner(t, "ca5");
+      const doc = campaignDoc(owner, { budgetCents });
+
+      await expectApiError(
+        () => t.run(async (ctx) => await createCampaign(ctx, doc)),
+        "invalid_state",
+      );
+
+      const campaigns = await t.run(async (ctx) => await ctx.db.query("campaigns").collect());
+      expect(campaigns).toHaveLength(0);
+    },
+  );
+
+  test.each([
+    { startsAt: Number.NaN },
+    { startsAt: Number.POSITIVE_INFINITY },
+    { endsAt: Number.NaN },
+    { endsAt: Number.NEGATIVE_INFINITY },
+    { startsAt: 2, endsAt: 1 },
+  ])("rejects invalid schedule %j without writing a campaign", async (schedule) => {
     const t = convexTest(schema, modules);
-    const owner = await seedOwner(t, "ca10");
-    const doc = campaignDoc(owner, { deadline: Date.now() - HOUR });
+    const owner = await seedOwner(t, "ca6");
+    const doc = campaignDoc(owner, schedule);
 
     await expectApiError(
       () => t.run(async (ctx) => await createCampaign(ctx, doc)),

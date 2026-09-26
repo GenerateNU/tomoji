@@ -3,6 +3,7 @@ import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
 import { api } from "../_generated/api";
 import { getCompanyByWorkosId } from "../models/companies";
+import { removeMembership } from "../models/users";
 import schema from "../schema";
 import {
   expectApiError,
@@ -94,9 +95,12 @@ describe("companies.update", () => {
     });
   });
 
-  test("only updates the company on the current token for a multi-company user", async () => {
+  test("only updates the new company after the previous membership is removed", async () => {
     const t = convexTest(schema, modules);
     await seedUser(t, { subject: "u2", org: { id: "org_a", name: "A" } });
+    await t.run(async (ctx) =>
+      removeMembership(ctx, { workosUserId: "u2", organizationId: "org_a" }),
+    );
     const asB = await seedUser(t, { subject: "u2", org: { id: "org_b", name: "B" } });
 
     await asB.mutation(api.companies.update, { name: "B2" });

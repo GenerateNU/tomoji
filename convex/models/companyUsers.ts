@@ -6,6 +6,17 @@ import { apiError } from "../lib/errors";
 import { companyRole } from "../schemas/companyUsers.schema";
 import { getCompanyByWorkosId } from "./companies";
 
+/** Finds the user's sole company membership; membership writes enforce this invariant. */
+export async function getCompanyUserByUserId(
+  ctx: QueryCtx | MutationCtx,
+  userId: Id<"users">,
+): Promise<Doc<"companyUsers"> | null> {
+  return await ctx.db
+    .query("companyUsers")
+    .withIndex("by_userId", (q) => q.eq("userId", userId))
+    .unique();
+}
+
 export async function getCompanyUser(
   ctx: QueryCtx | MutationCtx,
   userId: Id<"users">,
@@ -26,7 +37,8 @@ export const companyMember = v.object({
   membershipId: v.id("companyUsers"),
   userId: v.id("users"),
   role: companyRole,
-  name: v.string(),
+  firstName: v.optional(v.string()),
+  lastName: v.optional(v.string()),
   email: v.string(),
   profilePicture: v.optional(v.string()),
 });
@@ -65,7 +77,8 @@ export async function listCompanyUsers(
         membershipId: membership._id,
         userId: user._id,
         role: membership.role,
-        name: user.name,
+        firstName: user.firstName,
+        lastName: user.lastName,
         email: user.email,
         profilePicture: user.profilePicture,
       };

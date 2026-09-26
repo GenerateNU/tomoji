@@ -2,7 +2,7 @@
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
 import { api } from "../_generated/api";
-import { deactivateUser } from "../models/users";
+import { deactivateUser, getUserByWorkosId } from "../models/users";
 import schema from "../schema";
 import { expectApiError, seedOperator, seedUser, workosIdentity } from "./helpers";
 
@@ -22,6 +22,27 @@ function asCompany<T extends { synced: boolean }>(
 }
 
 describe("users.me", () => {
+  test.each([
+    { firstName: "Ada", lastName: "" },
+    { firstName: "Ada", lastName: "Lovelace" },
+  ])("returns a synced user with separate name parts %j", async (names) => {
+    const t = convexTest(schema, modules);
+    const asUser = await seedUser(t, { subject: "user_names", ...names });
+    const userId = await t.run(async (ctx) => {
+      const user = await getUserByWorkosId(ctx, "user_names");
+      if (user === null) throw new Error("expected seeded user");
+      return user._id;
+    });
+
+    expect(await asUser.query(api.users.me, {})).toEqual({
+      synced: true,
+      userId,
+      role: "creator",
+      email: "user_names@example.com",
+      ...names,
+    });
+  });
+
   test("rejects a signed-out caller", async () => {
     const t = convexTest(schema, modules);
     await expectApiError(() => t.query(api.users.me, {}), "not_authenticated");
@@ -36,12 +57,20 @@ describe("users.me", () => {
 
   test("returns a creator once synced", async () => {
     const t = convexTest(schema, modules);
-    const asUser = await seedUser(t, { subject: "user_2", email: "dev@example.com" });
+    const asUser = await seedUser(t, {
+      subject: "user_2",
+      email: "dev@example.com",
+      firstName: "Ada",
+      lastName: "Lovelace",
+    });
 
     const me = synced(await asUser.query(api.users.me, {}));
 
     expect(me.role).toBe("creator");
     expect(me.email).toBe("dev@example.com");
+    expect(me).not.toHaveProperty("name");
+    expect(me.firstName).toBe("Ada");
+    expect(me.lastName).toBe("Lovelace");
   });
 
   test("surfaces the org and company role for a company account", async () => {
@@ -164,7 +193,8 @@ describe("users.list", () => {
     expect(secondPage.page).toEqual([
       expect.objectContaining({
         workosId: "later_page_creator",
-        name: "later-page@example.com",
+        firstName: "Test",
+        lastName: "",
         email: "later-page@example.com",
         role: "creator",
         isActive: true,

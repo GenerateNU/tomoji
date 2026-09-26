@@ -19,6 +19,9 @@ import type * as lib_errors from "../lib/errors.js";
 import type * as lib_functions from "../lib/functions.js";
 import type * as lib_identity from "../lib/identity.js";
 import type * as lib_validation from "../lib/validation.js";
+import type * as migrations_2026_09_26_backfill_creator_usernames from "../migrations/2026_09_26_backfill_creator_usernames.js";
+import type * as migrations_2026_09_26_backfill_user_names from "../migrations/2026_09_26_backfill_user_names.js";
+import type * as migrations_runner from "../migrations/runner.js";
 import type * as models_campaigns from "../models/campaigns.js";
 import type * as models_companies from "../models/companies.js";
 import type * as models_companyUsers from "../models/companyUsers.js";
@@ -45,6 +48,9 @@ declare const fullApi: ApiFromModules<{
   "lib/functions": typeof lib_functions;
   "lib/identity": typeof lib_identity;
   "lib/validation": typeof lib_validation;
+  "migrations/2026_09_26_backfill_creator_usernames": typeof migrations_2026_09_26_backfill_creator_usernames;
+  "migrations/2026_09_26_backfill_user_names": typeof migrations_2026_09_26_backfill_user_names;
+  "migrations/runner": typeof migrations_runner;
   "models/campaigns": typeof models_campaigns;
   "models/companies": typeof models_companies;
   "models/companyUsers": typeof models_companyUsers;
@@ -82,4 +88,5 @@ export declare const internal: FilterApi<
 
 export declare const components: {
   workOSAuthKit: import("@convex-dev/workos-authkit/_generated/component.js").ComponentApi<"workOSAuthKit">;
+  migrations: import("@convex-dev/migrations/_generated/component.js").ComponentApi<"migrations">;
 };

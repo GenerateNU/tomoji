@@ -3,10 +3,13 @@ import { v, type Infer } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { apiError } from "../lib/errors";
+import { requireNonBlank } from "../lib/validation";
 
 export const creatorProfile = v.object({
   creatorId: v.id("creators"),
-  name: v.string(),
+  username: v.optional(v.string()),
+  firstName: v.optional(v.string()),
+  lastName: v.optional(v.string()),
   email: v.string(),
   profilePicture: v.optional(v.string()),
   xId: v.optional(v.string()),
@@ -15,6 +18,7 @@ export const creatorProfile = v.object({
 });
 
 export const creatorProfileUpdate = v.object({
+  username: v.optional(v.string()),
   xId: v.optional(v.union(v.string(), v.null())),
   githubLink: v.optional(v.union(v.string(), v.null())),
   phoneNumber: v.optional(v.union(v.string(), v.null())),
@@ -27,7 +31,9 @@ export type CreatorProfileUpdate = Infer<typeof creatorProfileUpdate>;
 function toCreatorProfile(user: Doc<"users">, creator: Doc<"creators">): CreatorProfile {
   return {
     creatorId: creator._id,
-    name: user.name,
+    username: creator.username,
+    firstName: user.firstName,
+    lastName: user.lastName,
     email: user.email,
     profilePicture: user.profilePicture,
     xId: creator.xId,
@@ -75,6 +81,24 @@ export async function listCreators(
   return { ...users, page };
 }
 
+/** Normalizes and checks a username in the same mutation that writes it. */
+export async function requireAvailableCreatorUsername(
+  ctx: MutationCtx,
+  creatorId: Id<"creators">,
+  value: string,
+): Promise<string> {
+  const username = requireNonBlank(value, "username").toLowerCase();
+  // Two matches suffice to detect another owner, including legacy duplicates.
+  const matches = await ctx.db
+    .query("creators")
+    .withIndex("by_username", (q) => q.eq("username", username))
+    .take(2);
+  if (matches.some((creator) => creator._id !== creatorId)) {
+    throw apiError("conflict", { reason: "username_taken" });
+  }
+  return username;
+}
+
 /** Updates the editable fields in a creator's own profile and returns the complete profile. */
 export async function updateCreatorProfile(
   ctx: MutationCtx,
@@ -86,7 +110,11 @@ export async function updateCreatorProfile(
     throw apiError("not_found", { resource: "creator" });
   }
 
-  const patch: Pick<Doc<"creators">, "xId" | "githubLink" | "phoneNumber"> = {};
+  const patch: Partial<Pick<Doc<"creators">, "username" | "xId" | "githubLink" | "phoneNumber">> =
+    {};
+  if (updates.username !== undefined) {
+    patch.username = await requireAvailableCreatorUsername(ctx, creator._id, updates.username);
+  }
   // Clients use null to clear a field because Convex cannot serialize undefined.
   if ("xId" in updates) patch.xId = updates.xId ?? undefined;
   if ("githubLink" in updates) patch.githubLink = updates.githubLink ?? undefined;

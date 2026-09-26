@@ -29,6 +29,8 @@ export async function expectApiError(call: () => Promise<unknown>, code: ApiErro
 export type SeedOptions = {
   subject: string;
   email?: string;
+  firstName?: string;
+  lastName?: string;
   org?: { id: string; name?: string; role?: Infer<typeof companyRole> };
 };
 
@@ -41,6 +43,8 @@ export async function seedUser(t: TestConvex, opts: SeedOptions) {
     await upsertUser(ctx, {
       workosId: opts.subject,
       email: opts.email ?? `${opts.subject}@example.com`,
+      firstName: opts.firstName ?? "Test",
+      lastName: opts.lastName ?? "",
     });
     if (opts.org) {
       await applyMembership(ctx, {

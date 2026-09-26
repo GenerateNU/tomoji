@@ -17,32 +17,159 @@ import { expectApiError, seedUser, workosIdentity } from "../helpers";
 const modules = import.meta.glob("../../**/*.ts");
 
 describe("upsertUser", () => {
-  test("creates a creator with a profile row", async () => {
+  test.each([undefined, null, "", "   ", "\t\n"])(
+    "falls back to email and an empty last name when firstName is %j",
+    async (firstName) => {
+      const t = convexTest(schema, modules);
+
+      const userId = await t.run(async (ctx) =>
+        upsertUser(ctx, {
+          workosId: "missing_first_name",
+          email: "fallback@example.com",
+          firstName,
+        }),
+      );
+
+      expect(await t.run(async (ctx) => ctx.db.get("users", userId))).toMatchObject({
+        firstName: "fallback@example.com",
+        lastName: "",
+        email: "fallback@example.com",
+      });
+      expect(await t.run(async (ctx) => ctx.db.query("creators").take(1))).toMatchObject([
+        { userId },
+      ]);
+    },
+  );
+
+  test.each([null, "", "   ", "\t\n"])(
+    "uses the current email when firstName is explicitly cleared to %j",
+    async (firstName) => {
+      const t = convexTest(schema, modules);
+      const userId = await t.run(async (ctx) =>
+        upsertUser(ctx, {
+          workosId: "existing_first_name",
+          email: "original@example.com",
+          firstName: "Ada",
+          lastName: "Lovelace",
+        }),
+      );
+      const updatedId = await t.run(async (ctx) =>
+        upsertUser(ctx, {
+          workosId: "existing_first_name",
+          email: "updated@example.com",
+          firstName,
+          lastName: null,
+        }),
+      );
+
+      expect(updatedId).toBe(userId);
+      expect(await t.run(async (ctx) => ctx.db.get("users", userId))).toMatchObject({
+        firstName: "updated@example.com",
+        lastName: "",
+        email: "updated@example.com",
+      });
+    },
+  );
+
+  test("preserves existing name parts when an update omits them", async () => {
     const t = convexTest(schema, modules);
-    await seedUser(t, { subject: "u1" });
+    const userId = await t.run(async (ctx) =>
+      upsertUser(ctx, {
+        workosId: "preserved_first_name",
+        email: "original@example.com",
+        firstName: "Ada",
+        lastName: "Lovelace",
+      }),
+    );
+
+    await t.run(async (ctx) =>
+      upsertUser(ctx, {
+        workosId: "preserved_first_name",
+        email: "updated@example.com",
+      }),
+    );
+
+    expect(await t.run(async (ctx) => ctx.db.get("users", userId))).toMatchObject({
+      firstName: "Ada",
+      lastName: "Lovelace",
+      email: "updated@example.com",
+    });
+  });
+
+  test("accepts an empty lastName with a nonblank firstName", async () => {
+    const t = convexTest(schema, modules);
+    const userId = await t.run(async (ctx) =>
+      upsertUser(ctx, {
+        workosId: "single_name",
+        email: "single@example.com",
+        firstName: "Cher",
+        lastName: "",
+      }),
+    );
+
+    expect(await t.run(async (ctx) => ctx.db.get("users", userId))).toMatchObject({
+      firstName: "Cher",
+      lastName: "",
+    });
+  });
+
+  test("creates a creator with a profile row and no generated username", async () => {
+    const t = convexTest(schema, modules);
+    await seedUser(t, { subject: "u1", firstName: "Ada", lastName: "Lovelace" });
 
     const counts = await t.run(async (ctx) => ({
       users: (await ctx.db.query("users").collect()).length,
       creators: (await ctx.db.query("creators").collect()).length,
     }));
     expect(counts).toEqual({ users: 1, creators: 1 });
+    expect(await t.run(async (ctx) => getUserByWorkosId(ctx, "u1"))).toMatchObject({
+      firstName: "Ada",
+      lastName: "Lovelace",
+    });
+    const creator = await t.run(async (ctx) => await ctx.db.query("creators").unique());
+    expect(creator).not.toHaveProperty("username");
   });
 
   test("is idempotent", async () => {
     const t = convexTest(schema, modules);
-    await seedUser(t, { subject: "u2" });
-    await seedUser(t, { subject: "u2" });
+    await seedUser(t, { subject: "u2", firstName: "Grace", lastName: "Hopper" });
+    await seedUser(t, { subject: "u2", firstName: "Grace", lastName: "Hopper" });
 
     const users = await t.run(async (ctx) => await ctx.db.query("users").collect());
     expect(users).toHaveLength(1);
+    expect(users[0]).toMatchObject({ firstName: "Grace", lastName: "Hopper" });
   });
 
-  test("falls back to the email when WorkOS has no name", async () => {
+  test("syncs separate name parts and preserves a chosen creator username", async () => {
     const t = convexTest(schema, modules);
-    await seedUser(t, { subject: "u3", email: "dev@example.com" });
+    const result = await t.run(async (ctx) => {
+      const userId = await upsertUser(ctx, {
+        workosId: "named_creator",
+        email: "original@example.com",
+        firstName: "Ada",
+        lastName: "Lovelace",
+      });
+      const before = await ctx.db
+        .query("creators")
+        .withIndex("by_userId", (q) => q.eq("userId", userId))
+        .unique();
+      if (before === null) throw new Error("expected seeded creator");
+      await ctx.db.patch("creators", before._id, { username: "ada" });
+      await upsertUser(ctx, {
+        workosId: "named_creator",
+        email: "updated@example.com",
+        firstName: "Augusta Ada",
+      });
+      const after = await ctx.db
+        .query("creators")
+        .withIndex("by_userId", (q) => q.eq("userId", userId))
+        .unique();
+      return { user: await ctx.db.get("users", userId), before, after };
+    });
 
-    const user = await t.run(async (ctx) => await getUserByWorkosId(ctx, "u3"));
-    expect(user?.name).toBe("dev@example.com");
+    expect(result.user).toMatchObject({ firstName: "Augusta Ada", lastName: "Lovelace" });
+    expect(result.before).not.toHaveProperty("username");
+    expect(result.after?.username).toBe("ada");
   });
 
   test("does not overwrite a promotion to operator", async () => {
@@ -114,6 +241,35 @@ describe("applyMembership", () => {
     expect(memberships[0]?.role).toBe("admin");
   });
 
+  test("rejects joining a second company and preserves the original membership", async () => {
+    const t = convexTest(schema, modules);
+    await seedUser(t, { subject: "single_company", org: { id: "org_acme", role: "admin" } });
+    const before = await t.run(async (ctx) => await ctx.db.query("companyUsers").take(2));
+
+    await expectApiError(
+      () =>
+        t.run(
+          async (ctx) =>
+            await applyMembership(ctx, {
+              workosUserId: "single_company",
+              organizationId: "org_other",
+              organizationName: "Other",
+              role: "member",
+            }),
+        ),
+      "conflict",
+    );
+
+    const after = await t.run(async (ctx) => ({
+      memberships: await ctx.db.query("companyUsers").take(2),
+      companies: await ctx.db.query("companies").take(2),
+      user: await getUserByWorkosId(ctx, "single_company"),
+    }));
+    expect(after.memberships).toEqual(before);
+    expect(after.companies).toHaveLength(1);
+    expect(after.user?.role).toBe("company");
+  });
+
   test("does not demote an operator who joins a company", async () => {
     const t = convexTest(schema, modules);
     await seedUser(t, { subject: "u10" });
@@ -134,6 +290,32 @@ describe("applyMembership", () => {
 });
 
 describe("removeMembership", () => {
+  test("recreates a missing creator profile without assigning a username", async () => {
+    const t = convexTest(schema, modules);
+    await seedUser(t, { subject: "recreated_creator", org: { id: "org_acme" } });
+    const creator = await t.run(async (ctx) => {
+      const user = await getUserByWorkosId(ctx, "recreated_creator");
+      if (user === null) throw new Error("expected seeded user");
+      const previous = await ctx.db
+        .query("creators")
+        .withIndex("by_userId", (q) => q.eq("userId", user._id))
+        .unique();
+      if (previous === null) throw new Error("expected seeded creator");
+      await ctx.db.delete("creators", previous._id);
+      await removeMembership(ctx, {
+        workosUserId: "recreated_creator",
+        organizationId: "org_acme",
+      });
+      return await ctx.db
+        .query("creators")
+        .withIndex("by_userId", (q) => q.eq("userId", user._id))
+        .unique();
+    });
+
+    expect(creator).not.toBeNull();
+    expect(creator).not.toHaveProperty("username");
+  });
+
   test("drops the membership and returns the user to creator", async () => {
     const t = convexTest(schema, modules);
     await seedUser(t, { subject: "u11", org: { id: "org_acme" } });
@@ -149,13 +331,13 @@ describe("removeMembership", () => {
     expect(memberships).toHaveLength(0);
   });
 
-  test("keeps the company role while another membership remains", async () => {
+  test("ignores a removal event for another company", async () => {
     const t = convexTest(schema, modules);
     await seedUser(t, { subject: "u12", org: { id: "org_acme" } });
-    await seedUser(t, { subject: "u12", org: { id: "org_other" } });
+    await seedUser(t, { subject: "u12_other", org: { id: "org_other" } });
     await t.run(
       async (ctx) =>
-        await removeMembership(ctx, { workosUserId: "u12", organizationId: "org_acme" }),
+        await removeMembership(ctx, { workosUserId: "u12", organizationId: "org_other" }),
     );
 
     const user = await t.run(async (ctx) => await getUserByWorkosId(ctx, "u12"));

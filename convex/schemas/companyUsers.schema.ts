@@ -8,6 +8,7 @@ export const companyUsersTable = defineTable({
   companyId: v.id("companies"),
   role: companyRole,
 })
+  // Convex indexes are not unique; applyMembership enforces one company per user.
   .index("by_userId", ["userId"])
   .index("by_companyId", ["companyId"])
   .index("by_userId_and_companyId", ["userId", "companyId"]);

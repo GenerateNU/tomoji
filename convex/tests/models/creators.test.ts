@@ -72,17 +72,22 @@ describe("requireCreatorProfile", () => {
 describe("listCreators", () => {
   test("returns full creator profiles", async () => {
     const t = convexTest(schema, modules);
-    await seedUser(t, { subject: "model_creator_list", email: "creator@example.com" });
+    await seedUser(t, {
+      subject: "model_creator_list",
+      email: "creator@example.com",
+      firstName: "Creator",
+      lastName: "Name",
+    });
     const creatorId = await t.run(async (ctx) => {
       const user = await getUserByWorkosId(ctx, "model_creator_list");
       if (user === null) throw new Error("expected seeded user");
       const creator = await getCreatorByUserId(ctx, user._id);
       if (creator === null) throw new Error("expected seeded creator");
       await ctx.db.patch("users", user._id, {
-        name: "Creator Name",
         profilePicture: "https://example.com/profile.png",
       });
       await updateCreatorProfile(ctx, user, {
+        username: "creator_name",
         xId: "creator_x",
         githubLink: "https://github.com/creator",
         phoneNumber: "+15555550123",
@@ -97,7 +102,9 @@ describe("listCreators", () => {
     expect(result.page).toEqual([
       {
         creatorId,
-        name: "Creator Name",
+        username: "creator_name",
+        firstName: "Creator",
+        lastName: "Name",
         email: "creator@example.com",
         profilePicture: "https://example.com/profile.png",
         xId: "creator_x",
@@ -112,10 +119,14 @@ describe("listCreators", () => {
     await seedUser(t, {
       subject: "model_creator_page_1",
       email: "page-one@example.com",
+      firstName: "Ada",
+      lastName: "Lovelace",
     });
     await seedUser(t, {
       subject: "model_creator_page_2",
       email: "page-two@example.com",
+      firstName: "Grace",
+      lastName: "Hopper",
     });
     const [firstCreatorId, secondCreatorId] = await t.run(async (ctx) => {
       const firstUser = await getUserByWorkosId(ctx, "model_creator_page_1");
@@ -141,7 +152,8 @@ describe("listCreators", () => {
     expect(firstPage.page).toEqual([
       {
         creatorId: firstCreatorId,
-        name: "page-one@example.com",
+        firstName: "Ada",
+        lastName: "Lovelace",
         email: "page-one@example.com",
       },
     ]);
@@ -149,7 +161,8 @@ describe("listCreators", () => {
     expect(secondPage.page).toEqual([
       {
         creatorId: secondCreatorId,
-        name: "page-two@example.com",
+        firstName: "Grace",
+        lastName: "Hopper",
         email: "page-two@example.com",
       },
     ]);
@@ -178,6 +191,85 @@ describe("listCreators", () => {
 });
 
 describe("updateCreatorProfile", () => {
+  test.each([true, false])(
+    "rejects a username owned by another creator (active: %j) without changing either profile",
+    async (isActive) => {
+      const t = convexTest(schema, modules);
+      await seedUser(t, { subject: "username_owner" });
+      await seedUser(t, { subject: "username_claimant" });
+      const { owner, claimant, beforeOwner, beforeClaimant } = await t.run(async (ctx) => {
+        const owner = await getUserByWorkosId(ctx, "username_owner");
+        const claimant = await getUserByWorkosId(ctx, "username_claimant");
+        if (owner === null || claimant === null) throw new Error("expected seeded users");
+        await updateCreatorProfile(ctx, owner, { username: "ada" });
+        await updateCreatorProfile(ctx, claimant, { username: "grace", xId: "original_x" });
+        if (!isActive) await deactivateUser(ctx, "username_owner");
+        return {
+          owner,
+          claimant,
+          beforeOwner: await getCreatorByUserId(ctx, owner._id),
+          beforeClaimant: await getCreatorByUserId(ctx, claimant._id),
+        };
+      });
+
+      await expectApiError(
+        () =>
+          t.run(async (ctx) =>
+            updateCreatorProfile(ctx, claimant, { username: "  ADA  ", xId: "changed_x" }),
+          ),
+        "conflict",
+      );
+
+      expect(await t.run(async (ctx) => getCreatorByUserId(ctx, owner._id))).toEqual(beforeOwner);
+      expect(await t.run(async (ctx) => getCreatorByUserId(ctx, claimant._id))).toEqual(
+        beforeClaimant,
+      );
+    },
+  );
+
+  test("makes the old username available after its owner renames", async () => {
+    const t = convexTest(schema, modules);
+    await seedUser(t, { subject: "renaming_owner" });
+    await seedUser(t, { subject: "new_username_owner" });
+
+    const profiles = await t.run(async (ctx) => {
+      const owner = await getUserByWorkosId(ctx, "renaming_owner");
+      const claimant = await getUserByWorkosId(ctx, "new_username_owner");
+      if (owner === null || claimant === null) throw new Error("expected seeded users");
+      await updateCreatorProfile(ctx, owner, { username: "ada" });
+      await updateCreatorProfile(ctx, owner, { username: "augusta" });
+      await updateCreatorProfile(ctx, claimant, { username: "  ADA  " });
+      return {
+        owner: await getCreatorByUserId(ctx, owner._id),
+        claimant: await getCreatorByUserId(ctx, claimant._id),
+      };
+    });
+
+    expect(profiles.owner?.username).toBe("augusta");
+    expect(profiles.claimant?.username).toBe("ada");
+  });
+
+  test.each(["", "   ", "\t\n"])(
+    "rejects blank username %j without changing the profile",
+    async (username) => {
+      const t = convexTest(schema, modules);
+      await seedUser(t, { subject: "model_creator_blank_username" });
+      const user = await t.run(
+        async (ctx) => await getUserByWorkosId(ctx, "model_creator_blank_username"),
+      );
+      if (user === null) throw new Error("expected seeded user");
+      const before = await t.run(async (ctx) => await getCreatorByUserId(ctx, user._id));
+
+      await expectApiError(
+        () =>
+          t.run(async (ctx) => await updateCreatorProfile(ctx, user, { username, xId: "new_x" })),
+        "invalid_state",
+      );
+
+      expect(await t.run(async (ctx) => await getCreatorByUserId(ctx, user._id))).toEqual(before);
+    },
+  );
+
   test("updates supplied fields and preserves omitted fields", async () => {
     const t = convexTest(schema, modules);
     await seedUser(t, { subject: "model_creator_update" });
@@ -269,7 +361,12 @@ describe("updateCreatorProfile", () => {
 describe("requireCreatorProfileById", () => {
   test("returns all user-facing fields for an active creator", async () => {
     const t = convexTest(schema, modules);
-    await seedUser(t, { subject: "model_creator_get", email: "creator@example.com" });
+    await seedUser(t, {
+      subject: "model_creator_get",
+      email: "creator@example.com",
+      firstName: "Creator",
+      lastName: "Name",
+    });
 
     const result = await t.run(async (ctx) => {
       const user = await getUserByWorkosId(ctx, "model_creator_get");
@@ -277,10 +374,10 @@ describe("requireCreatorProfileById", () => {
       const creator = await getCreatorByUserId(ctx, user._id);
       if (creator === null) throw new Error("expected seeded creator");
       await ctx.db.patch("users", user._id, {
-        name: "Creator Name",
         profilePicture: "https://example.com/profile.png",
       });
       await updateCreatorProfile(ctx, user, {
+        username: "creator_name",
         xId: "creator_x",
         githubLink: "https://github.com/creator",
         phoneNumber: "+15555550123",
@@ -293,7 +390,9 @@ describe("requireCreatorProfileById", () => {
 
     expect(result.profile).toEqual({
       creatorId: result.creatorId,
-      name: "Creator Name",
+      username: "creator_name",
+      firstName: "Creator",
+      lastName: "Name",
       email: "creator@example.com",
       profilePicture: "https://example.com/profile.png",
       xId: "creator_x",
@@ -347,7 +446,7 @@ describe("requireCreatorProfileById", () => {
     const creatorId = await t.run(async (ctx) => {
       const user = await getUserByWorkosId(ctx, "model_creator_get_company");
       if (user === null) throw new Error("expected seeded user");
-      return await ctx.db.insert("creators", { userId: user._id });
+      return await ctx.db.insert("creators", { userId: user._id, username: "non_creator" });
     });
 
     await expectApiError(

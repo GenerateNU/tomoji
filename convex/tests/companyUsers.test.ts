@@ -2,6 +2,7 @@
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
 import { api } from "../_generated/api";
+import { getUserByWorkosId, removeMembership } from "../models/users";
 import schema from "../schema";
 import { expectApiError, seedOperator, seedUser, seedWrongOrgCaller } from "./helpers";
 
@@ -10,6 +11,34 @@ const modules = import.meta.glob("../**/*.ts");
 const firstPage = { paginationOpts: { cursor: null, numItems: 10 } };
 
 describe("companyUsers.list", () => {
+  test.each([
+    { firstName: "Ada", lastName: "" },
+    { firstName: "Ada", lastName: "Lovelace" },
+  ])("returns a company member with separate name parts %j", async (names) => {
+    const t = convexTest(schema, modules);
+    const asCompany = await seedUser(t, {
+      subject: "member_names",
+      org: { id: "org_names" },
+      ...names,
+    });
+    const userId = await t.run(async (ctx) => {
+      const user = await getUserByWorkosId(ctx, "member_names");
+      if (user === null) throw new Error("expected seeded user");
+      return user._id;
+    });
+
+    const { page } = await asCompany.query(api.companyUsers.list, firstPage);
+    expect(page).toEqual([
+      {
+        membershipId: expect.any(String),
+        userId,
+        role: "member",
+        email: "member_names@example.com",
+        ...names,
+      },
+    ]);
+  });
+
   test("lists the members of the caller's company and no one else", async () => {
     const t = convexTest(schema, modules);
     const asAdmin = await seedUser(t, {
@@ -28,9 +57,16 @@ describe("companyUsers.list", () => {
     ]);
   });
 
-  test("lists the company on the current token for a multi-company user", async () => {
+  test("lists the new company's members after the previous membership is removed", async () => {
     const t = convexTest(schema, modules);
     await seedUser(t, { subject: "cu4", org: { id: "org_a" } });
+    await t.run(
+      async (ctx) =>
+        await removeMembership(ctx, {
+          workosUserId: "cu4",
+          organizationId: "org_a",
+        }),
+    );
     await seedUser(t, { subject: "cu5", email: "b@b.com", org: { id: "org_b" } });
     const asB = await seedUser(t, { subject: "cu4", org: { id: "org_b" } });
 

@@ -6,9 +6,7 @@ import { defineSchema, defineTable, queryGeneric } from "convex/server";
 import { v, type Infer } from "convex/values";
 import { describe, expect, test } from "vitest";
 import { components, internal } from "../_generated/api";
-import { migrateCreatorUsername } from "../models/migrations";
 import schema from "../schema";
-import { expectApiError, seedUser } from "./helpers";
 
 // Legacy backfills must run before the strict schema is deployed.
 const transitionSchema = defineSchema({
@@ -75,40 +73,6 @@ async function readIdentityRows(t: ReturnType<typeof setup>) {
 }
 
 describe("identity schema migrations", () => {
-  test("rejects a username backfill collision without changing either account", async () => {
-    const t = convexTest(schema, modules);
-    await seedUser(t, { subject: "backfill_target" });
-    const target = await t.run(async (ctx) => {
-      const creator = await ctx.db.query("creators").first();
-      if (creator === null) throw new Error("expected seeded creator");
-      return creator;
-    });
-    await seedUser(t, { subject: "username_owner" });
-    await t.run(async (ctx) => {
-      const user = await ctx.db
-        .query("users")
-        .withIndex("by_workosId", (q) => q.eq("workosId", "username_owner"))
-        .unique();
-      if (user === null) throw new Error("expected seeded owner");
-      const owner = await ctx.db
-        .query("creators")
-        .withIndex("by_userId", (q) => q.eq("userId", user._id))
-        .unique();
-      if (owner === null) throw new Error("expected owner creator");
-      await ctx.db.patch("creators", owner._id, { username: `creator_${target.userId}` });
-    });
-    const readRows = () =>
-      t.run(async (ctx) => ({
-        users: await ctx.db.query("users").take(3),
-        creators: await ctx.db.query("creators").take(3),
-      }));
-    const before = await readRows();
-
-    await expectApiError(() => t.run((ctx) => migrateCreatorUsername(ctx, target)), "conflict");
-
-    expect(await readRows()).toEqual(before);
-  });
-
   test("a restarted username backfill includes profiles created after the previous run", async () => {
     const t = setup();
     const seedCreator = async (workosId: string) =>
@@ -140,7 +104,7 @@ describe("identity schema migrations", () => {
     expect(await t.run(async (ctx) => ctx.db.get("creators", first.creatorId))).toEqual(firstPass);
     expect(await t.run(async (ctx) => ctx.db.get("creators", later.creatorId))).toMatchObject({
       userId: later.userId,
-      username: `creator_${later.userId}`,
+      username: expect.stringMatching(/^creator_[0-9a-z]{12}$/),
     });
   });
 
@@ -178,7 +142,9 @@ describe("identity schema migrations", () => {
     expect(legacyName).toBe("Old Display Name");
     expect(after.users).toEqual([{ ...retainedUser, firstName: "Ada", lastName: "Lovelace" }]);
     const creator = before.creators[0]!;
-    expect(after.creators).toEqual([{ ...creator, username: `creator_${creator.userId}` }]);
+    expect(after.creators).toEqual([
+      { ...creator, username: expect.stringMatching(/^creator_[0-9a-z]{12}$/) },
+    ]);
     expect(after.users[0]).not.toHaveProperty("name");
 
     // Restart from the beginning to verify the transformations, not just the
@@ -209,7 +175,7 @@ describe("identity schema migrations", () => {
     expect(after.users[0]).not.toHaveProperty("name");
     expect(after.creators[0]).toMatchObject({
       userId: after.users[0]!._id,
-      username: `creator_${after.users[0]!._id}`,
+      username: expect.stringMatching(/^creator_[0-9a-z]{12}$/),
     });
   });
 

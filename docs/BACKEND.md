@@ -2,8 +2,6 @@
 
 This document covers how we structure and write Convex code. Setup instructions and common commands live in `CONTRIBUTING.md`.
 
-For the current tables, relationships, and data rules, see [Database](DATABASE.md).
-
 ## Layout
 
 Convex maps the **file path directly to the API path**. For example, a function exported from `convex/creators.ts` is called as `api.creators.<name>`. There is no separate router because the filename itself defines the namespace.

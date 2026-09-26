@@ -2,11 +2,11 @@
 import { runToCompletion } from "@convex-dev/migrations";
 import migrationsTest from "@convex-dev/migrations/test";
 import { convexTest } from "convex-test";
-import { defineSchema, defineTable, queryGeneric } from "convex/server";
+import { defineSchema, defineTable, getFunctionName, queryGeneric } from "convex/server";
 import { v, type Infer } from "convex/values";
-import { describe, expect, test } from "vitest";
-import { components, internal } from "../_generated/api";
-import schema from "../schema";
+import { afterEach, describe, expect, test, vi } from "vitest";
+import { components, internal } from "../../_generated/api";
+import schema from "../../schema";
 
 // Legacy backfills must run before the strict schema is deployed.
 const transitionSchema = defineSchema({
@@ -24,7 +24,13 @@ const transitionSchema = defineSchema({
     .index("by_role_and_isActive", ["role", "isActive"]),
 });
 
-const modules = import.meta.glob("../**/*.ts");
+const modules = import.meta.glob("../../**/*.ts");
+
+const backfillUserNames = internal.migrations["2026_09_26_backfill_user_names"].backfillUserNames;
+const backfillCreatorUsernames =
+  internal.migrations["2026_09_26_backfill_creator_usernames"].backfillCreatorUsernames;
+
+afterEach(() => vi.useRealTimers());
 
 const cachedAuthUser = v.object({
   id: v.string(),
@@ -53,15 +59,10 @@ function setup(cachedUsers: Infer<typeof cachedAuthUser>[] = []) {
 
 async function runIdentityMigrations(t: ReturnType<typeof setup>) {
   await t.run(async (ctx) => {
-    await runToCompletion(ctx, components.migrations, internal.migrations.backfillUserNames, {
+    await runToCompletion(ctx, components.migrations, backfillUserNames, {
       cursor: null,
     });
-    await runToCompletion(
-      ctx,
-      components.migrations,
-      internal.migrations.backfillCreatorUsernames,
-      { cursor: null },
-    );
+    await runToCompletion(ctx, components.migrations, backfillCreatorUsernames, { cursor: null });
   });
 }
 
@@ -73,6 +74,93 @@ async function readIdentityRows(t: ReturnType<typeof setup>) {
 }
 
 describe("identity schema migrations", () => {
+  test("runAll completes the registered backfills in order", async () => {
+    vi.useFakeTimers();
+    const t = setup();
+    await t.run(async (ctx) => {
+      const userId = await ctx.db.insert("users", {
+        workosId: "workos_runner",
+        name: "Legacy Runner",
+        email: "runner@example.com",
+        role: "creator",
+        isActive: true,
+      });
+      await ctx.db.insert("creators", { userId });
+    });
+
+    await t.mutation(internal.migrations.runner.runAll, {});
+
+    // The user migration finishes before the creator migration is scheduled.
+    const firstPass = await readIdentityRows(t);
+    expect(firstPass.users[0]).toMatchObject({ firstName: "Legacy Runner", lastName: "" });
+    expect(firstPass.creators[0]).not.toHaveProperty("username");
+
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    const rows = await readIdentityRows(t);
+    expect(rows.users[0]).toMatchObject({ firstName: "Legacy Runner", lastName: "" });
+    expect(rows.users[0]).not.toHaveProperty("name");
+    expect(rows.creators[0]).toMatchObject({
+      username: expect.stringMatching(/^creator_[0-9a-z]{12}$/),
+    });
+    const statuses = await t.query(components.migrations.lib.getStatus, {
+      names: [getFunctionName(backfillUserNames), getFunctionName(backfillCreatorUsernames)],
+    });
+    expect(statuses).toHaveLength(2);
+    expect(statuses).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: getFunctionName(backfillUserNames),
+          isDone: true,
+          state: "success",
+          processed: 1,
+        }),
+        expect.objectContaining({
+          name: getFunctionName(backfillCreatorUsernames),
+          isDone: true,
+          state: "success",
+          processed: 1,
+        }),
+      ]),
+    );
+  });
+
+  test("run executes only the migration selected by fn", async () => {
+    vi.useFakeTimers();
+    const t = setup();
+    await t.run(async (ctx) => {
+      const userId = await ctx.db.insert("users", {
+        workosId: "workos_selected",
+        name: "Untouched User",
+        email: "selected@example.com",
+        role: "creator",
+        isActive: true,
+      });
+      await ctx.db.insert("creators", { userId });
+    });
+    const before = await readIdentityRows(t);
+
+    await t.mutation(internal.migrations.runner.run, {
+      fn: getFunctionName(backfillCreatorUsernames),
+    });
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    const after = await readIdentityRows(t);
+    expect(after.users).toEqual(before.users);
+    expect(after.creators[0]).toMatchObject({
+      username: expect.stringMatching(/^creator_[0-9a-z]{12}$/),
+    });
+    const statuses = await t.query(components.migrations.lib.getStatus, {});
+    expect(statuses).toMatchObject([
+      {
+        name: getFunctionName(backfillCreatorUsernames),
+        isDone: true,
+        state: "success",
+        processed: 1,
+      },
+    ]);
+  });
+
   test("a restarted username backfill includes profiles created after the previous run", async () => {
     const t = setup();
     const seedCreator = async (workosId: string) =>
@@ -89,7 +177,7 @@ describe("identity schema migrations", () => {
       });
     const runBackfill = async () =>
       await t.run(async (ctx) =>
-        runToCompletion(ctx, components.migrations, internal.migrations.backfillCreatorUsernames, {
+        runToCompletion(ctx, components.migrations, backfillCreatorUsernames, {
           cursor: null,
         }),
       );

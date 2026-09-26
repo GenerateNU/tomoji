@@ -105,22 +105,22 @@ Existing records with legacy `users.name` or missing required name fields must
 be converted under a compatible deployment before the current schema can deploy.
 Keeping backfill functions does not bypass schema validation.
 
-Migrations are registered in [convex/migrations.ts](../convex/migrations.ts), with
-transformation logic in [convex/models/migrations.ts](../convex/models/migrations.ts).
-After deploying the migration code to your development deployment, run:
+Migrations live in dated files under [convex/migrations/](../convex/migrations/),
+with an ordered registry in [runner.ts](../convex/migrations/runner.ts), shared
+setup in [convex/lib/migrations.ts](../convex/lib/migrations.ts), and transformation
+logic in [convex/models/migrations.ts](../convex/models/migrations.ts).
+After deploying the migration code to your personal development deployment, run
+the registered sequence:
 
 ```bash
-bunx convex run --deployment <dev-deployment-name> migrations:run \
-  '{"fn":"migrations:<migrationName>"}'
+bunx convex run --deployment dev migrations/runner:runAll
 ```
 
-Replace both placeholders with your development deployment and exported migration
-name. The runner processes records in batches and tracks progress so interrupted
-runs can resume. Deploying the code alone does not execute these backfills.
+The runner processes records in batches and tracks progress so interrupted runs
+can resume. Deploying the code alone does not execute these backfills. See the
+migration guide to select a single migration, preview a batch, reset progress,
+or check completion.
 
-- Add `"dryRun": true` to preview one batch without saving changes.
-- Add `"reset": true` to restart from the beginning, including records added after
-  an earlier completed run.
 - `backfillUserNames` fills missing name parts from available identity data and
   removes the legacy `name` field. It falls back to the account email when the
   selected first name is missing or blank.
@@ -129,8 +129,12 @@ runs can resume. Deploying the code alone does not execute these backfills.
   12-character lowercase alphanumeric suffix. Other existing values are preserved.
   Generated values use the same normalization and uniqueness check as profile
   updates; after five collisions, it returns `conflict` with reason
-  `username_generation_failed`. Reset a previously completed migration to revisit
-  old generated names. It does not change new-account creation behavior.
+  `username_generation_failed`. It does not change new-account creation behavior.
+
+Progress uses each migration's full function path. Moving the old functions into
+dated files gives them fresh progress and rescans records on the first run. Finish
+or cancel old running jobs before deploying the renamed functions; both backfills
+are safe to rerun.
 
 Both backfills preserve document IDs. Before making username required in a future
 change, update write paths, backfill existing records, and verify the data.

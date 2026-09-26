@@ -22,7 +22,7 @@ manage their own separate data.
 | `assignments`   | A creator's engagement on an opportunity, including agreed compensation, review setting, and status.                                           | `opportunityId` → `opportunities`; `creatorId` → `creators`.                    |
 | `submissions`   | Draft URL/description, review status, optional review note, and review attribution.                                                            | `assignmentId` → `assignments`; human `reviewedBy` → `companyUsers`.            |
 | `posts`         | Published URL, posting time, verification flag, engagement counts, and last update time.                                                       | `submissionId` → `submissions`.                                                 |
-| `disputes`      | Assignment dispute: reason, description, status, and optional resolution.                                                                      | `assignmentId` → `assignments`; `openedBy` and optional `resolvedBy` → `users`. |
+| `disputes`      | Assignment dispute: reason, description, resolution flag, and optional resolution.                                                             | `assignmentId` → `assignments`; `openedBy` and optional `resolvedBy` → `users`. |
 
 ## Relationships
 
@@ -76,7 +76,9 @@ data type. These validators restrict allowed values; they do not enforce transit
 | `applications`  | `pending`, `offered`, `accepted`, `declined`, `rejected`, `offerExpired`, `opportunityFull` |
 | `assignments`   | `termsPending`, `active`, `completed`, `cancelled`                                          |
 | `submissions`   | `pending`, `approved`, `changesRequested`                                                   |
-| `disputes`      | `open`, `resolved`                                                                          |
+
+Disputes use a required `isResolved` boolean: `false` means open and `true` means
+resolved. `resolvedBy` and `resolution` remain optional.
 
 Users have an account role of `creator`, `company`, or `operator`. Company membership
 roles (`admin` or `member`) are separate from account roles.

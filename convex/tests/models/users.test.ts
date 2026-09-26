@@ -17,7 +17,7 @@ import { expectApiError, seedUser, workosIdentity } from "../helpers";
 const modules = import.meta.glob("../../**/*.ts");
 
 describe("upsertUser", () => {
-  test("creates a creator with a profile row", async () => {
+  test("creates a creator with a profile row and no generated username", async () => {
     const t = convexTest(schema, modules);
     await seedUser(t, { subject: "u1" });
 
@@ -26,6 +26,8 @@ describe("upsertUser", () => {
       creators: (await ctx.db.query("creators").collect()).length,
     }));
     expect(counts).toEqual({ users: 1, creators: 1 });
+    const creator = await t.run(async (ctx) => await ctx.db.query("creators").unique());
+    expect(creator).not.toHaveProperty("username");
   });
 
   test("is idempotent", async () => {
@@ -46,7 +48,7 @@ describe("upsertUser", () => {
     expect(user).not.toHaveProperty("name");
   });
 
-  test("syncs separate name parts and keeps the creator username stable", async () => {
+  test("syncs separate name parts and preserves a chosen creator username", async () => {
     const t = convexTest(schema, modules);
     const result = await t.run(async (ctx) => {
       const userId = await upsertUser(ctx, {
@@ -59,6 +61,8 @@ describe("upsertUser", () => {
         .query("creators")
         .withIndex("by_userId", (q) => q.eq("userId", userId))
         .unique();
+      if (before === null) throw new Error("expected seeded creator");
+      await ctx.db.patch("creators", before._id, { username: "ada" });
       await upsertUser(ctx, {
         workosId: "named_creator",
         email: "updated@example.com",
@@ -72,8 +76,8 @@ describe("upsertUser", () => {
     });
 
     expect(result.user).toMatchObject({ firstName: "Augusta Ada", lastName: "Lovelace" });
-    expect(result.before?.username).toMatch(/^creator_.+/);
-    expect(result.after?.username).toBe(result.before?.username);
+    expect(result.before).not.toHaveProperty("username");
+    expect(result.after?.username).toBe("ada");
   });
 
   test("does not overwrite a promotion to operator", async () => {
@@ -194,6 +198,32 @@ describe("applyMembership", () => {
 });
 
 describe("removeMembership", () => {
+  test("recreates a missing creator profile without assigning a username", async () => {
+    const t = convexTest(schema, modules);
+    await seedUser(t, { subject: "recreated_creator", org: { id: "org_acme" } });
+    const creator = await t.run(async (ctx) => {
+      const user = await getUserByWorkosId(ctx, "recreated_creator");
+      if (user === null) throw new Error("expected seeded user");
+      const previous = await ctx.db
+        .query("creators")
+        .withIndex("by_userId", (q) => q.eq("userId", user._id))
+        .unique();
+      if (previous === null) throw new Error("expected seeded creator");
+      await ctx.db.delete("creators", previous._id);
+      await removeMembership(ctx, {
+        workosUserId: "recreated_creator",
+        organizationId: "org_acme",
+      });
+      return await ctx.db
+        .query("creators")
+        .withIndex("by_userId", (q) => q.eq("userId", user._id))
+        .unique();
+    });
+
+    expect(creator).not.toBeNull();
+    expect(creator).not.toHaveProperty("username");
+  });
+
   test("drops the membership and returns the user to creator", async () => {
     const t = convexTest(schema, modules);
     await seedUser(t, { subject: "u11", org: { id: "org_acme" } });

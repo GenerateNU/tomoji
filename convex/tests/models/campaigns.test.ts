@@ -50,10 +50,11 @@ describe("createCampaign", () => {
     expect(stored?.endsAt).toBeUndefined();
   });
 
-  test("persists an optional end time", async () => {
+  test("persists an optional end time one millisecond after the start", async () => {
     const t = convexTest(schema, modules);
     const owner = await seedOwner(t, "ca2");
-    const doc = campaignDoc(owner, { endsAt: Date.now() + 2 * HOUR });
+    const startsAt = Date.now() + HOUR;
+    const doc = campaignDoc(owner, { startsAt, endsAt: startsAt + 1 });
 
     const id = await t.run(async (ctx) => await createCampaign(ctx, doc));
     const stored = await t.run(async (ctx) => await ctx.db.get("campaigns", id));
@@ -72,16 +73,19 @@ describe("createCampaign", () => {
     expect(stored).toMatchObject(doc);
   });
 
-  test("allows the end to equal the start", async () => {
+  test("rejects an end equal to the start without writing a campaign", async () => {
     const t = convexTest(schema, modules);
     const owner = await seedOwner(t, "ca4");
     const startsAt = Date.now() + HOUR;
     const doc = campaignDoc(owner, { startsAt, endsAt: startsAt });
 
-    const id = await t.run(async (ctx) => await createCampaign(ctx, doc));
-    const stored = await t.run(async (ctx) => await ctx.db.get("campaigns", id));
+    await expectApiError(
+      () => t.run(async (ctx) => await createCampaign(ctx, doc)),
+      "invalid_state",
+    );
 
-    expect(stored?.endsAt).toBe(startsAt);
+    const campaigns = await t.run(async (ctx) => await ctx.db.query("campaigns").collect());
+    expect(campaigns).toHaveLength(0);
   });
 
   test.each([-1, 0.5, Number.MAX_SAFE_INTEGER + 1, Number.NaN, Number.POSITIVE_INFINITY])(

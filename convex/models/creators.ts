@@ -3,12 +3,13 @@ import { v, type Infer } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { apiError } from "../lib/errors";
-import { displayName } from "../lib/identity";
+import { requireNonBlank } from "../lib/validation";
 
 export const creatorProfile = v.object({
   creatorId: v.id("creators"),
-  username: v.string(),
-  name: v.string(),
+  username: v.optional(v.string()),
+  firstName: v.optional(v.string()),
+  lastName: v.optional(v.string()),
   email: v.string(),
   profilePicture: v.optional(v.string()),
   xId: v.optional(v.string()),
@@ -31,7 +32,8 @@ function toCreatorProfile(user: Doc<"users">, creator: Doc<"creators">): Creator
   return {
     creatorId: creator._id,
     username: creator.username,
-    name: displayName(user),
+    firstName: user.firstName,
+    lastName: user.lastName,
     email: user.email,
     profilePicture: user.profilePicture,
     xId: creator.xId,
@@ -92,7 +94,8 @@ export async function updateCreatorProfile(
 
   const patch: Partial<Pick<Doc<"creators">, "username" | "xId" | "githubLink" | "phoneNumber">> =
     {};
-  if (updates.username !== undefined) patch.username = updates.username;
+  if (updates.username !== undefined)
+    patch.username = requireNonBlank(updates.username, "username");
   // Clients use null to clear a field because Convex cannot serialize undefined.
   if ("xId" in updates) patch.xId = updates.xId ?? undefined;
   if ("githubLink" in updates) patch.githubLink = updates.githubLink ?? undefined;

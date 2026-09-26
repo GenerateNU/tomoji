@@ -48,8 +48,8 @@ async function seedWorkflow(t: TestConvex) {
       cpmRateCents: 500,
       paymentCapCents: 30_000,
       contentRequirements: "Show a working example.",
-      prohibitedClaims: ["Guaranteed revenue"],
-      disclosureRequirements: ["#ad"],
+      prohibitedClaims: "Guaranteed revenue",
+      disclosureRequirements: "#ad",
       usageRights: "Organic reposting for 30 days",
     });
     const assignmentId = await ctx.db.insert("assignments", {
@@ -66,6 +66,35 @@ async function seedWorkflow(t: TestConvex) {
 }
 
 describe("campaign delivery schema", () => {
+  test("stores opportunity claims and disclosure requirements as text", async () => {
+    const t = convexTest(schema, modules);
+    const { opportunityId } = await seedWorkflow(t);
+    const opportunity = await t.run(
+      async (ctx) => await ctx.db.get("opportunities", opportunityId),
+    );
+
+    expect(opportunity).toMatchObject({
+      prohibitedClaims: "Guaranteed revenue",
+      disclosureRequirements: "#ad",
+    });
+  });
+
+  test.each(["prohibitedClaims", "disclosureRequirements"] as const)(
+    "rejects legacy arrays for opportunity %s",
+    async (field) => {
+      const t = convexTest(schema, modules);
+      const { opportunityId } = await seedWorkflow(t);
+
+      await expect(
+        t.run(async (ctx) => {
+          await ctx.db.patch("opportunities", opportunityId, {
+            [field]: ["Legacy array"] as never, // Exercise the persisted validator.
+          });
+        }),
+      ).rejects.toThrow(/Validator error: Expected `string`/);
+    },
+  );
+
   test("stores and retrieves an application, reviewed draft, post, and dispute by their parent links", async () => {
     const t = convexTest(schema, modules);
     const workflow = await seedWorkflow(t);
@@ -76,7 +105,7 @@ describe("campaign delivery schema", () => {
         creatorId: workflow.creatorId,
         note: "I can demonstrate this in a live coding video.",
         status: "accepted",
-        acceptedAt: NOW,
+        offerAcceptedAt: NOW,
       });
       const submissionId = await ctx.db.insert("submissions", {
         assignmentId: workflow.assignmentId,
@@ -136,6 +165,7 @@ describe("campaign delivery schema", () => {
 
     expect(stored.application?._id).toBe(stored.applicationId);
     expect(stored.application?.status).toBe("accepted");
+    expect(stored.application?.offerAcceptedAt).toBe(NOW);
     expect(stored.submission).toMatchObject({
       reviewerType: "companyUser",
       reviewedBy: workflow.membershipId,

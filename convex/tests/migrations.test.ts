@@ -22,9 +22,6 @@ const transitionSchema = defineSchema({
     .index("by_role", ["role"])
     .index("by_isActive", ["isActive"])
     .index("by_role_and_isActive", ["role", "isActive"]),
-  creators: defineTable(
-    schema.tables.creators.validator.omit("username").extend({ username: v.optional(v.string()) }),
-  ).index("by_userId", ["userId"]),
 });
 
 const modules = import.meta.glob("../**/*.ts");
@@ -59,12 +56,6 @@ async function runIdentityMigrations(t: ReturnType<typeof setup>) {
     await runToCompletion(ctx, components.migrations, internal.migrations.backfillUserNames, {
       cursor: null,
     });
-    await runToCompletion(
-      ctx,
-      components.migrations,
-      internal.migrations.backfillCreatorUsernames,
-      { cursor: null },
-    );
   });
 }
 
@@ -85,7 +76,7 @@ describe("identity schema migrations", () => {
         lastName: "Lovelace",
       },
     ]);
-    const userId = await t.run(async (ctx) => {
+    await t.run(async (ctx) => {
       const userId = await ctx.db.insert("users", {
         workosId: "workos_legacy",
         name: "Old Display Name",
@@ -100,7 +91,6 @@ describe("identity schema migrations", () => {
         githubLink: "https://github.com/example",
         phoneNumber: "+15550102020",
       });
-      return userId;
     });
     const before = await readIdentityRows(t);
 
@@ -110,7 +100,7 @@ describe("identity schema migrations", () => {
     const { name: legacyName, ...retainedUser } = before.users[0]!;
     expect(legacyName).toBe("Old Display Name");
     expect(after.users).toEqual([{ ...retainedUser, firstName: "Ada", lastName: "Lovelace" }]);
-    expect(after.creators).toEqual([{ ...before.creators[0], username: `creator_${userId}` }]);
+    expect(after.creators).toEqual(before.creators);
     expect(after.users[0]).not.toHaveProperty("name");
 
     // Restart from the beginning to verify the transformations, not just the
@@ -141,11 +131,11 @@ describe("identity schema migrations", () => {
     expect(after.users[0]).not.toHaveProperty("name");
     expect(after.creators[0]).toMatchObject({
       userId: after.users[0]!._id,
-      username: `creator_${after.users[0]!._id}`,
     });
+    expect(after.creators[0]).not.toHaveProperty("username");
   });
 
-  test.each(["my_custom_username", ""])(
+  test.each(["my_custom_username", "creator_existing_id", ""])(
     "preserves migrated name parts and username %j",
     async (username) => {
       const t = setup();

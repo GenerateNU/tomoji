@@ -2,7 +2,7 @@
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
 import { api } from "../_generated/api";
-import { deactivateUser, upsertUser } from "../models/users";
+import { deactivateUser, getUserByWorkosId, upsertUser } from "../models/users";
 import schema from "../schema";
 import { expectApiError, seedOperator, seedUser, workosIdentity } from "./helpers";
 
@@ -22,6 +22,32 @@ function asCompany<T extends { synced: boolean }>(
 }
 
 describe("users.me", () => {
+  test.each([{}, { firstName: "Ada" }, { lastName: "Lovelace" }])(
+    "returns a synced user with optional name parts %j",
+    async (names) => {
+      const t = convexTest(schema, modules);
+      const asUser = await seedUser(t, { subject: "optional_user_names" });
+      const userId = await t.run(async (ctx) => {
+        const user = await getUserByWorkosId(ctx, "optional_user_names");
+        if (user === null) throw new Error("expected seeded user");
+        await ctx.db.patch("users", user._id, {
+          firstName: undefined,
+          lastName: undefined,
+          ...names,
+        });
+        return user._id;
+      });
+
+      expect(await asUser.query(api.users.me, {})).toEqual({
+        synced: true,
+        userId,
+        role: "creator",
+        email: "optional_user_names@example.com",
+        ...names,
+      });
+    },
+  );
+
   test("rejects a signed-out caller", async () => {
     const t = convexTest(schema, modules);
     await expectApiError(() => t.query(api.users.me, {}), "not_authenticated");
@@ -42,12 +68,12 @@ describe("users.me", () => {
 
     expect(me.role).toBe("creator");
     expect(me.email).toBe("dev@example.com");
-    expect(me.name).toBe("dev@example.com");
+    expect(me).not.toHaveProperty("name");
     expect(me.firstName).toBe("");
     expect(me.lastName).toBe("");
   });
 
-  test("returns name parts and a derived display name", async () => {
+  test("returns separate name parts without a combined name", async () => {
     const t = convexTest(schema, modules);
     const asUser = await seedUser(t, { subject: "named_user" });
     await t.run(
@@ -60,11 +86,12 @@ describe("users.me", () => {
         }),
     );
 
-    expect(synced(await asUser.query(api.users.me, {}))).toMatchObject({
-      name: "Ada Lovelace",
+    const me = synced(await asUser.query(api.users.me, {}));
+    expect(me).toMatchObject({
       firstName: "Ada",
       lastName: "Lovelace",
     });
+    expect(me).not.toHaveProperty("name");
   });
 
   test("surfaces the org and company role for a company account", async () => {

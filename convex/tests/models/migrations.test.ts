@@ -50,7 +50,7 @@ describe("normalizeLegacyUser", () => {
     );
   });
 
-  test("retains the email display fallback without putting an email in name fields", () => {
+  test("replaces a legacy email-as-name with empty name parts", () => {
     expect(normalizeLegacyUser({ ...legacyUser, name: legacyUser.email })).toMatchObject({
       firstName: "",
       lastName: "",

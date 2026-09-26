@@ -17,7 +17,7 @@ export const applicationsTable = defineTable({
   note: v.string(),
   status: applicationStatus,
   offerExpiresAt: v.optional(v.number()), // Unix milliseconds.
-  acceptedAt: v.optional(v.number()), // Unix milliseconds.
+  offerAcceptedAt: v.optional(v.number()), // Unix milliseconds.
 })
   .index("by_opportunityId_and_creatorId", ["opportunityId", "creatorId"])
   .index("by_opportunityId_and_status", ["opportunityId", "status"])

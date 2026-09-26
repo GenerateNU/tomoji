@@ -10,6 +10,34 @@ import { expectApiError, seedCreatorId, seedOperator, seedUser } from "./helpers
 const modules = import.meta.glob("../**/*.ts");
 
 describe("creators.me", () => {
+  test.each([{}, { firstName: "Ada" }, { lastName: "Lovelace" }])(
+    "preserves optional name parts %j through a creator profile update",
+    async (names) => {
+      const t = convexTest(schema, modules);
+      const asCreator = await seedUser(t, { subject: "optional_creator_names" });
+      const creatorId = await t.run(async (ctx) => {
+        const user = await getUserByWorkosId(ctx, "optional_creator_names");
+        if (user === null) throw new Error("expected seeded user");
+        const creator = await getCreatorByUserId(ctx, user._id);
+        if (creator === null) throw new Error("expected seeded creator");
+        await ctx.db.patch("users", user._id, {
+          firstName: undefined,
+          lastName: undefined,
+          ...names,
+        });
+        return creator._id;
+      });
+      const expected = { creatorId, email: "optional_creator_names@example.com", ...names };
+
+      expect(await asCreator.query(api.creators.me, {})).toEqual(expected);
+      expect(await asCreator.mutation(api.creators.update, { username: "ada" })).toEqual({
+        ...expected,
+        username: "ada",
+      });
+      expect(await asCreator.query(api.creators.me, {})).toEqual({ ...expected, username: "ada" });
+    },
+  );
+
   test("rejects a signed-out caller", async () => {
     const t = convexTest(schema, modules);
 
@@ -45,7 +73,8 @@ describe("creators.me", () => {
     expect(await asCreator.query(api.creators.me, {})).toEqual({
       creatorId,
       username: "creator_name",
-      name: "Creator Name",
+      firstName: "Creator",
+      lastName: "Name",
       email: "creator@example.com",
       profilePicture: "https://example.com/profile.png",
       xId: "creator_x",
@@ -60,6 +89,7 @@ describe("creators.me", () => {
 
     const profile = await asCreator.query(api.creators.me, {});
 
+    expect(profile).not.toHaveProperty("username");
     expect(profile).not.toHaveProperty("profilePicture");
     expect(profile).not.toHaveProperty("xId");
     expect(profile).not.toHaveProperty("githubLink");
@@ -165,8 +195,8 @@ describe("creators.get", () => {
 
     expect(await asCompany.query(api.creators.get, { creatorId })).toEqual({
       creatorId,
-      username: expect.stringMatching(/^creator_.+/),
-      name: "target@example.com",
+      firstName: "",
+      lastName: "",
       email: "target@example.com",
     });
   });
@@ -196,11 +226,11 @@ describe("creators.get", () => {
 });
 
 describe("creators.update", () => {
-  test("updates the username and preserves it when a later update omits it", async () => {
+  test("trims the username and preserves it when a later update omits it", async () => {
     const t = convexTest(schema, modules);
     const asCreator = await seedUser(t, { subject: "creator_username" });
 
-    const updated = await asCreator.mutation(api.creators.update, { username: "ada" });
+    const updated = await asCreator.mutation(api.creators.update, { username: "  ada  " });
     expect(updated.username).toBe("ada");
     await asCreator.mutation(api.creators.update, { xId: "ada_x" });
     expect((await asCreator.query(api.creators.me, {})).username).toBe("ada");
@@ -220,7 +250,8 @@ describe("creators.update", () => {
     });
 
     expect(profile).toMatchObject({
-      name: "creator@example.com",
+      firstName: "",
+      lastName: "",
       email: "creator@example.com",
       xId: "creator_x",
       githubLink: "https://github.com/creator",

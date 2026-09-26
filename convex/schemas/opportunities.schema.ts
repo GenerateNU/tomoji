@@ -27,8 +27,8 @@ export const opportunitiesTable = defineTable({
   cpmRateCents: v.number(),
   paymentCapCents: v.number(),
   contentRequirements: v.string(),
-  prohibitedClaims: v.array(v.string()),
-  disclosureRequirements: v.array(v.string()),
+  prohibitedClaims: v.string(),
+  disclosureRequirements: v.string(),
   usageRights: v.string(),
   productAccessLink: v.optional(v.string()),
 })

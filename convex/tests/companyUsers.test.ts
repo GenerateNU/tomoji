@@ -2,7 +2,7 @@
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
 import { api } from "../_generated/api";
-import { removeMembership } from "../models/users";
+import { getUserByWorkosId, removeMembership } from "../models/users";
 import schema from "../schema";
 import { expectApiError, seedOperator, seedUser, seedWrongOrgCaller } from "./helpers";
 
@@ -11,6 +11,38 @@ const modules = import.meta.glob("../**/*.ts");
 const firstPage = { paginationOpts: { cursor: null, numItems: 10 } };
 
 describe("companyUsers.list", () => {
+  test.each([{}, { firstName: "Ada" }, { lastName: "Lovelace" }])(
+    "returns a company member with optional name parts %j",
+    async (names) => {
+      const t = convexTest(schema, modules);
+      const asCompany = await seedUser(t, {
+        subject: "optional_member_names",
+        org: { id: "org_optional_names" },
+      });
+      const userId = await t.run(async (ctx) => {
+        const user = await getUserByWorkosId(ctx, "optional_member_names");
+        if (user === null) throw new Error("expected seeded user");
+        await ctx.db.patch("users", user._id, {
+          firstName: undefined,
+          lastName: undefined,
+          ...names,
+        });
+        return user._id;
+      });
+
+      const { page } = await asCompany.query(api.companyUsers.list, firstPage);
+      expect(page).toEqual([
+        {
+          membershipId: expect.any(String),
+          userId,
+          role: "member",
+          email: "optional_member_names@example.com",
+          ...names,
+        },
+      ]);
+    },
+  );
+
   test("lists the members of the caller's company and no one else", async () => {
     const t = convexTest(schema, modules);
     const asAdmin = await seedUser(t, {

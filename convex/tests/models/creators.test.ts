@@ -100,7 +100,8 @@ describe("listCreators", () => {
       {
         creatorId,
         username: "creator_name",
-        name: "Creator Name",
+        firstName: "Creator",
+        lastName: "Name",
         email: "creator@example.com",
         profilePicture: "https://example.com/profile.png",
         xId: "creator_x",
@@ -144,8 +145,8 @@ describe("listCreators", () => {
     expect(firstPage.page).toEqual([
       {
         creatorId: firstCreatorId,
-        username: expect.stringMatching(/^creator_.+/),
-        name: "page-one@example.com",
+        firstName: "",
+        lastName: "",
         email: "page-one@example.com",
       },
     ]);
@@ -153,8 +154,8 @@ describe("listCreators", () => {
     expect(secondPage.page).toEqual([
       {
         creatorId: secondCreatorId,
-        username: expect.stringMatching(/^creator_.+/),
-        name: "page-two@example.com",
+        firstName: "",
+        lastName: "",
         email: "page-two@example.com",
       },
     ]);
@@ -183,6 +184,27 @@ describe("listCreators", () => {
 });
 
 describe("updateCreatorProfile", () => {
+  test.each(["", "   ", "\t\n"])(
+    "rejects blank username %j without changing the profile",
+    async (username) => {
+      const t = convexTest(schema, modules);
+      await seedUser(t, { subject: "model_creator_blank_username" });
+      const user = await t.run(
+        async (ctx) => await getUserByWorkosId(ctx, "model_creator_blank_username"),
+      );
+      if (user === null) throw new Error("expected seeded user");
+      const before = await t.run(async (ctx) => await getCreatorByUserId(ctx, user._id));
+
+      await expectApiError(
+        () =>
+          t.run(async (ctx) => await updateCreatorProfile(ctx, user, { username, xId: "new_x" })),
+        "invalid_state",
+      );
+
+      expect(await t.run(async (ctx) => await getCreatorByUserId(ctx, user._id))).toEqual(before);
+    },
+  );
+
   test("updates supplied fields and preserves omitted fields", async () => {
     const t = convexTest(schema, modules);
     await seedUser(t, { subject: "model_creator_update" });
@@ -301,7 +323,8 @@ describe("requireCreatorProfileById", () => {
     expect(result.profile).toEqual({
       creatorId: result.creatorId,
       username: "creator_name",
-      name: "Creator Name",
+      firstName: "Creator",
+      lastName: "Name",
       email: "creator@example.com",
       profilePicture: "https://example.com/profile.png",
       xId: "creator_x",

@@ -7,7 +7,7 @@ import { apiError } from "../lib/errors";
  * Creates a campaign brief with its budget and schedule.
  *
  * @throws `invalid_state` for an invalid budget, nonfinite timestamps,
- * or an end before the start.
+ * or an end that is not after the start.
  */
 export async function createCampaign(
   ctx: MutationCtx,
@@ -22,8 +22,8 @@ export async function createCampaign(
   ) {
     throw apiError("invalid_state", { reason: "invalid_schedule" });
   }
-  if (campaign.endsAt !== undefined && campaign.endsAt < campaign.startsAt) {
-    throw apiError("invalid_state", { reason: "end_before_start" });
+  if (campaign.endsAt !== undefined && campaign.endsAt <= campaign.startsAt) {
+    throw apiError("invalid_state", { reason: "end_not_after_start" });
   }
 
   return await ctx.db.insert("campaigns", campaign);

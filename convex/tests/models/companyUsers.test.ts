@@ -186,6 +186,9 @@ describe("listCompanyUsers", () => {
       org: { id: "org_acme", role: "admin" },
     });
     const { userId, companyId } = await idsFor(t, "cu14", "org_acme");
+    await t.run(async (ctx) =>
+      ctx.db.patch("users", userId, { firstName: "Company", lastName: "Admin" }),
+    );
     const membership = await t.run(async (ctx) => await getCompanyUser(ctx, userId, companyId));
 
     const { page } = await listPage(t, companyId);
@@ -197,7 +200,8 @@ describe("listCompanyUsers", () => {
         membershipId: membership!._id,
         userId,
         role: "admin",
-        name: "admin@acme.com", // Display names fall back to email when no name parts are given.
+        firstName: "Company",
+        lastName: "Admin",
         email: "admin@acme.com",
       },
     ]);

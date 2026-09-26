@@ -20,6 +20,9 @@ Once completed, please reach out to a _Technical Chief_ if you wish to have some
 Documentation, style-guides, and best practices should be kept in a repo level folder `docs/`. It is crucial to have
 your team reference these docs extensively to provide a consistent styling of code across the repo.
 
+- [Database](docs/DATABASE.md) — tables, relationships, and current data rules.
+- [Backend](docs/BACKEND.md) — conventions for schemas, routes, models, and tests.
+
 ## CI/CD
 
 It is critical that on every single merge to main, you enable a specific subset of checks to run. These should include

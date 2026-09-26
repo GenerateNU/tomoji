@@ -4,7 +4,7 @@ import { query } from "./_generated/server";
 import { requireIdentity } from "./lib/authz";
 import { apiError } from "./lib/errors";
 import { operatorQuery } from "./lib/functions";
-import { displayName, findOrgId, toCompanyRole } from "./lib/identity";
+import { findOrgId, toCompanyRole } from "./lib/identity";
 import { getUserByWorkosId, listUsers } from "./models/users";
 import schema from "./schema";
 import { companyRole } from "./schemas/companyUsers.schema";
@@ -13,9 +13,8 @@ import { userRole } from "./schemas/users.schema";
 const identityFields = {
   synced: v.literal(true),
   userId: v.id("users"),
-  name: v.string(),
-  firstName: v.string(),
-  lastName: v.string(),
+  firstName: v.optional(v.string()),
+  lastName: v.optional(v.string()),
   email: v.string(),
 };
 
@@ -44,7 +43,6 @@ export const me = query({
     const base = {
       synced: true as const,
       userId: user._id,
-      name: displayName(user),
       firstName: user.firstName,
       lastName: user.lastName,
       email: user.email,

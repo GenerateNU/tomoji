@@ -3,7 +3,6 @@ import { v, type Infer } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { apiError } from "../lib/errors";
-import { displayName } from "../lib/identity";
 import { companyRole } from "../schemas/companyUsers.schema";
 import { getCompanyByWorkosId } from "./companies";
 
@@ -38,7 +37,8 @@ export const companyMember = v.object({
   membershipId: v.id("companyUsers"),
   userId: v.id("users"),
   role: companyRole,
-  name: v.string(),
+  firstName: v.optional(v.string()),
+  lastName: v.optional(v.string()),
   email: v.string(),
   profilePicture: v.optional(v.string()),
 });
@@ -77,7 +77,8 @@ export async function listCompanyUsers(
         membershipId: membership._id,
         userId: user._id,
         role: membership.role,
-        name: displayName(user),
+        firstName: user.firstName,
+        lastName: user.lastName,
         email: user.email,
         profilePicture: user.profilePicture,
       };

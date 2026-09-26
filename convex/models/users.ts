@@ -79,9 +79,7 @@ export async function upsertUser(ctx: MutationCtx, profile: WorkosProfile): Prom
       isActive: true,
       profilePicture,
     });
-    // Stable, editable initial username; do not expose an email or WorkOS identifier.
-    // Custom usernames are not required to be unique.
-    await ctx.db.insert("creators", { userId, username: `creator_${userId}` });
+    await ctx.db.insert("creators", { userId });
     return userId;
   }
 
@@ -180,7 +178,7 @@ export async function removeMembership(
       .withIndex("by_userId", (q) => q.eq("userId", user._id))
       .unique();
     if (profile === null) {
-      await ctx.db.insert("creators", { userId: user._id, username: `creator_${user._id}` });
+      await ctx.db.insert("creators", { userId: user._id });
     }
   }
 }

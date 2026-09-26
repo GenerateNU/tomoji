@@ -27,7 +27,7 @@ export function normalizeLegacyUser(
   const lastName = user.lastName ?? source?.lastName;
   const hasNameParts = typeof firstName === "string" || typeof lastName === "string";
   // Legacy names cannot be reliably split. Keep them intact unless authoritative
-  // parts exist; an old email-as-name continues to use displayName's email fallback.
+  // parts exist. A legacy email-as-name becomes empty name parts.
   const legacyName = user.name === user.email ? "" : (user.name ?? "");
 
   return {
@@ -55,12 +55,4 @@ export async function migrateUserNames(
       : null;
   // replace removes the obsolete `name` field while retaining _id and _creationTime.
   await ctx.db.replace("users", user._id, normalizeLegacyUser(user, source));
-}
-
-export async function migrateCreatorUsername(
-  ctx: MutationCtx,
-  creator: { _id: Id<"creators">; userId: Id<"users">; username?: string },
-): Promise<void> {
-  if (creator.username !== undefined) return;
-  await ctx.db.patch("creators", creator._id, { username: `creator_${creator.userId}` });
 }

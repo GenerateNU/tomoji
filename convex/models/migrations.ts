@@ -56,3 +56,12 @@ export async function migrateUserNames(
   // replace removes the obsolete `name` field while retaining _id and _creationTime.
   await ctx.db.replace("users", user._id, normalizeLegacyUser(user, source));
 }
+
+/** Fills missing usernames before the field becomes required, preserving existing choices. */
+export async function migrateCreatorUsername(
+  ctx: MutationCtx,
+  creator: Doc<"creators">,
+): Promise<void> {
+  if (creator.username !== undefined) return;
+  await ctx.db.patch("creators", creator._id, { username: `creator_${creator.userId}` });
+}

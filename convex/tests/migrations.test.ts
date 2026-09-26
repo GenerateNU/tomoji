@@ -56,6 +56,12 @@ async function runIdentityMigrations(t: ReturnType<typeof setup>) {
     await runToCompletion(ctx, components.migrations, internal.migrations.backfillUserNames, {
       cursor: null,
     });
+    await runToCompletion(
+      ctx,
+      components.migrations,
+      internal.migrations.backfillCreatorUsernames,
+      { cursor: null },
+    );
   });
 }
 
@@ -67,6 +73,39 @@ async function readIdentityRows(t: ReturnType<typeof setup>) {
 }
 
 describe("identity schema migrations", () => {
+  test("a restarted username backfill includes profiles created after the previous run", async () => {
+    const t = setup();
+    const seedCreator = async (workosId: string) =>
+      await t.run(async (ctx) => {
+        const userId = await ctx.db.insert("users", {
+          workosId,
+          email: `${workosId}@example.com`,
+          role: "creator",
+          isActive: true,
+        });
+        return { userId, creatorId: await ctx.db.insert("creators", { userId }) };
+      });
+    const runBackfill = async () =>
+      await t.run(async (ctx) =>
+        runToCompletion(ctx, components.migrations, internal.migrations.backfillCreatorUsernames, {
+          cursor: null,
+        }),
+      );
+
+    const first = await seedCreator("first_creator");
+    await runBackfill();
+    const firstPass = await t.run(async (ctx) => ctx.db.get("creators", first.creatorId));
+    const later = await seedCreator("later_creator");
+
+    await runBackfill();
+
+    expect(await t.run(async (ctx) => ctx.db.get("creators", first.creatorId))).toEqual(firstPass);
+    expect(await t.run(async (ctx) => ctx.db.get("creators", later.creatorId))).toMatchObject({
+      userId: later.userId,
+      username: `creator_${later.userId}`,
+    });
+  });
+
   test("backfills legacy rows from cached WorkOS names without replacing identities", async () => {
     const t = setup([
       {
@@ -100,7 +139,8 @@ describe("identity schema migrations", () => {
     const { name: legacyName, ...retainedUser } = before.users[0]!;
     expect(legacyName).toBe("Old Display Name");
     expect(after.users).toEqual([{ ...retainedUser, firstName: "Ada", lastName: "Lovelace" }]);
-    expect(after.creators).toEqual(before.creators);
+    const creator = before.creators[0]!;
+    expect(after.creators).toEqual([{ ...creator, username: `creator_${creator.userId}` }]);
     expect(after.users[0]).not.toHaveProperty("name");
 
     // Restart from the beginning to verify the transformations, not just the
@@ -131,8 +171,8 @@ describe("identity schema migrations", () => {
     expect(after.users[0]).not.toHaveProperty("name");
     expect(after.creators[0]).toMatchObject({
       userId: after.users[0]!._id,
+      username: `creator_${after.users[0]!._id}`,
     });
-    expect(after.creators[0]).not.toHaveProperty("username");
   });
 
   test.each(["my_custom_username", "creator_existing_id", ""])(

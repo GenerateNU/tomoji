@@ -21,6 +21,7 @@ function createArgs(overrides: Partial<CreateArgs> = {}): CreateArgs {
     product: "Daily moisturizer",
     audience: "Gen Z skincare enthusiasts",
     description: "Campaign supporting the spring launch.",
+    status: "open",
     budgetCents: 250_000,
     startsAt: Date.now() + HOUR,
     ...overrides,
@@ -56,6 +57,7 @@ describe("campaigns.create", () => {
     expect(stored?.audience).toBe(args.audience);
     expect(stored?.budgetCents).toBe(args.budgetCents);
     expect(stored?.startsAt).toBe(args.startsAt);
+    expect(stored?.status).toBe(args.status);
   });
 
   test("derives the company from the caller's membership, not the client", async () => {

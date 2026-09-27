@@ -6,13 +6,16 @@ import { apiError } from "../lib/errors";
 /**
  * Creates a campaign brief with its budget and schedule.
  *
- * @throws `invalid_state` for an invalid budget, nonfinite timestamps,
+ * @throws `invalid_state` for an invalid budget, invalid state, nonfinite timestamps,
  * or an end that is not after the start.
  */
 export async function createCampaign(
   ctx: MutationCtx,
   campaign: WithoutSystemFields<Doc<"campaigns">>,
 ): Promise<Id<"campaigns">> {
+  if (campaign.status !== "draft" && campaign.status !== "open") {
+    throw apiError("invalid_state", { reason: "invalid_status" });
+  }
   if (!Number.isSafeInteger(campaign.budgetCents) || campaign.budgetCents < 0) {
     throw apiError("invalid_state", { reason: "invalid_budget" });
   }

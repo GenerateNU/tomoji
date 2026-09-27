@@ -31,6 +31,7 @@ function campaignDoc(
     product: "Daily moisturizer",
     audience: "Gen Z skincare enthusiasts",
     description: "Campaign supporting the spring launch.",
+    status: "open",
     budgetCents: 250_000,
     startsAt: Date.now() + HOUR,
     ...overrides,
@@ -124,4 +125,31 @@ describe("createCampaign", () => {
     const campaigns = await t.run(async (ctx) => await ctx.db.query("campaigns").collect());
     expect(campaigns).toHaveLength(0);
   });
+
+  test.each(["draft", "open"] as const)("creates a campaign with status %s", async (status) => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOwner(t, `ca-status-ok-${status}`);
+    const doc = campaignDoc(owner, { status });
+
+    const id = await t.run(async (ctx) => await createCampaign(ctx, doc));
+    const stored = await t.run(async (ctx) => await ctx.db.get("campaigns", id));
+
+    expect(stored?.status).toBe(status);
+  });
+
+  test.each(["paused", "closed"] as const)(
+    "rejects status %s without writing a campaign",
+    async (status) => {
+      const t = convexTest(schema, modules);
+      const owner = await seedOwner(t, `ca-status-bad-${status}`);
+      const doc = campaignDoc(owner, { status });
+
+      await expect(t.run(async (ctx) => await createCampaign(ctx, doc))).rejects.toMatchObject({
+        data: { code: "invalid_state", reason: "invalid_status" },
+      });
+
+      const campaigns = await t.run(async (ctx) => await ctx.db.query("campaigns").collect());
+      expect(campaigns).toHaveLength(0);
+    },
+  );
 });

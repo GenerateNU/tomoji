@@ -10,6 +10,7 @@ export const opportunityStatus = v.union(
 
 export const opportunitiesTable = defineTable({
   campaignId: v.id("campaigns"),
+  companyId: v.id("companies"),
   createdBy: v.id("companyUsers"),
   title: v.string(),
   description: v.string(),
@@ -32,6 +33,7 @@ export const opportunitiesTable = defineTable({
   usageRights: v.string(),
   productAccessLink: v.optional(v.string()),
 })
+  .index("by_companyId_and_status", ["companyId", "status"])
   .index("by_campaignId_and_status", ["campaignId", "status"])
   .index("by_createdBy", ["createdBy"])
   .index("by_status_and_deadline", ["status", "deadline"]);

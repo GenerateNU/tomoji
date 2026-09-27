@@ -1,9 +1,8 @@
 import type { Infer } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
-import type { MutationCtx, QueryCtx } from "../_generated/server";
+import type { MutationCtx } from "../_generated/server";
 import { apiError } from "../lib/errors";
 import { requireNonBlank } from "../lib/validation";
-import { requireMembership } from "./companyUsers";
 import schema from "../schema";
 
 export const opportunityCreate = schema
@@ -58,43 +57,4 @@ export async function createOpportunity(
     createdBy: membership._id,
     numFilledSlots: 0,
   });
-}
-
-/** Returns an opportunity visible to its company, a creator, or an operator. */
-export async function requireOpportunity(
-  ctx: QueryCtx | MutationCtx,
-  opportunityId: Id<"opportunities">,
-  caller: { user: Doc<"users">; orgId: string | null },
-): Promise<Doc<"opportunities">> {
-  const opportunity = await ctx.db.get("opportunities", opportunityId);
-  if (opportunity === null) {
-    throw apiError("not_found", { resource: "opportunity" });
-  }
-  if (caller.user.role === "operator") return opportunity;
-
-  const campaign = await ctx.db.get("campaigns", opportunity.campaignId);
-  if (campaign === null || campaign.companyId !== opportunity.companyId) {
-    throw apiError("not_found", { resource: "opportunity" });
-  }
-  if (caller.user.role === "company") {
-    if (caller.orgId === null) {
-      throw apiError("misconfigured", { reason: "company account has no organization" });
-    }
-    const membership = await requireMembership(ctx, caller.user._id, caller.orgId);
-    if (membership.companyId !== opportunity.companyId) {
-      throw apiError("not_found", { resource: "opportunity" });
-    }
-    return opportunity;
-  }
-
-  const company = await ctx.db.get("companies", opportunity.companyId);
-  if (
-    opportunity.status !== "open" ||
-    campaign.status !== "open" ||
-    company === null ||
-    !company.isActive
-  ) {
-    throw apiError("not_found", { resource: "opportunity" });
-  }
-  return opportunity;
 }

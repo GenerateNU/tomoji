@@ -1,6 +1,13 @@
 import { defineTable } from "convex/server";
 import { v } from "convex/values";
 
+export const campaignStatus = v.union(
+  v.literal("draft"),
+  v.literal("open"),
+  v.literal("paused"),
+  v.literal("closed"),
+);
+
 export const campaignsTable = defineTable({
   companyId: v.id("companies"),
   createdBy: v.id("companyUsers"),
@@ -9,6 +16,7 @@ export const campaignsTable = defineTable({
   product: v.string(),
   audience: v.string(),
   description: v.string(),
+  status: campaignStatus,
   budgetCents: v.number(), // Nonnegative integer minor units; enforced by the model.
   startsAt: v.number(), // Unix timestamp in milliseconds.
   endsAt: v.optional(v.number()), // Unix timestamp in milliseconds.

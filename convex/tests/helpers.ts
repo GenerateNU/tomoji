@@ -7,7 +7,7 @@ import type { ApiErrorCode } from "../lib/errors";
 import { getCreatorByUserId } from "../models/creators";
 import { createCampaign } from "../models/campaigns";
 import { companyContext } from "../lib/functions";
-import type { OpportunityCreate } from "../models/opportunities";
+import { createOpportunity, type OpportunityCreate } from "../models/opportunities";
 import { applyMembership, getUserByWorkosId, upsertUser } from "../models/users";
 import type { companyRole } from "../schemas/companyUsers.schema";
 
@@ -157,4 +157,18 @@ export function opportunityArgs(
     usageRights: "Organic reposting for 30 days",
     ...overrides,
   };
+}
+
+/** Seeds a campaign and an opportunity through the model, bypassing route authorization. */
+export async function seedOpportunity(
+  t: TestConvex,
+  options: SeedCampaignOptions,
+  overrides: Partial<OpportunityCreate> = {},
+) {
+  const owner = await seedCampaign(t, options);
+  const opportunityId = await t.run(
+    async (ctx) =>
+      await createOpportunity(ctx, owner.membership, opportunityArgs(owner.campaignId, overrides)),
+  );
+  return { ...owner, opportunityId };
 }

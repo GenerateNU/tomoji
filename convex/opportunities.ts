@@ -1,8 +1,12 @@
 import { paginationResultValidator } from "convex/server";
 import { v } from "convex/values";
+import { internal } from "./_generated/api";
+import { internalMutation } from "./_generated/server";
 import { authedQuery, companyMutation, companyQuery, creatorQuery } from "./lib/functions";
 import { findOrgId } from "./lib/identity";
 import {
+  closeOpportunity,
+  closeExpiredOpportunities,
   createOpportunity,
   creatorOpportunity,
   discoverOpportunities,
@@ -19,6 +23,26 @@ import {
   updateOpportunity,
 } from "./models/opportunities";
 import schema from "./schema";
+
+/** Closes an owned published opportunity permanently without cancelling existing assignments. */
+export const close = companyMutation({
+  args: { opportunityId: v.id("opportunities") },
+  returns: schema.doc("opportunities"),
+  handler: async (ctx, { opportunityId }) => {
+    return await closeOpportunity(ctx, ctx.membership, opportunityId);
+  },
+});
+
+/** Drains overdue opportunities in bounded transactions for the deadline cron. */
+export const closeExpired = internalMutation({
+  args: {},
+  returns: v.null(),
+  handler: async (ctx) => {
+    const hasMore = await closeExpiredOpportunities(ctx);
+    if (hasMore) await ctx.scheduler.runAfter(0, internal.opportunities.closeExpired, {});
+    return null;
+  },
+});
 
 /** Pauses an open opportunity owned by the caller's company, preserving existing workflow records. */
 export const pause = companyMutation({

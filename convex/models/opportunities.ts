@@ -96,6 +96,41 @@ export const opportunityUpdate = opportunityCreate
 
 export type OpportunityUpdate = Infer<typeof opportunityUpdate>;
 
+/** Publishes an owned draft after validating its brief and parent campaign. */
+export async function publishOpportunity(
+  ctx: MutationCtx,
+  membership: Doc<"companyUsers">,
+  opportunityId: Id<"opportunities">,
+): Promise<Doc<"opportunities">> {
+  const opportunity = await ctx.db.get("opportunities", opportunityId);
+  if (opportunity === null || opportunity.companyId !== membership.companyId) {
+    throw apiError("not_found", { resource: "opportunity" });
+  }
+  const campaign = await ctx.db.get("campaigns", opportunity.campaignId);
+  const company = await ctx.db.get("companies", opportunity.companyId);
+  if (
+    campaign === null ||
+    campaign.companyId !== opportunity.companyId ||
+    company === null ||
+    !company.isActive
+  ) {
+    throw apiError("not_found", { resource: "opportunity" });
+  }
+  if (opportunity.status !== "draft") {
+    throw apiError("invalid_state", { reason: "opportunity_not_draft" });
+  }
+  if (campaign.status !== "open") {
+    throw apiError("invalid_state", { reason: "campaign_not_open" });
+  }
+  // Validate the target state so a deadline allowed on a draft must still be future at publication.
+  const normalized = validateOpportunityFields({ ...opportunity, status: "open" });
+  if (campaign.endsAt !== undefined && opportunity.deadline > campaign.endsAt) {
+    throw apiError("invalid_state", { reason: "deadline_after_campaign_end" });
+  }
+  await ctx.db.patch("opportunities", opportunityId, { status: "open", ...normalized });
+  return { ...opportunity, status: "open", ...normalized };
+}
+
 /** Removes an owned, unused draft without cascading into workflow history. */
 export async function removeOpportunity(
   ctx: MutationCtx,
@@ -303,7 +338,7 @@ export async function createOpportunity(
   });
 }
 
-/** Validates shared creation/update bounds and returns the normalized brief text. */
+/** Validates shared write bounds and returns the normalized brief text. */
 function validateOpportunityFields(
   fields: Omit<OpportunityCreate, "status"> & Pick<Doc<"opportunities">, "status">,
 ): {

@@ -5,6 +5,7 @@ import {
   createOpportunity,
   discoverOpportunities,
   listOpportunities,
+  publishOpportunity,
   removeOpportunity,
   requireOpportunity,
   updateOpportunity,
@@ -28,6 +29,239 @@ beforeEach(() => {
 });
 
 afterEach(() => vi.useRealTimers());
+
+describe("publishOpportunity", () => {
+  test("rejects an already open opportunity", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(t, { subject: "publish_owner" });
+    await expectApiError(
+      () =>
+        t.run(async (ctx) => await publishOpportunity(ctx, owner.membership, owner.opportunityId)),
+      "invalid_state",
+    );
+  });
+
+  test("rejects a paused opportunity without resuming it", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(t, { subject: "publish_owner" });
+    await t.run(
+      async (ctx) => await ctx.db.patch("opportunities", owner.opportunityId, { status: "paused" }),
+    );
+    await expectApiError(
+      () =>
+        t.run(async (ctx) => await publishOpportunity(ctx, owner.membership, owner.opportunityId)),
+      "invalid_state",
+    );
+    expect(
+      await t.run(async (ctx) => await ctx.db.get("opportunities", owner.opportunityId)),
+    ).toMatchObject({ status: "paused" });
+  });
+
+  test("rejects a closed opportunity without reopening it", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(t, { subject: "publish_owner" });
+    await t.run(
+      async (ctx) => await ctx.db.patch("opportunities", owner.opportunityId, { status: "closed" }),
+    );
+    await expectApiError(
+      () =>
+        t.run(async (ctx) => await publishOpportunity(ctx, owner.membership, owner.opportunityId)),
+      "invalid_state",
+    );
+    expect(
+      await t.run(async (ctx) => await ctx.db.get("opportunities", owner.opportunityId)),
+    ).toMatchObject({ status: "closed" });
+  });
+
+  test("rejects a draft under a paused campaign", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(
+      t,
+      { subject: "publish_owner", status: "paused" },
+      { status: "draft" },
+    );
+    await expectApiError(
+      () =>
+        t.run(async (ctx) => await publishOpportunity(ctx, owner.membership, owner.opportunityId)),
+      "invalid_state",
+    );
+    expect(
+      await t.run(async (ctx) => await ctx.db.get("opportunities", owner.opportunityId)),
+    ).toMatchObject({ status: "draft" });
+  });
+
+  test("rejects a draft under a draft campaign", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(
+      t,
+      { subject: "publish_owner", status: "draft" },
+      { status: "draft" },
+    );
+    await expectApiError(
+      () =>
+        t.run(async (ctx) => await publishOpportunity(ctx, owner.membership, owner.opportunityId)),
+      "invalid_state",
+    );
+  });
+
+  test("rejects a draft under a closed campaign", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(t, { subject: "publish_owner" }, { status: "draft" });
+    await t.run(
+      async (ctx) => await ctx.db.patch("campaigns", owner.campaignId, { status: "closed" }),
+    );
+    await expectApiError(
+      () =>
+        t.run(async (ctx) => await publishOpportunity(ctx, owner.membership, owner.opportunityId)),
+      "invalid_state",
+    );
+  });
+
+  test("rejects a draft whose deadline has elapsed since creation", async () => {
+    const t = convexTest(schema, modules);
+    const deadline = Date.now() + 60_000;
+    const owner = await seedOpportunity(
+      t,
+      { subject: "publish_owner" },
+      { status: "draft", deadline },
+    );
+    const before = await t.run(
+      async (ctx) => await ctx.db.get("opportunities", owner.opportunityId),
+    );
+    vi.setSystemTime(deadline);
+    await expectApiError(
+      () =>
+        t.run(async (ctx) => await publishOpportunity(ctx, owner.membership, owner.opportunityId)),
+      "invalid_state",
+    );
+    expect(
+      await t.run(async (ctx) => await ctx.db.get("opportunities", owner.opportunityId)),
+    ).toEqual(before);
+  });
+
+  test("conceals a missing opportunity", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(t, { subject: "publish_owner" }, { status: "draft" });
+    await t.run(async (ctx) => await ctx.db.delete("opportunities", owner.opportunityId));
+    await expectApiError(
+      () =>
+        t.run(async (ctx) => await publishOpportunity(ctx, owner.membership, owner.opportunityId)),
+      "not_found",
+    );
+  });
+
+  test("conceals a missing campaign", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(t, { subject: "publish_owner" }, { status: "draft" });
+    await t.run(async (ctx) => await ctx.db.delete("campaigns", owner.campaignId));
+    await expectApiError(
+      () =>
+        t.run(async (ctx) => await publishOpportunity(ctx, owner.membership, owner.opportunityId)),
+      "not_found",
+    );
+  });
+
+  test("conceals an inconsistent campaign/company link", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(t, { subject: "publish_owner" }, { status: "draft" });
+    const other = await seedCampaign(t, { subject: "publish_other", orgId: "org_other" });
+    await t.run(
+      async (ctx) =>
+        await ctx.db.patch("opportunities", owner.opportunityId, { campaignId: other.campaignId }),
+    );
+    await expectApiError(
+      () =>
+        t.run(async (ctx) => await publishOpportunity(ctx, owner.membership, owner.opportunityId)),
+      "not_found",
+    );
+  });
+
+  test("conceals a draft belonging to an inactive company", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(t, { subject: "publish_owner" }, { status: "draft" });
+    await t.run(
+      async (ctx) =>
+        await ctx.db.patch("companies", owner.membership.companyId, { isActive: false }),
+    );
+    await expectApiError(
+      () =>
+        t.run(async (ctx) => await publishOpportunity(ctx, owner.membership, owner.opportunityId)),
+      "not_found",
+    );
+  });
+
+  test("revalidates legacy blank brief text without publishing it", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(t, { subject: "publish_owner" }, { status: "draft" });
+    await t.run(
+      async (ctx) =>
+        await ctx.db.patch("opportunities", owner.opportunityId, { description: "  " }),
+    );
+    const before = await t.run(
+      async (ctx) => await ctx.db.get("opportunities", owner.opportunityId),
+    );
+    await expectApiError(
+      () =>
+        t.run(async (ctx) => await publishOpportunity(ctx, owner.membership, owner.opportunityId)),
+      "invalid_state",
+    );
+    expect(
+      await t.run(async (ctx) => await ctx.db.get("opportunities", owner.opportunityId)),
+    ).toEqual(before);
+  });
+
+  test("revalidates legacy fractional compensation", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(t, { subject: "publish_owner" }, { status: "draft" });
+    await t.run(
+      async (ctx) =>
+        await ctx.db.patch("opportunities", owner.opportunityId, { cpmRateCents: 0.5 }),
+    );
+    await expectApiError(
+      () =>
+        t.run(async (ctx) => await publishOpportunity(ctx, owner.membership, owner.opportunityId)),
+      "invalid_state",
+    );
+  });
+
+  test("revalidates legacy zero capacity", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(t, { subject: "publish_owner" }, { status: "draft" });
+    await t.run(
+      async (ctx) => await ctx.db.patch("opportunities", owner.opportunityId, { maxSlots: 0 }),
+    );
+    await expectApiError(
+      () =>
+        t.run(async (ctx) => await publishOpportunity(ctx, owner.membership, owner.opportunityId)),
+      "invalid_state",
+    );
+  });
+
+  test("publishes a draft and preserves the rest of the document and campaign", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(
+      t,
+      { subject: "publish_owner" },
+      { status: "draft", isGated: true },
+    );
+    const before = await t.run(
+      async (ctx) => await ctx.db.get("opportunities", owner.opportunityId),
+    );
+    const campaign = await t.run(async (ctx) => await ctx.db.get("campaigns", owner.campaignId));
+
+    const result = await t.run(
+      async (ctx) => await publishOpportunity(ctx, owner.membership, owner.opportunityId),
+    );
+
+    expect(result).toEqual({ ...before, status: "open" });
+    expect(
+      await t.run(async (ctx) => await ctx.db.get("opportunities", owner.opportunityId)),
+    ).toEqual(result);
+    expect(await t.run(async (ctx) => await ctx.db.get("campaigns", owner.campaignId))).toEqual(
+      campaign,
+    );
+  });
+});
 
 describe("removeOpportunity", () => {
   test("conceals a draft whose company is inactive", async () => {

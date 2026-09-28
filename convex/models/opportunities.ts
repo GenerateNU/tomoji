@@ -96,6 +96,44 @@ export const opportunityUpdate = opportunityCreate
 
 export type OpportunityUpdate = Infer<typeof opportunityUpdate>;
 
+/** Removes an owned, unused draft without cascading into workflow history. */
+export async function removeOpportunity(
+  ctx: MutationCtx,
+  membership: Doc<"companyUsers">,
+  opportunityId: Id<"opportunities">,
+): Promise<void> {
+  const opportunity = await ctx.db.get("opportunities", opportunityId);
+  if (opportunity === null || opportunity.companyId !== membership.companyId) {
+    throw apiError("not_found", { resource: "opportunity" });
+  }
+  const campaign = await ctx.db.get("campaigns", opportunity.campaignId);
+  const company = await ctx.db.get("companies", opportunity.companyId);
+  if (
+    campaign === null ||
+    campaign.companyId !== opportunity.companyId ||
+    company === null ||
+    !company.isActive
+  ) {
+    throw apiError("not_found", { resource: "opportunity" });
+  }
+  if (opportunity.status !== "draft" || opportunity.numFilledSlots !== 0) {
+    throw apiError("invalid_state", { reason: "opportunity_not_removable" });
+  }
+  // Check all statuses: historical applications and assignments must not become orphaned.
+  const applications = await ctx.db
+    .query("applications")
+    .withIndex("by_opportunityId_and_status", (q) => q.eq("opportunityId", opportunityId))
+    .take(1);
+  const assignments = await ctx.db
+    .query("assignments")
+    .withIndex("by_opportunityId_and_status", (q) => q.eq("opportunityId", opportunityId))
+    .take(1);
+  if (applications.length > 0 || assignments.length > 0) {
+    throw apiError("invalid_state", { reason: "opportunity_has_workflow_history" });
+  }
+  await ctx.db.delete("opportunities", opportunityId);
+}
+
 /** Updates an owned brief and its defaults without changing existing assignment terms. */
 export async function updateOpportunity(
   ctx: MutationCtx,

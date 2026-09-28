@@ -12,9 +12,20 @@ import {
   opportunityDiscover,
   opportunityList,
   opportunityUpdate,
+  removeOpportunity,
   updateOpportunity,
 } from "./models/opportunities";
 import schema from "./schema";
+
+/** Removes a draft owned by the caller's company only when it has no workflow history. */
+export const remove = companyMutation({
+  args: { opportunityId: v.id("opportunities") },
+  returns: v.null(),
+  handler: async (ctx, { opportunityId }) => {
+    await removeOpportunity(ctx, ctx.membership, opportunityId);
+    return null;
+  },
+});
 
 /** Updates editable opportunity fields for the caller's company, preserving assignment terms. */
 export const update = companyMutation({

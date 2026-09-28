@@ -95,6 +95,36 @@ export const opportunityList = schema
     paginationOpts: paginationOptsValidator,
   });
 
+export const opportunityDiscover = opportunityList.pick("paginationOpts");
+
+/** Discovers open briefs across active companies without ranking or application eligibility rules. */
+export async function discoverOpportunities(
+  ctx: QueryCtx,
+  options: Infer<typeof opportunityDiscover>,
+): Promise<PaginationResult<Doc<"opportunities">>> {
+  const result = await ctx.db
+    .query("opportunities")
+    .withIndex("by_status_and_deadline", (q) => q.eq("status", "open"))
+    .paginate(options.paginationOpts);
+  const visible = await Promise.all(
+    result.page.map(async (opportunity) => {
+      const campaign = await ctx.db.get("campaigns", opportunity.campaignId);
+      if (
+        campaign === null ||
+        campaign.status !== "open" ||
+        campaign.companyId !== opportunity.companyId
+      ) {
+        return null;
+      }
+      const company = await ctx.db.get("companies", opportunity.companyId);
+      return company !== null && company.isActive ? opportunity : null;
+    }),
+  );
+
+  // Visibility can shorten a page; retain the native cursor and isDone so callers can continue.
+  return { ...result, page: visible.filter((opportunity) => opportunity !== null) };
+}
+
 /** Lists the company's opportunities, optionally scoped to an owned campaign and status. */
 export async function listOpportunities(
   ctx: QueryCtx,

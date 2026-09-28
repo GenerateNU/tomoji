@@ -3,6 +3,7 @@ import { convexTest } from "convex-test";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import {
   createOpportunity,
+  discoverOpportunities,
   listOpportunities,
   requireOpportunity,
 } from "../../models/opportunities";
@@ -24,6 +25,226 @@ beforeEach(() => {
 });
 
 afterEach(() => vi.useRealTimers());
+
+describe("discoverOpportunities", () => {
+  test("returns an empty finished page when there are no open opportunities", async () => {
+    const t = convexTest(schema, modules);
+    await seedOpportunity(t, { subject: "discover_draft" }, { status: "draft" });
+
+    const result = await t.run(
+      async (ctx) =>
+        await discoverOpportunities(ctx, {
+          paginationOpts: { numItems: 10, cursor: null },
+        }),
+    );
+
+    expect(result.page).toEqual([]);
+    expect(result.isDone).toBe(true);
+  });
+
+  test("excludes draft, paused, and closed opportunities", async () => {
+    const t = convexTest(schema, modules);
+    const open = await seedOpportunity(t, { subject: "discover_open" });
+    await seedOpportunity(t, { subject: "discover_draft" }, { status: "draft" });
+    const paused = await seedOpportunity(t, { subject: "discover_paused" });
+    const closed = await seedOpportunity(t, { subject: "discover_closed" });
+    await t.run(async (ctx) => {
+      await ctx.db.patch("opportunities", paused.opportunityId, { status: "paused" });
+      await ctx.db.patch("opportunities", closed.opportunityId, { status: "closed" });
+    });
+
+    const result = await t.run(
+      async (ctx) =>
+        await discoverOpportunities(ctx, {
+          paginationOpts: { numItems: 10, cursor: null },
+        }),
+    );
+
+    expect(result.page).toEqual([
+      await t.run(async (ctx) => await ctx.db.get("opportunities", open.opportunityId)),
+    ]);
+  });
+
+  test("suppresses opportunities under draft, paused, or closed campaigns", async () => {
+    const t = convexTest(schema, modules);
+    const draft = await seedOpportunity(t, { subject: "discover_draft_campaign" });
+    const paused = await seedOpportunity(t, { subject: "discover_paused_campaign" });
+    const closed = await seedOpportunity(t, { subject: "discover_closed_campaign" });
+    await t.run(async (ctx) => {
+      await ctx.db.patch("campaigns", draft.campaignId, { status: "draft" });
+      await ctx.db.patch("campaigns", paused.campaignId, { status: "paused" });
+      await ctx.db.patch("campaigns", closed.campaignId, { status: "closed" });
+    });
+
+    const result = await t.run(
+      async (ctx) =>
+        await discoverOpportunities(ctx, {
+          paginationOpts: { numItems: 10, cursor: null },
+        }),
+    );
+
+    expect(result.page).toEqual([]);
+    expect(result.isDone).toBe(true);
+  });
+
+  test("excludes an inactive company", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(t, { subject: "discover_inactive" });
+    await t.run(
+      async (ctx) =>
+        await ctx.db.patch("companies", owner.membership.companyId, { isActive: false }),
+    );
+
+    const result = await t.run(
+      async (ctx) =>
+        await discoverOpportunities(ctx, {
+          paginationOpts: { numItems: 10, cursor: null },
+        }),
+    );
+
+    expect(result.page).toEqual([]);
+  });
+
+  test("excludes a missing company", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(t, { subject: "discover_missing_company" });
+    await t.run(async (ctx) => await ctx.db.delete("companies", owner.membership.companyId));
+
+    const result = await t.run(
+      async (ctx) =>
+        await discoverOpportunities(ctx, {
+          paginationOpts: { numItems: 10, cursor: null },
+        }),
+    );
+
+    expect(result.page).toEqual([]);
+  });
+
+  test("excludes a missing campaign", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(t, { subject: "discover_missing_campaign" });
+    await t.run(async (ctx) => await ctx.db.delete("campaigns", owner.campaignId));
+
+    const result = await t.run(
+      async (ctx) =>
+        await discoverOpportunities(ctx, {
+          paginationOpts: { numItems: 10, cursor: null },
+        }),
+    );
+
+    expect(result.page).toEqual([]);
+  });
+
+  test("excludes inconsistent campaign ownership", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(t, { subject: "discover_owner" });
+    const other = await seedCampaign(t, { subject: "discover_other", orgId: "org_other" });
+    await t.run(
+      async (ctx) =>
+        await ctx.db.patch("opportunities", owner.opportunityId, { campaignId: other.campaignId }),
+    );
+
+    const result = await t.run(
+      async (ctx) =>
+        await discoverOpportunities(ctx, {
+          paginationOpts: { numItems: 10, cursor: null },
+        }),
+    );
+
+    expect(result.page).toEqual([]);
+  });
+
+  test("paginates complete documents in deadline order", async () => {
+    const t = convexTest(schema, modules);
+    const later = await seedOpportunity(
+      t,
+      { subject: "discover_later" },
+      { deadline: Date.now() + 172_800_000, productAccessLink: "https://example.com/product" },
+    );
+    const sooner = await seedOpportunity(t, { subject: "discover_sooner", orgId: "org_other" });
+
+    const firstPage = await t.run(
+      async (ctx) =>
+        await discoverOpportunities(ctx, {
+          paginationOpts: { numItems: 1, cursor: null },
+        }),
+    );
+    const secondPage = await t.run(
+      async (ctx) =>
+        await discoverOpportunities(ctx, {
+          paginationOpts: { numItems: 1, cursor: firstPage.continueCursor },
+        }),
+    );
+
+    expect(firstPage.page).toEqual([
+      await t.run(async (ctx) => await ctx.db.get("opportunities", sooner.opportunityId)),
+    ]);
+    expect(firstPage.isDone).toBe(false);
+    expect(secondPage.page).toEqual([
+      await t.run(async (ctx) => await ctx.db.get("opportunities", later.opportunityId)),
+    ]);
+    expect(secondPage.isDone).toBe(true);
+  });
+
+  test("continues past an empty visibility-filtered page", async () => {
+    const t = convexTest(schema, modules);
+    const hidden = await seedOpportunity(t, { subject: "discover_hidden" });
+    await t.run(
+      async (ctx) => await ctx.db.patch("campaigns", hidden.campaignId, { status: "paused" }),
+    );
+    const visible = await seedOpportunity(
+      t,
+      { subject: "discover_visible" },
+      { deadline: Date.now() + 172_800_000 },
+    );
+
+    const firstPage = await t.run(
+      async (ctx) =>
+        await discoverOpportunities(ctx, {
+          paginationOpts: { numItems: 1, cursor: null },
+        }),
+    );
+    const secondPage = await t.run(
+      async (ctx) =>
+        await discoverOpportunities(ctx, {
+          paginationOpts: { numItems: 1, cursor: firstPage.continueCursor },
+        }),
+    );
+
+    expect(firstPage.page).toEqual([]);
+    expect(firstPage.isDone).toBe(false);
+    expect(secondPage.page).toEqual([
+      await t.run(async (ctx) => await ctx.db.get("opportunities", visible.opportunityId)),
+    ]);
+    expect(secondPage.isDone).toBe(true);
+  });
+
+  test("returns open briefs across companies, including gated and filled opportunities", async () => {
+    const t = convexTest(schema, modules);
+    const first = await seedOpportunity(t, { subject: "discover_first" });
+    const second = await seedOpportunity(
+      t,
+      { subject: "discover_second", orgId: "org_other" },
+      { isGated: true },
+    );
+    await t.run(
+      async (ctx) =>
+        await ctx.db.patch("opportunities", second.opportunityId, { numFilledSlots: 5 }),
+    );
+
+    const result = await t.run(
+      async (ctx) =>
+        await discoverOpportunities(ctx, {
+          paginationOpts: { numItems: 10, cursor: null },
+        }),
+    );
+
+    expect(result.page.map((row) => row._id).sort()).toEqual(
+      [first.opportunityId, second.opportunityId].sort(),
+    );
+    expect(result.isDone).toBe(true);
+  });
+});
 
 describe("listOpportunities", () => {
   test("lists every state across the company's campaigns without leaking another company", async () => {

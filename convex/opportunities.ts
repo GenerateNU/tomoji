@@ -1,16 +1,27 @@
 import { paginationResultValidator } from "convex/server";
 import { v } from "convex/values";
-import { authedQuery, companyMutation, companyQuery } from "./lib/functions";
+import { authedQuery, companyMutation, companyQuery, creatorQuery } from "./lib/functions";
 import { findOrgId } from "./lib/identity";
 import {
   createOpportunity,
   creatorOpportunity,
+  discoverOpportunities,
   getOpportunity,
   listOpportunities,
   opportunityCreate,
+  opportunityDiscover,
   opportunityList,
 } from "./models/opportunities";
 import schema from "./schema";
+
+/** Returns a creator's paginated discovery feed of visible open opportunity briefs. */
+export const discover = creatorQuery({
+  args: opportunityDiscover.fields,
+  returns: paginationResultValidator(schema.doc("opportunities")),
+  handler: async (ctx, args) => {
+    return await discoverOpportunities(ctx, args);
+  },
+});
 
 /** Returns the caller's company opportunities, optionally filtered by campaign and status. */
 export const list = companyQuery({

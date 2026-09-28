@@ -96,6 +96,67 @@ export const opportunityUpdate = opportunityCreate
 
 export type OpportunityUpdate = Infer<typeof opportunityUpdate>;
 
+/** Loads an owned opportunity and its campaign for company lifecycle transitions. */
+async function requireOwnedOpportunity(
+  ctx: MutationCtx,
+  membership: Doc<"companyUsers">,
+  opportunityId: Id<"opportunities">,
+): Promise<{ opportunity: Doc<"opportunities">; campaign: Doc<"campaigns"> }> {
+  const opportunity = await ctx.db.get("opportunities", opportunityId);
+  if (opportunity === null || opportunity.companyId !== membership.companyId) {
+    throw apiError("not_found", { resource: "opportunity" });
+  }
+  const campaign = await ctx.db.get("campaigns", opportunity.campaignId);
+  const company = await ctx.db.get("companies", opportunity.companyId);
+  if (
+    campaign === null ||
+    campaign.companyId !== opportunity.companyId ||
+    company === null ||
+    !company.isActive
+  ) {
+    throw apiError("not_found", { resource: "opportunity" });
+  }
+  return { opportunity, campaign };
+}
+
+/** Pauses an owned open opportunity without changing its existing workflow records. */
+export async function pauseOpportunity(
+  ctx: MutationCtx,
+  membership: Doc<"companyUsers">,
+  opportunityId: Id<"opportunities">,
+): Promise<Doc<"opportunities">> {
+  const { opportunity, campaign } = await requireOwnedOpportunity(ctx, membership, opportunityId);
+  if (opportunity.status !== "open") {
+    throw apiError("invalid_state", { reason: "opportunity_not_open" });
+  }
+  if (campaign.status === "closed") {
+    throw apiError("invalid_state", { reason: "campaign_closed" });
+  }
+  await ctx.db.patch("opportunities", opportunityId, { status: "paused" });
+  return { ...opportunity, status: "paused" };
+}
+
+/** Resumes an owned paused opportunity without altering its campaign or agreed terms. */
+export async function resumeOpportunity(
+  ctx: MutationCtx,
+  membership: Doc<"companyUsers">,
+  opportunityId: Id<"opportunities">,
+): Promise<Doc<"opportunities">> {
+  const { opportunity, campaign } = await requireOwnedOpportunity(ctx, membership, opportunityId);
+  if (opportunity.status !== "paused") {
+    throw apiError("invalid_state", { reason: "opportunity_not_paused" });
+  }
+  // Campaign and opportunity pause state are independent; resuming one cannot resume the other.
+  if (campaign.status !== "open") {
+    throw apiError("invalid_state", { reason: "campaign_not_open" });
+  }
+  if (!Number.isFinite(opportunity.deadline) || opportunity.deadline <= Date.now()) {
+    throw apiError("invalid_state", { reason: "invalid_deadline" });
+  }
+  await ctx.db.patch("opportunities", opportunityId, { status: "open" });
+  return { ...opportunity, status: "open" };
+}
+
 /** Publishes an owned draft after validating its brief and parent campaign. */
 export async function publishOpportunity(
   ctx: MutationCtx,

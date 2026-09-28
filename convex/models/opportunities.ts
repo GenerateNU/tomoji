@@ -96,6 +96,13 @@ export const opportunityUpdate = opportunityCreate
 
 export type OpportunityUpdate = Infer<typeof opportunityUpdate>;
 
+/** Requires an exact UTC :00 or :30 deadline with zero seconds and milliseconds. */
+function validateOpportunityDeadline(deadline: number): void {
+  if (!Number.isSafeInteger(deadline) || deadline % (30 * 60 * 1000) !== 0) {
+    throw apiError("invalid_state", { reason: "invalid_deadline" });
+  }
+}
+
 /** Loads an owned opportunity and its campaign for company lifecycle transitions. */
 async function requireOwnedOpportunity(
   ctx: MutationCtx,
@@ -150,7 +157,8 @@ export async function resumeOpportunity(
   if (campaign.status !== "open") {
     throw apiError("invalid_state", { reason: "campaign_not_open" });
   }
-  if (!Number.isFinite(opportunity.deadline) || opportunity.deadline <= Date.now()) {
+  validateOpportunityDeadline(opportunity.deadline);
+  if (opportunity.deadline <= Date.now()) {
     throw apiError("invalid_state", { reason: "invalid_deadline" });
   }
   await ctx.db.patch("opportunities", opportunityId, { status: "open" });
@@ -421,10 +429,8 @@ function validateOpportunityFields(
   if (fields.maxApplications > fields.maxSlots) {
     throw apiError("invalid_state", { reason: "invalid_capacity", field: "maxApplications" });
   }
-  if (
-    !Number.isSafeInteger(fields.deadline) ||
-    (fields.status === "open" && fields.deadline <= Date.now())
-  ) {
+  validateOpportunityDeadline(fields.deadline);
+  if (fields.status === "open" && fields.deadline <= Date.now()) {
     throw apiError("invalid_state", { reason: "invalid_deadline" });
   }
   return { title, description };

@@ -192,6 +192,23 @@ describe("pauseOpportunity", () => {
 });
 
 describe("resumeOpportunity", () => {
+  test("rejects resuming a legacy off-grid deadline", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(t, { subject: "resume_owner" });
+    await t.run(
+      async (ctx) =>
+        await ctx.db.patch("opportunities", owner.opportunityId, {
+          status: "paused",
+          deadline: Date.now() + 60_000,
+        }),
+    );
+    await expectApiError(
+      () =>
+        t.run(async (ctx) => await resumeOpportunity(ctx, owner.membership, owner.opportunityId)),
+      "invalid_state",
+    );
+  });
+
   test("rejects a draft without publishing it", async () => {
     const t = convexTest(schema, modules);
     const owner = await seedOpportunity(t, { subject: "resume_owner" }, { status: "draft" });
@@ -282,7 +299,7 @@ describe("resumeOpportunity", () => {
 
   test("rejects resuming at the deadline before automatic closure runs", async () => {
     const t = convexTest(schema, modules);
-    const deadline = Date.now() + 60_000;
+    const deadline = Date.now() + 1_800_000;
     const owner = await seedOpportunity(t, { subject: "resume_owner" }, { deadline });
     await t.run(
       async (ctx) => await ctx.db.patch("opportunities", owner.opportunityId, { status: "paused" }),
@@ -386,7 +403,6 @@ describe("publishOpportunity", () => {
       async (ctx) =>
         await ctx.db.patch("campaigns", owner.campaignId, { endsAt: Date.now() + 60_000 }),
     );
-
     await expectApiError(
       () =>
         t.run(async (ctx) => await publishOpportunity(ctx, owner.membership, owner.opportunityId)),
@@ -395,6 +411,20 @@ describe("publishOpportunity", () => {
     expect(
       await t.run(async (ctx) => await ctx.db.get("opportunities", owner.opportunityId)),
     ).toEqual(before);
+  });
+
+  test("rejects publishing a legacy off-grid draft deadline", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(t, { subject: "publish_owner" }, { status: "draft" });
+    await t.run(
+      async (ctx) =>
+        await ctx.db.patch("opportunities", owner.opportunityId, { deadline: Date.now() + 60_000 }),
+    );
+    await expectApiError(
+      () =>
+        t.run(async (ctx) => await publishOpportunity(ctx, owner.membership, owner.opportunityId)),
+      "invalid_state",
+    );
   });
 
   test("rejects an already open opportunity", async () => {
@@ -485,7 +515,7 @@ describe("publishOpportunity", () => {
 
   test("rejects a draft whose deadline has elapsed since creation", async () => {
     const t = convexTest(schema, modules);
-    const deadline = Date.now() + 60_000;
+    const deadline = Date.now() + 1_800_000;
     const owner = await seedOpportunity(
       t,
       { subject: "publish_owner" },
@@ -845,6 +875,27 @@ describe("removeOpportunity", () => {
 });
 
 describe("updateOpportunity", () => {
+  test("rejects an off-grid replacement deadline without changing the document", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(t, { subject: "update_owner" });
+    const before = await t.run(
+      async (ctx) => await ctx.db.get("opportunities", owner.opportunityId),
+    );
+    await expectApiError(
+      () =>
+        t.run(
+          async (ctx) =>
+            await updateOpportunity(ctx, owner.membership, owner.opportunityId, {
+              deadline: Date.now() + 60_000,
+            }),
+        ),
+      "invalid_state",
+    );
+    expect(
+      await t.run(async (ctx) => await ctx.db.get("opportunities", owner.opportunityId)),
+    ).toEqual(before);
+  });
+
   test("conceals an opportunity whose campaign is missing", async () => {
     const t = convexTest(schema, modules);
     const owner = await seedOpportunity(t, { subject: "update_owner" });
@@ -1129,7 +1180,7 @@ describe("updateOpportunity", () => {
         t.run(
           async (ctx) =>
             await updateOpportunity(ctx, owner.membership, owner.opportunityId, {
-              deadline: Date.now() - 1,
+              deadline: Date.now() - 1_800_000,
             }),
         ),
       "invalid_state",
@@ -1142,10 +1193,10 @@ describe("updateOpportunity", () => {
     const result = await t.run(
       async (ctx) =>
         await updateOpportunity(ctx, owner.membership, owner.opportunityId, {
-          deadline: Date.now() - 1,
+          deadline: Date.now() - 1_800_000,
         }),
     );
-    expect(result.deadline).toBe(Date.now() - 1);
+    expect(result.deadline).toBe(Date.now() - 1_800_000);
     await expectApiError(
       () =>
         t.run(
@@ -1688,6 +1739,67 @@ describe("listOpportunities", () => {
 });
 
 describe("createOpportunity", () => {
+  test("accepts an exact :00 UTC deadline", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(
+      t,
+      { subject: "deadline_owner" },
+      {
+        deadline: Date.parse("2026-09-27T13:00:00.000Z"),
+      },
+    );
+    expect(
+      await t.run(async (ctx) => await ctx.db.get("opportunities", owner.opportunityId)),
+    ).toMatchObject({ deadline: Date.parse("2026-09-27T13:00:00.000Z") });
+  });
+
+  test("accepts an exact :30 UTC deadline", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(
+      t,
+      { subject: "deadline_owner" },
+      {
+        deadline: Date.parse("2026-09-27T12:30:00.000Z"),
+      },
+    );
+    expect(
+      await t.run(async (ctx) => await ctx.db.get("opportunities", owner.opportunityId)),
+    ).toMatchObject({ deadline: Date.parse("2026-09-27T12:30:00.000Z") });
+  });
+
+  test("rejects an off-grid draft deadline without writing", async () => {
+    const t = convexTest(schema, modules);
+    const { campaignId, membership } = await seedCampaign(t, { subject: "deadline_owner" });
+    const args = opportunityArgs(campaignId, { status: "draft", deadline: Date.now() + 60_000 });
+    await expectApiError(
+      () => t.run(async (ctx) => await createOpportunity(ctx, membership, args)),
+      "invalid_state",
+    );
+    expect(await t.run(async (ctx) => await ctx.db.query("opportunities").take(1))).toEqual([]);
+  });
+
+  test("rejects nonzero deadline seconds without writing", async () => {
+    const t = convexTest(schema, modules);
+    const { campaignId, membership } = await seedCampaign(t, { subject: "deadline_owner" });
+    const args = opportunityArgs(campaignId, { deadline: Date.now() + 1_801_000 });
+    await expectApiError(
+      () => t.run(async (ctx) => await createOpportunity(ctx, membership, args)),
+      "invalid_state",
+    );
+    expect(await t.run(async (ctx) => await ctx.db.query("opportunities").take(1))).toEqual([]);
+  });
+
+  test("rejects nonzero deadline milliseconds without writing", async () => {
+    const t = convexTest(schema, modules);
+    const { campaignId, membership } = await seedCampaign(t, { subject: "deadline_owner" });
+    const args = opportunityArgs(campaignId, { deadline: Date.now() + 1_800_001 });
+    await expectApiError(
+      () => t.run(async (ctx) => await createOpportunity(ctx, membership, args)),
+      "invalid_state",
+    );
+    expect(await t.run(async (ctx) => await ctx.db.query("opportunities").take(1))).toEqual([]);
+  });
+
   test("accepts zero compensation and trims the brief", async () => {
     const t = convexTest(schema, modules);
     const { campaignId, membership } = await seedCampaign(t, { subject: "op_owner" });
@@ -1715,7 +1827,7 @@ describe("createOpportunity", () => {
       subject: "op_owner",
       status: "draft",
     });
-    const args = opportunityArgs(campaignId, { status: "draft", deadline: Date.now() - 1 });
+    const args = opportunityArgs(campaignId, { status: "draft", deadline: Date.now() - 1_800_000 });
 
     const id = await t.run(async (ctx) => await createOpportunity(ctx, membership, args));
     expect(await t.run(async (ctx) => await ctx.db.get("opportunities", id))).toMatchObject(args);
@@ -2015,7 +2127,7 @@ describe("createOpportunity", () => {
   test("rejects publishing with an elapsed deadline without writing", async () => {
     const t = convexTest(schema, modules);
     const { campaignId, membership } = await seedCampaign(t, { subject: "op_owner" });
-    const args = opportunityArgs(campaignId, { deadline: Date.now() - 1 });
+    const args = opportunityArgs(campaignId, { deadline: Date.now() - 1_800_000 });
 
     await expectApiError(
       () => t.run(async (ctx) => await createOpportunity(ctx, membership, args)),

@@ -147,7 +147,7 @@ export function opportunityArgs(
     targetApplicant: "Skincare creators",
     maxSlots: 5,
     maxApplications: 5,
-    deadline: Date.now() + 86_400_000,
+    deadline: Math.ceil((Date.now() + 86_400_000) / 1_800_000) * 1_800_000,
     fixedFeeCents: 10_000,
     cpmRateCents: 500,
     paymentCapCents: 25_000,

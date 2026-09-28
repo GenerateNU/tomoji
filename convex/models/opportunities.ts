@@ -87,6 +87,88 @@ export async function getOpportunity(
   return toCreatorOpportunity(opportunity, company);
 }
 
+export const opportunityUpdate = opportunityCreate
+  .omit("campaignId", "status", "productAccessLink")
+  .partial()
+  .extend({
+    productAccessLink: v.optional(v.union(v.string(), v.null())),
+  });
+
+export type OpportunityUpdate = Infer<typeof opportunityUpdate>;
+
+/** Updates an owned brief and its defaults without changing existing assignment terms. */
+export async function updateOpportunity(
+  ctx: MutationCtx,
+  membership: Doc<"companyUsers">,
+  opportunityId: Id<"opportunities">,
+  updates: OpportunityUpdate,
+): Promise<Doc<"opportunities">> {
+  const opportunity = await ctx.db.get("opportunities", opportunityId);
+  if (opportunity === null || opportunity.companyId !== membership.companyId) {
+    throw apiError("not_found", { resource: "opportunity" });
+  }
+  const campaign = await ctx.db.get("campaigns", opportunity.campaignId);
+  const company = await ctx.db.get("companies", opportunity.companyId);
+  if (
+    campaign === null ||
+    campaign.companyId !== opportunity.companyId ||
+    company === null ||
+    !company.isActive
+  ) {
+    throw apiError("not_found", { resource: "opportunity" });
+  }
+  if (opportunity.status === "closed" || campaign.status === "closed") {
+    throw apiError("invalid_state", { reason: "opportunity_not_editable" });
+  }
+
+  const patch: Partial<OpportunityCreate> = {};
+  for (const field of [
+    "title",
+    "description",
+    "targetApplicant",
+    "contentRequirements",
+    "prohibitedClaims",
+    "disclosureRequirements",
+    "usageRights",
+  ] as const) {
+    if (updates[field] !== undefined) patch[field] = updates[field];
+  }
+  for (const field of [
+    "maxSlots",
+    "maxApplications",
+    "deadline",
+    "fixedFeeCents",
+    "cpmRateCents",
+    "paymentCapCents",
+  ] as const) {
+    if (updates[field] !== undefined) patch[field] = updates[field];
+  }
+  for (const field of ["isGated", "usesAiReviewDefault"] as const) {
+    if (updates[field] !== undefined) patch[field] = updates[field];
+  }
+  // Omitted fields stay unchanged; null removes the optional link, as in creator updates.
+  if (updates.productAccessLink !== undefined)
+    patch.productAccessLink = updates.productAccessLink ?? undefined;
+  const updated = { ...opportunity, ...patch };
+  const normalized = validateOpportunityFields(updated);
+  if (campaign.endsAt !== undefined && updated.deadline > campaign.endsAt) {
+    throw apiError("invalid_state", { reason: "deadline_after_campaign_end" });
+  }
+  if (updated.maxSlots < opportunity.numFilledSlots) {
+    throw apiError("invalid_state", { reason: "capacity_below_filled_slots" });
+  }
+  if (
+    updates.deadline !== undefined &&
+    opportunity.status !== "draft" &&
+    updates.deadline <= Date.now()
+  ) {
+    throw apiError("invalid_state", { reason: "invalid_deadline" });
+  }
+
+  await ctx.db.patch("opportunities", opportunityId, { ...patch, ...normalized });
+  return { ...updated, ...normalized };
+}
+
 export const opportunityList = schema
   .doc("opportunities")
   .pick("campaignId", "status")
@@ -169,6 +251,27 @@ export async function createOpportunity(
   if (campaign.status === "closed" || (fields.status === "open" && campaign.status !== "open")) {
     throw apiError("invalid_state", { reason: "campaign_not_open" });
   }
+  const { title, description } = validateOpportunityFields(fields);
+  if (campaign.endsAt !== undefined && fields.deadline > campaign.endsAt) {
+    throw apiError("invalid_state", { reason: "deadline_after_campaign_end" });
+  }
+  return await ctx.db.insert("opportunities", {
+    ...fields,
+    title,
+    description,
+    companyId: campaign.companyId,
+    createdBy: membership._id,
+    numFilledSlots: 0,
+  });
+}
+
+/** Validates shared creation/update bounds and returns the normalized brief text. */
+function validateOpportunityFields(
+  fields: Omit<OpportunityCreate, "status"> & Pick<Doc<"opportunities">, "status">,
+): {
+  title: string;
+  description: string;
+} {
   const title = requireNonBlank(fields.title, "title");
   const description = requireNonBlank(fields.description, "description");
   for (const field of ["fixedFeeCents", "cpmRateCents", "paymentCapCents"] as const) {
@@ -190,17 +293,7 @@ export async function createOpportunity(
   ) {
     throw apiError("invalid_state", { reason: "invalid_deadline" });
   }
-  if (campaign.endsAt !== undefined && fields.deadline > campaign.endsAt) {
-    throw apiError("invalid_state", { reason: "deadline_after_campaign_end" });
-  }
-  return await ctx.db.insert("opportunities", {
-    ...fields,
-    title,
-    description,
-    companyId: campaign.companyId,
-    createdBy: membership._id,
-    numFilledSlots: 0,
-  });
+  return { title, description };
 }
 
 /** Returns an opportunity visible to its company, a creator, or an operator. */

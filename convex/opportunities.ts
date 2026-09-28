@@ -11,8 +11,19 @@ import {
   opportunityCreate,
   opportunityDiscover,
   opportunityList,
+  opportunityUpdate,
+  updateOpportunity,
 } from "./models/opportunities";
 import schema from "./schema";
+
+/** Updates editable opportunity fields for the caller's company, preserving assignment terms. */
+export const update = companyMutation({
+  args: { opportunityId: v.id("opportunities"), ...opportunityUpdate.fields },
+  returns: schema.doc("opportunities"),
+  handler: async (ctx, { opportunityId, ...updates }) => {
+    return await updateOpportunity(ctx, ctx.membership, opportunityId, updates);
+  },
+});
 
 /** Returns a creator's paginated discovery feed of visible open opportunity briefs. */
 export const discover = creatorQuery({

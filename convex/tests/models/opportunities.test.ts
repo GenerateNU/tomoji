@@ -1,7 +1,11 @@
 /// <reference types="vite/client" />
 import { convexTest } from "convex-test";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import { createOpportunity, requireOpportunity } from "../../models/opportunities";
+import {
+  createOpportunity,
+  listOpportunities,
+  requireOpportunity,
+} from "../../models/opportunities";
 import { authedContext } from "../../lib/functions";
 import schema from "../../schema";
 import {
@@ -20,6 +24,243 @@ beforeEach(() => {
 });
 
 afterEach(() => vi.useRealTimers());
+
+describe("listOpportunities", () => {
+  test("lists every state across the company's campaigns without leaking another company", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(t, { subject: "list_owner" });
+    const second = await seedOpportunity(t, { subject: "list_member" }, { status: "draft" });
+    const paused = await seedOpportunity(t, { subject: "list_paused" });
+    const closed = await seedOpportunity(t, { subject: "list_closed" });
+    await seedOpportunity(t, { subject: "other_owner", orgId: "org_other" });
+    await t.run(async (ctx) => {
+      await ctx.db.patch("opportunities", paused.opportunityId, { status: "paused" });
+      await ctx.db.patch("opportunities", closed.opportunityId, { status: "closed" });
+      await ctx.db.patch("campaigns", owner.campaignId, { status: "paused" });
+    });
+
+    const result = await t.run(
+      async (ctx) =>
+        await listOpportunities(ctx, owner.membership.companyId, {
+          paginationOpts: { numItems: 10, cursor: null },
+        }),
+    );
+
+    expect(result.page.map((row) => row._id).sort()).toEqual(
+      [
+        owner.opportunityId,
+        second.opportunityId,
+        paused.opportunityId,
+        closed.opportunityId,
+      ].sort(),
+    );
+    expect(result.isDone).toBe(true);
+  });
+
+  test("filters status across the company's campaigns", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(t, { subject: "list_owner" });
+    await seedOpportunity(t, { subject: "list_draft" }, { status: "draft" });
+    await seedOpportunity(t, { subject: "other_owner", orgId: "org_other" });
+
+    const result = await t.run(
+      async (ctx) =>
+        await listOpportunities(ctx, owner.membership.companyId, {
+          status: "open",
+          paginationOpts: { numItems: 10, cursor: null },
+        }),
+    );
+
+    expect(result.page).toEqual([
+      await t.run(async (ctx) => await ctx.db.get("opportunities", owner.opportunityId)),
+    ]);
+    expect(result.isDone).toBe(true);
+  });
+
+  test("filters an owned campaign without restricting its opportunity states", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(t, { subject: "list_owner" });
+    const draftId = await t.run(
+      async (ctx) =>
+        await createOpportunity(
+          ctx,
+          owner.membership,
+          opportunityArgs(owner.campaignId, { status: "draft" }),
+        ),
+    );
+    await seedOpportunity(t, { subject: "list_other_campaign" });
+
+    const result = await t.run(
+      async (ctx) =>
+        await listOpportunities(ctx, owner.membership.companyId, {
+          campaignId: owner.campaignId,
+          paginationOpts: { numItems: 10, cursor: null },
+        }),
+    );
+
+    expect(result.page.map((row) => row._id).sort()).toEqual([owner.opportunityId, draftId].sort());
+    expect(result.isDone).toBe(true);
+  });
+
+  test("combines campaign and status filters", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(t, { subject: "list_owner" });
+    await t.run(
+      async (ctx) =>
+        await createOpportunity(
+          ctx,
+          owner.membership,
+          opportunityArgs(owner.campaignId, { status: "draft" }),
+        ),
+    );
+    await seedOpportunity(t, { subject: "list_other_campaign" });
+
+    const result = await t.run(
+      async (ctx) =>
+        await listOpportunities(ctx, owner.membership.companyId, {
+          campaignId: owner.campaignId,
+          status: "open",
+          paginationOpts: { numItems: 10, cursor: null },
+        }),
+    );
+
+    expect(result.page).toEqual([
+      await t.run(async (ctx) => await ctx.db.get("opportunities", owner.opportunityId)),
+    ]);
+  });
+
+  test("continues company pagination and returns complete stored documents", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(t, { subject: "list_owner" });
+    vi.advanceTimersByTime(1);
+    const second = await seedOpportunity(
+      t,
+      { subject: "list_second" },
+      {
+        title: "Evening routine video",
+        productAccessLink: "https://example.com/product",
+      },
+    );
+    const firstPage = await t.run(
+      async (ctx) =>
+        await listOpportunities(ctx, owner.membership.companyId, {
+          paginationOpts: { numItems: 1, cursor: null },
+        }),
+    );
+    expect(firstPage.page).toEqual([
+      await t.run(async (ctx) => await ctx.db.get("opportunities", owner.opportunityId)),
+    ]);
+    expect(firstPage.isDone).toBe(false);
+
+    const secondPage = await t.run(
+      async (ctx) =>
+        await listOpportunities(ctx, owner.membership.companyId, {
+          paginationOpts: { numItems: 1, cursor: firstPage.continueCursor },
+        }),
+    );
+    expect(secondPage.page).toEqual([
+      await t.run(async (ctx) => await ctx.db.get("opportunities", second.opportunityId)),
+    ]);
+    expect(secondPage.isDone).toBe(true);
+  });
+
+  test("continues a status-filtered campaign cursor", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(t, { subject: "list_owner" });
+    vi.advanceTimersByTime(1);
+    const secondId = await t.run(
+      async (ctx) =>
+        await createOpportunity(
+          ctx,
+          owner.membership,
+          opportunityArgs(owner.campaignId, { title: "Second video" }),
+        ),
+    );
+    await t.run(
+      async (ctx) =>
+        await createOpportunity(
+          ctx,
+          owner.membership,
+          opportunityArgs(owner.campaignId, { status: "draft" }),
+        ),
+    );
+    const filters = { campaignId: owner.campaignId, status: "open" as const };
+    const firstPage = await t.run(
+      async (ctx) =>
+        await listOpportunities(ctx, owner.membership.companyId, {
+          ...filters,
+          paginationOpts: { numItems: 1, cursor: null },
+        }),
+    );
+    expect(firstPage.page).toEqual([
+      await t.run(async (ctx) => await ctx.db.get("opportunities", owner.opportunityId)),
+    ]);
+    expect(firstPage.isDone).toBe(false);
+
+    const secondPage = await t.run(
+      async (ctx) =>
+        await listOpportunities(ctx, owner.membership.companyId, {
+          ...filters,
+          paginationOpts: { numItems: 1, cursor: firstPage.continueCursor },
+        }),
+    );
+    expect(secondPage.page).toEqual([
+      await t.run(async (ctx) => await ctx.db.get("opportunities", secondId)),
+    ]);
+    expect(secondPage.isDone).toBe(true);
+  });
+
+  test("conceals a foreign campaign", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedCampaign(t, { subject: "list_owner" });
+    const other = await seedCampaign(t, { subject: "other_owner", orgId: "org_other" });
+
+    await expectApiError(
+      () =>
+        t.run(
+          async (ctx) =>
+            await listOpportunities(ctx, owner.membership.companyId, {
+              campaignId: other.campaignId,
+              paginationOpts: { numItems: 10, cursor: null },
+            }),
+        ),
+      "not_found",
+    );
+  });
+
+  test("conceals a missing campaign", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedCampaign(t, { subject: "list_owner" });
+    await t.run(async (ctx) => await ctx.db.delete("campaigns", owner.campaignId));
+
+    await expectApiError(
+      () =>
+        t.run(
+          async (ctx) =>
+            await listOpportunities(ctx, owner.membership.companyId, {
+              campaignId: owner.campaignId,
+              paginationOpts: { numItems: 10, cursor: null },
+            }),
+        ),
+      "not_found",
+    );
+  });
+
+  test("returns an empty page when the company has no opportunities", async () => {
+    const t = convexTest(schema, modules);
+    const { membership } = await seedCampaign(t, { subject: "list_owner" });
+
+    const result = await t.run(
+      async (ctx) =>
+        await listOpportunities(ctx, membership.companyId, {
+          paginationOpts: { numItems: 10, cursor: null },
+        }),
+    );
+
+    expect(result.page).toEqual([]);
+    expect(result.isDone).toBe(true);
+  });
+});
 
 describe("createOpportunity", () => {
   test("accepts zero compensation and trims the brief", async () => {

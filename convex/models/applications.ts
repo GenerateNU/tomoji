@@ -11,8 +11,8 @@ import type { applicationStatus } from "../schemas/applications.schema";
  * @throws `not_found` if the opportunity does not exist.
  * The note is optional; a missing or blank note is stored as "".
  *
- * @throws `invalid_state` if the opportunity or its campaign is not open, or
- * the opportunity is ungated.
+ * @throws `invalid_state` if the opportunity or its campaign is not open, the
+ * opportunity is ungated, or it already has `maxApplications` applications.
  * @throws `conflict` if the creator has already applied.
  */
 export async function createApplication(
@@ -48,6 +48,17 @@ export async function createApplication(
     .first();
   if (existing !== null) {
     throw apiError("conflict", { reason: "already_applied" });
+  }
+
+  // Every application counts toward the cap, whatever its status. Reads at most
+  // maxApplications rows; concurrent applies read the same range, so Convex
+  // retries one and the cap cannot be exceeded.
+  const received = await ctx.db
+    .query("applications")
+    .withIndex("by_opportunityId_and_status", (q) => q.eq("opportunityId", opportunity._id))
+    .take(opportunity.maxApplications);
+  if (received.length >= opportunity.maxApplications) {
+    throw apiError("invalid_state", { reason: "applications_full" });
   }
 
   return await ctx.db.insert("applications", {

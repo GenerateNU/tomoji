@@ -115,6 +115,19 @@ describe("createApplication", () => {
 
     await expectApiError(() => applyAs(t, creatorId, opportunityId), "conflict");
   });
+
+  test("rejects applications once maxApplications is reached, counting every status", async () => {
+    const t = convexTest(schema, modules);
+    const { opportunityId } = await seedOpportunity(t, { opportunity: { maxApplications: 2 } });
+    const rejectedId = await applyAs(t, await seedCreatorId(t, "creator_a"), opportunityId);
+    await t.run(
+      async (ctx) => await ctx.db.patch("applications", rejectedId, { status: "rejected" }),
+    );
+    await applyAs(t, await seedCreatorId(t, "creator_b"), opportunityId);
+    const third = await seedCreatorId(t, "creator_c");
+
+    await expectReason(() => applyAs(t, third, opportunityId), "applications_full");
+  });
 });
 
 describe("requireApplication", () => {

@@ -1,12 +1,12 @@
 import type { TestConvex as ConvexTest } from "convex-test";
-import type { UserIdentity } from "convex/server";
+import type { UserIdentity, WithoutSystemFields } from "convex/server";
 import type { Infer } from "convex/values";
 import { expect } from "vitest";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { ApiErrorCode } from "../lib/errors";
+import { companyContext } from "../lib/functions";
 import { getCreatorByUserId } from "../models/creators";
 import { createCampaign } from "../models/campaigns";
-import { companyContext } from "../lib/functions";
 import { createOpportunity, type OpportunityCreate } from "../models/opportunities";
 import { applyMembership, getUserByWorkosId, upsertUser } from "../models/users";
 import type { companyRole } from "../schemas/companyUsers.schema";
@@ -247,4 +247,29 @@ export async function seedAssignment(
       ...fields,
     });
   });
+}
+
+export type SeedGatedOpportunityOptions = {
+  /** Company member who owns the opportunity. Defaults to a member of `org_acme`. */
+  subject?: string;
+  orgId?: string;
+  /** Applied after creation, so states creation cannot produce (paused, closed) work too. */
+  opportunity?: Partial<WithoutSystemFields<Doc<"opportunities">>>;
+};
+
+/**
+ * Seeds an open, gated opportunity through `seedOpportunity` for application
+ * tests, and returns the owning company's ID alongside its other IDs.
+ */
+export async function seedGatedOpportunity(t: TestConvex, opts: SeedGatedOpportunityOptions = {}) {
+  const seeded = await seedOpportunity(
+    t,
+    { subject: opts.subject ?? "company_owner", orgId: opts.orgId },
+    { isGated: true, maxSlots: 2, maxApplications: 10 },
+  );
+  const patch = opts.opportunity;
+  if (patch !== undefined) {
+    await t.run(async (ctx) => await ctx.db.patch("opportunities", seeded.opportunityId, patch));
+  }
+  return { ...seeded, companyId: seeded.membership.companyId };
 }

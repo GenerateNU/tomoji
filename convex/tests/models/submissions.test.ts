@@ -5,7 +5,9 @@ import type { Doc, Id } from "../../_generated/dataModel";
 import type { ApiErrorCode } from "../../lib/errors";
 import {
   createSubmission,
+  listCreatorSubmissions,
   listSubmissions,
+  requireCreatorSubmission,
   requireSubmission,
   reviewSubmission,
   toCreatorSubmission,
@@ -68,8 +70,14 @@ async function reviewAs(
   return await t.run(async (ctx) => await reviewSubmission(ctx, membership, submissionId, review));
 }
 
-async function storedSubmission(t: TestConvex, submissionId: Id<"submissions">) {
-  return await t.run(async (ctx) => await ctx.db.get("submissions", submissionId));
+async function storedSubmission(
+  t: TestConvex,
+  submissionId: Id<"submissions">,
+): Promise<Doc<"submissions"> | null> {
+  // `TestConvex` loses the schema types, so the row comes back untyped.
+  return (await t.run(
+    async (ctx) => await ctx.db.get("submissions", submissionId),
+  )) as Doc<"submissions"> | null;
 }
 
 /** Narrows to a reviewed submission so its review fields can be read. */
@@ -107,6 +115,25 @@ async function listAs(
 ) {
   return await t.run(
     async (ctx) => await listSubmissions(ctx, viewer, assignmentId, paginationOpts),
+  );
+}
+
+async function getMineAs(
+  t: TestConvex,
+  creatorId: Id<"creators">,
+  submissionId: Id<"submissions">,
+) {
+  return await t.run(async (ctx) => await requireCreatorSubmission(ctx, creatorId, submissionId));
+}
+
+async function listMineAs(
+  t: TestConvex,
+  creatorId: Id<"creators">,
+  assignmentId: Id<"assignments">,
+) {
+  return await t.run(
+    async (ctx) =>
+      await listCreatorSubmissions(ctx, creatorId, assignmentId, { numItems: 10, cursor: null }),
   );
 }
 
@@ -238,6 +265,32 @@ describe("createSubmission", () => {
     },
   );
 
+  test.each([
+    ["draftUrl", `https://drive.example.com/${"a".repeat(2048)}`],
+    ["draftDescription", "a".repeat(5001)],
+  ] as const)("rejects a %s over the length limit", async (field, value) => {
+    const t = convexTest(schema, modules);
+    const fixture = await seedAssignment(t, `cs-long-${field}`);
+
+    await expectReason(
+      () => submit(t, fixture, { [field]: value } as Partial<SubmissionDraft>),
+      "invalid_state",
+      `${field}_too_long`,
+    );
+
+    expect(await storedSubmissions(t)).toHaveLength(0);
+  });
+
+  test("accepts a description exactly at the limit, measured after trimming", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await seedAssignment(t, "cs-long-edge");
+    const description = "a".repeat(5000);
+
+    const id = await submit(t, fixture, { draftDescription: `  ${description}  ` });
+
+    expect(await storedSubmission(t, id)).toMatchObject({ draftDescription: description });
+  });
+
   // TODO(dueAt): implement once assignments have a dueAt field.
   test.todo("rejects drafts and resubmissions after assignment.dueAt");
 });
@@ -308,6 +361,37 @@ describe("reviewSubmission", () => {
     );
 
     expect(await storedSubmission(t, id)).toMatchObject({ status: "pending" });
+  });
+
+  test("rejects a note over the length limit without reviewing", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await seedAssignment(t, "rs-long");
+    const id = await seedSubmission(t, fixture, "pending");
+
+    await expectReason(
+      () =>
+        reviewAs(t, fixture.membership, id, {
+          status: "changesRequested",
+          reviewNote: "a".repeat(2001),
+        }),
+      "invalid_state",
+      "reviewNote_too_long",
+    );
+
+    expect(await storedSubmission(t, id)).toMatchObject({ status: "pending" });
+  });
+
+  test("accepts a note exactly at the limit", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await seedAssignment(t, "rs-long-edge");
+    const id = await seedSubmission(t, fixture, "pending");
+
+    const reviewed = await reviewAs(t, fixture.membership, id, {
+      status: "changesRequested",
+      reviewNote: "a".repeat(2000),
+    });
+
+    expect(reviewed.reviewNote).toHaveLength(2000);
   });
 
   test("rejects a member of another company without reviewing", async () => {
@@ -444,19 +528,12 @@ describe("toCreatorSubmission", () => {
 });
 
 describe("requireSubmission", () => {
-  test("gives a creator their own submission without reviewer details", async () => {
+  test("lets a creator access their own submission", async () => {
     const t = convexTest(schema, modules);
     const fixture = await seedAssignment(t, "gs-creator");
     const id = await seedSubmission(t, fixture, "changesRequested");
 
-    const view = await getAs(t, creatorViewer(fixture), id);
-
-    expect(view).toMatchObject({
-      _id: id,
-      status: "changesRequested",
-      reviewerType: "companyUser",
-    });
-    expectCreatorShape(view);
+    expect(await getAs(t, creatorViewer(fixture), id)).toEqual(await storedSubmission(t, id));
   });
 
   test("gives the company its submission with reviewer details", async () => {
@@ -525,18 +602,6 @@ describe("listSubmissions", () => {
     expect(result.isDone).toBe(true);
   });
 
-  test("gives creators the creator shape and companies the full shape", async () => {
-    const t = convexTest(schema, modules);
-    const fixture = await seedAssignment(t, "ls-shapes");
-    await seedSubmission(t, fixture, "approved");
-
-    const [asCreator] = (await listAs(t, creatorViewer(fixture), fixture.assignmentId)).page;
-    const [asCompany] = (await listAs(t, companyViewer(fixture), fixture.assignmentId)).page;
-
-    expectCreatorShape(asCreator);
-    expect(asCompany).toHaveProperty("reviewedBy", fixture.membership._id);
-  });
-
   test("paginates with the returned cursor", async () => {
     const t = convexTest(schema, modules);
     const fixture = await seedAssignment(t, "ls-pages");
@@ -593,5 +658,50 @@ describe("listSubmissions", () => {
     await t.run(async (ctx) => await ctx.db.delete("assignments", fixture.assignmentId));
 
     await expectApiError(() => listAs(t, operatorViewer, fixture.assignmentId), "not_found");
+  });
+});
+
+describe("requireCreatorSubmission", () => {
+  test("returns the creator's own submission in the creator shape", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await seedAssignment(t, "gm-own");
+    const id = await seedSubmission(t, fixture, "approved");
+    const stored = await storedSubmission(t, id);
+
+    const view = await getMineAs(t, fixture.creatorId, id);
+
+    expect(view).toEqual(toCreatorSubmission(stored!));
+    expectCreatorShape(view);
+  });
+
+  test("hides another creator's submission", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await seedAssignment(t, "gm-owner");
+    const id = await seedSubmission(t, fixture, "pending");
+    const intruderId = await seedCreatorId(t, "gm-intruder");
+
+    await expectApiError(() => getMineAs(t, intruderId, id), "not_found");
+  });
+});
+
+describe("listCreatorSubmissions", () => {
+  test("lists the creator's submissions newest first in the creator shape", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await seedAssignment(t, "lm-own");
+    const firstId = await seedSubmission(t, fixture, "changesRequested");
+    const secondId = await seedSubmission(t, fixture, "approved");
+
+    const result = await listMineAs(t, fixture.creatorId, fixture.assignmentId);
+
+    expect(result.page.map((s) => s._id)).toEqual([secondId, firstId]);
+    for (const view of result.page) expectCreatorShape(view);
+  });
+
+  test("hides another creator's assignment", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await seedAssignment(t, "lm-owner");
+    const intruderId = await seedCreatorId(t, "lm-intruder");
+
+    await expectApiError(() => listMineAs(t, intruderId, fixture.assignmentId), "not_found");
   });
 });

@@ -4,8 +4,9 @@ import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { apiError } from "../lib/errors";
 import { requireNonBlank } from "../lib/validation";
-import schema from "../schema";
 import { submissionStatus } from "../schemas/submissions.schema";
+
+// --- Validators and types ---
 
 /** The creator-supplied fields of a new submission */
 export const submissionDraft = v.object({
@@ -15,16 +16,13 @@ export const submissionDraft = v.object({
 });
 export type SubmissionDraft = Infer<typeof submissionDraft>;
 
-/**
- * A review decision.
- */
+/** A review decision. A note is required when requesting changes. */
 export const submissionReview = v.union(
   v.object({ status: v.literal("approved"), reviewNote: v.optional(v.string()) }),
   v.object({ status: v.literal("changesRequested"), reviewNote: v.string() }),
 );
 export type SubmissionReview = Infer<typeof submissionReview>;
 
-/** A submission reviewed by a company user. */
 export type CompanyUserReviewedSubmission = Extract<
   Doc<"submissions">,
   { reviewerType: "companyUser" }
@@ -32,7 +30,8 @@ export type CompanyUserReviewedSubmission = Extract<
 
 /**
  * A submission as creators see it: the draft and the review outcome, without
- * who reviewed it or any dispute details.
+ * who reviewed it or any dispute details. Creator routes return this validator,
+ * so Convex rejects any response that carries an extra field.
  */
 export const creatorSubmission = v.object({
   _id: v.id("submissions"),
@@ -50,10 +49,6 @@ export const creatorSubmission = v.object({
 });
 export type CreatorSubmission = Infer<typeof creatorSubmission>;
 
-/** What `get` and `list` return: the full row, or the creator shape for creators. */
-export const submissionView = v.union(schema.doc("submissions"), creatorSubmission);
-export type SubmissionView = Doc<"submissions"> | CreatorSubmission;
-
 /**
  * Who is reading or acting on submissions. Routes resolve it from the caller's
  * auth context, so the model never trusts a client-supplied identity.
@@ -62,6 +57,52 @@ export type SubmissionViewer =
   | { role: "creator"; creatorId: Id<"creators"> }
   | { role: "company"; companyId: Id<"companies"> }
   | { role: "operator" };
+
+// --- Input validation ---
+
+// Upper bounds on free text, measured after trimming. They keep documents and
+// list pages small; `.length` counts UTF-16 units, so an emoji counts as two.
+const MAX_LENGTH = {
+  draftUrl: 2048,
+  draftDescription: 5000,
+  reviewNote: 2000,
+} as const;
+
+/**
+ * Returns `value` trimmed.
+ *
+ * @throws `invalid_state` with reason `<field>_blank` or `<field>_too_long`.
+ */
+function requireText(value: string, field: keyof typeof MAX_LENGTH): string {
+  const trimmed = requireNonBlank(value, field);
+  if (trimmed.length > MAX_LENGTH[field]) {
+    throw apiError("invalid_state", { reason: `${field}_too_long` });
+  }
+  return trimmed;
+}
+
+/**
+ * Returns the trimmed draft URL.
+ *
+ * @throws `invalid_state` with reason `draftUrl_blank`, `draftUrl_too_long`, or
+ * `draftUrl_invalid`.
+ */
+function requireDraftUrl(value: string): string {
+  const trimmed = requireText(value, "draftUrl");
+  let url: URL;
+  try {
+    url = new URL(trimmed);
+  } catch {
+    throw apiError("invalid_state", { reason: "draftUrl_invalid" });
+  }
+  // Only web links: rejects `javascript:`, `data:`, `ftp:`, and similar schemes.
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    throw apiError("invalid_state", { reason: "draftUrl_invalid" });
+  }
+  return trimmed;
+}
+
+// --- Access ---
 
 // TODO(assignments): move this lookup into models/assignments.ts once that
 // domain has a model.
@@ -77,65 +118,89 @@ async function getAssignmentCompanyId(
 }
 
 /**
- * Returns the assignment if the viewer may see it, or `null` if it doesn't exist
- * or isn't theirs. Creators see their own, companies see theirs, operators see all.
- */
-async function getAccessibleAssignment(
-  ctx: QueryCtx | MutationCtx,
-  viewer: SubmissionViewer,
-  assignmentId: Id<"assignments">,
-): Promise<Doc<"assignments"> | null> {
-  const assignment = await ctx.db.get("assignments", assignmentId);
-  if (assignment === null) return null;
-  switch (viewer.role) {
-    case "operator":
-      return assignment;
-    case "creator":
-      return assignment.creatorId === viewer.creatorId ? assignment : null;
-    case "company":
-      return (await getAssignmentCompanyId(ctx, assignment)) === viewer.companyId
-        ? assignment
-        : null;
-  }
-}
-
-/**
- * Returns the assignment if the viewer may see it.
+ * Returns the assignment if the viewer may see it: creators their own,
+ * companies theirs, operators all.
  *
- * @throws `not_found` if it doesn't exist or isn't theirs, so callers can't tell
- * the two apart.
+ * Access is granted only by a matching case; anything else falls through to
+ * the throw, so a role added later sees nothing until it is handled here.
+ *
+ * @throws `not_found` for `resource` if it doesn't exist or isn't theirs, so
+ * callers can't tell the two apart.
  */
 async function requireAssignmentAccess(
   ctx: QueryCtx | MutationCtx,
   viewer: SubmissionViewer,
   assignmentId: Id<"assignments">,
+  resource: "assignment" | "submission" = "assignment",
 ): Promise<Doc<"assignments">> {
-  const assignment = await getAccessibleAssignment(ctx, viewer, assignmentId);
-  if (assignment === null) throw apiError("not_found", { resource: "assignment" });
-  return assignment;
+  const assignment = await ctx.db.get("assignments", assignmentId);
+  if (assignment !== null) {
+    switch (viewer.role) {
+      case "operator":
+        return assignment;
+      case "creator":
+        if (assignment.creatorId === viewer.creatorId) return assignment;
+        break;
+      case "company":
+        if ((await getAssignmentCompanyId(ctx, assignment)) === viewer.companyId) return assignment;
+        break;
+    }
+  }
+  throw apiError("not_found", { resource });
 }
 
 /**
  * Returns the submission and its assignment if the viewer may see them.
  *
- * @throws `not_found` if the submission doesn't exist or isn't theirs. Every case
- * reports the same resource, so callers can't tell which link failed.
+ * @throws `not_found` for `submission` whichever link fails, so callers can't
+ * tell a missing submission from someone else's.
  */
 async function requireSubmissionAccess(
   ctx: QueryCtx | MutationCtx,
   viewer: SubmissionViewer,
   submissionId: Id<"submissions">,
 ): Promise<{ submission: Doc<"submissions">; assignment: Doc<"assignments"> }> {
-  const notFound = () => apiError("not_found", { resource: "submission" });
   const submission = await ctx.db.get("submissions", submissionId);
-  if (submission === null) throw notFound();
-  const assignment = await getAccessibleAssignment(ctx, viewer, submission.assignmentId);
-  if (assignment === null) throw notFound();
+  if (submission === null) throw apiError("not_found", { resource: "submission" });
+  const assignment = await requireAssignmentAccess(
+    ctx,
+    viewer,
+    submission.assignmentId,
+    "submission",
+  );
   return { submission, assignment };
 }
 
+// --- Creator shape ---
+
 /**
- * Validation logic for assignment active state based on deadline.
+ * Converts a stored submission to the creator shape. It copies an explicit list
+ * of fields, so a field added to the schema later stays hidden from creators
+ * until someone adds it here on purpose.
+ */
+export function toCreatorSubmission(submission: Doc<"submissions">): CreatorSubmission {
+  const view: CreatorSubmission = {
+    _id: submission._id,
+    _creationTime: submission._creationTime,
+    assignmentId: submission.assignmentId,
+    draftUrl: submission.draftUrl,
+    draftDescription: submission.draftDescription,
+    status: submission.status,
+    usesAiReview: submission.usesAiReview,
+  };
+  if (submission.status === "pending") return view;
+  return {
+    ...view,
+    reviewNote: submission.reviewNote,
+    reviewerType: submission.reviewerType,
+    reviewedAt: submission.reviewedAt,
+  };
+}
+
+// --- Writes ---
+
+/**
+ * Throws unless the creator may submit a draft on this assignment right now.
  *
  * @throws `invalid_state` with reason `assignment_not_active`.
  */
@@ -162,63 +227,11 @@ async function getLatestSubmission(
 }
 
 /**
- * Returns the trimmed draft URL.
- *
- * @throws `invalid_state` with reason `draftUrl_blank` or `draftUrl_invalid`.
- */
-function requireDraftUrl(value: string): string {
-  const trimmed = requireNonBlank(value, "draftUrl");
-  let url: URL;
-  try {
-    url = new URL(trimmed);
-  } catch {
-    throw apiError("invalid_state", { reason: "draftUrl_invalid" });
-  }
-  // Only web links: rejects `javascript:`, `data:`, `ftp:`, and similar schemes.
-  if (url.protocol !== "http:" && url.protocol !== "https:") {
-    throw apiError("invalid_state", { reason: "draftUrl_invalid" });
-  }
-  return trimmed;
-}
-
-/**
- * Converts a stored submission to the creator shape. It copies an explicit list
- * of fields, so a field added to the schema later stays hidden from creators
- * until someone adds it here on purpose.
- */
-export function toCreatorSubmission(submission: Doc<"submissions">): CreatorSubmission {
-  const view: CreatorSubmission = {
-    _id: submission._id,
-    _creationTime: submission._creationTime,
-    assignmentId: submission.assignmentId,
-    draftUrl: submission.draftUrl,
-    draftDescription: submission.draftDescription,
-    status: submission.status,
-    usesAiReview: submission.usesAiReview,
-  };
-  if (submission.status === "pending") return view;
-  return {
-    ...view,
-    reviewNote: submission.reviewNote,
-    reviewerType: submission.reviewerType,
-    reviewedAt: submission.reviewedAt,
-  };
-}
-
-/** Returns the shape the viewer is allowed to see. */
-function toSubmissionView(
-  viewer: SubmissionViewer,
-  submission: Doc<"submissions">,
-): SubmissionView {
-  return viewer.role === "creator" ? toCreatorSubmission(submission) : submission;
-}
-
-/**
  * Submits a creator's draft for review on their own active assignment.
  *
  * @throws `not_found` if the assignment doesn't exist or isn't the creator's.
  * @throws `invalid_state` if the assignment isn't active, a draft is already
- * approved, or a draft field is blank or the URL isn't http(s).
+ * approved, or a draft field is blank, too long, or the URL isn't http(s).
  * @throws `conflict` if a draft is already pending review.
  * @returns the new submission's id.
  */
@@ -245,7 +258,7 @@ export async function createSubmission(
   return await ctx.db.insert("submissions", {
     assignmentId: assignment._id,
     draftUrl: requireDraftUrl(draft.draftUrl),
-    draftDescription: requireNonBlank(draft.draftDescription, "draftDescription"),
+    draftDescription: requireText(draft.draftDescription, "draftDescription"),
     status: "pending",
     usesAiReview: assignment.usesAiReview,
   });
@@ -257,7 +270,7 @@ export async function createSubmission(
  *
  * @throws `not_found` if the submission doesn't exist or isn't the company's.
  * @throws `invalid_state` if it was already reviewed, the assignment isn't
- * active, or the review note is blank.
+ * active, or the review note is blank or too long.
  * @returns the reviewed submission as stored.
  */
 export async function reviewSubmission(
@@ -285,9 +298,7 @@ export async function reviewSubmission(
     status: review.status,
     // The validator requires a note for `changesRequested` - this rejects blank ones.
     reviewNote:
-      review.reviewNote === undefined
-        ? undefined
-        : requireNonBlank(review.reviewNote, "reviewNote"),
+      review.reviewNote === undefined ? undefined : requireText(review.reviewNote, "reviewNote"),
     reviewerType: "companyUser" as const,
     reviewedBy: membership._id,
     reviewedAt: Date.now(),
@@ -296,23 +307,23 @@ export async function reviewSubmission(
   return { ...submission, ...patch };
 }
 
-/**
- * Returns one submission in the shape the viewer may see.
- *
- * @throws `not_found` if it doesn't exist or isn't the viewer's.
- */
+// --- Reads ---
+// `requireSubmission` and `listSubmissions` return rows as stored. Creator
+// routes use the `…CreatorSubmission(s)` versions, which return the creator shape.
+
+/** @throws `not_found` if the submission doesn't exist or isn't the viewer's. */
 export async function requireSubmission(
   ctx: QueryCtx,
   viewer: SubmissionViewer,
   submissionId: Id<"submissions">,
-): Promise<SubmissionView> {
+): Promise<Doc<"submissions">> {
   const { submission } = await requireSubmissionAccess(ctx, viewer, submissionId);
-  return toSubmissionView(viewer, submission);
+  return submission;
 }
 
 /**
- * Returns one page of an assignment's submissions, newest first, in the shape
- * the viewer may see. Access is checked once, on the assignment.
+ * Returns one page of an assignment's submissions, newest first. Access is
+ * checked once, on the assignment.
  *
  * @throws `not_found` if the assignment doesn't exist or isn't the viewer's.
  */
@@ -321,12 +332,37 @@ export async function listSubmissions(
   viewer: SubmissionViewer,
   assignmentId: Id<"assignments">,
   paginationOpts: PaginationOptions,
-): Promise<PaginationResult<SubmissionView>> {
+): Promise<PaginationResult<Doc<"submissions">>> {
   await requireAssignmentAccess(ctx, viewer, assignmentId);
-  const result = await ctx.db
+  return await ctx.db
     .query("submissions")
     .withIndex("by_assignmentId", (q) => q.eq("assignmentId", assignmentId))
     .order("desc")
     .paginate(paginationOpts);
-  return { ...result, page: result.page.map((submission) => toSubmissionView(viewer, submission)) };
+}
+
+/** `requireSubmission` for a creator, in the creator shape. */
+export async function requireCreatorSubmission(
+  ctx: QueryCtx,
+  creatorId: Id<"creators">,
+  submissionId: Id<"submissions">,
+): Promise<CreatorSubmission> {
+  const submission = await requireSubmission(ctx, { role: "creator", creatorId }, submissionId);
+  return toCreatorSubmission(submission);
+}
+
+/** `listSubmissions` for a creator, in the creator shape. */
+export async function listCreatorSubmissions(
+  ctx: QueryCtx,
+  creatorId: Id<"creators">,
+  assignmentId: Id<"assignments">,
+  paginationOpts: PaginationOptions,
+): Promise<PaginationResult<CreatorSubmission>> {
+  const result = await listSubmissions(
+    ctx,
+    { role: "creator", creatorId },
+    assignmentId,
+    paginationOpts,
+  );
+  return { ...result, page: result.page.map(toCreatorSubmission) };
 }

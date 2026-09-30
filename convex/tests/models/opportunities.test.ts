@@ -31,6 +31,27 @@ beforeEach(() => {
 afterEach(() => vi.useRealTimers());
 
 describe("publishOpportunity", () => {
+  test("rejects publishing when the campaign end moved before the draft deadline", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(t, { subject: "publish_owner" }, { status: "draft" });
+    const before = await t.run(
+      async (ctx) => await ctx.db.get("opportunities", owner.opportunityId),
+    );
+    await t.run(
+      async (ctx) =>
+        await ctx.db.patch("campaigns", owner.campaignId, { endsAt: Date.now() + 60_000 }),
+    );
+
+    await expectApiError(
+      () =>
+        t.run(async (ctx) => await publishOpportunity(ctx, owner.membership, owner.opportunityId)),
+      "invalid_state",
+    );
+    expect(
+      await t.run(async (ctx) => await ctx.db.get("opportunities", owner.opportunityId)),
+    ).toEqual(before);
+  });
+
   test("rejects an already open opportunity", async () => {
     const t = convexTest(schema, modules);
     const owner = await seedOpportunity(t, { subject: "publish_owner" });

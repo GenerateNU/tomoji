@@ -1,8 +1,7 @@
 import { paginationOptsValidator, paginationResultValidator } from "convex/server";
 import { v } from "convex/values";
 import type { Doc } from "./_generated/dataModel";
-import type { MutationCtx, QueryCtx } from "./_generated/server";
-import { apiError } from "./lib/errors";
+import type { QueryCtx } from "./_generated/server";
 import { authedQuery, companyContext, creatorMutation, creatorQuery } from "./lib/functions";
 import {
   createApplication,
@@ -10,7 +9,7 @@ import {
   requireApplication,
   type ApplicationViewer,
 } from "./models/applications";
-import { getCreatorByUserId } from "./models/creators";
+import { requireCallerCreatorId } from "./models/users";
 import schema from "./schema";
 import { applicationStatus } from "./schemas/applications.schema";
 
@@ -76,13 +75,4 @@ async function applicationViewer(ctx: QueryCtx, user: Doc<"users">): Promise<App
       return { role: "company", companyId: membership.companyId };
     }
   }
-}
-
-/** Returns the caller's creator ID, or throws if their creator row is missing. */
-async function requireCallerCreatorId(ctx: QueryCtx | MutationCtx, user: Doc<"users">) {
-  const creator = await getCreatorByUserId(ctx, user._id);
-  if (creator === null) {
-    throw apiError("not_found", { resource: "creator" });
-  }
-  return creator._id;
 }

@@ -223,3 +223,22 @@ export async function seedOpportunity(
   );
   return { ...owner, opportunityId };
 }
+
+/** Inserts an assignment directly, in any status, with the seeded opportunity's default terms. */
+export async function seedAssignment(
+  t: TestConvex,
+  fields: Pick<Doc<"assignments">, "opportunityId" | "creatorId" | "companyId"> &
+    Partial<Pick<Doc<"assignments">, "status">>,
+): Promise<Id<"assignments">> {
+  return await t.run(
+    async (ctx) =>
+      await ctx.db.insert("assignments", {
+        fixedFeeCents: 10_000,
+        cpmRateCents: 500,
+        paymentCapCents: 25_000,
+        usesAiReview: true,
+        status: "termsPending",
+        ...fields,
+      }),
+  );
+}

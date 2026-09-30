@@ -29,9 +29,12 @@ describe("opportunities.close", () => {
     const t = convexTest(schema, modules);
     const owner = await seedOpportunity(t, { subject: "close_member", role: "member" });
     const asCreator = await seedUser(t, { subject: "close_creator" });
-    const before = await asCreator.query(api.opportunities.get, {
+    const before = await owner.asCompany.query(api.opportunities.get, {
       opportunityId: owner.opportunityId,
     });
+    expect(
+      await asCreator.query(api.opportunities.get, { opportunityId: owner.opportunityId }),
+    ).toMatchObject({ _id: owner.opportunityId, companyName: "Acme" });
     const result = await owner.asCompany.mutation(api.opportunities.close, {
       opportunityId: owner.opportunityId,
     });

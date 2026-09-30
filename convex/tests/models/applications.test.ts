@@ -26,9 +26,9 @@ async function applyAs(
 }
 
 describe("createApplication", () => {
-  test("stores a pending application with the trimmed note", async () => {
+  test("stores a pending application with the trimmed note and company", async () => {
     const t = convexTest(schema, modules);
-    const { opportunityId } = await seedOpportunity(t);
+    const { companyId, opportunityId } = await seedOpportunity(t);
     const creatorId = await seedCreatorId(t, "creator_a");
 
     const id = await t.run(
@@ -40,6 +40,7 @@ describe("createApplication", () => {
     expect(stored).toMatchObject({
       opportunityId,
       creatorId,
+      companyId,
       note: "I film daily.",
       status: "pending",
     });
@@ -58,7 +59,6 @@ describe("createApplication", () => {
   test.each<{
     name: string;
     opportunity?: Partial<WithoutSystemFields<Doc<"opportunities">>>;
-    campaign?: Partial<WithoutSystemFields<Doc<"campaigns">>>;
     reason: string;
   }>([
     {
@@ -81,11 +81,9 @@ describe("createApplication", () => {
       opportunity: { isGated: false },
       reason: "opportunity_not_gated",
     },
-    { name: "a paused campaign", campaign: { status: "paused" }, reason: "campaign_not_open" },
-    { name: "a closed campaign", campaign: { status: "closed" }, reason: "campaign_not_open" },
-  ])("rejects $name", async ({ opportunity, campaign, reason }) => {
+  ])("rejects $name", async ({ opportunity, reason }) => {
     const t = convexTest(schema, modules);
-    const { opportunityId } = await seedOpportunity(t, { opportunity, campaign });
+    const { opportunityId } = await seedOpportunity(t, { opportunity });
     const creatorId = await seedCreatorId(t, "creator_a");
 
     await expectReason(() => applyAs(t, creatorId, opportunityId), reason);

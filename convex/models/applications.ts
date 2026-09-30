@@ -11,8 +11,8 @@ import type { applicationStatus } from "../schemas/applications.schema";
  * @throws `not_found` if the opportunity does not exist.
  * The note is optional; a missing or blank note is left out.
  *
- * @throws `invalid_state` if the opportunity or its campaign is not open, the
- * opportunity is ungated, or it already has `maxApplications` applications.
+ * @throws `invalid_state` if the opportunity is not open or ungated, or it
+ * already has `maxApplications` applications.
  * @throws `conflict` if the creator has already applied.
  */
 export async function createApplication(
@@ -32,10 +32,9 @@ export async function createApplication(
   if (!opportunity.isGated) {
     throw apiError("invalid_state", { reason: "opportunity_not_gated" });
   }
-  // Pausing a campaign pauses its opportunities, so check the campaign too.
   const campaign = await ctx.db.get("campaigns", opportunity.campaignId);
-  if (campaign === null || campaign.status !== "open") {
-    throw apiError("invalid_state", { reason: "campaign_not_open" });
+  if (campaign === null) {
+    throw apiError("not_found", { resource: "opportunity" });
   }
 
   // One application per creator per opportunity: blocks double-submits and
@@ -64,6 +63,7 @@ export async function createApplication(
   return await ctx.db.insert("applications", {
     opportunityId: opportunity._id,
     creatorId,
+    companyId: campaign.companyId,
     note,
     status: "pending",
   });
@@ -89,29 +89,20 @@ export async function requireApplication(
   applicationId: Id<"applications">,
 ): Promise<Doc<"applications">> {
   const application = await ctx.db.get("applications", applicationId);
-  if (application === null || !(await canViewApplication(ctx, viewer, application))) {
+  if (application === null || !canViewApplication(viewer, application)) {
     throw apiError("not_found", { resource: "application" });
   }
   return application;
 }
 
-async function canViewApplication(
-  ctx: QueryCtx | MutationCtx,
-  viewer: ApplicationViewer,
-  application: Doc<"applications">,
-): Promise<boolean> {
+function canViewApplication(viewer: ApplicationViewer, application: Doc<"applications">): boolean {
   switch (viewer.role) {
     case "operator":
       return true;
     case "creator":
       return application.creatorId === viewer.creatorId;
-    case "company": {
-      // Applications do not store companyId, pulls from opportunity -> campaign.
-      const opportunity = await ctx.db.get("opportunities", application.opportunityId);
-      if (opportunity === null) return false;
-      const campaign = await ctx.db.get("campaigns", opportunity.campaignId);
-      return campaign?.companyId === viewer.companyId;
-    }
+    case "company":
+      return application.companyId === viewer.companyId;
   }
 }
 

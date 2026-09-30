@@ -20,9 +20,9 @@ const modules = import.meta.glob("../../**/*.ts");
 
 const DAY = 24 * 60 * 60 * 1000;
 
-type SeededIds = { campaignId: Id<"campaigns">; opportunityId: Id<"opportunities"> };
+type SeededIds = { opportunityId: Id<"opportunities"> };
 
-/** States where only creators may act, so company review actions are refused. */
+/** Opportunity states where only creators may act, so company review actions are refused. */
 const pausedOrClosed: {
   name: string;
   patch: (ctx: MutationCtx, ids: SeededIds) => Promise<void>;
@@ -37,11 +37,6 @@ const pausedOrClosed: {
     name: "the opportunity is closed",
     patch: (ctx, ids) => ctx.db.patch("opportunities", ids.opportunityId, { status: "closed" }),
     reason: "opportunity_not_open",
-  },
-  {
-    name: "the campaign is paused",
-    patch: (ctx, ids) => ctx.db.patch("campaigns", ids.campaignId, { status: "paused" }),
-    reason: "campaign_not_open",
   },
 ];
 
@@ -499,8 +494,8 @@ describe("offerApplication", () => {
 
   test.each(pausedOrClosed)("rejects offering while $name", async ({ patch, reason }) => {
     const t = convexTest(schema, modules);
-    const { companyId, campaignId, opportunityId, applicationId } = await seedPending(t);
-    await t.run(async (ctx) => await patch(ctx, { campaignId, opportunityId }));
+    const { companyId, opportunityId, applicationId } = await seedPending(t);
+    await t.run(async (ctx) => await patch(ctx, { opportunityId }));
 
     await expectReason(
       () => t.run(async (ctx) => await offerApplication(ctx, companyId, applicationId, {})),
@@ -555,8 +550,8 @@ describe("rejectApplication", () => {
 
   test.each(pausedOrClosed)("refuses rejecting while $name", async ({ patch, reason }) => {
     const t = convexTest(schema, modules);
-    const { companyId, campaignId, opportunityId, applicationId } = await seedPending(t);
-    await t.run(async (ctx) => await patch(ctx, { campaignId, opportunityId }));
+    const { companyId, opportunityId, applicationId } = await seedPending(t);
+    await t.run(async (ctx) => await patch(ctx, { opportunityId }));
 
     await expectReason(
       () => t.run(async (ctx) => await rejectApplication(ctx, companyId, applicationId)),

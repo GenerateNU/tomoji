@@ -97,8 +97,8 @@ export const list = companyQuery({
  *
  * @throws `not_found` if the application does not exist or belongs to another
  * company.
- * @throws `invalid_state` if the application is not pending, the opportunity or
- * its campaign is paused or closed, or the expiry is not in the future.
+ * @throws `invalid_state` if the application is not pending, the opportunity is
+ * paused or closed, or the expiry is not in the future.
  */
 export const offer = companyMutation({
   args: { applicationId: v.id("applications"), offerExpiresAt: v.optional(v.number()) },
@@ -114,7 +114,7 @@ export const offer = companyMutation({
  * @throws `not_found` if the application does not exist or belongs to another
  * company.
  * @throws `invalid_state` if the application is not pending or the opportunity
- * or its campaign is paused or closed.
+ * is paused or closed.
  */
 export const reject = companyMutation({
   args: { applicationId: v.id("applications") },

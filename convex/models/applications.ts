@@ -25,7 +25,7 @@ export async function createApplication(
   if (opportunity === null) {
     throw apiError("not_found", { resource: "opportunity" });
   }
-  await requireOpportunityOpen(ctx, opportunity);
+  requireOpportunityOpen(opportunity);
   // Ungated opportunities are joined directly, without an application.
   if (!opportunity.isGated) {
     throw apiError("invalid_state", { reason: "opportunity_not_gated" });
@@ -68,23 +68,16 @@ export async function createApplication(
 }
 
 /**
- * Requires the opportunity and its campaign to be open. While either is paused
- * or closed, only creators may act on existing offers, so applying, offering,
- * and rejecting are all refused.
+ * Requires the opportunity to be open. While it is paused or closed, only
+ * creators may act on existing offers, so applying, offering, and rejecting are
+ * all refused. Pausing a campaign pauses its opportunities, so the
+ * opportunity's own status is enough.
  *
- * @throws `invalid_state` with `opportunity_not_open` or `campaign_not_open`.
+ * @throws `invalid_state` with `opportunity_not_open`.
  */
-async function requireOpportunityOpen(
-  ctx: QueryCtx | MutationCtx,
-  opportunity: Doc<"opportunities">,
-): Promise<void> {
+function requireOpportunityOpen(opportunity: Doc<"opportunities">): void {
   if (opportunity.status !== "open") {
     throw apiError("invalid_state", { reason: "opportunity_not_open" });
-  }
-  // Pausing a campaign pauses its opportunities, so check the campaign too.
-  const campaign = await ctx.db.get("campaigns", opportunity.campaignId);
-  if (campaign === null || campaign.status !== "open") {
-    throw apiError("invalid_state", { reason: "campaign_not_open" });
   }
 }
 
@@ -193,8 +186,8 @@ export const DEFAULT_OFFER_DURATION_MS = 48 * 60 * 60 * 1000;
  *
  * @throws `not_found` if the application does not exist or belongs to another
  * company.
- * @throws `invalid_state` if the application is not pending, the opportunity or
- * its campaign is not open, or `offerExpiresAt` is not in the future.
+ * @throws `invalid_state` if the application is not pending, the opportunity is
+ * not open, or `offerExpiresAt` is not in the future.
  */
 export async function offerApplication(
   ctx: MutationCtx,
@@ -220,7 +213,7 @@ export async function offerApplication(
  * @throws `not_found` if the application does not exist or belongs to another
  * company.
  * @throws `invalid_state` if the application is not pending or the opportunity
- * or its campaign is not open.
+ * is not open.
  */
 export async function rejectApplication(
   ctx: MutationCtx,
@@ -246,6 +239,6 @@ async function requirePendingForReview(
   if (opportunity === null) {
     throw apiError("not_found", { resource: "application" });
   }
-  await requireOpportunityOpen(ctx, opportunity);
+  requireOpportunityOpen(opportunity);
   return application;
 }

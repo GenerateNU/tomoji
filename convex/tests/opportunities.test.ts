@@ -29,9 +29,12 @@ describe("opportunities.pause", () => {
     const t = convexTest(schema, modules);
     const owner = await seedOpportunity(t, { subject: "pause_member", role: "member" });
     const asCreator = await seedUser(t, { subject: "pause_creator" });
-    const before = await asCreator.query(api.opportunities.get, {
+    const before = await owner.asCompany.query(api.opportunities.get, {
       opportunityId: owner.opportunityId,
     });
+    expect(
+      await asCreator.query(api.opportunities.get, { opportunityId: owner.opportunityId }),
+    ).toMatchObject({ _id: owner.opportunityId, companyName: "Acme" });
 
     const result = await owner.asCompany.mutation(api.opportunities.pause, {
       opportunityId: owner.opportunityId,
@@ -126,13 +129,19 @@ describe("opportunities.resume", () => {
     });
 
     expect(result).toEqual({ ...before, status: "open" });
-    expect(
-      await asCreator.query(api.opportunities.get, { opportunityId: owner.opportunityId }),
-    ).toEqual(result);
+    const creatorView = await asCreator.query(api.opportunities.get, {
+      opportunityId: owner.opportunityId,
+    });
+    expect(creatorView).toMatchObject({
+      _id: owner.opportunityId,
+      status: "open",
+      companyName: "Acme",
+    });
+    expect(creatorView).not.toHaveProperty("createdBy");
     const feed = await asCreator.query(api.opportunities.discover, {
       paginationOpts: { numItems: 10, cursor: null },
     });
-    expect(feed.page).toEqual([result]);
+    expect(feed.page).toEqual([creatorView]);
     expect(feed.isDone).toBe(true);
   });
 

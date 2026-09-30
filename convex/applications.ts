@@ -1,7 +1,8 @@
 import { paginationOptsValidator, paginationResultValidator } from "convex/server";
 import { v } from "convex/values";
 import type { Doc } from "./_generated/dataModel";
-import type { QueryCtx } from "./_generated/server";
+import { internal } from "./_generated/api";
+import { internalMutation, type QueryCtx } from "./_generated/server";
 import {
   authedQuery,
   companyContext,
@@ -14,6 +15,7 @@ import {
   acceptApplication,
   createApplication,
   declineApplication,
+  expireApplicationOffers,
   listApplications,
   listApplicationsByOpportunityId,
   offerApplication,
@@ -160,6 +162,17 @@ export const decline = creatorMutation({
   handler: async (ctx, args) => {
     const creatorId = await requireCallerCreatorId(ctx, ctx.user);
     return await declineApplication(ctx, creatorId, args.applicationId);
+  },
+});
+
+/** Drains expired offers in bounded transactions for the offer expiry cron. */
+export const expireOffers = internalMutation({
+  args: {},
+  returns: v.null(),
+  handler: async (ctx) => {
+    const hasMore = await expireApplicationOffers(ctx);
+    if (hasMore) await ctx.scheduler.runAfter(0, internal.applications.expireOffers, {});
+    return null;
   },
 });
 

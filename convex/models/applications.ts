@@ -353,3 +353,22 @@ async function markRemainingApplicationsFull(
     }
   }
 }
+
+/**
+ * Marks one bounded batch of offers past their expiry as `offerExpired` and
+ * reports whether more may remain. `acceptApplication` already refuses expired
+ * offers, so this only makes the status visible.
+ */
+export async function expireApplicationOffers(ctx: MutationCtx): Promise<boolean> {
+  const batchSize = 100;
+  const expired = await ctx.db
+    .query("applications")
+    .withIndex("by_status_and_offerExpiresAt", (q) =>
+      q.eq("status", "offered").lte("offerExpiresAt", Date.now()),
+    )
+    .take(batchSize);
+  for (const application of expired) {
+    await ctx.db.patch("applications", application._id, { status: "offerExpired" });
+  }
+  return expired.length === batchSize;
+}

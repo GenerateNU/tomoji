@@ -8,6 +8,7 @@ import {
   acceptApplication,
   createApplication,
   declineApplication,
+  expireApplicationOffers,
   DEFAULT_OFFER_DURATION_MS,
   listApplications,
   listApplicationsByOpportunityId,
@@ -768,5 +769,46 @@ describe("declineApplication", () => {
       () => t.run(async (ctx) => await declineApplication(ctx, otherCreatorId, applicationId)),
       "not_found",
     );
+  });
+});
+
+describe("expireApplicationOffers", () => {
+  test("marks offers past their expiry as offerExpired and leaves the rest", async () => {
+    const t = convexTest(schema, modules);
+    const { companyId, opportunityId, applicationId: expiredId } = await seedOffered(t);
+    const openId = await applyAs(t, await seedCreatorId(t, "creator_b"), opportunityId);
+    await t.run(async (ctx) => await offerApplication(ctx, companyId, openId, {}));
+    const pendingId = await applyAs(t, await seedCreatorId(t, "creator_c"), opportunityId);
+    await t.run(
+      async (ctx) =>
+        await ctx.db.patch("applications", expiredId, { offerExpiresAt: Date.now() - 1 }),
+    );
+
+    const hasMore = await t.run(async (ctx) => await expireApplicationOffers(ctx));
+    const statuses = await t.run(async (ctx) =>
+      Promise.all(
+        [expiredId, openId, pendingId].map(
+          async (id) => (await ctx.db.get("applications", id))?.status,
+        ),
+      ),
+    );
+
+    expect(hasMore).toBe(false);
+    expect(statuses).toEqual(["offerExpired", "offered", "pending"]);
+  });
+
+  test("does not expire an offer that was already accepted", async () => {
+    const t = convexTest(schema, modules);
+    const { creatorId, applicationId } = await seedOffered(t);
+    await t.run(async (ctx) => await acceptApplication(ctx, creatorId, applicationId));
+    await t.run(
+      async (ctx) =>
+        await ctx.db.patch("applications", applicationId, { offerExpiresAt: Date.now() - 1 }),
+    );
+
+    await t.run(async (ctx) => await expireApplicationOffers(ctx));
+    const stored = await t.run(async (ctx) => await ctx.db.get("applications", applicationId));
+
+    expect(stored?.status).toBe("accepted");
   });
 });

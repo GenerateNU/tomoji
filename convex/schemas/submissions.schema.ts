@@ -3,36 +3,39 @@ import { v } from "convex/values";
 
 /** The outcomes a review can record. A submission with no review is `pending`. */
 export const reviewedSubmissionStatus = v.union(
-    v.literal("approved"),
-    v.literal("changesRequested"),
+  v.literal("approved"),
+  v.literal("changesRequested"),
 );
 
-export const submissionStatus = v.union(v.literal("pending"), ...reviewedSubmissionStatus.members);
+export const submissionStatus = v.union(
+  v.literal("pending"),
+  ...reviewedSubmissionStatus.members,
+);
 
 const submissionFields = {
-    assignmentId: v.id("assignments"),
-    draftUrl: v.string(),
-    draftDescription: v.string(),
-    // Source of truth for who completes first review
-    usesAiReview: v.boolean(),
+  assignmentId: v.id("assignments"),
+  draftUrl: v.string(),
+  draftDescription: v.string(),
+  // Source of truth for who completes first review
+  usesAiReview: v.boolean(),
 };
 
 const reviewFields = {
-    status: reviewedSubmissionStatus,
-    // requires for `changesRequested` status
-    reviewNote: v.optional(v.string()),
-    reviewAt: v.number(), // TODO: Unix milliseconds... recommended but check
+  status: reviewedSubmissionStatus,
+  // requires for `changesRequested` status
+  reviewNote: v.optional(v.string()),
+  reviewedAt: v.number(), // Unix milliseconds.
 };
 
 const aiReviewFields = {
-    ...reviewFields,
-    reviewerType: v.literal("ai")
+  ...reviewFields,
+  reviewerType: v.literal("ai"),
 };
 
 const companyUserReviewFields = {
-    ...reviewFields,
-    reviewerType: v.literal("companyyUser"),
-    reviewedBy: v.id("companyUsers")
+  ...reviewFields,
+  reviewerType: v.literal("companyUser"),
+  reviewedBy: v.id("companyUsers"),
 };
 
 /**
@@ -40,27 +43,27 @@ const companyUserReviewFields = {
  * Operator reviews cannot themselves be overridden, so only these two appear.
  */
 export const overriddenReview = v.union(
-    v.object(aiReviewFields),
-    v.object(companyUserReviewFields),
+  v.object(aiReviewFields),
+  v.object(companyUserReviewFields),
 );
 
 // No review yet, an AI review, or an attributed human review. A human ID cannot
 // be attached to an AI review, and a recorded review always has a timestamp.
 export const submissionsTable = defineTable(
-    v.union(
-        v.object({ ...submissionFields, status: v.literal("pending") }),
-        v.object({ ...submissionFields, ...aiReviewFields }),
-        v.object({ ...submissionFields, ...companyUserReviewFields }),
-        // TODO(disputes): written only by the dispute override
-        v.object({
-            ...submissionFields,
-            ...reviewFields,
-            reviewerType: v.literal("operator"),
-            reviewedByOperator: v.id("users"),
-            overriddenReview,
-            disputeId: v.optional(v.id("disputes")),
-        }),
-    ),
+  v.union(
+    v.object({ ...submissionFields, status: v.literal("pending") }),
+    v.object({ ...submissionFields, ...aiReviewFields }),
+    v.object({ ...submissionFields, ...companyUserReviewFields }),
+    // TODO(disputes): written only by the dispute override
+    v.object({
+      ...submissionFields,
+      ...reviewFields,
+      reviewerType: v.literal("operator"),
+      reviewedByOperator: v.id("users"),
+      overriddenReview,
+      disputeId: v.optional(v.id("disputes")),
+    }),
+  ),
 )
-    .index("by_assignmentId", ["assignmentId"])
-    .index("by_reviewedBy", ["reviewedBy"]);
+  .index("by_assignmentId", ["assignmentId"])
+  .index("by_reviewedBy", ["reviewedBy"]);

@@ -46,13 +46,19 @@ describe("opportunities.publish", () => {
     });
 
     expect(result).toEqual({ ...before, status: "open" });
-    expect(
-      await asCreator.query(api.opportunities.get, { opportunityId: owner.opportunityId }),
-    ).toEqual(result);
+    const creatorView = await asCreator.query(api.opportunities.get, {
+      opportunityId: owner.opportunityId,
+    });
+    expect(creatorView).toMatchObject({
+      _id: owner.opportunityId,
+      status: "open",
+      companyName: "Acme",
+    });
+    expect(creatorView).not.toHaveProperty("createdBy");
     const feed = await asCreator.query(api.opportunities.discover, {
       paginationOpts: { numItems: 10, cursor: null },
     });
-    expect(feed.page).toEqual([result]);
+    expect(feed.page).toEqual([creatorView]);
     expect(feed.isDone).toBe(true);
   });
 

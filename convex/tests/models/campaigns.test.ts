@@ -39,6 +39,48 @@ function campaignDoc(
 }
 
 describe("createCampaign", () => {
+  test.each(["title", "objective", "product", "audience", "description"] as const)(
+    "rejects blank %s in drafts and open campaigns without writing",
+    async (field) => {
+      const t = convexTest(schema, modules);
+      const owner = await seedOwner(t, "ca-blank");
+
+      for (const status of ["draft", "open"] as const) {
+        for (const value of ["", " \t\n "]) {
+          const doc = campaignDoc(owner, { status, [field]: value });
+
+          await expect(t.run(async (ctx) => await createCampaign(ctx, doc))).rejects.toMatchObject({
+            data: { code: "invalid_state", reason: `campaign_${field}_blank` },
+          });
+        }
+      }
+      expect(await t.run(async (ctx) => await ctx.db.query("campaigns").first())).toBeNull();
+    },
+  );
+
+  test("trims brief fields while preserving internal whitespace", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOwner(t, "ca-trim");
+    const doc = campaignDoc(owner, {
+      title: "  Spring launch  ",
+      objective: "  Introduce the new skincare range\n",
+      product: "\tDaily moisturizer  ",
+      audience: "  Gen Z skincare enthusiasts  ",
+      description: "\nFirst paragraph.\n\nSecond paragraph.\n",
+    });
+
+    const id = await t.run(async (ctx) => await createCampaign(ctx, doc));
+    const stored = await t.run(async (ctx) => await ctx.db.get("campaigns", id));
+
+    expect(stored).toMatchObject({
+      title: "Spring launch",
+      objective: "Introduce the new skincare range",
+      product: "Daily moisturizer",
+      audience: "Gen Z skincare enthusiasts",
+      description: "First paragraph.\n\nSecond paragraph.",
+    });
+  });
+
   test("stores the campaign brief, budget, and schedule", async () => {
     const t = convexTest(schema, modules);
     const owner = await seedOwner(t, "ca1");

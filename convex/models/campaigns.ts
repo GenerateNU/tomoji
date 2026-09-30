@@ -2,12 +2,13 @@ import type { WithoutSystemFields } from "convex/server";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx } from "../_generated/server";
 import { apiError } from "../lib/errors";
+import { requireNonBlank } from "../lib/validation";
 
 /**
- * Creates a campaign brief with its budget and schedule.
+ * Creates a draft or open campaign with a trimmed, nonblank brief.
  *
- * @throws `invalid_state` for an invalid budget, invalid state, nonfinite timestamps,
- * or an end that is not after the start.
+ * @throws `invalid_state` for blank brief fields, an invalid initial status or budget,
+ * nonfinite timestamps, or an end that is not after the start.
  */
 export async function createCampaign(
   ctx: MutationCtx,
@@ -29,5 +30,12 @@ export async function createCampaign(
     throw apiError("invalid_state", { reason: "end_not_after_start" });
   }
 
-  return await ctx.db.insert("campaigns", campaign);
+  return await ctx.db.insert("campaigns", {
+    ...campaign,
+    title: requireNonBlank(campaign.title, "campaign_title"),
+    objective: requireNonBlank(campaign.objective, "campaign_objective"),
+    product: requireNonBlank(campaign.product, "campaign_product"),
+    audience: requireNonBlank(campaign.audience, "campaign_audience"),
+    description: requireNonBlank(campaign.description, "campaign_description"),
+  });
 }

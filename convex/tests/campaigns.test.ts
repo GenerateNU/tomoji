@@ -42,10 +42,15 @@ async function seedOrphanedCompanyUser(t: TestConvex, subject: string, orgId: st
 }
 
 describe("campaigns.create", () => {
-  test("creates a campaign for the caller's company and returns its id", async () => {
+  test.each([
+    { role: "admin", status: "draft" },
+    { role: "admin", status: "open" },
+    { role: "member", status: "draft" },
+    { role: "member", status: "open" },
+  ] as const)("lets a company $role create a $status campaign", async ({ role, status }) => {
     const t = convexTest(schema, modules);
-    const asMember = await seedUser(t, { subject: "cc1", org: { id: "org_acme" } });
-    const args = createArgs();
+    const asMember = await seedUser(t, { subject: "cc1", org: { id: "org_acme", role } });
+    const args = createArgs({ status });
 
     const id = await asMember.mutation(api.campaigns.create, args);
     const stored = await t.run(async (ctx) => await ctx.db.get("campaigns", id));
@@ -79,6 +84,41 @@ describe("campaigns.create", () => {
     expect(stored?.companyId).toBe(companyId);
     expect(stored?.createdBy).toBe(membershipId);
   });
+
+  test.each(["companyId", "createdBy"] as const)(
+    "rejects client-supplied %s without creating a campaign",
+    async (field) => {
+      const t = convexTest(schema, modules);
+      const asMember = await seedUser(t, { subject: "cc-owner", org: { id: "org_acme" } });
+      await seedUser(t, { subject: "cc-other", org: { id: "org_other" } });
+      const otherOwner = await t.run(async (ctx) => {
+        const user = await getUserByWorkosId(ctx, "cc-other");
+        const company = await getCompanyByWorkosId(ctx, "org_other");
+        const membership = await getCompanyUser(ctx, user!._id, company!._id);
+        return { companyId: company!._id, createdBy: membership!._id };
+      });
+      const args = { ...createArgs(), [field]: otherOwner[field] };
+
+      await expect(asMember.mutation(api.campaigns.create, args)).rejects.toThrow(
+        `Unexpected field \`${field}\``,
+      );
+      expect(await t.run(async (ctx) => await ctx.db.query("campaigns").first())).toBeNull();
+    },
+  );
+
+  test.each(["paused", "closed"] as const)(
+    "rejects initial status %s at the argument boundary",
+    async (status) => {
+      const t = convexTest(schema, modules);
+      const asMember = await seedUser(t, { subject: "cc-status", org: { id: "org_acme" } });
+      const args = { ...createArgs(), status };
+      // @ts-expect-error Clients can send invalid statuses despite the generated argument types.
+      const result = asMember.mutation(api.campaigns.create, args);
+
+      await expect(result).rejects.toThrow("Validator error");
+      expect(await t.run(async (ctx) => await ctx.db.query("campaigns").first())).toBeNull();
+    },
+  );
 
   test("persists the optional campaign end time", async () => {
     const t = convexTest(schema, modules);

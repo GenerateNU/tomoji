@@ -116,6 +116,36 @@ describe("createApplication", () => {
     await expectApiError(() => applyAs(t, creatorId, opportunityId), "conflict");
   });
 
+  test("allows the same creator to apply to a different opportunity", async () => {
+    const t = convexTest(schema, modules);
+    const first = await seedOpportunity(t);
+    const second = await seedOpportunity(t, { subject: "company_other", orgId: "org_other" });
+    const creatorId = await seedCreatorId(t, "creator_a");
+
+    await applyAs(t, creatorId, first.opportunityId);
+    const secondApplicationId = await applyAs(t, creatorId, second.opportunityId);
+
+    const secondApplication = await t.run(
+      async (ctx) => await ctx.db.get("applications", secondApplicationId),
+    );
+    expect(secondApplication).toMatchObject({
+      opportunityId: second.opportunityId,
+      creatorId,
+    });
+  });
+
+  test("allows a different creator to apply to the same opportunity", async () => {
+    const t = convexTest(schema, modules);
+    const { opportunityId } = await seedOpportunity(t);
+    await applyAs(t, await seedCreatorId(t, "creator_a"), opportunityId);
+    const otherCreatorId = await seedCreatorId(t, "creator_b");
+
+    const applicationId = await applyAs(t, otherCreatorId, opportunityId);
+
+    const stored = await t.run(async (ctx) => await ctx.db.get("applications", applicationId));
+    expect(stored).toMatchObject({ opportunityId, creatorId: otherCreatorId });
+  });
+
   test("rejects applications once maxApplications is reached, counting every status", async () => {
     const t = convexTest(schema, modules);
     const { opportunityId } = await seedOpportunity(t, { opportunity: { maxApplications: 2 } });

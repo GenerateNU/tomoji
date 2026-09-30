@@ -43,7 +43,7 @@ export async function createApplication(
   const existing = await ctx.db
     .query("applications")
     .withIndex("by_opportunityId_and_creatorId", (q) =>
-      q.eq("opportunityId", opportunity._id).eq("creatorId", creatorId),
+      q.eq("opportunityId", args.opportunityId).eq("creatorId", creatorId),
     )
     .first();
   if (existing !== null) {

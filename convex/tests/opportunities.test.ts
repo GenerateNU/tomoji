@@ -22,6 +22,20 @@ beforeEach(() => {
 afterEach(() => vi.useRealTimers());
 
 describe("opportunities.create", () => {
+  test("rejects an inactive company through the shared membership guard", async () => {
+    const t = convexTest(schema, modules);
+    const { asCompany, campaignId, membership } = await seedCampaign(t, { subject: "op_inactive" });
+    await t.run(
+      async (ctx) => await ctx.db.patch("companies", membership.companyId, { isActive: false }),
+    );
+
+    await expectApiError(
+      () => asCompany.mutation(api.opportunities.create, opportunityArgs(campaignId)),
+      "forbidden",
+    );
+    expect(await t.run(async (ctx) => await ctx.db.query("opportunities").take(1))).toEqual([]);
+  });
+
   test("allows a company admin to save a draft", async () => {
     const t = convexTest(schema, modules);
     const { asCompany, campaignId } = await seedCampaign(t, {

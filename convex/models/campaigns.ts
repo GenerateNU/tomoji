@@ -76,6 +76,28 @@ export async function updateCampaign(
   await ctx.db.patch("campaigns", campaignId, patch);
 }
 
+/** Removes only a draft with no opportunities, preserving campaigns that have been used. */
+export async function removeCampaign(
+  ctx: MutationCtx,
+  campaignId: Id<"campaigns">,
+  companyId: Id<"companies">,
+): Promise<void> {
+  const campaign = await requireCampaign(ctx, campaignId, companyId);
+  if (campaign.status !== "draft") {
+    throw apiError("invalid_state", { reason: "campaign_not_draft" });
+  }
+
+  const opportunity = await ctx.db
+    .query("opportunities")
+    .withIndex("by_campaignId_and_status", (q) => q.eq("campaignId", campaignId))
+    .first();
+  if (opportunity !== null) {
+    throw apiError("invalid_state", { reason: "campaign_has_opportunities" });
+  }
+
+  await ctx.db.delete("campaigns", campaignId);
+}
+
 /**
  * Creates a draft or open campaign with a trimmed, nonblank brief.
  *

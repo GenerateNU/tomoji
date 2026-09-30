@@ -314,6 +314,111 @@ describe("campaigns.update", () => {
   });
 });
 
+describe("campaigns.remove", () => {
+  test.each(["admin", "member"] as const)(
+    "lets a company %s remove a teammate's empty draft",
+    async (role) => {
+      const t = convexTest(schema, modules);
+      const asAuthor = await seedUser(t, { subject: "cr-author", org: { id: "org_acme" } });
+      const asTeammate = await seedUser(t, {
+        subject: "cr-teammate",
+        org: { id: "org_acme", role },
+      });
+      const campaignId = await asAuthor.mutation(
+        api.campaigns.create,
+        createArgs({ status: "draft" }),
+      );
+
+      const result = await asTeammate.mutation(api.campaigns.remove, { campaignId });
+
+      expect(result).toBeNull();
+      expect(await t.run(async (ctx) => ctx.db.get("campaigns", campaignId))).toBeNull();
+    },
+  );
+
+  test("rejects another company's draft without deleting it", async () => {
+    const t = convexTest(schema, modules);
+    const asOwner = await seedUser(t, { subject: "cr-owner", org: { id: "org_acme" } });
+    const asOther = await seedUser(t, { subject: "cr-other", org: { id: "org_other" } });
+    const campaignId = await asOwner.mutation(
+      api.campaigns.create,
+      createArgs({ status: "draft" }),
+    );
+    const before = await t.run(async (ctx) => ctx.db.get("campaigns", campaignId));
+
+    await expectApiError(() => asOther.mutation(api.campaigns.remove, { campaignId }), "not_found");
+
+    expect(await t.run(async (ctx) => ctx.db.get("campaigns", campaignId))).toEqual(before);
+  });
+
+  test("rejects a client-supplied company identity", async () => {
+    const t = convexTest(schema, modules);
+    const asOwner = await seedUser(t, { subject: "cr-owner", org: { id: "org_acme" } });
+    const asOther = await seedUser(t, { subject: "cr-other", org: { id: "org_other" } });
+    const campaignId = await asOwner.mutation(
+      api.campaigns.create,
+      createArgs({ status: "draft" }),
+    );
+    const campaign = await t.run(async (ctx) => ctx.db.get("campaigns", campaignId));
+    const args = { campaignId, companyId: campaign!.companyId };
+
+    await expect(asOther.mutation(api.campaigns.remove, args)).rejects.toThrow(
+      "Unexpected field `companyId`",
+    );
+    expect(await t.run(async (ctx) => ctx.db.get("campaigns", campaignId))).toEqual(campaign);
+  });
+
+  test("rejects a signed-out caller", async () => {
+    const t = convexTest(schema, modules);
+    const asOwner = await seedUser(t, { subject: "cr-owner", org: { id: "org_acme" } });
+    const campaignId = await asOwner.mutation(
+      api.campaigns.create,
+      createArgs({ status: "draft" }),
+    );
+
+    await expectApiError(
+      () => t.mutation(api.campaigns.remove, { campaignId }),
+      "not_authenticated",
+    );
+    expect(await t.run(async (ctx) => ctx.db.get("campaigns", campaignId))).not.toBeNull();
+  });
+
+  test("rejects a creator", async () => {
+    const t = convexTest(schema, modules);
+    const asOwner = await seedUser(t, { subject: "cr-owner", org: { id: "org_acme" } });
+    const asCreator = await seedUser(t, { subject: "cr-creator" });
+    const campaignId = await asOwner.mutation(
+      api.campaigns.create,
+      createArgs({ status: "draft" }),
+    );
+
+    await expectApiError(
+      () => asCreator.mutation(api.campaigns.remove, { campaignId }),
+      "forbidden",
+    );
+    expect(await t.run(async (ctx) => ctx.db.get("campaigns", campaignId))).not.toBeNull();
+  });
+
+  test("rejects a caller claiming the owner's org without membership", async () => {
+    const t = convexTest(schema, modules);
+    const asOwner = await seedUser(t, { subject: "cr-owner", org: { id: "org_acme" } });
+    await seedUser(t, { subject: "cr-outsider", org: { id: "org_other" } });
+    const campaignId = await asOwner.mutation(
+      api.campaigns.create,
+      createArgs({ status: "draft" }),
+    );
+    const asWrongOrg = t.withIdentity(
+      workosIdentity({ subject: "cr-outsider", org_id: "org_acme" }),
+    );
+
+    await expectApiError(
+      () => asWrongOrg.mutation(api.campaigns.remove, { campaignId }),
+      "forbidden",
+    );
+    expect(await t.run(async (ctx) => ctx.db.get("campaigns", campaignId))).not.toBeNull();
+  });
+});
+
 describe("campaigns.create", () => {
   test.each([
     { role: "admin", status: "draft" },

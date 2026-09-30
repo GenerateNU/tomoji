@@ -11,7 +11,9 @@ import {
   creatorQuery,
 } from "./lib/functions";
 import {
+  acceptApplication,
   createApplication,
+  declineApplication,
   listApplications,
   listApplicationsByOpportunityId,
   offerApplication,
@@ -126,6 +128,38 @@ export const reject = companyMutation({
   returns: application,
   handler: async (ctx, args) => {
     return await rejectApplication(ctx, ctx.membership.companyId, args.applicationId);
+  },
+});
+
+/**
+ * Accepts the caller's own unexpired offer: takes a slot and creates the
+ * assignment, first come first serve. Works while the opportunity is paused.
+ *
+ * @throws `not_found` if the application does not exist or is not the caller's.
+ * @throws `invalid_state` if there is no offer, it has expired, the opportunity
+ * is closed, or every slot is filled.
+ */
+export const accept = creatorMutation({
+  args: { applicationId: v.id("applications") },
+  returns: application,
+  handler: async (ctx, args) => {
+    const creatorId = await requireCallerCreatorId(ctx, ctx.user);
+    return await acceptApplication(ctx, creatorId, args.applicationId);
+  },
+});
+
+/**
+ * Declines the caller's own offer. Works whatever the opportunity's status.
+ *
+ * @throws `not_found` if the application does not exist or is not the caller's.
+ * @throws `invalid_state` if there is no offer.
+ */
+export const decline = creatorMutation({
+  args: { applicationId: v.id("applications") },
+  returns: application,
+  handler: async (ctx, args) => {
+    const creatorId = await requireCallerCreatorId(ctx, ctx.user);
+    return await declineApplication(ctx, creatorId, args.applicationId);
   },
 });
 

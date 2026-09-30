@@ -2,10 +2,20 @@ import { paginationOptsValidator, paginationResultValidator } from "convex/serve
 import { v } from "convex/values";
 import type { Doc } from "./_generated/dataModel";
 import type { QueryCtx } from "./_generated/server";
-import { authedQuery, companyContext, creatorMutation, creatorQuery } from "./lib/functions";
+import {
+  authedQuery,
+  companyContext,
+  companyMutation,
+  companyQuery,
+  creatorMutation,
+  creatorQuery,
+} from "./lib/functions";
 import {
   createApplication,
   listApplications,
+  listApplicationsByOpportunityId,
+  offerApplication,
+  rejectApplication,
   requireApplication,
   type ApplicationViewer,
 } from "./models/applications";
@@ -59,6 +69,58 @@ export const get = authedQuery({
       await applicationViewer(ctx, ctx.user),
       args.applicationId,
     );
+  },
+});
+
+/**
+ * Lists applications to one of the caller's company's opportunities, optionally
+ * filtered by status. Open to any company member.
+ *
+ * @throws `not_found` if the opportunity does not exist or belongs to another
+ * company.
+ */
+export const list = companyQuery({
+  args: {
+    opportunityId: v.id("opportunities"),
+    status: v.optional(applicationStatus),
+    paginationOpts: paginationOptsValidator,
+  },
+  returns: paginationResultValidator(application),
+  handler: async (ctx, args) => {
+    return await listApplicationsByOpportunityId(ctx, ctx.membership.companyId, args);
+  },
+});
+
+/**
+ * Sends an offer on a pending application. `offerExpiresAt` defaults to 48
+ * hours from now. Offers are not capped by open slots.
+ *
+ * @throws `not_found` if the application does not exist or belongs to another
+ * company.
+ * @throws `invalid_state` if the application is not pending, the opportunity or
+ * its campaign is paused or closed, or the expiry is not in the future.
+ */
+export const offer = companyMutation({
+  args: { applicationId: v.id("applications"), offerExpiresAt: v.optional(v.number()) },
+  returns: application,
+  handler: async (ctx, args) => {
+    return await offerApplication(ctx, ctx.membership.companyId, args.applicationId, args);
+  },
+});
+
+/**
+ * Rejects a pending application.
+ *
+ * @throws `not_found` if the application does not exist or belongs to another
+ * company.
+ * @throws `invalid_state` if the application is not pending or the opportunity
+ * or its campaign is paused or closed.
+ */
+export const reject = companyMutation({
+  args: { applicationId: v.id("applications") },
+  returns: application,
+  handler: async (ctx, args) => {
+    return await rejectApplication(ctx, ctx.membership.companyId, args.applicationId);
   },
 });
 

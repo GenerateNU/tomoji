@@ -5,7 +5,9 @@ import { describe, expect, test } from "vitest";
 import type { Doc, Id } from "../../_generated/dataModel";
 import type { MutationCtx } from "../../_generated/server";
 import {
+  acceptApplication,
   createApplication,
+  declineApplication,
   DEFAULT_OFFER_DURATION_MS,
   listApplications,
   listApplicationsByOpportunityId,
@@ -556,6 +558,215 @@ describe("rejectApplication", () => {
     await expectReason(
       () => t.run(async (ctx) => await rejectApplication(ctx, companyId, applicationId)),
       reason,
+    );
+  });
+});
+
+/** Seeds an opportunity and an offered application from `creator_a`. */
+async function seedOffered(t: TestConvex, opts: Parameters<typeof seedOpportunity>[1] = {}) {
+  const seeded = await seedOpportunity(t, opts);
+  const creatorId = await seedCreatorId(t, "creator_a");
+  const applicationId = await applyAs(t, creatorId, seeded.opportunityId);
+  await t.run(async (ctx) => await offerApplication(ctx, seeded.companyId, applicationId, {}));
+  return { ...seeded, creatorId, applicationId };
+}
+
+describe("acceptApplication", () => {
+  test("accepts the offer, takes a slot, and creates the assignment with the opportunity's terms", async () => {
+    const t = convexTest(schema, modules);
+    const { opportunityId, creatorId, applicationId } = await seedOffered(t);
+    const before = Date.now();
+
+    const accepted = await t.run(
+      async (ctx) => await acceptApplication(ctx, creatorId, applicationId),
+    );
+    const { opportunity, assignments } = await t.run(async (ctx) => ({
+      opportunity: await ctx.db.get("opportunities", opportunityId),
+      assignments: await ctx.db
+        .query("assignments")
+        .withIndex("by_opportunityId_and_creatorId", (q) =>
+          q.eq("opportunityId", opportunityId).eq("creatorId", creatorId),
+        )
+        .take(2),
+    }));
+
+    expect(accepted.status).toBe("accepted");
+    expect(accepted.offerAcceptedAt).toBeGreaterThanOrEqual(before);
+    expect(opportunity?.numFilledSlots).toBe(1);
+    expect(assignments).toHaveLength(1);
+    expect(assignments[0]).toMatchObject({
+      status: "termsPending",
+      fixedFeeCents: opportunity?.fixedFeeCents,
+      cpmRateCents: opportunity?.cpmRateCents,
+      paymentCapCents: opportunity?.paymentCapCents,
+      usesAiReview: opportunity?.usesAiReviewDefault,
+    });
+  });
+
+  test("still accepts while the opportunity is paused", async () => {
+    const t = convexTest(schema, modules);
+    const { opportunityId, creatorId, applicationId } = await seedOffered(t);
+    await t.run(
+      async (ctx) => await ctx.db.patch("opportunities", opportunityId, { status: "paused" }),
+    );
+
+    const accepted = await t.run(
+      async (ctx) => await acceptApplication(ctx, creatorId, applicationId),
+    );
+
+    expect(accepted.status).toBe("accepted");
+  });
+
+  test("refuses once the opportunity is closed", async () => {
+    const t = convexTest(schema, modules);
+    const { opportunityId, creatorId, applicationId } = await seedOffered(t);
+    await t.run(
+      async (ctx) => await ctx.db.patch("opportunities", opportunityId, { status: "closed" }),
+    );
+
+    await expectReason(
+      () => t.run(async (ctx) => await acceptApplication(ctx, creatorId, applicationId)),
+      "opportunity_closed",
+    );
+  });
+
+  test("refuses an expired offer even before the cron marks it", async () => {
+    const t = convexTest(schema, modules);
+    const { creatorId, applicationId } = await seedOffered(t);
+    await t.run(
+      async (ctx) =>
+        await ctx.db.patch("applications", applicationId, { offerExpiresAt: Date.now() - 1 }),
+    );
+
+    await expectReason(
+      () => t.run(async (ctx) => await acceptApplication(ctx, creatorId, applicationId)),
+      "offer_expired",
+    );
+  });
+
+  test("refuses an application without an offer", async () => {
+    const t = convexTest(schema, modules);
+    const { opportunityId } = await seedOpportunity(t);
+    const creatorId = await seedCreatorId(t, "creator_a");
+    const applicationId = await applyAs(t, creatorId, opportunityId);
+
+    await expectReason(
+      () => t.run(async (ctx) => await acceptApplication(ctx, creatorId, applicationId)),
+      "application_not_offered",
+    );
+  });
+
+  test("hides another creator's application as not found", async () => {
+    const t = convexTest(schema, modules);
+    const { applicationId } = await seedOffered(t);
+    const otherCreatorId = await seedCreatorId(t, "creator_b");
+
+    await expectApiError(
+      () => t.run(async (ctx) => await acceptApplication(ctx, otherCreatorId, applicationId)),
+      "not_found",
+    );
+  });
+
+  test("refuses when every slot is already filled", async () => {
+    const t = convexTest(schema, modules);
+    const { opportunityId, creatorId, applicationId } = await seedOffered(t, {
+      opportunity: { maxSlots: 1 },
+    });
+    await t.run(
+      async (ctx) => await ctx.db.patch("opportunities", opportunityId, { numFilledSlots: 1 }),
+    );
+
+    await expectReason(
+      () => t.run(async (ctx) => await acceptApplication(ctx, creatorId, applicationId)),
+      "opportunity_full",
+    );
+  });
+
+  test("taking the last slot marks remaining pending and offered applications as full", async () => {
+    const t = convexTest(schema, modules);
+    const { companyId, opportunityId, creatorId, applicationId } = await seedOffered(t, {
+      opportunity: { maxSlots: 1 },
+    });
+    const offeredId = await applyAs(t, await seedCreatorId(t, "creator_b"), opportunityId);
+    await t.run(async (ctx) => await offerApplication(ctx, companyId, offeredId, {}));
+    const pendingId = await applyAs(t, await seedCreatorId(t, "creator_c"), opportunityId);
+    const rejectedId = await applyAs(t, await seedCreatorId(t, "creator_d"), opportunityId);
+    await t.run(async (ctx) => await rejectApplication(ctx, companyId, rejectedId));
+
+    await t.run(async (ctx) => await acceptApplication(ctx, creatorId, applicationId));
+    const statuses = await t.run(async (ctx) =>
+      Promise.all(
+        [applicationId, offeredId, pendingId, rejectedId].map(
+          async (id) => (await ctx.db.get("applications", id))?.status,
+        ),
+      ),
+    );
+
+    expect(statuses).toEqual(["accepted", "opportunityFull", "opportunityFull", "rejected"]);
+  });
+
+  test("leaves other offers open while slots remain", async () => {
+    const t = convexTest(schema, modules);
+    const { companyId, opportunityId, creatorId, applicationId } = await seedOffered(t, {
+      opportunity: { maxSlots: 2 },
+    });
+    const offeredId = await applyAs(t, await seedCreatorId(t, "creator_b"), opportunityId);
+    await t.run(async (ctx) => await offerApplication(ctx, companyId, offeredId, {}));
+
+    await t.run(async (ctx) => await acceptApplication(ctx, creatorId, applicationId));
+    const other = await t.run(async (ctx) => await ctx.db.get("applications", offeredId));
+
+    expect(other?.status).toBe("offered");
+  });
+});
+
+describe("declineApplication", () => {
+  test("declines an offer", async () => {
+    const t = convexTest(schema, modules);
+    const { creatorId, applicationId } = await seedOffered(t);
+
+    const declined = await t.run(
+      async (ctx) => await declineApplication(ctx, creatorId, applicationId),
+    );
+
+    expect(declined.status).toBe("declined");
+  });
+
+  test.each(["paused", "closed"] as const)(
+    "still declines while the opportunity is %s",
+    async (status) => {
+      const t = convexTest(schema, modules);
+      const { opportunityId, creatorId, applicationId } = await seedOffered(t);
+      await t.run(async (ctx) => await ctx.db.patch("opportunities", opportunityId, { status }));
+
+      const declined = await t.run(
+        async (ctx) => await declineApplication(ctx, creatorId, applicationId),
+      );
+
+      expect(declined.status).toBe("declined");
+    },
+  );
+
+  test("refuses an application without an offer", async () => {
+    const t = convexTest(schema, modules);
+    const { opportunityId } = await seedOpportunity(t);
+    const creatorId = await seedCreatorId(t, "creator_a");
+    const applicationId = await applyAs(t, creatorId, opportunityId);
+
+    await expectReason(
+      () => t.run(async (ctx) => await declineApplication(ctx, creatorId, applicationId)),
+      "application_not_offered",
+    );
+  });
+
+  test("hides another creator's application as not found", async () => {
+    const t = convexTest(schema, modules);
+    const { applicationId } = await seedOffered(t);
+    const otherCreatorId = await seedCreatorId(t, "creator_b");
+
+    await expectApiError(
+      () => t.run(async (ctx) => await declineApplication(ctx, otherCreatorId, applicationId)),
+      "not_found",
     );
   });
 });

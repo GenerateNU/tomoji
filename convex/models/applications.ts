@@ -243,3 +243,113 @@ async function requirePendingForReview(
   requireOpportunityOpen(opportunity);
   return application;
 }
+
+/**
+ * Accepts the creator's own unexpired offer. In one transaction this takes a
+ * slot, creates the assignment with the opportunity's current terms, and, if
+ * that was the last slot, marks every remaining pending or offered application
+ * as `opportunityFull`. Offers can be accepted while the opportunity is paused.
+ *
+ * Two creators accepting the last slot at once both read the opportunity, so
+ * Convex retries one, which then sees the slot is taken.
+ *
+ * @throws `not_found` if the application does not exist or is not the
+ * creator's.
+ * @throws `invalid_state` if the application has no offer, the offer has
+ * expired, the opportunity is closed, or every slot is filled.
+ */
+export async function acceptApplication(
+  ctx: MutationCtx,
+  creatorId: Id<"creators">,
+  applicationId: Id<"applications">,
+): Promise<Doc<"applications">> {
+  const application = await requireOfferedApplication(ctx, creatorId, applicationId);
+  const now = Date.now();
+  if (application.offerExpiresAt === undefined || application.offerExpiresAt <= now) {
+    throw apiError("invalid_state", { reason: "offer_expired" });
+  }
+  const opportunity = await ctx.db.get("opportunities", application.opportunityId);
+  if (opportunity === null) {
+    throw apiError("not_found", { resource: "application" });
+  }
+  if (opportunity.status !== "open" && opportunity.status !== "paused") {
+    throw apiError("invalid_state", { reason: "opportunity_closed" });
+  }
+  if (opportunity.numFilledSlots >= opportunity.maxSlots) {
+    throw apiError("invalid_state", { reason: "opportunity_full" });
+  }
+
+  const patch = { status: "accepted" as const, offerAcceptedAt: now };
+  await ctx.db.patch("applications", application._id, patch);
+  // Accept creates the assignment directly for now; a follow-up
+  // ticket moves this into the assignments model once that ticket lands.
+
+  await ctx.db.insert("assignments", {
+    opportunityId: opportunity._id,
+    creatorId,
+    fixedFeeCents: opportunity.fixedFeeCents,
+    cpmRateCents: opportunity.cpmRateCents,
+    paymentCapCents: opportunity.paymentCapCents,
+    usesAiReview: opportunity.usesAiReviewDefault,
+    status: "termsPending",
+  });
+  const numFilledSlots = opportunity.numFilledSlots + 1;
+  await ctx.db.patch("opportunities", opportunity._id, { numFilledSlots });
+  if (numFilledSlots >= opportunity.maxSlots) {
+    await markRemainingApplicationsFull(ctx, opportunity);
+  }
+  return { ...application, ...patch };
+}
+
+/**
+ * Declines the creator's own offer. Allowed whatever the opportunity's status,
+ * since saying no never takes a slot.
+ *
+ * @throws `not_found` if the application does not exist or is not the
+ * creator's.
+ * @throws `invalid_state` if the application has no offer.
+ */
+export async function declineApplication(
+  ctx: MutationCtx,
+  creatorId: Id<"creators">,
+  applicationId: Id<"applications">,
+): Promise<Doc<"applications">> {
+  const application = await requireOfferedApplication(ctx, creatorId, applicationId);
+  await ctx.db.patch("applications", application._id, { status: "declined" });
+  return { ...application, status: "declined" };
+}
+
+/** Loads the creator's own application and requires it to hold an offer. */
+async function requireOfferedApplication(
+  ctx: MutationCtx,
+  creatorId: Id<"creators">,
+  applicationId: Id<"applications">,
+): Promise<Doc<"applications">> {
+  const application = await requireApplication(ctx, { role: "creator", creatorId }, applicationId);
+  if (application.status !== "offered") {
+    throw apiError("invalid_state", { reason: "application_not_offered" });
+  }
+  return application;
+}
+
+/**
+ * Marks every pending or offered application to the opportunity as
+ * `opportunityFull` once its last slot is taken. An opportunity never has more
+ * than `maxApplications` applications, so this batch is bounded.
+ */
+async function markRemainingApplicationsFull(
+  ctx: MutationCtx,
+  opportunity: Doc<"opportunities">,
+): Promise<void> {
+  for (const status of ["pending", "offered"] as const) {
+    const remaining = await ctx.db
+      .query("applications")
+      .withIndex("by_opportunityId_and_status", (q) =>
+        q.eq("opportunityId", opportunity._id).eq("status", status),
+      )
+      .take(opportunity.maxApplications);
+    for (const application of remaining) {
+      await ctx.db.patch("applications", application._id, { status: "opportunityFull" });
+    }
+  }
+}

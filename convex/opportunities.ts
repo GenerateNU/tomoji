@@ -1,7 +1,12 @@
 import { v } from "convex/values";
 import { authedQuery, companyMutation } from "./lib/functions";
 import { findOrgId } from "./lib/identity";
-import { createOpportunity, opportunityCreate, requireOpportunity } from "./models/opportunities";
+import {
+  createOpportunity,
+  creatorOpportunity,
+  getOpportunity,
+  opportunityCreate,
+} from "./models/opportunities";
 import schema from "./schema";
 
 /** Creates a draft or open opportunity in a campaign owned by the caller's company. */
@@ -13,12 +18,12 @@ export const create = companyMutation({
   },
 });
 
-/** Returns a complete opportunity with company, creator, and operator visibility checks. */
+/** Returns a public brief to creators or the complete document to its company and operators. */
 export const get = authedQuery({
   args: { opportunityId: v.id("opportunities") },
-  returns: schema.doc("opportunities"),
+  returns: v.union(schema.doc("opportunities"), creatorOpportunity),
   handler: async (ctx, args) => {
-    return await requireOpportunity(ctx, args.opportunityId, {
+    return await getOpportunity(ctx, args.opportunityId, {
       user: ctx.user,
       orgId: findOrgId(ctx.identity),
     });

@@ -296,14 +296,61 @@ describe("opportunities.get", () => {
     );
   });
 
-  test("lets a creator read the complete open opportunity", async () => {
+  test("returns only the public brief and company name to a creator", async () => {
     const t = convexTest(schema, modules);
-    const { opportunityId } = await seedOpportunity(t, { subject: "op_owner" });
+    const { opportunityId, membership } = await seedOpportunity(
+      t,
+      { subject: "op_owner" },
+      { productAccessLink: "https://example.com/private-product" },
+    );
+    await t.run(
+      async (ctx) => await ctx.db.patch("companies", membership.companyId, { name: "New Brand" }),
+    );
     const asCreator = await seedUser(t, { subject: "op_creator" });
 
     const result = await asCreator.query(api.opportunities.get, { opportunityId });
+    expect(result).toMatchObject({
+      _id: opportunityId,
+      companyName: "New Brand",
+      title: "Moisturizer launch video",
+    });
+    expect(Object.keys(result).sort()).toEqual(
+      [
+        "_id",
+        "_creationTime",
+        "companyName",
+        "title",
+        "description",
+        "isGated",
+        "usesAiReviewDefault",
+        "targetApplicant",
+        "maxSlots",
+        "numFilledSlots",
+        "maxApplications",
+        "deadline",
+        "status",
+        "fixedFeeCents",
+        "cpmRateCents",
+        "paymentCapCents",
+        "contentRequirements",
+        "prohibitedClaims",
+        "disclosureRequirements",
+        "usageRights",
+      ].sort(),
+    );
+  });
+
+  test("keeps the complete document for the owning company and operators", async () => {
+    const t = convexTest(schema, modules);
+    const { asCompany, opportunityId } = await seedOpportunity(
+      t,
+      { subject: "op_owner" },
+      { productAccessLink: "https://example.com/private-product" },
+    );
+    const asOperator = await seedOperator(t, "op_operator");
     const stored = await t.run(async (ctx) => await ctx.db.get("opportunities", opportunityId));
 
-    expect(result).toEqual(stored);
+    expect(await asCompany.query(api.opportunities.get, { opportunityId })).toEqual(stored);
+    expect(await asOperator.query(api.opportunities.get, { opportunityId })).toEqual(stored);
   });
 });

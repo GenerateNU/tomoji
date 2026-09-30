@@ -13,6 +13,79 @@ export const opportunityCreate = schema
 
 export type OpportunityCreate = Infer<typeof opportunityCreate>;
 
+// Allowlist creator fields so new stored fields do not become public by default.
+export const creatorOpportunity = schema
+  .doc("opportunities")
+  .pick(
+    "_id",
+    "_creationTime",
+    "title",
+    "description",
+    "isGated",
+    "usesAiReviewDefault",
+    "targetApplicant",
+    "maxSlots",
+    "numFilledSlots",
+    "maxApplications",
+    "deadline",
+    "status",
+    "fixedFeeCents",
+    "cpmRateCents",
+    "paymentCapCents",
+    "contentRequirements",
+    "prohibitedClaims",
+    "disclosureRequirements",
+    "usageRights",
+  )
+  .extend({ companyName: v.string() });
+
+export type CreatorOpportunity = Infer<typeof creatorOpportunity>;
+
+/** Builds the allowlisted creator-facing brief from an opportunity and its company. */
+export function toCreatorOpportunity(
+  opportunity: Doc<"opportunities">,
+  company: Doc<"companies">,
+): CreatorOpportunity {
+  return {
+    _id: opportunity._id,
+    _creationTime: opportunity._creationTime,
+    title: opportunity.title,
+    description: opportunity.description,
+    isGated: opportunity.isGated,
+    usesAiReviewDefault: opportunity.usesAiReviewDefault,
+    targetApplicant: opportunity.targetApplicant,
+    maxSlots: opportunity.maxSlots,
+    numFilledSlots: opportunity.numFilledSlots,
+    maxApplications: opportunity.maxApplications,
+    deadline: opportunity.deadline,
+    status: opportunity.status,
+    fixedFeeCents: opportunity.fixedFeeCents,
+    cpmRateCents: opportunity.cpmRateCents,
+    paymentCapCents: opportunity.paymentCapCents,
+    contentRequirements: opportunity.contentRequirements,
+    prohibitedClaims: opportunity.prohibitedClaims,
+    disclosureRequirements: opportunity.disclosureRequirements,
+    usageRights: opportunity.usageRights,
+    companyName: company.name,
+  };
+}
+
+/** Returns a role-appropriate opportunity response after enforcing visibility. */
+export async function getOpportunity(
+  ctx: QueryCtx,
+  opportunityId: Id<"opportunities">,
+  caller: { user: Doc<"users">; orgId: string | null },
+): Promise<Doc<"opportunities"> | CreatorOpportunity> {
+  const opportunity = await requireOpportunity(ctx, opportunityId, caller);
+  if (caller.user.role === "company" || caller.user.role === "operator") return opportunity;
+
+  const company = await ctx.db.get("companies", opportunity.companyId);
+  if (company === null) {
+    throw apiError("not_found", { resource: "opportunity" });
+  }
+  return toCreatorOpportunity(opportunity, company);
+}
+
 /** Creates a draft or open opportunity in the caller's campaign; ownership is server-derived. */
 export async function createOpportunity(
   ctx: MutationCtx,

@@ -1,7 +1,20 @@
 import { v } from "convex/values";
-import { createCampaign } from "./models/campaigns";
-import { companyMutation } from "./lib/functions";
+import { createCampaign, requireCampaign } from "./models/campaigns";
+import { companyMutation, companyQuery } from "./lib/functions";
 import schema from "./schema";
+
+/**
+ * Gets a campaign in any status from the caller's company.
+ *
+ * @throws `not_found` if the campaign is missing or belongs to another company.
+ */
+export const get = companyQuery({
+  args: { campaignId: v.id("campaigns") },
+  returns: schema.doc("campaigns"),
+  handler: async (ctx, args) => {
+    return await requireCampaign(ctx, args.campaignId, ctx.membership.companyId);
+  },
+});
 
 /**
  * Creates a draft or open campaign for the caller's company.

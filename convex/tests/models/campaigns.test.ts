@@ -4,7 +4,7 @@ import type { WithoutSystemFields } from "convex/server";
 import { describe, expect, test } from "vitest";
 import type { Doc, Id } from "../../_generated/dataModel";
 import { companyContext } from "../../lib/functions";
-import { createCampaign } from "../../models/campaigns";
+import { createCampaign, requireCampaign } from "../../models/campaigns";
 import schema from "../../schema";
 import { expectApiError, seedUser, type TestConvex } from "../helpers";
 
@@ -37,6 +37,52 @@ function campaignDoc(
     ...overrides,
   };
 }
+
+describe("requireCampaign", () => {
+  test.each(["draft", "open", "paused", "closed"] as const)(
+    "returns an owned campaign with status %s",
+    async (status) => {
+      const t = convexTest(schema, modules);
+      const owner = await seedOwner(t, "cg-owned");
+      const doc = campaignDoc(owner, { status });
+      const campaignId = await t.run(async (ctx) => await ctx.db.insert("campaigns", doc));
+
+      const campaign = await t.run(
+        async (ctx) => await requireCampaign(ctx, campaignId, owner.companyId),
+      );
+
+      expect(campaign).toMatchObject({ ...doc, _id: campaignId });
+      expect(campaign.endsAt).toBeUndefined();
+    },
+  );
+
+  test("throws not_found for a missing campaign", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOwner(t, "cg-missing");
+    const campaignId = await t.run(async (ctx) => {
+      const id = await ctx.db.insert("campaigns", campaignDoc(owner));
+      await ctx.db.delete("campaigns", id);
+      return id;
+    });
+
+    await expect(
+      t.run(async (ctx) => await requireCampaign(ctx, campaignId, owner.companyId)),
+    ).rejects.toHaveProperty("data", { code: "not_found", message: "Not found", campaignId });
+  });
+
+  test("uses the same not_found error for another company's campaign", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOwner(t, "cg-owner", "org_acme");
+    const other = await seedOwner(t, "cg-other", "org_other");
+    const campaignId = await t.run(
+      async (ctx) => await ctx.db.insert("campaigns", campaignDoc(owner)),
+    );
+
+    await expect(
+      t.run(async (ctx) => await requireCampaign(ctx, campaignId, other.companyId)),
+    ).rejects.toHaveProperty("data", { code: "not_found", message: "Not found", campaignId });
+  });
+});
 
 describe("createCampaign", () => {
   test.each(["title", "objective", "product", "audience", "description"] as const)(

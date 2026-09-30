@@ -1,8 +1,21 @@
 import type { WithoutSystemFields } from "convex/server";
 import type { Doc, Id } from "../_generated/dataModel";
-import type { MutationCtx } from "../_generated/server";
+import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { apiError } from "../lib/errors";
 import { requireNonBlank } from "../lib/validation";
+
+/** Returns a campaign, or throws `not_found` if it is missing or belongs to another company. */
+export async function requireCampaign(
+  ctx: QueryCtx | MutationCtx,
+  campaignId: Id<"campaigns">,
+  companyId: Id<"companies">,
+): Promise<Doc<"campaigns">> {
+  const campaign = await ctx.db.get("campaigns", campaignId);
+  if (campaign === null || campaign.companyId !== companyId) {
+    throw apiError("not_found", { campaignId });
+  }
+  return campaign;
+}
 
 /**
  * Creates a draft or open campaign with a trimmed, nonblank brief.

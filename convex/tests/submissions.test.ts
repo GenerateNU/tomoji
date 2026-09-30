@@ -1,12 +1,14 @@
 /// <reference types="vite/client" />
 import { convexTest } from "convex-test";
 import type { FunctionArgs } from "convex/server";
+import type { Infer } from "convex/values";
 import { describe, expect, test } from "vitest";
 import { api } from "../_generated/api";
-import type { Doc, Id } from "../_generated/dataModel";
+import type { Id } from "../_generated/dataModel";
 import type { ApiErrorCode } from "../lib/errors";
 import { toCreatorSubmission } from "../models/submissions";
 import schema from "../schema";
+import type { submissionStatus } from "../schemas/submissions.schema";
 import {
   expectApiError,
   seedAssignment,
@@ -15,6 +17,8 @@ import {
   seedSubmission,
   seedUser,
   seedWrongOrgCaller,
+  storedSubmission,
+  storedSubmissions,
   type AssignmentFixture,
   type TestConvex,
 } from "./helpers";
@@ -27,31 +31,32 @@ const draft = {
 };
 
 type CreateArgs = FunctionArgs<typeof api.submissions.create>;
-type ReviewArgs = FunctionArgs<typeof api.submissions.review>;
 
 function createArgs(fixture: AssignmentFixture): CreateArgs {
   return { assignmentId: fixture.assignmentId, ...draft };
 }
 
-async function storedSubmissions(t: TestConvex) {
-  return await t.run(async (ctx) => await ctx.db.query("submissions").collect());
+/** Arguments for the first page of the fixture's assignment's submissions. */
+function pageArgs(fixture: AssignmentFixture) {
+  return { assignmentId: fixture.assignmentId, paginationOpts: { numItems: 10, cursor: null } };
 }
 
-async function storedSubmission(
+/** Seeds an assignment with one submission in the given state. */
+async function seedOneSubmission(
   t: TestConvex,
-  submissionId: Id<"submissions">,
-): Promise<Doc<"submissions"> | null> {
-  // `TestConvex` loses the schema types, so the row comes back untyped.
-  return (await t.run(
-    async (ctx) => await ctx.db.get("submissions", submissionId),
-  )) as Doc<"submissions"> | null;
+  prefix: string,
+  status: Infer<typeof submissionStatus> = "pending",
+) {
+  const fixture = await seedAssignment(t, prefix);
+  const submissionId = await seedSubmission(t, fixture, status);
+  return { fixture, submissionId };
 }
 
-/** Seeds an assignment with one pending draft, ready for review. */
-async function seedPendingSubmission(t: TestConvex, prefix: string) {
-  const fixture = await seedAssignment(t, prefix);
-  const submissionId = await seedSubmission(t, fixture, "pending");
-  return { fixture, submissionId };
+/** Returns a submission in the creator shape, as a creator route should. */
+async function creatorView(t: TestConvex, submissionId: Id<"submissions">) {
+  const stored = await storedSubmission(t, submissionId);
+  if (stored === null) throw new Error("expected a stored submission");
+  return toCreatorSubmission(stored);
 }
 
 type Client = Pick<TestConvex, "mutation" | "query">;
@@ -64,7 +69,7 @@ const nonCreators: [string, Caller, ApiErrorCode][] = [
   ["an operator", async (t) => await seedOperator(t, "sc-operator-user"), "forbidden"],
 ];
 
-// Only company users may review drafts; every other caller is refused by the builder.
+// Callers refused by the company-only route (`review`).
 const nonCompanyUsers: [string, Caller, ApiErrorCode][] = [
   ["a signed-out caller", async (t) => t, "not_authenticated"],
   ["a creator", async (_t, fixture) => fixture.asCreator, "forbidden"],
@@ -89,24 +94,14 @@ const nonFullReaders: [string, Caller, ApiErrorCode][] = [
   ],
 ];
 
-const firstPage = { numItems: 10, cursor: null };
-
-/** Returns a submission in the creator shape, as a creator route should. */
-async function creatorView(t: TestConvex, submissionId: Id<"submissions">) {
-  const stored = await storedSubmission(t, submissionId);
-  if (stored === null) throw new Error("expected a stored submission");
-  return toCreatorSubmission(stored);
-}
-
 describe("submissions.create", () => {
   test("submits a pending draft on the caller's own assignment", async () => {
     const t = convexTest(schema, modules);
     const fixture = await seedAssignment(t, "sc-own", { usesAiReview: true });
 
     const id = await fixture.asCreator.mutation(api.submissions.create, createArgs(fixture));
-    const stored = await t.run(async (ctx) => await ctx.db.get("submissions", id));
 
-    expect(stored).toMatchObject({
+    expect(await storedSubmission(t, id)).toMatchObject({
       ...createArgs(fixture),
       status: "pending",
       usesAiReview: true,
@@ -167,7 +162,7 @@ describe("submissions.create", () => {
 describe("submissions.review", () => {
   test("records the review as the calling company user", async () => {
     const t = convexTest(schema, modules);
-    const { fixture, submissionId } = await seedPendingSubmission(t, "sr-approve");
+    const { fixture, submissionId } = await seedOneSubmission(t, "sr-approve");
 
     const reviewed = await fixture.asCompany.mutation(api.submissions.review, {
       submissionId,
@@ -186,7 +181,7 @@ describe("submissions.review", () => {
 
   test("requests changes with a note", async () => {
     const t = convexTest(schema, modules);
-    const { fixture, submissionId } = await seedPendingSubmission(t, "sr-changes");
+    const { fixture, submissionId } = await seedOneSubmission(t, "sr-changes");
 
     const reviewed = await fixture.asCompany.mutation(api.submissions.review, {
       submissionId,
@@ -203,7 +198,7 @@ describe("submissions.review", () => {
   // handler never runs without one.
   test("rejects a change request with no note", async () => {
     const t = convexTest(schema, modules);
-    const { fixture, submissionId } = await seedPendingSubmission(t, "sr-no-note");
+    const { fixture, submissionId } = await seedOneSubmission(t, "sr-no-note");
 
     await expect(
       fixture.asCompany.mutation(api.submissions.review, {
@@ -222,7 +217,7 @@ describe("submissions.review", () => {
     ["reviewerType", "ai"],
   ] as const)("rejects a client-supplied %s", async (field, value) => {
     const t = convexTest(schema, modules);
-    const { fixture, submissionId } = await seedPendingSubmission(t, `sr-extra-${field}`);
+    const { fixture, submissionId } = await seedOneSubmission(t, `sr-extra-${field}`);
 
     await expect(
       fixture.asCompany.mutation(api.submissions.review, {
@@ -238,7 +233,7 @@ describe("submissions.review", () => {
 
   test("rejects a member of another company", async () => {
     const t = convexTest(schema, modules);
-    const { submissionId } = await seedPendingSubmission(t, "sr-owner");
+    const { submissionId } = await seedOneSubmission(t, "sr-owner");
     const { asMember: asOutsider } = await seedMembership(t, "sr-outsider");
 
     await expectApiError(
@@ -246,7 +241,7 @@ describe("submissions.review", () => {
         asOutsider.mutation(api.submissions.review, {
           submissionId,
           review: { status: "approved" },
-        } satisfies ReviewArgs),
+        }),
       "not_found",
     );
 
@@ -255,7 +250,7 @@ describe("submissions.review", () => {
 
   test.each(nonCompanyUsers)("rejects %s without reviewing", async (_label, caller, code) => {
     const t = convexTest(schema, modules);
-    const { fixture, submissionId } = await seedPendingSubmission(t, "sr-caller");
+    const { fixture, submissionId } = await seedOneSubmission(t, "sr-caller");
     const client = await caller(t, fixture);
 
     await expectApiError(
@@ -274,8 +269,7 @@ describe("submissions.review", () => {
 describe("submissions.get", () => {
   test.each(fullReaders)("gives %s the submission as stored", async (_label, caller) => {
     const t = convexTest(schema, modules);
-    const fixture = await seedAssignment(t, "sg-reader");
-    const submissionId = await seedSubmission(t, fixture, "approved");
+    const { fixture, submissionId } = await seedOneSubmission(t, "sg-reader", "approved");
     const client = await caller(t, fixture);
 
     const view = await client.query(api.submissions.get, { submissionId });
@@ -286,8 +280,7 @@ describe("submissions.get", () => {
   // `not_found`, so another company can't tell it apart from a missing submission.
   test("hides the submission from another company's user", async () => {
     const t = convexTest(schema, modules);
-    const fixture = await seedAssignment(t, "sg-owner");
-    const submissionId = await seedSubmission(t, fixture, "pending");
+    const { submissionId } = await seedOneSubmission(t, "sg-owner");
     const { asMember: asOutsider } = await seedMembership(t, "sg-outsider");
 
     await expectApiError(
@@ -298,8 +291,7 @@ describe("submissions.get", () => {
 
   test.each(nonFullReaders)("rejects %s", async (_label, caller, code) => {
     const t = convexTest(schema, modules);
-    const fixture = await seedAssignment(t, "sg-refused");
-    const submissionId = await seedSubmission(t, fixture, "pending");
+    const { fixture, submissionId } = await seedOneSubmission(t, "sg-refused");
     const client = await caller(t, fixture);
 
     await expectApiError(() => client.query(api.submissions.get, { submissionId }), code);
@@ -316,10 +308,7 @@ describe("submissions.list", () => {
       const secondId = await seedSubmission(t, fixture, "approved");
       const client = await caller(t, fixture);
 
-      const result = await client.query(api.submissions.list, {
-        assignmentId: fixture.assignmentId,
-        paginationOpts: firstPage,
-      });
+      const result = await client.query(api.submissions.list, pageArgs(fixture));
 
       expect(result.page).toEqual([
         await storedSubmission(t, secondId),
@@ -330,16 +319,11 @@ describe("submissions.list", () => {
 
   test("hides the assignment from another company's user", async () => {
     const t = convexTest(schema, modules);
-    const fixture = await seedAssignment(t, "sl-owner");
-    await seedSubmission(t, fixture, "pending");
+    const { fixture } = await seedOneSubmission(t, "sl-owner");
     const { asMember: asOutsider } = await seedMembership(t, "sl-outsider");
 
     await expectApiError(
-      () =>
-        asOutsider.query(api.submissions.list, {
-          assignmentId: fixture.assignmentId,
-          paginationOpts: firstPage,
-        }),
+      () => asOutsider.query(api.submissions.list, pageArgs(fixture)),
       "not_found",
     );
   });
@@ -349,14 +333,7 @@ describe("submissions.list", () => {
     const fixture = await seedAssignment(t, "sl-refused");
     const client = await caller(t, fixture);
 
-    await expectApiError(
-      () =>
-        client.query(api.submissions.list, {
-          assignmentId: fixture.assignmentId,
-          paginationOpts: firstPage,
-        }),
-      code,
-    );
+    await expectApiError(() => client.query(api.submissions.list, pageArgs(fixture)), code);
   });
 });
 
@@ -365,8 +342,7 @@ describe("submissions.getMine", () => {
   // reviewer and dispute details can never reach a creator.
   test("gives the creator their submission in the creator shape", async () => {
     const t = convexTest(schema, modules);
-    const fixture = await seedAssignment(t, "sm-own");
-    const submissionId = await seedSubmission(t, fixture, "approved");
+    const { fixture, submissionId } = await seedOneSubmission(t, "sm-own", "approved");
 
     const view = await fixture.asCreator.query(api.submissions.getMine, { submissionId });
 
@@ -376,8 +352,7 @@ describe("submissions.getMine", () => {
 
   test("hides another creator's submission", async () => {
     const t = convexTest(schema, modules);
-    const fixture = await seedAssignment(t, "sm-owner");
-    const submissionId = await seedSubmission(t, fixture, "pending");
+    const { submissionId } = await seedOneSubmission(t, "sm-owner");
     const asIntruder = await seedUser(t, { subject: "sm-intruder" });
 
     await expectApiError(
@@ -388,8 +363,7 @@ describe("submissions.getMine", () => {
 
   test.each(nonCreators)("rejects %s", async (_label, caller, code) => {
     const t = convexTest(schema, modules);
-    const fixture = await seedAssignment(t, "sm-refused");
-    const submissionId = await seedSubmission(t, fixture, "pending");
+    const { fixture, submissionId } = await seedOneSubmission(t, "sm-refused");
     const client = await caller(t, fixture);
 
     await expectApiError(() => client.query(api.submissions.getMine, { submissionId }), code);
@@ -403,10 +377,7 @@ describe("submissions.listMine", () => {
     const firstId = await seedSubmission(t, fixture, "changesRequested");
     const secondId = await seedSubmission(t, fixture, "approved");
 
-    const result = await fixture.asCreator.query(api.submissions.listMine, {
-      assignmentId: fixture.assignmentId,
-      paginationOpts: firstPage,
-    });
+    const result = await fixture.asCreator.query(api.submissions.listMine, pageArgs(fixture));
 
     expect(result.page).toEqual([await creatorView(t, secondId), await creatorView(t, firstId)]);
   });
@@ -417,11 +388,7 @@ describe("submissions.listMine", () => {
     const asIntruder = await seedUser(t, { subject: "slm-intruder" });
 
     await expectApiError(
-      () =>
-        asIntruder.query(api.submissions.listMine, {
-          assignmentId: fixture.assignmentId,
-          paginationOpts: firstPage,
-        }),
+      () => asIntruder.query(api.submissions.listMine, pageArgs(fixture)),
       "not_found",
     );
   });
@@ -431,13 +398,6 @@ describe("submissions.listMine", () => {
     const fixture = await seedAssignment(t, "slm-refused");
     const client = await caller(t, fixture);
 
-    await expectApiError(
-      () =>
-        client.query(api.submissions.listMine, {
-          assignmentId: fixture.assignmentId,
-          paginationOpts: firstPage,
-        }),
-      code,
-    );
+    await expectApiError(() => client.query(api.submissions.listMine, pageArgs(fixture)), code);
   });
 });

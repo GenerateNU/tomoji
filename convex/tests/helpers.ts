@@ -227,3 +227,26 @@ export async function seedSubmission(
     });
   });
 }
+
+// `TestConvex` loses the schema types, so rows read through `t.run` come back
+// untyped. These two helpers hold the only casts back to the submission type.
+
+/** Reads one submission as stored, or `null` if it doesn't exist. */
+export async function storedSubmission(
+  t: TestConvex,
+  submissionId: Id<"submissions">,
+): Promise<Doc<"submissions"> | null> {
+  return (await t.run(
+    async (ctx) => await ctx.db.get("submissions", submissionId),
+  )) as Doc<"submissions"> | null;
+}
+
+/**
+ * Reads every submission in the test's database, oldest first. Each test has
+ * its own database, so with one assignment these are all that assignment's.
+ */
+export async function storedSubmissions(t: TestConvex): Promise<Doc<"submissions">[]> {
+  return (await t.run(
+    async (ctx) => await ctx.db.query("submissions").collect(),
+  )) as Doc<"submissions">[];
+}

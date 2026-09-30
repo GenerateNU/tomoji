@@ -22,6 +22,8 @@ import {
   seedCreatorId,
   seedMembership,
   seedSubmission,
+  storedSubmission,
+  storedSubmissions,
   type AssignmentFixture,
   type TestConvex,
 } from "../helpers";
@@ -50,12 +52,6 @@ async function submit(
   );
 }
 
-// Each test has its own database with a single assignment, so every stored
-// submission belongs to that assignment.
-async function storedSubmissions(t: TestConvex) {
-  return await t.run(async (ctx) => await ctx.db.query("submissions").collect());
-}
-
 async function expectReason(call: () => Promise<unknown>, code: ApiErrorCode, reason: string) {
   await expect(call()).rejects.toMatchObject({ data: { code, reason } });
 }
@@ -68,16 +64,6 @@ async function reviewAs(
   review: SubmissionReview,
 ) {
   return await t.run(async (ctx) => await reviewSubmission(ctx, membership, submissionId, review));
-}
-
-async function storedSubmission(
-  t: TestConvex,
-  submissionId: Id<"submissions">,
-): Promise<Doc<"submissions"> | null> {
-  // `TestConvex` loses the schema types, so the row comes back untyped.
-  return (await t.run(
-    async (ctx) => await ctx.db.get("submissions", submissionId),
-  )) as Doc<"submissions"> | null;
 }
 
 /** Narrows to a reviewed submission so its review fields can be read. */

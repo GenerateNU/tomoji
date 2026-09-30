@@ -92,11 +92,7 @@ export async function createSubmission(
   creatorId: Id<"creators">,
   draft: SubmissionDraft,
 ): Promise<Id<"submissions">> {
-  const assignment = await requireCreatorAssignment(
-    ctx,
-    creatorId,
-    draft.assignmentId,
-  );
+  const assignment = await requireCreatorAssignment(ctx, creatorId, draft.assignmentId);
   requireSubmissionWindowOpen(assignment);
 
   const latest = await getLatestSubmission(ctx, assignment._id);
@@ -110,10 +106,7 @@ export async function createSubmission(
   return await ctx.db.insert("submissions", {
     assignmentId: assignment._id,
     draftUrl: requireDraftUrl(draft.draftUrl),
-    draftDescription: requireNonBlank(
-      draft.draftDescription,
-      "draftDescription",
-    ),
+    draftDescription: requireNonBlank(draft.draftDescription, "draftDescription"),
     status: "pending",
     usesAiReview: assignment.usesAiReview,
   });

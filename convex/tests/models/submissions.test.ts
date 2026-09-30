@@ -3,10 +3,7 @@ import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
 import type { Id } from "../../_generated/dataModel";
 import type { ApiErrorCode } from "../../lib/errors";
-import {
-  createSubmission,
-  type SubmissionDraft,
-} from "../../models/submissions";
+import { createSubmission, type SubmissionDraft } from "../../models/submissions";
 import schema from "../../schema";
 import {
   expectApiError,
@@ -41,24 +38,13 @@ async function submit(
   );
 }
 
-async function storedSubmissions(
-  t: TestConvex,
-  assignmentId: Id<"assignments">,
-) {
-  return await t.run(
-    async (ctx) =>
-      await ctx.db
-        .query("submissions")
-        .withIndex("by_assignmentId", (q) => q.eq("assignmentId", assignmentId))
-        .collect(),
-  );
+// Each test has its own database with a single assignment, so every stored
+// submission belongs to that assignment.
+async function storedSubmissions(t: TestConvex) {
+  return await t.run(async (ctx) => await ctx.db.query("submissions").collect());
 }
 
-async function expectReason(
-  call: () => Promise<unknown>,
-  code: ApiErrorCode,
-  reason: string,
-) {
+async function expectReason(call: () => Promise<unknown>, code: ApiErrorCode, reason: string) {
   await expect(call()).rejects.toMatchObject({ data: { code, reason } });
 }
 
@@ -72,9 +58,7 @@ describe("createSubmission", () => {
       });
 
       const id = await submit(t, fixture);
-      const stored = await t.run(
-        async (ctx) => await ctx.db.get("submissions", id),
-      );
+      const stored = await t.run(async (ctx) => await ctx.db.get("submissions", id));
 
       expect(stored).toMatchObject({
         assignmentId: fixture.assignmentId,
@@ -93,9 +77,7 @@ describe("createSubmission", () => {
       draftUrl: `  ${draft.draftUrl}  `,
       draftDescription: `  ${draft.draftDescription}\n`,
     });
-    const stored = await t.run(
-      async (ctx) => await ctx.db.get("submissions", id),
-    );
+    const stored = await t.run(async (ctx) => await ctx.db.get("submissions", id));
 
     expect(stored).toMatchObject(draft);
   });
@@ -107,15 +89,13 @@ describe("createSubmission", () => {
 
     await expectApiError(() => submit(t, fixture, {}, intruderId), "not_found");
 
-    expect(await storedSubmissions(t, fixture.assignmentId)).toHaveLength(0);
+    expect(await storedSubmissions(t)).toHaveLength(0);
   });
 
   test("rejects an assignment that no longer exists", async () => {
     const t = convexTest(schema, modules);
     const fixture = await seedAssignment(t, "cs-gone");
-    await t.run(
-      async (ctx) => await ctx.db.delete("assignments", fixture.assignmentId),
-    );
+    await t.run(async (ctx) => await ctx.db.delete("assignments", fixture.assignmentId));
 
     await expectApiError(() => submit(t, fixture), "not_found");
   });
@@ -128,13 +108,9 @@ describe("createSubmission", () => {
         status,
       });
 
-      await expectReason(
-        () => submit(t, fixture),
-        "invalid_state",
-        "assignment_not_active",
-      );
+      await expectReason(() => submit(t, fixture), "invalid_state", "assignment_not_active");
 
-      expect(await storedSubmissions(t, fixture.assignmentId)).toHaveLength(0);
+      expect(await storedSubmissions(t)).toHaveLength(0);
     },
   );
 
@@ -143,13 +119,9 @@ describe("createSubmission", () => {
     const fixture = await seedAssignment(t, "cs-pending");
     await seedSubmission(t, fixture, "pending");
 
-    await expectReason(
-      () => submit(t, fixture),
-      "conflict",
-      "submission_pending",
-    );
+    await expectReason(() => submit(t, fixture), "conflict", "submission_pending");
 
-    expect(await storedSubmissions(t, fixture.assignmentId)).toHaveLength(1);
+    expect(await storedSubmissions(t)).toHaveLength(1);
   });
 
   test("rejects a new draft once one is approved", async () => {
@@ -158,13 +130,9 @@ describe("createSubmission", () => {
     await seedSubmission(t, fixture, "changesRequested");
     await seedSubmission(t, fixture, "approved");
 
-    await expectReason(
-      () => submit(t, fixture),
-      "invalid_state",
-      "already_approved",
-    );
+    await expectReason(() => submit(t, fixture), "invalid_state", "already_approved");
 
-    expect(await storedSubmissions(t, fixture.assignmentId)).toHaveLength(2);
+    expect(await storedSubmissions(t)).toHaveLength(2);
   });
 
   test("accepts a resubmission after changes are requested", async () => {
@@ -173,7 +141,7 @@ describe("createSubmission", () => {
     const firstId = await seedSubmission(t, fixture, "changesRequested");
 
     const secondId = await submit(t, fixture);
-    const stored = await storedSubmissions(t, fixture.assignmentId);
+    const stored = await storedSubmissions(t);
 
     // The earlier draft is untouched; the resubmission is a new row.
     expect(stored.map((s) => [s._id, s.status])).toEqual([
@@ -190,24 +158,23 @@ describe("createSubmission", () => {
 
       await expectApiError(() => submit(t, fixture, blank), "invalid_state");
 
-      expect(await storedSubmissions(t, fixture.assignmentId)).toHaveLength(0);
+      expect(await storedSubmissions(t)).toHaveLength(0);
     },
   );
 
-  test.each([
-    "not a url",
-    "ftp://example.com/draft.mp4",
-    "javascript:alert(1)",
-  ])("rejects non-http(s) draft URL %s", async (draftUrl) => {
-    const t = convexTest(schema, modules);
-    const fixture = await seedAssignment(t, "cs-url");
+  test.each(["not a url", "ftp://example.com/draft.mp4", "javascript:alert(1)"])(
+    "rejects non-http(s) draft URL %s",
+    async (draftUrl) => {
+      const t = convexTest(schema, modules);
+      const fixture = await seedAssignment(t, "cs-url");
 
-    await expectReason(
-      () => submit(t, fixture, { draftUrl }),
-      "invalid_state",
-      "draftUrl_invalid",
-    );
-  });
+      await expectReason(
+        () => submit(t, fixture, { draftUrl }),
+        "invalid_state",
+        "draftUrl_invalid",
+      );
+    },
+  );
 
   // TODO(dueAt): implement once assignments have a dueAt field.
   test.todo("rejects drafts and resubmissions after assignment.dueAt");

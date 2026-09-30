@@ -6,11 +6,7 @@ import type { Doc, Id } from "../_generated/dataModel";
 import type { ApiErrorCode } from "../lib/errors";
 import { companyContext } from "../lib/functions";
 import { getCreatorByUserId } from "../models/creators";
-import {
-  applyMembership,
-  getUserByWorkosId,
-  upsertUser,
-} from "../models/users";
+import { applyMembership, getUserByWorkosId, upsertUser } from "../models/users";
 import type { companyRole } from "../schemas/companyUsers.schema";
 import type { submissionStatus } from "../schemas/submissions.schema";
 
@@ -28,10 +24,7 @@ export function workosIdentity(claims: {
 }
 
 /** Asserts a call fails with a specific API error code. */
-export async function expectApiError(
-  call: () => Promise<unknown>,
-  code: ApiErrorCode,
-) {
+export async function expectApiError(call: () => Promise<unknown>, code: ApiErrorCode) {
   await expect(call()).rejects.toThrow(new RegExp(`"code":"${code}"`));
 }
 
@@ -75,10 +68,7 @@ export async function seedUser(t: TestConvex, opts: SeedOptions) {
 }
 
 /** Seeds a creator account and returns its creator document ID. */
-export async function seedCreatorId(
-  t: TestConvex,
-  subject: string,
-): Promise<Id<"creators">> {
+export async function seedCreatorId(t: TestConvex, subject: string): Promise<Id<"creators">> {
   await seedUser(t, { subject });
   return await t.run(async (ctx) => {
     const user = await getUserByWorkosId(ctx, subject);
@@ -110,9 +100,7 @@ export async function seedWrongOrgCaller(t: TestConvex) {
     subject: "insider",
     org: { id: "org_other", name: "Other" },
   });
-  return t.withIdentity(
-    workosIdentity({ subject: "outsider", org_id: "org_other" }),
-  );
+  return t.withIdentity(workosIdentity({ subject: "outsider", org_id: "org_other" }));
 }
 
 export type AssignmentFixture = {
@@ -142,9 +130,7 @@ export async function seedAssignment(
     subject: companySubject,
     org: { id: `org_${prefix}` },
   });
-  const { membership } = await asCompany.run(
-    async (ctx) => await companyContext(ctx),
-  );
+  const { membership } = await asCompany.run(async (ctx) => await companyContext(ctx));
   const creatorId = await seedCreatorId(t, creatorSubject);
 
   const assignmentId = await t.run(async (ctx) => {
@@ -224,8 +210,7 @@ export async function seedSubmission(
     return await ctx.db.insert("submissions", {
       ...draft,
       status,
-      reviewNote:
-        status === "changesRequested" ? "Add the #ad disclosure." : undefined,
+      reviewNote: status === "changesRequested" ? "Add the #ad disclosure." : undefined,
       reviewerType: "companyUser",
       reviewedBy: fixture.membershipId,
       reviewedAt: Date.now(),

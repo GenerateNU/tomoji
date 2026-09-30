@@ -7,10 +7,7 @@ export const reviewedSubmissionStatus = v.union(
   v.literal("changesRequested"),
 );
 
-export const submissionStatus = v.union(
-  v.literal("pending"),
-  ...reviewedSubmissionStatus.members,
-);
+export const submissionStatus = v.union(v.literal("pending"), ...reviewedSubmissionStatus.members);
 
 const submissionFields = {
   assignmentId: v.id("assignments"),

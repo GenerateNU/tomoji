@@ -1,6 +1,6 @@
 import { v, type Infer } from "convex/values";
-import { MutationCtx, QueryCtx } from "../_generated/server";
-import { Doc, Id } from "../_generated/dataModel";
+import type { Doc, Id } from "../_generated/dataModel";
+import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { apiError } from "../lib/errors";
 import { requireNonBlank } from "../lib/validation";
 
@@ -11,6 +11,21 @@ export const submissionDraft = v.object({
   draftDescription: v.string(),
 });
 export type SubmissionDraft = Infer<typeof submissionDraft>;
+
+/**
+ * A review decision.
+ */
+export const submissionReview = v.union(
+  v.object({ status: v.literal("approved"), reviewNote: v.optional(v.string()) }),
+  v.object({ status: v.literal("changesRequested"), reviewNote: v.string() }),
+);
+export type SubmissionReview = Infer<typeof submissionReview>;
+
+/** A submission reviewed by a company user. */
+export type CompanyUserReviewedSubmission = Extract<
+  Doc<"submissions">,
+  { reviewerType: "companyUser" }
+>;
 
 // TODO(assignments): move into models/assignments.ts once that domain has a model.
 /**
@@ -40,7 +55,35 @@ function requireSubmissionWindowOpen(assignment: Doc<"assignments">): void {
   if (assignment.status !== "active") {
     throw apiError("invalid_state", { reason: "assignment_not_active" });
   }
-  // TODO: reject after `assignment.deadline` once assignments have it.
+  // TODO(dueAt): reject after `assignment.dueAt` once assignments have it.
+}
+
+// TODO(assignments): move the assignment → opportunity → campaign lookup into
+// models/assignments.ts once that domain has a model.
+/**
+ * Returns the submission and its assignment if the submission belongs to the
+ * company, following submission → assignment → opportunity → campaign.
+ *
+ * @throws `not_found` if any link is missing or the campaign belongs to another
+ * company, so callers can't tell the cases apart.
+ */
+async function requireCompanySubmission(
+  ctx: QueryCtx | MutationCtx,
+  companyId: Id<"companies">,
+  submissionId: Id<"submissions">,
+): Promise<{ submission: Doc<"submissions">; assignment: Doc<"assignments"> }> {
+  const notFound = () => apiError("not_found", { resource: "submission" });
+
+  const submission = await ctx.db.get("submissions", submissionId);
+  if (submission === null) throw notFound();
+  const assignment = await ctx.db.get("assignments", submission.assignmentId);
+  if (assignment === null) throw notFound();
+  const opportunity = await ctx.db.get("opportunities", assignment.opportunityId);
+  if (opportunity === null) throw notFound();
+  const campaign = await ctx.db.get("campaigns", opportunity.campaignId);
+  if (campaign === null || campaign.companyId !== companyId) throw notFound();
+
+  return { submission, assignment };
 }
 
 /**
@@ -110,4 +153,49 @@ export async function createSubmission(
     status: "pending",
     usesAiReview: assignment.usesAiReview,
   });
+}
+
+/**
+ * Records a company user's review of a pending submission from their company.
+ * Reviews are final: only a `pending` submission can be reviewed.
+ *
+ * @throws `not_found` if the submission doesn't exist or isn't the company's.
+ * @throws `invalid_state` if it was already reviewed, the assignment isn't
+ * active, or the review note is blank.
+ * @returns the reviewed submission as stored.
+ */
+export async function reviewSubmission(
+  ctx: MutationCtx,
+  membership: Doc<"companyUsers">,
+  submissionId: Id<"submissions">,
+  review: SubmissionReview,
+): Promise<CompanyUserReviewedSubmission> {
+  const { submission, assignment } = await requireCompanySubmission(
+    ctx,
+    membership.companyId,
+    submissionId,
+  );
+  if (submission.status !== "pending") {
+    throw apiError("invalid_state", { reason: "already_reviewed" });
+  }
+  // The assignment may have been cancelled or completed while the draft waited.
+  if (assignment.status !== "active") {
+    throw apiError("invalid_state", { reason: "assignment_not_active" });
+  }
+  // TODO(ai-layer): reject when `submission.usesAiReview` is true. Until the AI
+  // layer exists, company users review every submission.
+
+  const patch = {
+    status: review.status,
+    // The validator requires a note for `changesRequested` - this rejects blank ones.
+    reviewNote:
+      review.reviewNote === undefined
+        ? undefined
+        : requireNonBlank(review.reviewNote, "reviewNote"),
+    reviewerType: "companyUser" as const,
+    reviewedBy: membership._id,
+    reviewedAt: Date.now(),
+  };
+  await ctx.db.patch("submissions", submissionId, patch);
+  return { ...submission, ...patch };
 }

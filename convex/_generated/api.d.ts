@@ -26,7 +26,9 @@ import type * as models_campaigns from "../models/campaigns.js";
 import type * as models_companies from "../models/companies.js";
 import type * as models_companyUsers from "../models/companyUsers.js";
 import type * as models_creators from "../models/creators.js";
+import type * as models_submissions from "../models/submissions.js";
 import type * as models_users from "../models/users.js";
+import type * as submissions from "../submissions.js";
 import type * as tests_helpers from "../tests/helpers.js";
 import type * as users from "../users.js";
 
@@ -55,7 +57,9 @@ declare const fullApi: ApiFromModules<{
   "models/companies": typeof models_companies;
   "models/companyUsers": typeof models_companyUsers;
   "models/creators": typeof models_creators;
+  "models/submissions": typeof models_submissions;
   "models/users": typeof models_users;
+  submissions: typeof submissions;
   "tests/helpers": typeof tests_helpers;
   users: typeof users;
 }>;

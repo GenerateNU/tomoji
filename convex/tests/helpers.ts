@@ -103,10 +103,17 @@ export async function seedWrongOrgCaller(t: TestConvex) {
   return t.withIdentity(workosIdentity({ subject: "outsider", org_id: "org_other" }));
 }
 
+/** Seeds a company member and returns their client and membership row. */
+export async function seedMembership(t: TestConvex, subject: string, orgId = `org_${subject}`) {
+  const asMember = await seedUser(t, { subject, org: { id: orgId } });
+  const { membership } = await asMember.run(async (ctx) => await companyContext(ctx));
+  return { asMember, membership };
+}
+
 export type AssignmentFixture = {
   assignmentId: Id<"assignments">;
   creatorId: Id<"creators">;
-  membershipId: Id<"companyUsers">;
+  membership: Doc<"companyUsers">;
   asCreator: ReturnType<TestConvex["withIdentity"]>;
   asCompany: ReturnType<TestConvex["withIdentity"]>;
 };
@@ -126,11 +133,11 @@ export async function seedAssignment(
   const companySubject = `${prefix}-company`;
   const creatorSubject = `${prefix}-creator`;
 
-  const asCompany = await seedUser(t, {
-    subject: companySubject,
-    org: { id: `org_${prefix}` },
-  });
-  const { membership } = await asCompany.run(async (ctx) => await companyContext(ctx));
+  const { asMember: asCompany, membership } = await seedMembership(
+    t,
+    companySubject,
+    `org_${prefix}`,
+  );
   const creatorId = await seedCreatorId(t, creatorSubject);
 
   const assignmentId = await t.run(async (ctx) => {
@@ -182,28 +189,31 @@ export async function seedAssignment(
   return {
     assignmentId,
     creatorId,
-    membershipId: membership._id,
+    membership,
     asCreator: t.withIdentity(workosIdentity({ subject: creatorSubject })),
     asCompany,
   };
 }
 
 /**
- * Inserts a submission in a given state on a fixture's assignment. Reviewed
- * submissions are attributed to the fixture's company member.
+ * Inserts a submission in a given state on a fixture's assignment, bypassing
+ * the create rules. Like a real draft, it copies `usesAiReview` from the
+ * assignment. Reviewed submissions are attributed to the fixture's company member.
  */
 export async function seedSubmission(
   t: TestConvex,
   fixture: AssignmentFixture,
   status: Infer<typeof submissionStatus>,
 ): Promise<Id<"submissions">> {
-  const draft = {
-    assignmentId: fixture.assignmentId,
-    draftUrl: "https://drive.example.com/drafts/seeded",
-    draftDescription: "Seeded draft",
-    usesAiReview: false,
-  };
   return await t.run(async (ctx) => {
+    const assignment = await ctx.db.get("assignments", fixture.assignmentId);
+    if (assignment === null) throw new Error("expected seeded assignment");
+    const draft = {
+      assignmentId: fixture.assignmentId,
+      draftUrl: "https://drive.example.com/drafts/seeded",
+      draftDescription: "Seeded draft",
+      usesAiReview: assignment.usesAiReview,
+    };
     if (status === "pending") {
       return await ctx.db.insert("submissions", { ...draft, status });
     }
@@ -212,7 +222,7 @@ export async function seedSubmission(
       status,
       reviewNote: status === "changesRequested" ? "Add the #ad disclosure." : undefined,
       reviewerType: "companyUser",
-      reviewedBy: fixture.membershipId,
+      reviewedBy: fixture.membership._id,
       reviewedAt: Date.now(),
     });
   });

@@ -1,14 +1,20 @@
 /// <reference types="vite/client" />
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
-import type { Id } from "../../_generated/dataModel";
+import type { Doc, Id } from "../../_generated/dataModel";
 import type { ApiErrorCode } from "../../lib/errors";
-import { createSubmission, type SubmissionDraft } from "../../models/submissions";
+import {
+  createSubmission,
+  reviewSubmission,
+  type SubmissionDraft,
+  type SubmissionReview,
+} from "../../models/submissions";
 import schema from "../../schema";
 import {
   expectApiError,
   seedAssignment,
   seedCreatorId,
+  seedMembership,
   seedSubmission,
   type AssignmentFixture,
   type TestConvex,
@@ -46,6 +52,26 @@ async function storedSubmissions(t: TestConvex) {
 
 async function expectReason(call: () => Promise<unknown>, code: ApiErrorCode, reason: string) {
   await expect(call()).rejects.toMatchObject({ data: { code, reason } });
+}
+
+/** Reviews a submission as the given company member. */
+async function reviewAs(
+  t: TestConvex,
+  membership: Doc<"companyUsers">,
+  submissionId: Id<"submissions">,
+  review: SubmissionReview,
+) {
+  return await t.run(async (ctx) => await reviewSubmission(ctx, membership, submissionId, review));
+}
+
+async function storedSubmission(t: TestConvex, submissionId: Id<"submissions">) {
+  return await t.run(async (ctx) => await ctx.db.get("submissions", submissionId));
+}
+
+/** Narrows to a reviewed submission so its review fields can be read. */
+function reviewedAtOf(submission: Doc<"submissions">): number {
+  if (submission.status === "pending") throw new Error("expected a reviewed submission");
+  return submission.reviewedAt;
 }
 
 describe("createSubmission", () => {
@@ -178,4 +204,148 @@ describe("createSubmission", () => {
 
   // TODO(dueAt): implement once assignments have a dueAt field.
   test.todo("rejects drafts and resubmissions after assignment.dueAt");
+});
+
+describe("reviewSubmission", () => {
+  test("approves a pending draft and attributes the review to the caller", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await seedAssignment(t, "rs-approve");
+    const id = await seedSubmission(t, fixture, "pending");
+
+    const before = Date.now();
+    const reviewed = await reviewAs(t, fixture.membership, id, { status: "approved" });
+    const after = Date.now();
+
+    expect(reviewed).toMatchObject({
+      _id: id,
+      status: "approved",
+      reviewerType: "companyUser",
+      reviewedBy: fixture.membership._id,
+    });
+    expect(reviewed.reviewNote).toBeUndefined();
+    expect(reviewedAtOf(reviewed)).toBeGreaterThanOrEqual(before);
+    expect(reviewedAtOf(reviewed)).toBeLessThanOrEqual(after);
+    // The returned row is what was stored.
+    expect(await storedSubmission(t, id)).toEqual(reviewed);
+  });
+
+  test("stores a trimmed note on an approval", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await seedAssignment(t, "rs-approve-note");
+    const id = await seedSubmission(t, fixture, "pending");
+
+    const reviewed = await reviewAs(t, fixture.membership, id, {
+      status: "approved",
+      reviewNote: "  Great hook in the first second.  ",
+    });
+
+    expect(reviewed.reviewNote).toBe("Great hook in the first second.");
+  });
+
+  test("requests changes with a note", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await seedAssignment(t, "rs-changes");
+    const id = await seedSubmission(t, fixture, "pending");
+
+    const reviewed = await reviewAs(t, fixture.membership, id, {
+      status: "changesRequested",
+      reviewNote: "Add the #ad disclosure in the caption.",
+    });
+
+    expect(reviewed).toMatchObject({
+      status: "changesRequested",
+      reviewNote: "Add the #ad disclosure in the caption.",
+      reviewerType: "companyUser",
+      reviewedBy: fixture.membership._id,
+    });
+  });
+
+  test("rejects a blank note without reviewing", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await seedAssignment(t, "rs-blank");
+    const id = await seedSubmission(t, fixture, "pending");
+
+    await expectReason(
+      () => reviewAs(t, fixture.membership, id, { status: "changesRequested", reviewNote: "  \n" }),
+      "invalid_state",
+      "reviewNote_blank",
+    );
+
+    expect(await storedSubmission(t, id)).toMatchObject({ status: "pending" });
+  });
+
+  test("rejects a member of another company without reviewing", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await seedAssignment(t, "rs-owner");
+    const id = await seedSubmission(t, fixture, "pending");
+    const { membership: outsider } = await seedMembership(t, "rs-outsider");
+
+    await expectApiError(() => reviewAs(t, outsider, id, { status: "approved" }), "not_found");
+
+    expect(await storedSubmission(t, id)).toMatchObject({ status: "pending" });
+  });
+
+  test("rejects a submission that no longer exists", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await seedAssignment(t, "rs-gone");
+    const id = await seedSubmission(t, fixture, "pending");
+    await t.run(async (ctx) => await ctx.db.delete("submissions", id));
+
+    await expectApiError(
+      () => reviewAs(t, fixture.membership, id, { status: "approved" }),
+      "not_found",
+    );
+  });
+
+  // Reviews are final: only a pending submission can be reviewed.
+  test.each(["approved", "changesRequested"] as const)(
+    "rejects a submission already %s without changing it",
+    async (status) => {
+      const t = convexTest(schema, modules);
+      const fixture = await seedAssignment(t, `rs-final-${status}`);
+      const id = await seedSubmission(t, fixture, status);
+      const original = await storedSubmission(t, id);
+
+      await expectReason(
+        () => reviewAs(t, fixture.membership, id, { status: "approved" }),
+        "invalid_state",
+        "already_reviewed",
+      );
+
+      expect(await storedSubmission(t, id)).toEqual(original);
+    },
+  );
+
+  test.each(["completed", "cancelled"] as const)(
+    "rejects a pending draft on a %s assignment without reviewing",
+    async (status) => {
+      const t = convexTest(schema, modules);
+      const fixture = await seedAssignment(t, `rs-assignment-${status}`, { status });
+      const id = await seedSubmission(t, fixture, "pending");
+
+      await expectReason(
+        () => reviewAs(t, fixture.membership, id, { status: "approved" }),
+        "invalid_state",
+        "assignment_not_active",
+      );
+
+      expect(await storedSubmission(t, id)).toMatchObject({ status: "pending" });
+    },
+  );
+
+  // TODO(ai-layer): once AI review exists, submissions with usesAiReview are
+  // reviewed only by the AI; flip this test to expect a rejection.
+  test("lets a company user review a submission that uses AI review", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await seedAssignment(t, "rs-ai", { usesAiReview: true });
+    const id = await seedSubmission(t, fixture, "pending");
+
+    const reviewed = await reviewAs(t, fixture.membership, id, { status: "approved" });
+
+    expect(reviewed).toMatchObject({
+      usesAiReview: true,
+      status: "approved",
+      reviewerType: "companyUser",
+    });
+  });
 });

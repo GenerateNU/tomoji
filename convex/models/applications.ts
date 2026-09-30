@@ -25,9 +25,7 @@ export async function createApplication(
   if (opportunity === null) {
     throw apiError("not_found", { resource: "opportunity" });
   }
-  if (opportunity.status !== "open") {
-    throw apiError("invalid_state", { reason: "opportunity_not_open" });
-  }
+  await requireOpportunityOpen(ctx, opportunity);
   // Ungated opportunities are joined directly, without an application.
   if (!opportunity.isGated) {
     throw apiError("invalid_state", { reason: "opportunity_not_gated" });
@@ -67,6 +65,27 @@ export async function createApplication(
     note,
     status: "pending",
   });
+}
+
+/**
+ * Requires the opportunity and its campaign to be open. While either is paused
+ * or closed, only creators may act on existing offers, so applying, offering,
+ * and rejecting are all refused.
+ *
+ * @throws `invalid_state` with `opportunity_not_open` or `campaign_not_open`.
+ */
+async function requireOpportunityOpen(
+  ctx: QueryCtx | MutationCtx,
+  opportunity: Doc<"opportunities">,
+): Promise<void> {
+  if (opportunity.status !== "open") {
+    throw apiError("invalid_state", { reason: "opportunity_not_open" });
+  }
+  // Pausing a campaign pauses its opportunities, so check the campaign too.
+  const campaign = await ctx.db.get("campaigns", opportunity.campaignId);
+  if (campaign === null || campaign.status !== "open") {
+    throw apiError("invalid_state", { reason: "campaign_not_open" });
+  }
 }
 
 /** Who is reading an application, resolved from the caller by the route. */
@@ -128,4 +147,105 @@ export async function listApplications(
     )
     .order("desc")
     .paginate(options.paginationOpts);
+}
+
+/**
+ * Returns one page of applications to an opportunity the company owns,
+ * optionally filtered by status. Results are ordered by status, then newest
+ * first within each status.
+ *
+ * @throws `not_found` if the opportunity does not exist or belongs to another
+ * company.
+ */
+export async function listApplicationsByOpportunityId(
+  ctx: QueryCtx,
+  companyId: Id<"companies">,
+  options: {
+    opportunityId: Id<"opportunities">;
+    status?: Infer<typeof applicationStatus>;
+    paginationOpts: PaginationOptions;
+  },
+): Promise<PaginationResult<Doc<"applications">>> {
+  const { opportunityId, status } = options;
+  const opportunity = await ctx.db.get("opportunities", opportunityId);
+  const campaign = opportunity && (await ctx.db.get("campaigns", opportunity.campaignId));
+  if (!campaign || campaign.companyId !== companyId) {
+    throw apiError("not_found", { resource: "opportunity" });
+  }
+  return await ctx.db
+    .query("applications")
+    .withIndex("by_opportunityId_and_status", (q) =>
+      status === undefined
+        ? q.eq("opportunityId", opportunityId)
+        : q.eq("opportunityId", opportunityId).eq("status", status),
+    )
+    .order("desc")
+    .paginate(options.paginationOpts);
+}
+
+/** How long an offer stays open when the company does not choose an expiry. */
+export const DEFAULT_OFFER_DURATION_MS = 48 * 60 * 60 * 1000;
+
+/**
+ * Sends an offer on a pending application to one of the company's
+ * opportunities. Offers are not capped by open slots: the first creators to
+ * accept take them.
+ *
+ * @throws `not_found` if the application does not exist or belongs to another
+ * company.
+ * @throws `invalid_state` if the application is not pending, the opportunity or
+ * its campaign is not open, or `offerExpiresAt` is not in the future.
+ */
+export async function offerApplication(
+  ctx: MutationCtx,
+  companyId: Id<"companies">,
+  applicationId: Id<"applications">,
+  args: { offerExpiresAt?: number },
+): Promise<Doc<"applications">> {
+  const application = await requirePendingForReview(ctx, companyId, applicationId);
+  const now = Date.now();
+  const offerExpiresAt = args.offerExpiresAt ?? now + DEFAULT_OFFER_DURATION_MS;
+  if (!Number.isFinite(offerExpiresAt) || offerExpiresAt <= now) {
+    throw apiError("invalid_state", { reason: "invalid_offer_expiry" });
+  }
+
+  const patch = { status: "offered" as const, offerSentAt: now, offerExpiresAt };
+  await ctx.db.patch("applications", application._id, patch);
+  return { ...application, ...patch };
+}
+
+/**
+ * Rejects a pending application to one of the company's opportunities.
+ *
+ * @throws `not_found` if the application does not exist or belongs to another
+ * company.
+ * @throws `invalid_state` if the application is not pending or the opportunity
+ * or its campaign is not open.
+ */
+export async function rejectApplication(
+  ctx: MutationCtx,
+  companyId: Id<"companies">,
+  applicationId: Id<"applications">,
+): Promise<Doc<"applications">> {
+  const application = await requirePendingForReview(ctx, companyId, applicationId);
+  await ctx.db.patch("applications", application._id, { status: "rejected" });
+  return { ...application, status: "rejected" };
+}
+
+/** Loads a pending application the company may review while it is open. */
+async function requirePendingForReview(
+  ctx: MutationCtx,
+  companyId: Id<"companies">,
+  applicationId: Id<"applications">,
+): Promise<Doc<"applications">> {
+  const application = await requireApplication(ctx, { role: "company", companyId }, applicationId);
+  if (application.status !== "pending") {
+    throw apiError("invalid_state", { reason: "application_not_pending" });
+  }
+  const opportunity = await ctx.db.get("opportunities", application.opportunityId);
+  if (opportunity === null) {
+    throw apiError("not_found", { resource: "application" });
+  }
+  await requireOpportunityOpen(ctx, opportunity);
+  return application;
 }

@@ -5,9 +5,13 @@ import type { Doc, Id } from "../../_generated/dataModel";
 import type { ApiErrorCode } from "../../lib/errors";
 import {
   createSubmission,
+  listSubmissions,
+  requireSubmission,
   reviewSubmission,
+  toCreatorSubmission,
   type SubmissionDraft,
   type SubmissionReview,
+  type SubmissionViewer,
 } from "../../models/submissions";
 import schema from "../../schema";
 import {
@@ -72,6 +76,38 @@ async function storedSubmission(t: TestConvex, submissionId: Id<"submissions">) 
 function reviewedAtOf(submission: Doc<"submissions">): number {
   if (submission.status === "pending") throw new Error("expected a reviewed submission");
   return submission.reviewedAt;
+}
+
+const creatorViewer = (fixture: AssignmentFixture): SubmissionViewer => ({
+  role: "creator",
+  creatorId: fixture.creatorId,
+});
+const companyViewer = (fixture: AssignmentFixture): SubmissionViewer => ({
+  role: "company",
+  companyId: fixture.membership.companyId,
+});
+const operatorViewer: SubmissionViewer = { role: "operator" };
+
+// Fields that identify reviewers or disputes; creators must never receive them.
+const hiddenFromCreators = ["reviewedBy", "reviewedByOperator", "overriddenReview", "disputeId"];
+
+function expectCreatorShape(view: object) {
+  for (const field of hiddenFromCreators) expect(view).not.toHaveProperty(field);
+}
+
+async function getAs(t: TestConvex, viewer: SubmissionViewer, submissionId: Id<"submissions">) {
+  return await t.run(async (ctx) => await requireSubmission(ctx, viewer, submissionId));
+}
+
+async function listAs(
+  t: TestConvex,
+  viewer: SubmissionViewer,
+  assignmentId: Id<"assignments">,
+  paginationOpts = { numItems: 10, cursor: null as string | null },
+) {
+  return await t.run(
+    async (ctx) => await listSubmissions(ctx, viewer, assignmentId, paginationOpts),
+  );
 }
 
 describe("createSubmission", () => {
@@ -347,5 +383,215 @@ describe("reviewSubmission", () => {
       status: "approved",
       reviewerType: "companyUser",
     });
+  });
+});
+
+describe("toCreatorSubmission", () => {
+  // Built directly: this is a pure function, so no database is needed.
+  const base = {
+    _id: "submissions|1" as Id<"submissions">,
+    _creationTime: 1,
+    assignmentId: "assignments|1" as Id<"assignments">,
+    ...draft,
+    usesAiReview: false,
+  };
+
+  test("returns a pending draft unchanged", () => {
+    const pending: Doc<"submissions"> = { ...base, status: "pending" };
+
+    expect(toCreatorSubmission(pending)).toEqual(pending);
+  });
+
+  test("keeps a company review's outcome but hides the reviewer", () => {
+    const reviewed: Doc<"submissions"> = {
+      ...base,
+      status: "changesRequested",
+      reviewNote: "Add the #ad disclosure.",
+      reviewerType: "companyUser",
+      reviewedBy: "companyUsers|1" as Id<"companyUsers">,
+      reviewedAt: 2,
+    };
+
+    expect(toCreatorSubmission(reviewed)).toEqual({
+      ...base,
+      status: "changesRequested",
+      reviewNote: "Add the #ad disclosure.",
+      reviewerType: "companyUser",
+      reviewedAt: 2,
+    });
+  });
+
+  test("hides the operator, the overridden review, and the dispute", () => {
+    const overridden: Doc<"submissions"> = {
+      ...base,
+      status: "changesRequested",
+      reviewNote: "Prohibited claim in the caption.",
+      reviewerType: "operator",
+      reviewedByOperator: "users|1" as Id<"users">,
+      reviewedAt: 3,
+      overriddenReview: { status: "approved", reviewerType: "ai", reviewedAt: 2 },
+      disputeId: "disputes|1" as Id<"disputes">,
+    };
+
+    expect(toCreatorSubmission(overridden)).toEqual({
+      ...base,
+      status: "changesRequested",
+      reviewNote: "Prohibited claim in the caption.",
+      reviewerType: "operator",
+      reviewedAt: 3,
+    });
+  });
+});
+
+describe("requireSubmission", () => {
+  test("gives a creator their own submission without reviewer details", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await seedAssignment(t, "gs-creator");
+    const id = await seedSubmission(t, fixture, "changesRequested");
+
+    const view = await getAs(t, creatorViewer(fixture), id);
+
+    expect(view).toMatchObject({
+      _id: id,
+      status: "changesRequested",
+      reviewerType: "companyUser",
+    });
+    expectCreatorShape(view);
+  });
+
+  test("gives the company its submission with reviewer details", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await seedAssignment(t, "gs-company");
+    const id = await seedSubmission(t, fixture, "approved");
+
+    const view = await getAs(t, companyViewer(fixture), id);
+
+    expect(view).toEqual(await storedSubmission(t, id));
+    expect(view).toHaveProperty("reviewedBy", fixture.membership._id);
+  });
+
+  test("gives an operator any submission in full", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await seedAssignment(t, "gs-operator");
+    const id = await seedSubmission(t, fixture, "approved");
+
+    expect(await getAs(t, operatorViewer, id)).toEqual(await storedSubmission(t, id));
+  });
+
+  test("hides another creator's submission", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await seedAssignment(t, "gs-owner");
+    const id = await seedSubmission(t, fixture, "pending");
+    const intruderId = await seedCreatorId(t, "gs-intruder");
+
+    await expectApiError(
+      () => getAs(t, { role: "creator", creatorId: intruderId }, id),
+      "not_found",
+    );
+  });
+
+  test("hides another company's submission", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await seedAssignment(t, "gs-owner-co");
+    const id = await seedSubmission(t, fixture, "pending");
+    const { membership: outsider } = await seedMembership(t, "gs-outsider");
+
+    await expectApiError(
+      () => getAs(t, { role: "company", companyId: outsider.companyId }, id),
+      "not_found",
+    );
+  });
+
+  test("rejects a submission that no longer exists", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await seedAssignment(t, "gs-gone");
+    const id = await seedSubmission(t, fixture, "pending");
+    await t.run(async (ctx) => await ctx.db.delete("submissions", id));
+
+    await expectApiError(() => getAs(t, operatorViewer, id), "not_found");
+  });
+});
+
+describe("listSubmissions", () => {
+  test("lists an assignment's submissions newest first", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await seedAssignment(t, "ls-order");
+    const firstId = await seedSubmission(t, fixture, "changesRequested");
+    const secondId = await seedSubmission(t, fixture, "pending");
+
+    const result = await listAs(t, companyViewer(fixture), fixture.assignmentId);
+
+    expect(result.page.map((s) => s._id)).toEqual([secondId, firstId]);
+    expect(result.isDone).toBe(true);
+  });
+
+  test("gives creators the creator shape and companies the full shape", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await seedAssignment(t, "ls-shapes");
+    await seedSubmission(t, fixture, "approved");
+
+    const [asCreator] = (await listAs(t, creatorViewer(fixture), fixture.assignmentId)).page;
+    const [asCompany] = (await listAs(t, companyViewer(fixture), fixture.assignmentId)).page;
+
+    expectCreatorShape(asCreator);
+    expect(asCompany).toHaveProperty("reviewedBy", fixture.membership._id);
+  });
+
+  test("paginates with the returned cursor", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await seedAssignment(t, "ls-pages");
+    const firstId = await seedSubmission(t, fixture, "changesRequested");
+    const secondId = await seedSubmission(t, fixture, "pending");
+
+    const pageOne = await listAs(t, operatorViewer, fixture.assignmentId, {
+      numItems: 1,
+      cursor: null,
+    });
+    const pageTwo = await listAs(t, operatorViewer, fixture.assignmentId, {
+      numItems: 1,
+      cursor: pageOne.continueCursor,
+    });
+
+    expect(pageOne.page.map((s) => s._id)).toEqual([secondId]);
+    expect(pageTwo.page.map((s) => s._id)).toEqual([firstId]);
+  });
+
+  test("returns an empty page for an assignment with no submissions", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await seedAssignment(t, "ls-empty");
+
+    const result = await listAs(t, creatorViewer(fixture), fixture.assignmentId);
+
+    expect(result.page).toEqual([]);
+  });
+
+  test("hides another creator's assignment", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await seedAssignment(t, "ls-owner");
+    const intruderId = await seedCreatorId(t, "ls-intruder");
+
+    await expectApiError(
+      () => listAs(t, { role: "creator", creatorId: intruderId }, fixture.assignmentId),
+      "not_found",
+    );
+  });
+
+  test("hides another company's assignment", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await seedAssignment(t, "ls-owner-co");
+    const { membership: outsider } = await seedMembership(t, "ls-outsider");
+
+    await expectApiError(
+      () => listAs(t, { role: "company", companyId: outsider.companyId }, fixture.assignmentId),
+      "not_found",
+    );
+  });
+
+  test("rejects an assignment that no longer exists", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await seedAssignment(t, "ls-gone");
+    await t.run(async (ctx) => await ctx.db.delete("assignments", fixture.assignmentId));
+
+    await expectApiError(() => listAs(t, operatorViewer, fixture.assignmentId), "not_found");
   });
 });

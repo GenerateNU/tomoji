@@ -12,6 +12,7 @@ import { expectApiError, seedOperator, seedUser, workosIdentity, type TestConvex
 const modules = import.meta.glob("../**/*.ts");
 
 const HOUR = 60 * 60 * 1000;
+const firstPage = { paginationOpts: { cursor: null, numItems: 10 } };
 type CreateArgs = FunctionArgs<typeof api.campaigns.create>;
 
 function createArgs(overrides: Partial<CreateArgs> = {}): CreateArgs {
@@ -99,6 +100,99 @@ describe("campaigns.get", () => {
     );
 
     await expectApiError(() => asWrongOrg.query(api.campaigns.get, { campaignId }), "forbidden");
+  });
+});
+
+describe("campaigns.list", () => {
+  test.each(["admin", "member"] as const)(
+    "lets a company %s list and filter their teammates' campaigns",
+    async (role) => {
+      const t = convexTest(schema, modules);
+      const asAuthor = await seedUser(t, { subject: "cl-author", org: { id: "org_acme" } });
+      const asTeammate = await seedUser(t, {
+        subject: "cl-teammate",
+        org: { id: "org_acme", role },
+      });
+      const asOther = await seedUser(t, { subject: "cl-other", org: { id: "org_other" } });
+      const openId = await asAuthor.mutation(api.campaigns.create, createArgs());
+      await asOther.mutation(api.campaigns.create, createArgs());
+      const draftId = await asAuthor.mutation(
+        api.campaigns.create,
+        createArgs({ status: "draft" }),
+      );
+
+      const all = await asTeammate.query(api.campaigns.list, firstPage);
+      const open = await asTeammate.query(api.campaigns.list, { ...firstPage, status: "open" });
+
+      expect(all.page.map((campaign) => campaign._id)).toEqual([draftId, openId]);
+      expect(all.isDone).toBe(true);
+      expect(open.page.map((campaign) => campaign._id)).toEqual([openId]);
+    },
+  );
+
+  test("accepts a continuation cursor for the next page", async () => {
+    const t = convexTest(schema, modules);
+    const asMember = await seedUser(t, { subject: "cl-pages", org: { id: "org_acme" } });
+    const olderId = await asMember.mutation(api.campaigns.create, createArgs());
+    const newerId = await asMember.mutation(api.campaigns.create, createArgs());
+
+    const first = await asMember.query(api.campaigns.list, {
+      paginationOpts: { cursor: null, numItems: 1 },
+    });
+    const second = await asMember.query(api.campaigns.list, {
+      paginationOpts: { cursor: first.continueCursor, numItems: 1 },
+    });
+
+    expect(first.page.map((campaign) => campaign._id)).toEqual([newerId]);
+    expect(first.isDone).toBe(false);
+    expect(second.page.map((campaign) => campaign._id)).toEqual([olderId]);
+    expect(second.isDone).toBe(true);
+  });
+
+  test("rejects a client-supplied company filter", async () => {
+    const t = convexTest(schema, modules);
+    const asMember = await seedUser(t, { subject: "cl-member", org: { id: "org_acme" } });
+    await seedUser(t, { subject: "cl-other", org: { id: "org_other" } });
+    const company = await t.run(async (ctx) => await getCompanyByWorkosId(ctx, "org_other"));
+    const args = { ...firstPage, companyId: company!._id };
+
+    await expect(asMember.query(api.campaigns.list, args)).rejects.toThrow(
+      "Unexpected field `companyId`",
+    );
+  });
+
+  test("rejects an invalid status filter", async () => {
+    const t = convexTest(schema, modules);
+    const asMember = await seedUser(t, { subject: "cl-status", org: { id: "org_acme" } });
+    const args = { ...firstPage, status: "archived" };
+    // @ts-expect-error Clients can send invalid statuses despite the generated argument types.
+    const result = asMember.query(api.campaigns.list, args);
+
+    await expect(result).rejects.toThrow("Validator error");
+  });
+
+  test("rejects a signed-out caller", async () => {
+    const t = convexTest(schema, modules);
+
+    await expectApiError(() => t.query(api.campaigns.list, firstPage), "not_authenticated");
+  });
+
+  test("rejects a creator", async () => {
+    const t = convexTest(schema, modules);
+    const asCreator = await seedUser(t, { subject: "cl-creator" });
+
+    await expectApiError(() => asCreator.query(api.campaigns.list, firstPage), "forbidden");
+  });
+
+  test("rejects a company caller acting on an org they are not a member of", async () => {
+    const t = convexTest(schema, modules);
+    await seedUser(t, { subject: "cl-outsider", org: { id: "org_acme" } });
+    await seedUser(t, { subject: "cl-insider", org: { id: "org_other" } });
+    const asWrongOrg = t.withIdentity(
+      workosIdentity({ subject: "cl-outsider", org_id: "org_other" }),
+    );
+
+    await expectApiError(() => asWrongOrg.query(api.campaigns.list, firstPage), "forbidden");
   });
 });
 

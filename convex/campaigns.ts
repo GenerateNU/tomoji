@@ -1,7 +1,9 @@
+import { paginationOptsValidator, paginationResultValidator } from "convex/server";
 import { v } from "convex/values";
-import { createCampaign, requireCampaign } from "./models/campaigns";
+import { createCampaign, listCampaigns, requireCampaign } from "./models/campaigns";
 import { companyMutation, companyQuery } from "./lib/functions";
 import schema from "./schema";
+import { campaignStatus } from "./schemas/campaigns.schema";
 
 /**
  * Gets a campaign in any status from the caller's company.
@@ -13,6 +15,18 @@ export const get = companyQuery({
   returns: schema.doc("campaigns"),
   handler: async (ctx, args) => {
     return await requireCampaign(ctx, args.campaignId, ctx.membership.companyId);
+  },
+});
+
+/** Lists the caller's company campaigns newest first, optionally filtered by status. */
+export const list = companyQuery({
+  args: {
+    status: v.optional(campaignStatus),
+    paginationOpts: paginationOptsValidator,
+  },
+  returns: paginationResultValidator(schema.doc("campaigns")),
+  handler: async (ctx, args) => {
+    return await listCampaigns(ctx, ctx.membership.companyId, args);
   },
 });
 

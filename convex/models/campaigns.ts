@@ -1,4 +1,4 @@
-import type { WithoutSystemFields } from "convex/server";
+import type { PaginationOptions, PaginationResult, WithoutSystemFields } from "convex/server";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { apiError } from "../lib/errors";
@@ -15,6 +15,25 @@ export async function requireCampaign(
     throw apiError("not_found", { campaignId });
   }
   return campaign;
+}
+
+/** Returns one page of a company's campaigns, newest first, optionally filtered by status. */
+export async function listCampaigns(
+  ctx: QueryCtx,
+  companyId: Id<"companies">,
+  options: { status?: Doc<"campaigns">["status"]; paginationOpts: PaginationOptions },
+): Promise<PaginationResult<Doc<"campaigns">>> {
+  const status = options.status;
+  const campaigns =
+    status === undefined
+      ? ctx.db.query("campaigns").withIndex("by_companyId", (q) => q.eq("companyId", companyId))
+      : ctx.db
+          .query("campaigns")
+          .withIndex("by_companyId_and_status", (q) =>
+            q.eq("companyId", companyId).eq("status", status),
+          );
+
+  return await campaigns.order("desc").paginate(options.paginationOpts);
 }
 
 /**

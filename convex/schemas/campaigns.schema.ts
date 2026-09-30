@@ -20,4 +20,6 @@ export const campaignsTable = defineTable({
   budgetCents: v.number(), // Nonnegative integer minor units; enforced by the model.
   startsAt: v.number(), // Unix timestamp in milliseconds.
   endsAt: v.optional(v.number()), // Unix timestamp in milliseconds.
-}).index("by_companyId", ["companyId"]);
+})
+  .index("by_companyId", ["companyId"])
+  .index("by_companyId_and_status", ["companyId", "status"]);

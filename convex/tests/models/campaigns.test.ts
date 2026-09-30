@@ -4,7 +4,7 @@ import type { WithoutSystemFields } from "convex/server";
 import { describe, expect, test } from "vitest";
 import type { Doc, Id } from "../../_generated/dataModel";
 import { companyContext } from "../../lib/functions";
-import { createCampaign, requireCampaign } from "../../models/campaigns";
+import { createCampaign, listCampaigns, requireCampaign } from "../../models/campaigns";
 import schema from "../../schema";
 import { expectApiError, seedUser, type TestConvex } from "../helpers";
 
@@ -81,6 +81,144 @@ describe("requireCampaign", () => {
     await expect(
       t.run(async (ctx) => await requireCampaign(ctx, campaignId, other.companyId)),
     ).rejects.toHaveProperty("data", { code: "not_found", message: "Not found", campaignId });
+  });
+});
+
+describe("listCampaigns", () => {
+  test("lists only the company's campaigns across all statuses, newest first", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOwner(t, "cl-owner");
+    const other = await seedOwner(t, "cl-other", "org_other");
+    const campaignIds = await t.run(async (ctx) => {
+      const ids: Id<"campaigns">[] = [];
+      for (const status of ["open", "closed", "draft", "paused"] as const) {
+        ids.push(await ctx.db.insert("campaigns", campaignDoc(owner, { status })));
+        await ctx.db.insert("campaigns", campaignDoc(other, { status }));
+      }
+      return ids;
+    });
+
+    const result = await t.run(async (ctx) =>
+      listCampaigns(ctx, owner.companyId, { paginationOpts: { cursor: null, numItems: 10 } }),
+    );
+
+    expect(result.page.map((campaign) => campaign._id)).toEqual(campaignIds.toReversed());
+    expect(result.isDone).toBe(true);
+  });
+
+  test.each(["draft", "open", "paused", "closed"] as const)(
+    "filters by %s within the company",
+    async (status) => {
+      const t = convexTest(schema, modules);
+      const owner = await seedOwner(t, "cl-filter-owner");
+      const other = await seedOwner(t, "cl-filter-other", "org_other");
+      const matchingIds = await t.run(async (ctx) => {
+        const ids: Id<"campaigns">[] = [];
+        for (const candidate of ["draft", "open", "paused", "closed"] as const) {
+          const id = await ctx.db.insert("campaigns", campaignDoc(owner, { status: candidate }));
+          if (candidate === status) ids.push(id);
+        }
+        await ctx.db.insert("campaigns", campaignDoc(other, { status }));
+        return ids;
+      });
+
+      const result = await t.run(async (ctx) =>
+        listCampaigns(ctx, owner.companyId, {
+          status,
+          paginationOpts: { cursor: null, numItems: 10 },
+        }),
+      );
+
+      expect(result.page.map((campaign) => campaign._id)).toEqual(matchingIds);
+      expect(result.isDone).toBe(true);
+    },
+  );
+
+  test.each([undefined, "closed"] as const)(
+    "returns a completed empty page when no campaigns match status %s",
+    async (status) => {
+      const t = convexTest(schema, modules);
+      const owner = await seedOwner(t, "cl-empty-owner");
+      const other = await seedOwner(t, "cl-empty-other", "org_other");
+      await t.run(async (ctx) => {
+        await ctx.db.insert("campaigns", campaignDoc(other, { status: "closed" }));
+        if (status !== undefined) await ctx.db.insert("campaigns", campaignDoc(owner));
+      });
+
+      const result = await t.run(async (ctx) =>
+        listCampaigns(ctx, owner.companyId, {
+          status,
+          paginationOpts: { cursor: null, numItems: 2 },
+        }),
+      );
+
+      expect(result.page).toEqual([]);
+      expect(result.isDone).toBe(true);
+    },
+  );
+
+  test.each([undefined, "open"] as const)(
+    "pages through status %s without duplicates, omissions, or another company's campaigns",
+    async (status) => {
+      const t = convexTest(schema, modules);
+      const owner = await seedOwner(t, "cl-page-owner");
+      const other = await seedOwner(t, "cl-page-other", "org_other");
+      const matchingIds = await t.run(async (ctx) => {
+        const ids: Id<"campaigns">[] = [];
+        for (const candidate of ["open", "draft", "open", "paused", "open"] as const) {
+          const id = await ctx.db.insert("campaigns", campaignDoc(owner, { status: candidate }));
+          if (status === undefined || candidate === status) ids.push(id);
+          await ctx.db.insert("campaigns", campaignDoc(other, { status: candidate }));
+        }
+        return ids.toReversed();
+      });
+      const receivedIds: Id<"campaigns">[] = [];
+      let cursor: string | null = null;
+      let isDone = false;
+
+      for (let page = 0; page < 3 && !isDone; page++) {
+        const result = await t.run(async (ctx) =>
+          listCampaigns(ctx, owner.companyId, {
+            status,
+            paginationOpts: { cursor, numItems: 2 },
+          }),
+        );
+        receivedIds.push(...result.page.map((campaign) => campaign._id));
+        cursor = result.continueCursor;
+        isDone = result.isDone;
+      }
+
+      expect(isDone).toBe(true);
+      expect(receivedIds).toEqual(matchingIds);
+    },
+  );
+
+  test("preserves the optional pagination read limit and continuation cursor", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOwner(t, "cl-limit");
+    const campaignIds = await t.run(async (ctx) => {
+      const ids: Id<"campaigns">[] = [];
+      for (let n = 0; n < 3; n++) {
+        ids.push(await ctx.db.insert("campaigns", campaignDoc(owner)));
+      }
+      return ids.toReversed();
+    });
+
+    const first = await t.run(async (ctx) =>
+      listCampaigns(ctx, owner.companyId, {
+        paginationOpts: { cursor: null, numItems: 10, maximumRowsRead: 2 },
+      }),
+    );
+    const second = await t.run(async (ctx) =>
+      listCampaigns(ctx, owner.companyId, {
+        paginationOpts: { cursor: first.continueCursor, numItems: 10 },
+      }),
+    );
+
+    expect(first.page.map((campaign) => campaign._id)).toEqual(campaignIds.slice(0, 2));
+    expect(first.isDone).toBe(false);
+    expect(second.page.map((campaign) => campaign._id)).toEqual(campaignIds.slice(2));
+    expect(second.isDone).toBe(true);
   });
 });
 

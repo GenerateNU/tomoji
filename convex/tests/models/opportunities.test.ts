@@ -69,7 +69,7 @@ describe("updateOpportunity", () => {
       isGated: true,
       usesAiReviewDefault: false,
       maxSlots: 2,
-      maxApplications: 50,
+      maxApplications: 2,
       deadline: Date.now() + 172_800_000,
       fixedFeeCents: 20_000,
       cpmRateCents: 0,
@@ -237,6 +237,54 @@ describe("updateOpportunity", () => {
         ),
       "invalid_state",
     );
+  });
+
+  test("rejects an application limit above available slots", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(t, { subject: "update_owner" });
+    const before = await t.run(
+      async (ctx) => await ctx.db.get("opportunities", owner.opportunityId),
+    );
+
+    await expectApiError(
+      () =>
+        t.run(
+          async (ctx) =>
+            await updateOpportunity(ctx, owner.membership, owner.opportunityId, {
+              maxApplications: 6,
+            }),
+        ),
+      "invalid_state",
+    );
+    expect(
+      await t.run(async (ctx) => await ctx.db.get("opportunities", owner.opportunityId)),
+    ).toEqual(before);
+  });
+
+  test("rejects extending a deadline beyond the campaign end", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(t, { subject: "update_owner" });
+    const before = await t.run(
+      async (ctx) => await ctx.db.get("opportunities", owner.opportunityId),
+    );
+    await t.run(
+      async (ctx) =>
+        await ctx.db.patch("campaigns", owner.campaignId, { endsAt: Date.now() + 86_400_000 }),
+    );
+
+    await expectApiError(
+      () =>
+        t.run(
+          async (ctx) =>
+            await updateOpportunity(ctx, owner.membership, owner.opportunityId, {
+              deadline: Date.now() + 172_800_000,
+            }),
+        ),
+      "invalid_state",
+    );
+    expect(
+      await t.run(async (ctx) => await ctx.db.get("opportunities", owner.opportunityId)),
+    ).toEqual(before);
   });
 
   test("rejects a deadline at the current time for an open opportunity", async () => {

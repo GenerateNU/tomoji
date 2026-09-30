@@ -69,8 +69,11 @@ const MAX_LENGTH = {
 } as const;
 
 /**
- * Returns `value` trimmed.
+ * Validates a free-text field: trims it, rejects blank input, and enforces the
+ * field's limit from `MAX_LENGTH`, measured after trimming. Every text field goes
+ * through here, so each one is guaranteed a limit.
  *
+ * @returns the trimmed value, which is what gets stored.
  * @throws `invalid_state` with reason `<field>_blank` or `<field>_too_long`.
  */
 function requireText(value: string, field: keyof typeof MAX_LENGTH): string {

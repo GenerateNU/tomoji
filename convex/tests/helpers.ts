@@ -228,6 +228,21 @@ export async function seedSubmission(
   });
 }
 
+/**
+ * Seeds an assignment with one submission in the given state. `assignment`
+ * overrides the assignment's status or AI review flag.
+ */
+export async function seedOneSubmission(
+  t: TestConvex,
+  prefix: string,
+  status: Infer<typeof submissionStatus> = "pending",
+  assignment: Partial<Pick<Doc<"assignments">, "status" | "usesAiReview">> = {},
+) {
+  const fixture = await seedAssignment(t, prefix, assignment);
+  const submissionId = await seedSubmission(t, fixture, status);
+  return { fixture, submissionId };
+}
+
 // `TestConvex` loses the schema types, so rows read through `t.run` come back
 // untyped. These two helpers hold the only casts back to the submission type.
 

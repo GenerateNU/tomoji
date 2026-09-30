@@ -1,18 +1,17 @@
 /// <reference types="vite/client" />
 import { convexTest } from "convex-test";
 import type { FunctionArgs } from "convex/server";
-import type { Infer } from "convex/values";
 import { describe, expect, test } from "vitest";
 import { api } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import type { ApiErrorCode } from "../lib/errors";
 import { toCreatorSubmission } from "../models/submissions";
 import schema from "../schema";
-import type { submissionStatus } from "../schemas/submissions.schema";
 import {
   expectApiError,
   seedAssignment,
   seedMembership,
+  seedOneSubmission,
   seedOperator,
   seedSubmission,
   seedUser,
@@ -39,17 +38,6 @@ function createArgs(fixture: AssignmentFixture): CreateArgs {
 /** Arguments for the first page of the fixture's assignment's submissions. */
 function pageArgs(fixture: AssignmentFixture) {
   return { assignmentId: fixture.assignmentId, paginationOpts: { numItems: 10, cursor: null } };
-}
-
-/** Seeds an assignment with one submission in the given state. */
-async function seedOneSubmission(
-  t: TestConvex,
-  prefix: string,
-  status: Infer<typeof submissionStatus> = "pending",
-) {
-  const fixture = await seedAssignment(t, prefix);
-  const submissionId = await seedSubmission(t, fixture, status);
-  return { fixture, submissionId };
 }
 
 /** Returns a submission in the creator shape, as a creator route should. */

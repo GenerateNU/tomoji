@@ -21,6 +21,7 @@ import {
   seedAssignment,
   seedCreatorId,
   seedMembership,
+  seedOneSubmission,
   seedSubmission,
   storedSubmission,
   storedSubmissions,
@@ -34,6 +35,8 @@ const draft = {
   draftUrl: "https://drive.example.com/drafts/1",
   draftDescription: "30-second unboxing, product shown at 0:03.",
 };
+
+const firstPage = { numItems: 10, cursor: null as string | null };
 
 /** Submits `draft` as the fixture's creator, with any fields overridden. */
 async function submit(
@@ -97,7 +100,7 @@ async function listAs(
   t: TestConvex,
   viewer: SubmissionViewer,
   assignmentId: Id<"assignments">,
-  paginationOpts = { numItems: 10, cursor: null as string | null },
+  paginationOpts = firstPage,
 ) {
   return await t.run(
     async (ctx) => await listSubmissions(ctx, viewer, assignmentId, paginationOpts),
@@ -118,8 +121,7 @@ async function listMineAs(
   assignmentId: Id<"assignments">,
 ) {
   return await t.run(
-    async (ctx) =>
-      await listCreatorSubmissions(ctx, creatorId, assignmentId, { numItems: 10, cursor: null }),
+    async (ctx) => await listCreatorSubmissions(ctx, creatorId, assignmentId, firstPage),
   );
 }
 
@@ -128,14 +130,11 @@ describe("createSubmission", () => {
     "stores a pending draft and copies usesAiReview=%s from the assignment",
     async (usesAiReview) => {
       const t = convexTest(schema, modules);
-      const fixture = await seedAssignment(t, `cs-ai-${usesAiReview}`, {
-        usesAiReview,
-      });
+      const fixture = await seedAssignment(t, `cs-ai-${usesAiReview}`, { usesAiReview });
 
       const id = await submit(t, fixture);
-      const stored = await t.run(async (ctx) => await ctx.db.get("submissions", id));
 
-      expect(stored).toMatchObject({
+      expect(await storedSubmission(t, id)).toMatchObject({
         assignmentId: fixture.assignmentId,
         ...draft,
         status: "pending",
@@ -152,9 +151,8 @@ describe("createSubmission", () => {
       draftUrl: `  ${draft.draftUrl}  `,
       draftDescription: `  ${draft.draftDescription}\n`,
     });
-    const stored = await t.run(async (ctx) => await ctx.db.get("submissions", id));
 
-    expect(stored).toMatchObject(draft);
+    expect(await storedSubmission(t, id)).toMatchObject(draft);
   });
 
   test("rejects another creator's assignment without writing a submission", async () => {
@@ -179,9 +177,7 @@ describe("createSubmission", () => {
     "rejects a %s assignment without writing a submission",
     async (status) => {
       const t = convexTest(schema, modules);
-      const fixture = await seedAssignment(t, `cs-status-${status}`, {
-        status,
-      });
+      const fixture = await seedAssignment(t, `cs-status-${status}`, { status });
 
       await expectReason(() => submit(t, fixture), "invalid_state", "assignment_not_active");
 
@@ -191,8 +187,7 @@ describe("createSubmission", () => {
 
   test("rejects a new draft while one is pending", async () => {
     const t = convexTest(schema, modules);
-    const fixture = await seedAssignment(t, "cs-pending");
-    await seedSubmission(t, fixture, "pending");
+    const { fixture } = await seedOneSubmission(t, "cs-pending");
 
     await expectReason(() => submit(t, fixture), "conflict", "submission_pending");
 
@@ -212,8 +207,11 @@ describe("createSubmission", () => {
 
   test("accepts a resubmission after changes are requested", async () => {
     const t = convexTest(schema, modules);
-    const fixture = await seedAssignment(t, "cs-resubmit");
-    const firstId = await seedSubmission(t, fixture, "changesRequested");
+    const { fixture, submissionId: firstId } = await seedOneSubmission(
+      t,
+      "cs-resubmit",
+      "changesRequested",
+    );
 
     const secondId = await submit(t, fixture);
     const stored = await storedSubmissions(t);
@@ -225,17 +223,21 @@ describe("createSubmission", () => {
     ]);
   });
 
-  test.each([{ draftUrl: "   " }, { draftDescription: " \n " }])(
-    "rejects blank draft fields %j without writing a submission",
-    async (blank) => {
-      const t = convexTest(schema, modules);
-      const fixture = await seedAssignment(t, "cs-blank");
+  test.each([
+    ["draftUrl", "   "],
+    ["draftDescription", " \n "],
+  ] as const)("rejects a blank %s without writing a submission", async (field, value) => {
+    const t = convexTest(schema, modules);
+    const fixture = await seedAssignment(t, `cs-blank-${field}`);
 
-      await expectApiError(() => submit(t, fixture, blank), "invalid_state");
+    await expectReason(
+      () => submit(t, fixture, { [field]: value } as Partial<SubmissionDraft>),
+      "invalid_state",
+      `${field}_blank`,
+    );
 
-      expect(await storedSubmissions(t)).toHaveLength(0);
-    },
-  );
+    expect(await storedSubmissions(t)).toHaveLength(0);
+  });
 
   test.each(["not a url", "ftp://example.com/draft.mp4", "javascript:alert(1)"])(
     "rejects non-http(s) draft URL %s",
@@ -284,8 +286,7 @@ describe("createSubmission", () => {
 describe("reviewSubmission", () => {
   test("approves a pending draft and attributes the review to the caller", async () => {
     const t = convexTest(schema, modules);
-    const fixture = await seedAssignment(t, "rs-approve");
-    const id = await seedSubmission(t, fixture, "pending");
+    const { fixture, submissionId: id } = await seedOneSubmission(t, "rs-approve");
 
     const before = Date.now();
     const reviewed = await reviewAs(t, fixture.membership, id, { status: "approved" });
@@ -306,8 +307,7 @@ describe("reviewSubmission", () => {
 
   test("stores a trimmed note on an approval", async () => {
     const t = convexTest(schema, modules);
-    const fixture = await seedAssignment(t, "rs-approve-note");
-    const id = await seedSubmission(t, fixture, "pending");
+    const { fixture, submissionId: id } = await seedOneSubmission(t, "rs-approve-note");
 
     const reviewed = await reviewAs(t, fixture.membership, id, {
       status: "approved",
@@ -319,8 +319,7 @@ describe("reviewSubmission", () => {
 
   test("requests changes with a note", async () => {
     const t = convexTest(schema, modules);
-    const fixture = await seedAssignment(t, "rs-changes");
-    const id = await seedSubmission(t, fixture, "pending");
+    const { fixture, submissionId: id } = await seedOneSubmission(t, "rs-changes");
 
     const reviewed = await reviewAs(t, fixture.membership, id, {
       status: "changesRequested",
@@ -337,8 +336,7 @@ describe("reviewSubmission", () => {
 
   test("rejects a blank note without reviewing", async () => {
     const t = convexTest(schema, modules);
-    const fixture = await seedAssignment(t, "rs-blank");
-    const id = await seedSubmission(t, fixture, "pending");
+    const { fixture, submissionId: id } = await seedOneSubmission(t, "rs-blank");
 
     await expectReason(
       () => reviewAs(t, fixture.membership, id, { status: "changesRequested", reviewNote: "  \n" }),
@@ -351,8 +349,7 @@ describe("reviewSubmission", () => {
 
   test("rejects a note over the length limit without reviewing", async () => {
     const t = convexTest(schema, modules);
-    const fixture = await seedAssignment(t, "rs-long");
-    const id = await seedSubmission(t, fixture, "pending");
+    const { fixture, submissionId: id } = await seedOneSubmission(t, "rs-long");
 
     await expectReason(
       () =>
@@ -369,8 +366,7 @@ describe("reviewSubmission", () => {
 
   test("accepts a note exactly at the limit", async () => {
     const t = convexTest(schema, modules);
-    const fixture = await seedAssignment(t, "rs-long-edge");
-    const id = await seedSubmission(t, fixture, "pending");
+    const { fixture, submissionId: id } = await seedOneSubmission(t, "rs-long-edge");
 
     const reviewed = await reviewAs(t, fixture.membership, id, {
       status: "changesRequested",
@@ -382,8 +378,7 @@ describe("reviewSubmission", () => {
 
   test("rejects a member of another company without reviewing", async () => {
     const t = convexTest(schema, modules);
-    const fixture = await seedAssignment(t, "rs-owner");
-    const id = await seedSubmission(t, fixture, "pending");
+    const { submissionId: id } = await seedOneSubmission(t, "rs-owner");
     const { membership: outsider } = await seedMembership(t, "rs-outsider");
 
     await expectApiError(() => reviewAs(t, outsider, id, { status: "approved" }), "not_found");
@@ -393,8 +388,7 @@ describe("reviewSubmission", () => {
 
   test("rejects a submission that no longer exists", async () => {
     const t = convexTest(schema, modules);
-    const fixture = await seedAssignment(t, "rs-gone");
-    const id = await seedSubmission(t, fixture, "pending");
+    const { fixture, submissionId: id } = await seedOneSubmission(t, "rs-gone");
     await t.run(async (ctx) => await ctx.db.delete("submissions", id));
 
     await expectApiError(
@@ -408,8 +402,11 @@ describe("reviewSubmission", () => {
     "rejects a submission already %s without changing it",
     async (status) => {
       const t = convexTest(schema, modules);
-      const fixture = await seedAssignment(t, `rs-final-${status}`);
-      const id = await seedSubmission(t, fixture, status);
+      const { fixture, submissionId: id } = await seedOneSubmission(
+        t,
+        `rs-final-${status}`,
+        status,
+      );
       const original = await storedSubmission(t, id);
 
       await expectReason(
@@ -426,8 +423,12 @@ describe("reviewSubmission", () => {
     "rejects a pending draft on a %s assignment without reviewing",
     async (status) => {
       const t = convexTest(schema, modules);
-      const fixture = await seedAssignment(t, `rs-assignment-${status}`, { status });
-      const id = await seedSubmission(t, fixture, "pending");
+      const { fixture, submissionId: id } = await seedOneSubmission(
+        t,
+        `rs-assignment-${status}`,
+        "pending",
+        { status },
+      );
 
       await expectReason(
         () => reviewAs(t, fixture.membership, id, { status: "approved" }),
@@ -443,8 +444,9 @@ describe("reviewSubmission", () => {
   // reviewed only by the AI; flip this test to expect a rejection.
   test("lets a company user review a submission that uses AI review", async () => {
     const t = convexTest(schema, modules);
-    const fixture = await seedAssignment(t, "rs-ai", { usesAiReview: true });
-    const id = await seedSubmission(t, fixture, "pending");
+    const { fixture, submissionId: id } = await seedOneSubmission(t, "rs-ai", "pending", {
+      usesAiReview: true,
+    });
 
     const reviewed = await reviewAs(t, fixture.membership, id, { status: "approved" });
 
@@ -516,16 +518,18 @@ describe("toCreatorSubmission", () => {
 describe("requireSubmission", () => {
   test("lets a creator access their own submission", async () => {
     const t = convexTest(schema, modules);
-    const fixture = await seedAssignment(t, "gs-creator");
-    const id = await seedSubmission(t, fixture, "changesRequested");
+    const { fixture, submissionId: id } = await seedOneSubmission(
+      t,
+      "gs-creator",
+      "changesRequested",
+    );
 
     expect(await getAs(t, creatorViewer(fixture), id)).toEqual(await storedSubmission(t, id));
   });
 
   test("gives the company its submission with reviewer details", async () => {
     const t = convexTest(schema, modules);
-    const fixture = await seedAssignment(t, "gs-company");
-    const id = await seedSubmission(t, fixture, "approved");
+    const { fixture, submissionId: id } = await seedOneSubmission(t, "gs-company", "approved");
 
     const view = await getAs(t, companyViewer(fixture), id);
 
@@ -535,16 +539,14 @@ describe("requireSubmission", () => {
 
   test("gives an operator any submission in full", async () => {
     const t = convexTest(schema, modules);
-    const fixture = await seedAssignment(t, "gs-operator");
-    const id = await seedSubmission(t, fixture, "approved");
+    const { submissionId: id } = await seedOneSubmission(t, "gs-operator", "approved");
 
     expect(await getAs(t, operatorViewer, id)).toEqual(await storedSubmission(t, id));
   });
 
   test("hides another creator's submission", async () => {
     const t = convexTest(schema, modules);
-    const fixture = await seedAssignment(t, "gs-owner");
-    const id = await seedSubmission(t, fixture, "pending");
+    const { submissionId: id } = await seedOneSubmission(t, "gs-owner");
     const intruderId = await seedCreatorId(t, "gs-intruder");
 
     await expectApiError(
@@ -555,8 +557,7 @@ describe("requireSubmission", () => {
 
   test("hides another company's submission", async () => {
     const t = convexTest(schema, modules);
-    const fixture = await seedAssignment(t, "gs-owner-co");
-    const id = await seedSubmission(t, fixture, "pending");
+    const { submissionId: id } = await seedOneSubmission(t, "gs-owner-co");
     const { membership: outsider } = await seedMembership(t, "gs-outsider");
 
     await expectApiError(
@@ -567,8 +568,7 @@ describe("requireSubmission", () => {
 
   test("rejects a submission that no longer exists", async () => {
     const t = convexTest(schema, modules);
-    const fixture = await seedAssignment(t, "gs-gone");
-    const id = await seedSubmission(t, fixture, "pending");
+    const { submissionId: id } = await seedOneSubmission(t, "gs-gone");
     await t.run(async (ctx) => await ctx.db.delete("submissions", id));
 
     await expectApiError(() => getAs(t, operatorViewer, id), "not_found");
@@ -650,8 +650,7 @@ describe("listSubmissions", () => {
 describe("requireCreatorSubmission", () => {
   test("returns the creator's own submission in the creator shape", async () => {
     const t = convexTest(schema, modules);
-    const fixture = await seedAssignment(t, "gm-own");
-    const id = await seedSubmission(t, fixture, "approved");
+    const { fixture, submissionId: id } = await seedOneSubmission(t, "gm-own", "approved");
     const stored = await storedSubmission(t, id);
 
     const view = await getMineAs(t, fixture.creatorId, id);
@@ -662,8 +661,7 @@ describe("requireCreatorSubmission", () => {
 
   test("hides another creator's submission", async () => {
     const t = convexTest(schema, modules);
-    const fixture = await seedAssignment(t, "gm-owner");
-    const id = await seedSubmission(t, fixture, "pending");
+    const { submissionId: id } = await seedOneSubmission(t, "gm-owner");
     const intruderId = await seedCreatorId(t, "gm-intruder");
 
     await expectApiError(() => getMineAs(t, intruderId, id), "not_found");
@@ -679,8 +677,10 @@ describe("listCreatorSubmissions", () => {
 
     const result = await listMineAs(t, fixture.creatorId, fixture.assignmentId);
 
-    expect(result.page.map((s) => s._id)).toEqual([secondId, firstId]);
-    for (const view of result.page) expectCreatorShape(view);
+    expect(result.page).toEqual([
+      toCreatorSubmission((await storedSubmission(t, secondId))!),
+      toCreatorSubmission((await storedSubmission(t, firstId))!),
+    ]);
   });
 
   test("hides another creator's assignment", async () => {

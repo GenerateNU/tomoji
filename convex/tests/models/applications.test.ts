@@ -94,7 +94,7 @@ describe("createApplication", () => {
   test.each([
     { name: "no note", note: undefined },
     { name: "a blank note", note: "   " },
-  ])("stores an empty note when given $name", async ({ note }) => {
+  ])("leaves the note out when given $name", async ({ note }) => {
     const t = convexTest(schema, modules);
     const { opportunityId } = await seedOpportunity(t);
     const creatorId = await seedCreatorId(t, "creator_a");
@@ -104,7 +104,7 @@ describe("createApplication", () => {
     );
     const stored = await t.run(async (ctx) => await ctx.db.get("applications", id));
 
-    expect(stored?.note).toBe("");
+    expect(stored).not.toHaveProperty("note");
   });
 
   test("rejects a second application from the same creator", async () => {

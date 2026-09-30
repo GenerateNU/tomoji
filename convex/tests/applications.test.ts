@@ -47,9 +47,9 @@ describe("applications.create", () => {
 
     const applicationId = await asCreator.mutation(api.applications.create, { opportunityId });
 
-    expect(await asCreator.query(api.applications.get, { applicationId })).toMatchObject({
-      note: "",
-    });
+    const application = await asCreator.query(api.applications.get, { applicationId });
+    expect(application.status).toBe("pending");
+    expect(application).not.toHaveProperty("note");
   });
 
   test("rejects a signed-out caller", async () => {

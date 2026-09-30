@@ -9,7 +9,7 @@ import type { applicationStatus } from "../schemas/applications.schema";
  * Creates a pending application from a creator to an open, gated opportunity.
  *
  * @throws `not_found` if the opportunity does not exist.
- * The note is optional; a missing or blank note is stored as "".
+ * The note is optional; a missing or blank note is left out.
  *
  * @throws `invalid_state` if the opportunity or its campaign is not open, the
  * opportunity is ungated, or it already has `maxApplications` applications.
@@ -20,7 +20,7 @@ export async function createApplication(
   creatorId: Id<"creators">,
   args: { opportunityId: Id<"opportunities">; note?: string },
 ): Promise<Id<"applications">> {
-  const note = args.note?.trim() ?? "";
+  const note = args.note?.trim() || undefined;
   const opportunity = await ctx.db.get("opportunities", args.opportunityId);
   if (opportunity === null) {
     throw apiError("not_found", { resource: "opportunity" });

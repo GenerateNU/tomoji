@@ -1,6 +1,12 @@
 import { paginationOptsValidator, paginationResultValidator } from "convex/server";
 import { v } from "convex/values";
-import { createCampaign, listCampaigns, requireCampaign } from "./models/campaigns";
+import {
+  campaignUpdate,
+  createCampaign,
+  listCampaigns,
+  requireCampaign,
+  updateCampaign,
+} from "./models/campaigns";
 import { companyMutation, companyQuery } from "./lib/functions";
 import schema from "./schema";
 import { campaignStatus } from "./schemas/campaigns.schema";
@@ -27,6 +33,24 @@ export const list = companyQuery({
   returns: paginationResultValidator(schema.doc("campaigns")),
   handler: async (ctx, args) => {
     return await listCampaigns(ctx, ctx.membership.companyId, args);
+  },
+});
+
+/**
+ * Updates the editable details of a campaign in the caller's company.
+ * Open to any company member until the company-admin builder is available.
+ * Omitted fields stay unchanged; `endsAt: null` removes the end date.
+ *
+ * @throws `not_found` if the campaign is missing or belongs to another company.
+ * @throws `invalid_state` for blank fields or an invalid resulting budget or schedule.
+ */
+export const update = companyMutation({
+  args: { campaignId: v.id("campaigns"), ...campaignUpdate.fields },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const { campaignId, ...fields } = args;
+    await updateCampaign(ctx, campaignId, ctx.membership.companyId, fields);
+    return null;
   },
 });
 

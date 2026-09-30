@@ -1,8 +1,18 @@
 import type { PaginationOptions, PaginationResult, WithoutSystemFields } from "convex/server";
+import { v, type Infer } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { apiError } from "../lib/errors";
 import { requireNonBlank } from "../lib/validation";
+import schema from "../schema";
+
+export const campaignUpdate = schema
+  .doc("campaigns")
+  .pick("title", "objective", "product", "audience", "description", "budgetCents", "startsAt")
+  .partial()
+  .extend({ endsAt: v.optional(v.union(v.number(), v.null())) });
+
+export type CampaignUpdate = Infer<typeof campaignUpdate>;
 
 /** Returns a campaign, or throws `not_found` if it is missing or belongs to another company. */
 export async function requireCampaign(
@@ -36,6 +46,36 @@ export async function listCampaigns(
   return await campaigns.order("desc").paginate(options.paginationOpts);
 }
 
+/** Updates campaign details without changing ownership, status, or assignment terms. */
+export async function updateCampaign(
+  ctx: MutationCtx,
+  campaignId: Id<"campaigns">,
+  companyId: Id<"companies">,
+  fields: CampaignUpdate,
+): Promise<void> {
+  const campaign = await requireCampaign(ctx, campaignId, companyId);
+  const patch: Partial<Pick<Doc<"campaigns">, keyof CampaignUpdate>> = {};
+
+  for (const field of ["title", "objective", "product", "audience", "description"] as const) {
+    const value = fields[field];
+    if (value !== undefined) {
+      patch[field] = requireNonBlank(value, `campaign_${field}`);
+    }
+  }
+  if (fields.budgetCents !== undefined) {
+    patch.budgetCents = fields.budgetCents;
+  }
+  if (fields.startsAt !== undefined) {
+    patch.startsAt = fields.startsAt;
+  }
+  if (fields.endsAt !== undefined) {
+    patch.endsAt = fields.endsAt ?? undefined;
+  }
+
+  validateCampaignBudgetAndSchedule({ ...campaign, ...patch });
+  await ctx.db.patch("campaigns", campaignId, patch);
+}
+
 /**
  * Creates a draft or open campaign with a trimmed, nonblank brief.
  *
@@ -49,6 +89,21 @@ export async function createCampaign(
   if (campaign.status !== "draft" && campaign.status !== "open") {
     throw apiError("invalid_state", { reason: "invalid_status" });
   }
+  validateCampaignBudgetAndSchedule(campaign);
+
+  return await ctx.db.insert("campaigns", {
+    ...campaign,
+    title: requireNonBlank(campaign.title, "campaign_title"),
+    objective: requireNonBlank(campaign.objective, "campaign_objective"),
+    product: requireNonBlank(campaign.product, "campaign_product"),
+    audience: requireNonBlank(campaign.audience, "campaign_audience"),
+    description: requireNonBlank(campaign.description, "campaign_description"),
+  });
+}
+
+function validateCampaignBudgetAndSchedule(
+  campaign: Pick<Doc<"campaigns">, "budgetCents" | "startsAt" | "endsAt">,
+): void {
   if (!Number.isSafeInteger(campaign.budgetCents) || campaign.budgetCents < 0) {
     throw apiError("invalid_state", { reason: "invalid_budget" });
   }
@@ -61,13 +116,4 @@ export async function createCampaign(
   if (campaign.endsAt !== undefined && campaign.endsAt <= campaign.startsAt) {
     throw apiError("invalid_state", { reason: "end_not_after_start" });
   }
-
-  return await ctx.db.insert("campaigns", {
-    ...campaign,
-    title: requireNonBlank(campaign.title, "campaign_title"),
-    objective: requireNonBlank(campaign.objective, "campaign_objective"),
-    product: requireNonBlank(campaign.product, "campaign_product"),
-    audience: requireNonBlank(campaign.audience, "campaign_audience"),
-    description: requireNonBlank(campaign.description, "campaign_description"),
-  });
 }

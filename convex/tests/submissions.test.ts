@@ -25,8 +25,8 @@ import {
 const modules = import.meta.glob("../**/*.ts");
 
 const draft = {
-  draftUrl: "https://drive.example.com/drafts/1",
-  draftDescription: "30-second unboxing, product shown at 0:03.",
+  draftUrl: "https://drive.example.com/drafts/driftwood-first-deploy",
+  draftDescription: "60-second walkthrough: install, `driftwood init`, first deploy at 0:45.",
 };
 
 type CreateArgs = FunctionArgs<typeof api.submissions.create>;
@@ -173,12 +173,15 @@ describe("submissions.review", () => {
 
     const reviewed = await fixture.asCompany.mutation(api.submissions.review, {
       submissionId,
-      review: { status: "changesRequested", reviewNote: "Add the #ad disclosure." },
+      review: {
+        status: "changesRequested",
+        reviewNote: "Show `driftwood init` before the deploy.",
+      },
     });
 
     expect(reviewed).toMatchObject({
       status: "changesRequested",
-      reviewNote: "Add the #ad disclosure.",
+      reviewNote: "Show `driftwood init` before the deploy.",
     });
   });
 

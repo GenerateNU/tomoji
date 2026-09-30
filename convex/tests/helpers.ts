@@ -144,11 +144,11 @@ export async function seedAssignment(
     const campaignId = await ctx.db.insert("campaigns", {
       companyId: membership.companyId,
       createdBy: membership._id,
-      title: "Spring launch",
-      objective: "Introduce the new skincare range",
-      product: "Daily moisturizer",
-      audience: "Gen Z skincare enthusiasts",
-      description: "Campaign supporting the spring launch.",
+      title: "Driftwood CLI launch week",
+      objective: "Drive installs of the Driftwood deployment CLI",
+      product: "Driftwood CLI",
+      audience: "Backend and platform engineers",
+      description: "Creator walkthroughs showing a first deploy with the Driftwood CLI.",
       status: "open",
       budgetCents: 250_000,
       startsAt: Date.now(),
@@ -156,11 +156,11 @@ export async function seedAssignment(
     const opportunityId = await ctx.db.insert("opportunities", {
       campaignId,
       createdBy: membership._id,
-      title: "Unboxing video",
-      description: "A 30-second unboxing of the moisturizer.",
+      title: "Terminal walkthrough video",
+      description: "A 60-second screen recording taking a sample app from install to first deploy.",
       isGated: false,
       usesAiReviewDefault: false,
-      targetApplicant: "Skincare creators",
+      targetApplicant: "Developer educators and tech creators",
       maxSlots: 5,
       numFilledSlots: 1,
       maxApplications: 50,
@@ -169,10 +169,10 @@ export async function seedAssignment(
       fixedFeeCents: 10_000,
       cpmRateCents: 500,
       paymentCapCents: 50_000,
-      contentRequirements: "Show the product within the first 5 seconds.",
-      prohibitedClaims: "No medical claims.",
-      disclosureRequirements: "Include #ad.",
-      usageRights: "Organic use for 90 days.",
+      contentRequirements: "Run `driftwood init` in a real terminal within the first 10 seconds.",
+      prohibitedClaims: "No uptime, latency, or cost-savings guarantees.",
+      disclosureRequirements: "Include #ad or 'sponsored by Driftwood' in the caption.",
+      usageRights: "Organic reposts on Driftwood's channels for 90 days.",
     });
     return await ctx.db.insert("assignments", {
       opportunityId,
@@ -210,8 +210,8 @@ export async function seedSubmission(
     if (assignment === null) throw new Error("expected seeded assignment");
     const draft = {
       assignmentId: fixture.assignmentId,
-      draftUrl: "https://drive.example.com/drafts/seeded",
-      draftDescription: "Seeded draft",
+      draftUrl: "https://drive.example.com/drafts/driftwood-cli-screencast",
+      draftDescription: "Screencast: installing the Driftwood CLI and running a first deploy.",
       usesAiReview: assignment.usesAiReview,
     };
     if (status === "pending") {
@@ -220,7 +220,8 @@ export async function seedSubmission(
     return await ctx.db.insert("submissions", {
       ...draft,
       status,
-      reviewNote: status === "changesRequested" ? "Add the #ad disclosure." : undefined,
+      reviewNote:
+        status === "changesRequested" ? "Add #ad to the caption before posting." : undefined,
       reviewerType: "companyUser",
       reviewedBy: fixture.membership._id,
       reviewedAt: Date.now(),

@@ -32,8 +32,8 @@ import {
 const modules = import.meta.glob("../../**/*.ts");
 
 const draft = {
-  draftUrl: "https://drive.example.com/drafts/1",
-  draftDescription: "30-second unboxing, product shown at 0:03.",
+  draftUrl: "https://drive.example.com/drafts/driftwood-first-deploy",
+  draftDescription: "60-second walkthrough: install, `driftwood init`, first deploy at 0:45.",
 };
 
 const firstPage = { numItems: 10, cursor: null as string | null };
@@ -311,10 +311,10 @@ describe("reviewSubmission", () => {
 
     const reviewed = await reviewAs(t, fixture.membership, id, {
       status: "approved",
-      reviewNote: "  Great hook in the first second.  ",
+      reviewNote: "  Clear terminal font and a clean first deploy.  ",
     });
 
-    expect(reviewed.reviewNote).toBe("Great hook in the first second.");
+    expect(reviewed.reviewNote).toBe("Clear terminal font and a clean first deploy.");
   });
 
   test("requests changes with a note", async () => {
@@ -323,12 +323,12 @@ describe("reviewSubmission", () => {
 
     const reviewed = await reviewAs(t, fixture.membership, id, {
       status: "changesRequested",
-      reviewNote: "Add the #ad disclosure in the caption.",
+      reviewNote: "Blur the API key visible in the terminal at 0:32.",
     });
 
     expect(reviewed).toMatchObject({
       status: "changesRequested",
-      reviewNote: "Add the #ad disclosure in the caption.",
+      reviewNote: "Blur the API key visible in the terminal at 0:32.",
       reviewerType: "companyUser",
       reviewedBy: fixture.membership._id,
     });
@@ -478,7 +478,7 @@ describe("toCreatorSubmission", () => {
     const reviewed: Doc<"submissions"> = {
       ...base,
       status: "changesRequested",
-      reviewNote: "Add the #ad disclosure.",
+      reviewNote: "Add #ad to the caption before posting.",
       reviewerType: "companyUser",
       reviewedBy: "companyUsers|1" as Id<"companyUsers">,
       reviewedAt: 2,
@@ -487,7 +487,7 @@ describe("toCreatorSubmission", () => {
     expect(toCreatorSubmission(reviewed)).toEqual({
       ...base,
       status: "changesRequested",
-      reviewNote: "Add the #ad disclosure.",
+      reviewNote: "Add #ad to the caption before posting.",
       reviewerType: "companyUser",
       reviewedAt: 2,
     });
@@ -497,7 +497,7 @@ describe("toCreatorSubmission", () => {
     const overridden: Doc<"submissions"> = {
       ...base,
       status: "changesRequested",
-      reviewNote: "Prohibited claim in the caption.",
+      reviewNote: "Caption promises 99.99% uptime, which is a prohibited claim.",
       reviewerType: "operator",
       reviewedByOperator: "users|1" as Id<"users">,
       reviewedAt: 3,
@@ -508,7 +508,7 @@ describe("toCreatorSubmission", () => {
     expect(toCreatorSubmission(overridden)).toEqual({
       ...base,
       status: "changesRequested",
-      reviewNote: "Prohibited claim in the caption.",
+      reviewNote: "Caption promises 99.99% uptime, which is a prohibited claim.",
       reviewerType: "operator",
       reviewedAt: 3,
     });

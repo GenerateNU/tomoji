@@ -101,7 +101,7 @@ export const opportunityDiscover = opportunityList.pick("paginationOpts");
 export async function discoverOpportunities(
   ctx: QueryCtx,
   options: Infer<typeof opportunityDiscover>,
-): Promise<PaginationResult<Doc<"opportunities">>> {
+): Promise<PaginationResult<CreatorOpportunity>> {
   const result = await ctx.db
     .query("opportunities")
     .withIndex("by_status_and_deadline", (q) => q.eq("status", "open"))
@@ -117,7 +117,9 @@ export async function discoverOpportunities(
         return null;
       }
       const company = await ctx.db.get("companies", opportunity.companyId);
-      return company !== null && company.isActive ? opportunity : null;
+      return company !== null && company.isActive
+        ? toCreatorOpportunity(opportunity, company)
+        : null;
     }),
   );
 

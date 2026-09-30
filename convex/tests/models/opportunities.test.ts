@@ -60,9 +60,7 @@ describe("discoverOpportunities", () => {
         }),
     );
 
-    expect(result.page).toEqual([
-      await t.run(async (ctx) => await ctx.db.get("opportunities", open.opportunityId)),
-    ]);
+    expect(result.page).toMatchObject([{ _id: open.opportunityId, companyName: "Acme" }]);
   });
 
   test("suppresses opportunities under draft, paused, or closed campaigns", async () => {
@@ -154,7 +152,7 @@ describe("discoverOpportunities", () => {
     expect(result.page).toEqual([]);
   });
 
-  test("paginates complete documents in deadline order", async () => {
+  test("paginates public briefs in deadline order", async () => {
     const t = convexTest(schema, modules);
     const later = await seedOpportunity(
       t,
@@ -176,13 +174,15 @@ describe("discoverOpportunities", () => {
         }),
     );
 
-    expect(firstPage.page).toEqual([
-      await t.run(async (ctx) => await ctx.db.get("opportunities", sooner.opportunityId)),
+    expect(firstPage.page).toMatchObject([
+      { _id: sooner.opportunityId, companyName: "Acme", title: "Moisturizer launch video" },
     ]);
+    expect(firstPage.page[0]).not.toHaveProperty("companyId");
     expect(firstPage.isDone).toBe(false);
-    expect(secondPage.page).toEqual([
-      await t.run(async (ctx) => await ctx.db.get("opportunities", later.opportunityId)),
+    expect(secondPage.page).toMatchObject([
+      { _id: later.opportunityId, companyName: "Acme", title: "Moisturizer launch video" },
     ]);
+    expect(secondPage.page[0]).not.toHaveProperty("productAccessLink");
     expect(secondPage.isDone).toBe(true);
   });
 
@@ -213,9 +213,7 @@ describe("discoverOpportunities", () => {
 
     expect(firstPage.page).toEqual([]);
     expect(firstPage.isDone).toBe(false);
-    expect(secondPage.page).toEqual([
-      await t.run(async (ctx) => await ctx.db.get("opportunities", visible.opportunityId)),
-    ]);
+    expect(secondPage.page).toMatchObject([{ _id: visible.opportunityId, companyName: "Acme" }]);
     expect(secondPage.isDone).toBe(true);
   });
 

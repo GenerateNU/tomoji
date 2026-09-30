@@ -25,18 +25,53 @@ beforeEach(() => {
 afterEach(() => vi.useRealTimers());
 
 describe("opportunities.discover", () => {
-  test("returns complete opportunity documents to a creator", async () => {
+  test("returns public briefs with company names to a creator", async () => {
     const t = convexTest(schema, modules);
-    const owner = await seedOpportunity(t, { subject: "discover_owner" }, { isGated: true });
+    const owner = await seedOpportunity(
+      t,
+      { subject: "discover_owner" },
+      {
+        isGated: true,
+        productAccessLink: "https://example.com/private-product",
+      },
+    );
+    await t.run(
+      async (ctx) =>
+        await ctx.db.patch("companies", owner.membership.companyId, { name: "Discovery Brand" }),
+    );
     const asCreator = await seedUser(t, { subject: "discover_creator" });
 
     const result = await asCreator.query(api.opportunities.discover, {
       paginationOpts: { numItems: 10, cursor: null },
     });
 
-    expect(result.page).toEqual([
-      await t.run(async (ctx) => await ctx.db.get("opportunities", owner.opportunityId)),
+    expect(result.page).toMatchObject([
+      { _id: owner.opportunityId, companyName: "Discovery Brand", isGated: true },
     ]);
+    expect(Object.keys(result.page[0]).sort()).toEqual(
+      [
+        "_id",
+        "_creationTime",
+        "companyName",
+        "title",
+        "description",
+        "isGated",
+        "usesAiReviewDefault",
+        "targetApplicant",
+        "maxSlots",
+        "numFilledSlots",
+        "maxApplications",
+        "deadline",
+        "status",
+        "fixedFeeCents",
+        "cpmRateCents",
+        "paymentCapCents",
+        "contentRequirements",
+        "prohibitedClaims",
+        "disclosureRequirements",
+        "usageRights",
+      ].sort(),
+    );
     expect(result.isDone).toBe(true);
   });
 

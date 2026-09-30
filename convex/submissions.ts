@@ -25,10 +25,19 @@ import {
 } from "./models/submissions";
 import schema from "./schema";
 
+// Each read comes in two versions: full rows (`get` / `list`) for company users
+// and operators, and the creator shape (`getMine` / `listMine`) for creators.
+const oneSubmissionArgs = { submissionId: v.id("submissions") };
+const assignmentPageArgs = {
+  assignmentId: v.id("assignments"),
+  paginationOpts: paginationOptsValidator,
+};
+
 /**
  * Works out who is reading through `get` / `list`: company users and operators.
  * Company users go through `companyContext`, so their token's org must be one
- * they belong to. Creators are refused; they read through `getMine` / `listMine`.
+ * they belong to.
+ * Creators are refused; they read through `getMine` / `listMine`.
  *
  * @throws `forbidden` for creators, or `forbidden` / `not_synced` /
  * `misconfigured` from `companyContext`.
@@ -95,7 +104,7 @@ export const review = companyMutation({
  * @throws `forbidden` for creators, who use `getMine`.
  */
 export const get = authedQuery({
-  args: { submissionId: v.id("submissions") },
+  args: oneSubmissionArgs,
   returns: schema.doc("submissions"),
   handler: async (ctx, args) => {
     const viewer = await requireFullReader(ctx, ctx.user);
@@ -111,7 +120,7 @@ export const get = authedQuery({
  * @throws `forbidden` for creators, who use `listMine`.
  */
 export const list = authedQuery({
-  args: { assignmentId: v.id("assignments"), paginationOpts: paginationOptsValidator },
+  args: assignmentPageArgs,
   returns: paginationResultValidator(schema.doc("submissions")),
   handler: async (ctx, args) => {
     const viewer = await requireFullReader(ctx, ctx.user);
@@ -126,7 +135,7 @@ export const list = authedQuery({
  * @throws `not_found` if it doesn't exist or isn't the caller's.
  */
 export const getMine = creatorQuery({
-  args: { submissionId: v.id("submissions") },
+  args: oneSubmissionArgs,
   returns: creatorSubmission,
   handler: async (ctx, args) => {
     const { creatorId } = await requireCreatorProfile(ctx, ctx.user);
@@ -141,7 +150,7 @@ export const getMine = creatorQuery({
  * @throws `not_found` if the assignment doesn't exist or isn't the caller's.
  */
 export const listMine = creatorQuery({
-  args: { assignmentId: v.id("assignments"), paginationOpts: paginationOptsValidator },
+  args: assignmentPageArgs,
   returns: paginationResultValidator(creatorSubmission),
   handler: async (ctx, args) => {
     const { creatorId } = await requireCreatorProfile(ctx, ctx.user);

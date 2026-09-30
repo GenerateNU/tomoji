@@ -1,7 +1,7 @@
 /// <reference types="vite/client" />
 import { convexTest } from "convex-test";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import { api } from "../_generated/api";
+import { api, internal } from "../_generated/api";
 import { deactivateUser } from "../models/users";
 import schema from "../schema";
 import {
@@ -214,5 +214,109 @@ describe("assignments.get", () => {
       () => asWrongOrg.query(api.assignments.get, { assignmentId }),
       "forbidden",
     );
+  });
+});
+
+describe("assignments.acceptTerms", () => {
+  test("activates the calling creator's assignment", async () => {
+    const t = convexTest(schema, modules);
+    const { asCreator, assignmentId } = await seedDeal(t);
+
+    const result = await asCreator.mutation(api.assignments.acceptTerms, { assignmentId });
+
+    expect(result.status).toBe("active");
+  });
+
+  test("rejects a company user", async () => {
+    const t = convexTest(schema, modules);
+    const { owner, assignmentId } = await seedDeal(t);
+    await expectApiError(
+      () => owner.asCompany.mutation(api.assignments.acceptTerms, { assignmentId }),
+      "forbidden",
+    );
+  });
+
+  test("conceals another creator's assignment", async () => {
+    const t = convexTest(schema, modules);
+    const { assignmentId } = await seedDeal(t);
+    const asOtherCreator = await seedUser(t, { subject: "other_creator" });
+    await expectApiError(
+      () => asOtherCreator.mutation(api.assignments.acceptTerms, { assignmentId }),
+      "not_found",
+    );
+  });
+});
+
+describe("assignments.declineTerms", () => {
+  test("cancels the calling creator's assignment", async () => {
+    const t = convexTest(schema, modules);
+    const { asCreator, assignmentId } = await seedDeal(t);
+
+    const result = await asCreator.mutation(api.assignments.declineTerms, { assignmentId });
+
+    expect(result.status).toBe("cancelled");
+  });
+
+  test("rejects a company user", async () => {
+    const t = convexTest(schema, modules);
+    const { owner, assignmentId } = await seedDeal(t);
+    await expectApiError(
+      () => owner.asCompany.mutation(api.assignments.declineTerms, { assignmentId }),
+      "forbidden",
+    );
+  });
+});
+
+describe("assignments.cancel", () => {
+  test("lets a company member cancel a termsPending assignment", async () => {
+    const t = convexTest(schema, modules);
+    const { owner, assignmentId } = await seedDeal(t);
+
+    const result = await owner.asCompany.mutation(api.assignments.cancel, { assignmentId });
+
+    expect(result.status).toBe("cancelled");
+  });
+
+  test("rejects a creator", async () => {
+    const t = convexTest(schema, modules);
+    const { asCreator, assignmentId } = await seedDeal(t);
+    await expectApiError(
+      () => asCreator.mutation(api.assignments.cancel, { assignmentId }),
+      "forbidden",
+    );
+  });
+
+  test("conceals another company's assignment", async () => {
+    const t = convexTest(schema, modules);
+    const { assignmentId } = await seedDeal(t);
+    const other = await seedOpportunity(t, { subject: "other", orgId: "org_other" });
+    await expectApiError(
+      () => other.asCompany.mutation(api.assignments.cancel, { assignmentId }),
+      "not_found",
+    );
+  });
+
+  test("rejects a forged organization claim", async () => {
+    const t = convexTest(schema, modules);
+    const { assignmentId } = await seedDeal(t);
+    const asWrongOrg = await seedWrongOrgCaller(t);
+    await expectApiError(
+      () => asWrongOrg.mutation(api.assignments.cancel, { assignmentId }),
+      "forbidden",
+    );
+  });
+});
+
+describe("assignments.complete", () => {
+  test("completes an active assignment for server-side callers", async () => {
+    const t = convexTest(schema, modules);
+    const { assignmentId } = await seedDeal(t);
+    await t.run(
+      async (ctx) => await ctx.db.patch("assignments", assignmentId, { status: "active" }),
+    );
+
+    const result = await t.mutation(internal.assignments.complete, { assignmentId });
+
+    expect(result.status).toBe("completed");
   });
 });

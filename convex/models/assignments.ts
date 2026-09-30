@@ -260,3 +260,124 @@ export async function listCreatorAssignments(
   );
   return await mergedStream(streams, ["_creationTime"]).paginate(options.paginationOpts);
 }
+
+/**
+ * Accepts the terms on the creator's own assignment, making it active.
+ *
+ * @throws `not_found` if the assignment does not exist or is not the
+ * creator's.
+ * @throws `invalid_state` if the assignment is not termsPending.
+ */
+export async function acceptAssignmentTerms(
+  ctx: MutationCtx,
+  creatorId: Id<"creators">,
+  assignmentId: Id<"assignments">,
+): Promise<Doc<"assignments">> {
+  const assignment = await requirePendingAssignment(
+    ctx,
+    { role: "creator", creatorId },
+    assignmentId,
+  );
+  await ctx.db.patch("assignments", assignment._id, { status: "active" });
+  return { ...assignment, status: "active" };
+}
+
+/**
+ * Declines the terms on the creator's own assignment, cancelling it and
+ * freeing its slot.
+ *
+ * @throws `not_found` if the assignment does not exist or is not the
+ * creator's.
+ * @throws `invalid_state` if the assignment is not termsPending.
+ */
+export async function declineAssignmentTerms(
+  ctx: MutationCtx,
+  creatorId: Id<"creators">,
+  assignmentId: Id<"assignments">,
+): Promise<Doc<"assignments">> {
+  const assignment = await requirePendingAssignment(
+    ctx,
+    { role: "creator", creatorId },
+    assignmentId,
+  );
+  return await cancelAssignment(ctx, assignment);
+}
+
+/**
+ * Cancels one of the company's assignments before the creator accepts the
+ * terms, freeing its slot. Active assignments go through disputes instead.
+ *
+ * @throws `not_found` if the assignment does not exist or belongs to another
+ * company.
+ * @throws `invalid_state` if the assignment is not termsPending.
+ */
+export async function cancelPendingAssignment(
+  ctx: MutationCtx,
+  companyId: Id<"companies">,
+  assignmentId: Id<"assignments">,
+): Promise<Doc<"assignments">> {
+  const assignment = await requirePendingAssignment(
+    ctx,
+    { role: "company", companyId },
+    assignmentId,
+  );
+  return await cancelAssignment(ctx, assignment);
+}
+
+async function requirePendingAssignment(
+  ctx: MutationCtx,
+  viewer: AssignmentViewer,
+  assignmentId: Id<"assignments">,
+): Promise<Doc<"assignments">> {
+  const assignment = await requireAssignment(ctx, viewer, assignmentId);
+  if (assignment.status !== "termsPending") {
+    throw apiError("invalid_state", { reason: "assignment_not_pending" });
+  }
+  return assignment;
+}
+
+/**
+ * Cancels a termsPending or active assignment and frees its slot. Does no
+ * authorization: callers such as the company cancel route or dispute
+ * resolution decide who may cancel and from which status.
+ *
+ * @throws `invalid_state` if the assignment is already completed or cancelled.
+ */
+export async function cancelAssignment(
+  ctx: MutationCtx,
+  assignment: Doc<"assignments">,
+): Promise<Doc<"assignments">> {
+  if (assignment.status !== "termsPending" && assignment.status !== "active") {
+    throw apiError("invalid_state", { reason: "assignment_not_cancellable" });
+  }
+  await ctx.db.patch("assignments", assignment._id, { status: "cancelled" });
+  const opportunity = await ctx.db.get("opportunities", assignment.opportunityId);
+  if (opportunity !== null && opportunity.numFilledSlots > 0) {
+    await ctx.db.patch("opportunities", opportunity._id, {
+      numFilledSlots: opportunity.numFilledSlots - 1,
+    });
+  }
+  return { ...assignment, status: "cancelled" };
+}
+
+/**
+ * Marks an active assignment completed. The slot stays filled. Does no
+ * authorization; what triggers completion is not decided yet.
+ *
+ * @throws `not_found` if the assignment does not exist.
+ * @throws `invalid_state` if the assignment is not active.
+ */
+export async function completeAssignment(
+  ctx: MutationCtx,
+  assignmentId: Id<"assignments">,
+): Promise<Doc<"assignments">> {
+  const assignment = await ctx.db.get("assignments", assignmentId);
+  if (assignment === null) {
+    throw apiError("not_found", { resource: "assignment" });
+  }
+  if (assignment.status !== "active") {
+    throw apiError("invalid_state", { reason: "assignment_not_active" });
+  }
+  await ctx.db.patch("assignments", assignment._id, { status: "completed" });
+  return { ...assignment, status: "completed" };
+}

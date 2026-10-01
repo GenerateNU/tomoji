@@ -3,8 +3,13 @@ import { convexTest } from "convex-test";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import type { Doc, Id } from "../../_generated/dataModel";
 import {
+  acceptAssignmentTerms,
+  cancelAssignment,
+  cancelPendingAssignment,
   claimAssignment,
+  completeAssignment,
   createAssignmentFromOffer,
+  declineAssignmentTerms,
   listAssignments,
   listCreatorAssignments,
   requireAssignment,
@@ -701,6 +706,233 @@ describe("requireAssignment", () => {
 
     await expectApiError(
       () => t.run(async (ctx) => await requireAssignment(ctx, { role: "operator" }, assignmentId)),
+      "not_found",
+    );
+  });
+});
+
+/** Claims a real assignment (so a slot is taken), then moves it to `status`. */
+async function seedClaimed(
+  t: TestConvex,
+  status: Doc<"assignments">["status"] = "termsPending",
+  overrides: { maxSlots?: number; maxApplications?: number } = {},
+) {
+  const owner = await seedOpportunity(t, { subject: "owner" }, overrides);
+  const creatorId = await seedCreatorId(t, "creator");
+  const assignmentId = await t.run(async (ctx) => {
+    const id = await claimAssignment(ctx, creatorId, owner.opportunityId);
+    await ctx.db.patch("assignments", id, { status });
+    return id;
+  });
+  const read = async () =>
+    await t.run(async (ctx) => ({
+      assignment: await ctx.db.get("assignments", assignmentId),
+      opportunity: await ctx.db.get("opportunities", owner.opportunityId),
+    }));
+  return { owner, creatorId, assignmentId, read };
+}
+
+const notPending = ["active", "completed", "cancelled"] as const;
+
+describe("acceptAssignmentTerms", () => {
+  test("moves the creator's termsPending assignment to active and keeps the slot", async () => {
+    const t = convexTest(schema, modules);
+    const { creatorId, assignmentId, read } = await seedClaimed(t);
+
+    const result = await t.run(
+      async (ctx) => await acceptAssignmentTerms(ctx, creatorId, assignmentId),
+    );
+
+    const { assignment, opportunity } = await read();
+    expect(result).toEqual(assignment);
+    expect(assignment?.status).toBe("active");
+    expect(opportunity?.numFilledSlots).toBe(1);
+  });
+
+  test.each(notPending)("refuses a %s assignment without changing it", async (status) => {
+    const t = convexTest(schema, modules);
+    const { creatorId, assignmentId, read } = await seedClaimed(t, status);
+    const before = await read();
+
+    await expect(
+      t.run(async (ctx) => await acceptAssignmentTerms(ctx, creatorId, assignmentId)),
+    ).rejects.toMatchObject({ data: { code: "invalid_state", reason: "assignment_not_pending" } });
+    expect(await read()).toEqual(before);
+  });
+
+  test("conceals another creator's assignment", async () => {
+    const t = convexTest(schema, modules);
+    const { assignmentId } = await seedClaimed(t);
+    const otherCreatorId = await seedCreatorId(t, "other_creator");
+
+    await expectApiError(
+      () => t.run(async (ctx) => await acceptAssignmentTerms(ctx, otherCreatorId, assignmentId)),
+      "not_found",
+    );
+  });
+});
+
+describe("declineAssignmentTerms", () => {
+  test("cancels the creator's termsPending assignment and frees its slot for someone else", async () => {
+    const t = convexTest(schema, modules);
+    const { owner, creatorId, assignmentId, read } = await seedClaimed(t, "termsPending", {
+      maxSlots: 1,
+      maxApplications: 1,
+    });
+
+    const result = await t.run(
+      async (ctx) => await declineAssignmentTerms(ctx, creatorId, assignmentId),
+    );
+
+    const { assignment, opportunity } = await read();
+    expect(result).toEqual(assignment);
+    expect(assignment?.status).toBe("cancelled");
+    expect(opportunity?.numFilledSlots).toBe(0);
+    const nextCreatorId = await seedCreatorId(t, "next_creator");
+    await t.run(async (ctx) => await claimAssignment(ctx, nextCreatorId, owner.opportunityId));
+  });
+
+  test.each(notPending)("refuses a %s assignment without changing it", async (status) => {
+    const t = convexTest(schema, modules);
+    const { creatorId, assignmentId, read } = await seedClaimed(t, status);
+    const before = await read();
+
+    await expect(
+      t.run(async (ctx) => await declineAssignmentTerms(ctx, creatorId, assignmentId)),
+    ).rejects.toMatchObject({ data: { code: "invalid_state", reason: "assignment_not_pending" } });
+    expect(await read()).toEqual(before);
+  });
+
+  test("conceals another creator's assignment", async () => {
+    const t = convexTest(schema, modules);
+    const { assignmentId } = await seedClaimed(t);
+    const otherCreatorId = await seedCreatorId(t, "other_creator");
+
+    await expectApiError(
+      () => t.run(async (ctx) => await declineAssignmentTerms(ctx, otherCreatorId, assignmentId)),
+      "not_found",
+    );
+  });
+});
+
+describe("cancelPendingAssignment", () => {
+  test("cancels the company's termsPending assignment and frees its slot", async () => {
+    const t = convexTest(schema, modules);
+    const { owner, assignmentId, read } = await seedClaimed(t);
+
+    const result = await t.run(
+      async (ctx) => await cancelPendingAssignment(ctx, owner.membership.companyId, assignmentId),
+    );
+
+    const { assignment, opportunity } = await read();
+    expect(result).toEqual(assignment);
+    expect(assignment?.status).toBe("cancelled");
+    expect(opportunity?.numFilledSlots).toBe(0);
+  });
+
+  test.each(notPending)("refuses a %s assignment without changing it", async (status) => {
+    const t = convexTest(schema, modules);
+    const { owner, assignmentId, read } = await seedClaimed(t, status);
+    const before = await read();
+
+    await expect(
+      t.run(
+        async (ctx) => await cancelPendingAssignment(ctx, owner.membership.companyId, assignmentId),
+      ),
+    ).rejects.toMatchObject({ data: { code: "invalid_state", reason: "assignment_not_pending" } });
+    expect(await read()).toEqual(before);
+  });
+
+  test("conceals another company's assignment", async () => {
+    const t = convexTest(schema, modules);
+    const { assignmentId, read } = await seedClaimed(t);
+    const other = await seedOpportunity(t, { subject: "other", orgId: "org_other" });
+    const before = await read();
+
+    await expectApiError(
+      () =>
+        t.run(
+          async (ctx) =>
+            await cancelPendingAssignment(ctx, other.membership.companyId, assignmentId),
+        ),
+      "not_found",
+    );
+    expect(await read()).toEqual(before);
+  });
+});
+
+describe("cancelAssignment", () => {
+  test.each(["termsPending", "active"] as const)(
+    "cancels a %s assignment and frees its slot",
+    async (status) => {
+      const t = convexTest(schema, modules);
+      const { assignmentId, read } = await seedClaimed(t, status);
+
+      await t.run(async (ctx) => {
+        const assignment = await ctx.db.get("assignments", assignmentId);
+        await cancelAssignment(ctx, assignment!);
+      });
+
+      const { assignment, opportunity } = await read();
+      expect(assignment?.status).toBe("cancelled");
+      expect(opportunity?.numFilledSlots).toBe(0);
+    },
+  );
+
+  test.each(["completed", "cancelled"] as const)(
+    "refuses a %s assignment without freeing a slot",
+    async (status) => {
+      const t = convexTest(schema, modules);
+      const { assignmentId, read } = await seedClaimed(t, status);
+      const before = await read();
+
+      await expect(
+        t.run(async (ctx) => {
+          const assignment = await ctx.db.get("assignments", assignmentId);
+          await cancelAssignment(ctx, assignment!);
+        }),
+      ).rejects.toMatchObject({
+        data: { code: "invalid_state", reason: "assignment_not_cancellable" },
+      });
+      expect(await read()).toEqual(before);
+    },
+  );
+});
+
+describe("completeAssignment", () => {
+  test("moves an active assignment to completed and keeps its slot", async () => {
+    const t = convexTest(schema, modules);
+    const { assignmentId, read } = await seedClaimed(t, "active");
+
+    const result = await t.run(async (ctx) => await completeAssignment(ctx, assignmentId));
+
+    const { assignment, opportunity } = await read();
+    expect(result).toEqual(assignment);
+    expect(assignment?.status).toBe("completed");
+    expect(opportunity?.numFilledSlots).toBe(1);
+  });
+
+  test.each(["termsPending", "completed", "cancelled"] as const)(
+    "refuses a %s assignment without changing it",
+    async (status) => {
+      const t = convexTest(schema, modules);
+      const { assignmentId, read } = await seedClaimed(t, status);
+      const before = await read();
+
+      await expect(
+        t.run(async (ctx) => await completeAssignment(ctx, assignmentId)),
+      ).rejects.toMatchObject({ data: { code: "invalid_state", reason: "assignment_not_active" } });
+      expect(await read()).toEqual(before);
+    },
+  );
+
+  test("reports a missing assignment as not found", async () => {
+    const t = convexTest(schema, modules);
+    const { assignmentId } = await seedClaimed(t, "active");
+    await t.run(async (ctx) => await ctx.db.delete("assignments", assignmentId));
+
+    await expectApiError(
+      () => t.run(async (ctx) => await completeAssignment(ctx, assignmentId)),
       "not_found",
     );
   });

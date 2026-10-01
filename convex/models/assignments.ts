@@ -161,7 +161,7 @@ function canViewAssignment(viewer: AssignmentViewer, assignment: Doc<"assignment
   }
 }
 
-export const assignmentList = schema
+export const assignmentListFilters = schema
   .doc("assignments")
   .pick("opportunityId", "status")
   .partial()
@@ -170,9 +170,6 @@ export const assignmentList = schema
     paginationOpts: paginationOptsValidator,
   });
 
-/** Most opportunities a campaign filter merges; past this, filter by opportunity. */
-const MAX_CAMPAIGN_OPPORTUNITIES = 100;
-
 /**
  * Returns one page of the company's assignments, optionally filtered by
  * opportunity, campaign, and status. Results are ordered by status, then
@@ -180,12 +177,11 @@ const MAX_CAMPAIGN_OPPORTUNITIES = 100;
  *
  * @throws `not_found` if the opportunity or campaign belongs to another
  * company, or the opportunity is not in the given campaign.
- * @throws `invalid_state` if the campaign has too many opportunities to merge.
  */
 export async function listAssignments(
   ctx: QueryCtx,
   companyId: Id<"companies">,
-  options: Infer<typeof assignmentList>,
+  options: Infer<typeof assignmentListFilters>,
 ): Promise<PaginationResult<Doc<"assignments">>> {
   const { opportunityId, campaignId, status, paginationOpts } = options;
 
@@ -215,31 +211,14 @@ export async function listAssignments(
     if (campaign === null || campaign.companyId !== companyId) {
       throw apiError("not_found", { resource: "campaign" });
     }
-    // Assignments do not store campaignId, so merge each opportunity's range.
-    const opportunities = await ctx.db
-      .query("opportunities")
-      .withIndex("by_campaignId_and_status", (q) => q.eq("campaignId", campaignId))
-      .take(MAX_CAMPAIGN_OPPORTUNITIES + 1);
-    if (opportunities.length > MAX_CAMPAIGN_OPPORTUNITIES) {
-      throw apiError("invalid_state", { reason: "too_many_opportunities" });
-    }
-    // mergedStream throws on an empty list.
-    if (opportunities.length === 0) {
-      return { page: [], isDone: true, continueCursor: "" };
-    }
-    const streams = opportunities.map((opportunity) =>
-      stream(ctx.db, schema)
-        .query("assignments")
-        .withIndex("by_opportunityId_and_status", (q) => {
-          const range = q.eq("opportunityId", opportunity._id);
-          return status === undefined ? range : range.eq("status", status);
-        })
-        .order("desc"),
-    );
-    // Without a status filter each range is ordered by status, then creation
-    // time, so merge on both to keep the same order as the other filters.
-    const orderBy = status === undefined ? ["status", "_creationTime"] : ["_creationTime"];
-    return await mergedStream(streams, orderBy).paginate(paginationOpts);
+    return await ctx.db
+      .query("assignments")
+      .withIndex("by_campaignId_and_status", (q) => {
+        const range = q.eq("campaignId", campaignId);
+        return status === undefined ? range : range.eq("status", status);
+      })
+      .order("desc")
+      .paginate(paginationOpts);
   }
 
   return await ctx.db
@@ -260,7 +239,7 @@ const PHASE_STATUSES = {
   past: ["completed", "cancelled"],
 } as const satisfies Record<Infer<typeof assignmentPhase>, Doc<"assignments">["status"][]>;
 
-export const creatorAssignmentList = v.object({
+export const creatorAssignmentListFilters = v.object({
   phase: assignmentPhase,
   paginationOpts: paginationOptsValidator,
 });
@@ -269,7 +248,7 @@ export const creatorAssignmentList = v.object({
 export async function listCreatorAssignments(
   ctx: QueryCtx,
   creatorId: Id<"creators">,
-  options: Infer<typeof creatorAssignmentList>,
+  options: Infer<typeof creatorAssignmentListFilters>,
 ): Promise<PaginationResult<Doc<"assignments">>> {
   const streams = PHASE_STATUSES[options.phase].map((status) =>
     stream(ctx.db, schema)

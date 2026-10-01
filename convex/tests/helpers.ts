@@ -224,21 +224,27 @@ export async function seedOpportunity(
   return { ...owner, opportunityId };
 }
 
-/** Inserts an assignment directly, in any status, with the seeded opportunity's default terms. */
+/**
+ * Inserts an assignment directly, in any status, with the seeded opportunity's
+ * default terms. Ownership fields are copied from the opportunity.
+ */
 export async function seedAssignment(
   t: TestConvex,
-  fields: Pick<Doc<"assignments">, "opportunityId" | "creatorId" | "companyId"> &
+  fields: Pick<Doc<"assignments">, "opportunityId" | "creatorId"> &
     Partial<Pick<Doc<"assignments">, "status">>,
 ): Promise<Id<"assignments">> {
-  return await t.run(
-    async (ctx) =>
-      await ctx.db.insert("assignments", {
-        fixedFeeCents: 10_000,
-        cpmRateCents: 500,
-        paymentCapCents: 25_000,
-        usesAiReview: true,
-        status: "termsPending",
-        ...fields,
-      }),
-  );
+  return await t.run(async (ctx) => {
+    const opportunity = await ctx.db.get("opportunities", fields.opportunityId);
+    if (opportunity === null) throw new Error("expected seeded opportunity");
+    return await ctx.db.insert("assignments", {
+      companyId: opportunity.companyId,
+      campaignId: opportunity.campaignId,
+      fixedFeeCents: 10_000,
+      cpmRateCents: 500,
+      paymentCapCents: 25_000,
+      usesAiReview: true,
+      status: "termsPending",
+      ...fields,
+    });
+  });
 }

@@ -400,7 +400,6 @@ async function assign(
   return await seedAssignment(t, {
     opportunityId,
     creatorId,
-    companyId: owner.membership.companyId,
     status,
   });
 }
@@ -503,7 +502,7 @@ describe("listAssignments", () => {
     );
   });
 
-  test("merges a campaign's opportunities and excludes other campaigns", async () => {
+  test("lists every assignment across a campaign's opportunities and excludes other campaigns", async () => {
     const t = convexTest(schema, modules);
     const owner = await seedOpportunity(t, { subject: "owner" });
     const secondOpportunityId = await addOpportunity(t, owner);

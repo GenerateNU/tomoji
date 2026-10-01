@@ -10,9 +10,9 @@ import {
   creatorQuery,
 } from "./lib/functions";
 import {
-  assignmentList,
+  assignmentListFilters,
   claimAssignment,
-  creatorAssignmentList,
+  creatorAssignmentListFilters,
   listAssignments,
   listCreatorAssignments,
   requireAssignment,
@@ -50,7 +50,7 @@ export const claim = creatorMutation({
  * company.
  */
 export const list = companyQuery({
-  args: assignmentList.fields,
+  args: assignmentListFilters.fields,
   returns: paginationResultValidator(assignment),
   handler: async (ctx, args) => {
     return await listAssignments(ctx, ctx.membership.companyId, args);
@@ -62,7 +62,7 @@ export const list = companyQuery({
  * active, `past` for completed and cancelled. Newest first.
  */
 export const listMine = creatorQuery({
-  args: creatorAssignmentList.fields,
+  args: creatorAssignmentListFilters.fields,
   returns: paginationResultValidator(assignment),
   handler: async (ctx, args) => {
     const creatorId = await requireCallerCreatorId(ctx, ctx.user);

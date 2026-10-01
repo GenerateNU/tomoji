@@ -105,7 +105,6 @@ async function seedDeal(t: TestConvex) {
   const assignmentId = await seedAssignment(t, {
     opportunityId: owner.opportunityId,
     creatorId,
-    companyId: owner.membership.companyId,
   });
   return { owner, asCreator, creatorId, assignmentId };
 }

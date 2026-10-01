@@ -743,6 +743,104 @@ describe("campaigns.resume", () => {
   });
 });
 
+describe("campaigns.close", () => {
+  test.each(["admin", "member"] as const)(
+    "lets a company %s close a teammate's campaign and safely repeat the request",
+    async (role) => {
+      const t = convexTest(schema, modules);
+      const asAuthor = await seedUser(t, { subject: "ccl-author", org: { id: "org_acme" } });
+      const asTeammate = await seedUser(t, {
+        subject: "ccl-teammate",
+        org: { id: "org_acme", role },
+      });
+      const campaignId = await asAuthor.mutation(api.campaigns.create, createArgs());
+      const before = await t.run(async (ctx) => ctx.db.get("campaigns", campaignId));
+
+      expect(await asTeammate.mutation(api.campaigns.close, { campaignId })).toBeNull();
+      expect(await asTeammate.mutation(api.campaigns.close, { campaignId })).toBeNull();
+      expect(await t.run(async (ctx) => ctx.db.get("campaigns", campaignId))).toEqual({
+        ...before,
+        status: "closed",
+      });
+    },
+  );
+
+  test("rejects another company's campaign without changing it", async () => {
+    const t = convexTest(schema, modules);
+    const asOwner = await seedUser(t, { subject: "ccl-owner", org: { id: "org_acme" } });
+    const asOther = await seedUser(t, { subject: "ccl-other", org: { id: "org_other" } });
+    const campaignId = await asOwner.mutation(api.campaigns.create, createArgs());
+    const before = await t.run(async (ctx) => ctx.db.get("campaigns", campaignId));
+
+    await expectApiError(() => asOther.mutation(api.campaigns.close, { campaignId }), "not_found");
+    expect(await t.run(async (ctx) => ctx.db.get("campaigns", campaignId))).toEqual(before);
+  });
+
+  test("rejects a client-supplied company identity", async () => {
+    const t = convexTest(schema, modules);
+    const asOwner = await seedUser(t, { subject: "ccl-owner", org: { id: "org_acme" } });
+    const asOther = await seedUser(t, { subject: "ccl-other", org: { id: "org_other" } });
+    const campaignId = await asOwner.mutation(api.campaigns.create, createArgs());
+    const campaign = await t.run(async (ctx) => ctx.db.get("campaigns", campaignId));
+    const args = { campaignId, companyId: campaign!.companyId };
+
+    await expect(asOther.mutation(api.campaigns.close, args)).rejects.toThrow(
+      "Unexpected field `companyId`",
+    );
+    expect(await t.run(async (ctx) => ctx.db.get("campaigns", campaignId))).toEqual(campaign);
+  });
+
+  test("rejects a signed-out caller", async () => {
+    const t = convexTest(schema, modules);
+    const asOwner = await seedUser(t, { subject: "ccl-owner", org: { id: "org_acme" } });
+    const campaignId = await asOwner.mutation(api.campaigns.create, createArgs());
+
+    await expectApiError(
+      () => t.mutation(api.campaigns.close, { campaignId }),
+      "not_authenticated",
+    );
+    expect(await t.run(async (ctx) => ctx.db.get("campaigns", campaignId))).toHaveProperty(
+      "status",
+      "open",
+    );
+  });
+
+  test("rejects a creator", async () => {
+    const t = convexTest(schema, modules);
+    const asOwner = await seedUser(t, { subject: "ccl-owner", org: { id: "org_acme" } });
+    const asCreator = await seedUser(t, { subject: "ccl-creator" });
+    const campaignId = await asOwner.mutation(api.campaigns.create, createArgs());
+
+    await expectApiError(
+      () => asCreator.mutation(api.campaigns.close, { campaignId }),
+      "forbidden",
+    );
+    expect(await t.run(async (ctx) => ctx.db.get("campaigns", campaignId))).toHaveProperty(
+      "status",
+      "open",
+    );
+  });
+
+  test("rejects a caller claiming the owner's org without membership", async () => {
+    const t = convexTest(schema, modules);
+    const asOwner = await seedUser(t, { subject: "ccl-owner", org: { id: "org_acme" } });
+    await seedUser(t, { subject: "ccl-outsider", org: { id: "org_other" } });
+    const campaignId = await asOwner.mutation(api.campaigns.create, createArgs());
+    const asWrongOrg = t.withIdentity(
+      workosIdentity({ subject: "ccl-outsider", org_id: "org_acme" }),
+    );
+
+    await expectApiError(
+      () => asWrongOrg.mutation(api.campaigns.close, { campaignId }),
+      "forbidden",
+    );
+    expect(await t.run(async (ctx) => ctx.db.get("campaigns", campaignId))).toHaveProperty(
+      "status",
+      "open",
+    );
+  });
+});
+
 describe("campaigns.create", () => {
   test.each([
     { role: "admin", status: "draft" },

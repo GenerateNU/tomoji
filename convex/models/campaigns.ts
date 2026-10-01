@@ -142,6 +142,20 @@ export async function resumeCampaign(
   await ctx.db.patch("campaigns", campaignId, { status: "open" });
 }
 
+/** Closes an owned campaign once, preserving its details, opportunities, and assignments. */
+export async function closeCampaign(
+  ctx: MutationCtx,
+  campaignId: Id<"campaigns">,
+  companyId: Id<"companies">,
+): Promise<void> {
+  const campaign = await requireCampaign(ctx, campaignId, companyId);
+  if (campaign.status === "closed") {
+    return;
+  }
+
+  await ctx.db.patch("campaigns", campaignId, { status: "closed" });
+}
+
 /**
  * Creates a draft or open campaign with a trimmed, nonblank brief.
  *

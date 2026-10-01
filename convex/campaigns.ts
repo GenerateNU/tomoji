@@ -2,6 +2,7 @@ import { paginationOptsValidator, paginationResultValidator } from "convex/serve
 import { v } from "convex/values";
 import {
   campaignUpdate,
+  closeCampaign,
   createCampaign,
   listCampaigns,
   pauseCampaign,
@@ -118,6 +119,22 @@ export const resume = companyMutation({
   returns: v.null(),
   handler: async (ctx, args) => {
     await resumeCampaign(ctx, args.campaignId, ctx.membership.companyId);
+    return null;
+  },
+});
+
+/**
+ * Closes a draft, open, or paused campaign, preserving its opportunities and assignments.
+ * An already-closed campaign is a successful no-op.
+ * Open to any company member until the company-admin builder is available.
+ *
+ * @throws `not_found` if the campaign is missing or belongs to another company.
+ */
+export const close = companyMutation({
+  args: { campaignId: v.id("campaigns") },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    await closeCampaign(ctx, args.campaignId, ctx.membership.companyId);
     return null;
   },
 });

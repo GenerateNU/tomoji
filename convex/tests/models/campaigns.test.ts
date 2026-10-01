@@ -5,6 +5,7 @@ import { describe, expect, test, vi } from "vitest";
 import type { Doc, Id } from "../../_generated/dataModel";
 import { companyContext } from "../../lib/functions";
 import {
+  closeCampaign,
   createCampaign,
   listCampaigns,
   pauseCampaign,
@@ -922,6 +923,130 @@ describe("resumeCampaign", () => {
 
       await expect(
         t.run(async (ctx) => resumeCampaign(ctx, campaignId, caller.companyId)),
+      ).rejects.toHaveProperty("data", { code: "not_found", message: "Not found", campaignId });
+
+      expect(await t.run(async (ctx) => ctx.db.get("campaigns", campaignId))).toEqual(before);
+    },
+  );
+});
+
+describe("closeCampaign", () => {
+  test.each(["draft", "open", "paused"] as const)(
+    "closes a %s campaign without changing its details or ownership",
+    async (status) => {
+      const t = convexTest(schema, modules);
+      const owner = await seedOwner(t, "cclose-owner");
+      const campaignId = await t.run(async (ctx) =>
+        ctx.db.insert("campaigns", campaignDoc(owner, { status, title: "  Original title  " })),
+      );
+      const before = await t.run(async (ctx) => ctx.db.get("campaigns", campaignId));
+
+      await t.run(async (ctx) => closeCampaign(ctx, campaignId, owner.companyId));
+
+      expect(await t.run(async (ctx) => ctx.db.get("campaigns", campaignId))).toEqual({
+        ...before,
+        status: "closed",
+      });
+    },
+  );
+
+  test("preserves all opportunity statuses and the active assignment", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOwner(t, "cclose-children");
+    const creatorId = await seedCreatorId(t, "cclose-creator");
+    const { campaignId, opportunityIds, assignmentId } = await t.run(async (ctx) => {
+      const campaignId = await ctx.db.insert("campaigns", campaignDoc(owner));
+      const opportunityIds: Id<"opportunities">[] = [];
+      for (const status of ["draft", "open", "paused", "closed"] as const) {
+        opportunityIds.push(
+          await ctx.db.insert("opportunities", {
+            ...opportunityFields,
+            campaignId,
+            createdBy: owner.createdBy,
+            status,
+          }),
+        );
+      }
+      const assignmentId = await ctx.db.insert("assignments", {
+        opportunityId: opportunityIds[1],
+        creatorId,
+        fixedFeeCents: 1500,
+        cpmRateCents: 200,
+        paymentCapCents: 3000,
+        usesAiReview: false,
+        status: "active",
+      });
+      return { campaignId, opportunityIds, assignmentId };
+    });
+    const before = await t.run(async (ctx) => ({
+      campaign: await ctx.db.get("campaigns", campaignId),
+      opportunities: await Promise.all(opportunityIds.map((id) => ctx.db.get("opportunities", id))),
+      assignment: await ctx.db.get("assignments", assignmentId),
+    }));
+
+    await t.run(async (ctx) => closeCampaign(ctx, campaignId, owner.companyId));
+
+    expect(
+      await t.run(async (ctx) => ({
+        campaign: await ctx.db.get("campaigns", campaignId),
+        opportunities: await Promise.all(
+          opportunityIds.map((id) => ctx.db.get("opportunities", id)),
+        ),
+        assignment: await ctx.db.get("assignments", assignmentId),
+      })),
+    ).toEqual({ ...before, campaign: { ...before.campaign, status: "closed" } });
+  });
+
+  test("closing an already closed campaign succeeds without further changes", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOwner(t, "cclose-repeat");
+    const campaignId = await t.run(async (ctx) => ctx.db.insert("campaigns", campaignDoc(owner)));
+    await t.run(async (ctx) => closeCampaign(ctx, campaignId, owner.companyId));
+    const closed = await t.run(async (ctx) => ctx.db.get("campaigns", campaignId));
+
+    await t.run(async (ctx) => closeCampaign(ctx, campaignId, owner.companyId));
+
+    expect(closed?.status).toBe("closed");
+    expect(await t.run(async (ctx) => ctx.db.get("campaigns", campaignId))).toEqual(closed);
+  });
+
+  test("can close an expired campaign with invalid legacy details", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOwner(t, "cclose-legacy");
+    const campaignId = await t.run(async (ctx) =>
+      ctx.db.insert(
+        "campaigns",
+        campaignDoc(owner, { title: "", budgetCents: -1, startsAt: 2000, endsAt: 1000 }),
+      ),
+    );
+    const before = await t.run(async (ctx) => ctx.db.get("campaigns", campaignId));
+
+    await t.run(async (ctx) => closeCampaign(ctx, campaignId, owner.companyId));
+
+    expect(await t.run(async (ctx) => ctx.db.get("campaigns", campaignId))).toEqual({
+      ...before,
+      status: "closed",
+    });
+  });
+
+  test.each(["missing", "foreign-open", "foreign-closed"] as const)(
+    "rejects a %s campaign before deciding whether it is already closed",
+    async (kind) => {
+      const t = convexTest(schema, modules);
+      const owner = await seedOwner(t, "cclose-owner");
+      const caller = await seedOwner(t, "cclose-caller", "org_other");
+      const campaignId = await t.run(async (ctx) => {
+        const id = await ctx.db.insert(
+          "campaigns",
+          campaignDoc(owner, { status: kind === "foreign-open" ? "open" : "closed" }),
+        );
+        if (kind === "missing") await ctx.db.delete("campaigns", id);
+        return id;
+      });
+      const before = await t.run(async (ctx) => ctx.db.get("campaigns", campaignId));
+
+      await expect(
+        t.run(async (ctx) => closeCampaign(ctx, campaignId, caller.companyId)),
       ).rejects.toHaveProperty("data", { code: "not_found", message: "Not found", campaignId });
 
       expect(await t.run(async (ctx) => ctx.db.get("campaigns", campaignId))).toEqual(before);

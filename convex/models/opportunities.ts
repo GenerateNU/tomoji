@@ -1,3 +1,4 @@
+import { paginationOptsValidator, type PaginationResult } from "convex/server";
 import { v, type Infer } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
@@ -84,6 +85,43 @@ export async function getOpportunity(
     throw apiError("not_found", { resource: "opportunity" });
   }
   return toCreatorOpportunity(opportunity, company);
+}
+
+export const opportunityList = schema
+  .doc("opportunities")
+  .pick("campaignId", "status")
+  .partial()
+  .extend({
+    paginationOpts: paginationOptsValidator,
+  });
+
+/** Lists the company's opportunities, optionally scoped to an owned campaign and status. */
+export async function listOpportunities(
+  ctx: QueryCtx,
+  companyId: Id<"companies">,
+  options: Infer<typeof opportunityList>,
+): Promise<PaginationResult<Doc<"opportunities">>> {
+  const { campaignId, status } = options;
+  if (campaignId !== undefined) {
+    const campaign = await ctx.db.get("campaigns", campaignId);
+    if (campaign === null || campaign.companyId !== companyId) {
+      throw apiError("not_found", { resource: "campaign" });
+    }
+    return await ctx.db
+      .query("opportunities")
+      .withIndex("by_campaignId_and_status", (q) => {
+        const range = q.eq("campaignId", campaignId);
+        return status === undefined ? range : range.eq("status", status);
+      })
+      .paginate(options.paginationOpts);
+  }
+  return await ctx.db
+    .query("opportunities")
+    .withIndex("by_companyId_and_status", (q) => {
+      const range = q.eq("companyId", companyId);
+      return status === undefined ? range : range.eq("status", status);
+    })
+    .paginate(options.paginationOpts);
 }
 
 /** Creates a draft or open opportunity in the caller's campaign; ownership is server-derived. */

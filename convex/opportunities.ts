@@ -1,13 +1,25 @@
+import { paginationResultValidator } from "convex/server";
 import { v } from "convex/values";
-import { authedQuery, companyMutation } from "./lib/functions";
+import { authedQuery, companyMutation, companyQuery } from "./lib/functions";
 import { findOrgId } from "./lib/identity";
 import {
   createOpportunity,
   creatorOpportunity,
   getOpportunity,
+  listOpportunities,
   opportunityCreate,
+  opportunityList,
 } from "./models/opportunities";
 import schema from "./schema";
+
+/** Returns the caller's company opportunities, optionally filtered by campaign and status. */
+export const list = companyQuery({
+  args: opportunityList.fields,
+  returns: paginationResultValidator(schema.doc("opportunities")),
+  handler: async (ctx, args) => {
+    return await listOpportunities(ctx, ctx.membership.companyId, args);
+  },
+});
 
 /** Creates a draft or open opportunity in a campaign owned by the caller's company. */
 export const create = companyMutation({

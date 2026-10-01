@@ -23,6 +23,115 @@ beforeEach(() => {
 
 afterEach(() => vi.useRealTimers());
 
+describe("opportunities.list", () => {
+  test("allows a company member to list their company's stored opportunities", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(t, { subject: "list_owner", role: "member" });
+    await seedOpportunity(t, { subject: "other_owner", orgId: "org_other" });
+
+    const result = await owner.asCompany.query(api.opportunities.list, {
+      campaignId: owner.campaignId,
+      status: "open",
+      paginationOpts: { numItems: 10, cursor: null },
+    });
+
+    expect(result.page).toEqual([
+      await t.run(async (ctx) => await ctx.db.get("opportunities", owner.opportunityId)),
+    ]);
+    expect(result.isDone).toBe(true);
+  });
+
+  test("allows a company admin to list drafts without filters", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(
+      t,
+      { subject: "list_admin", role: "admin" },
+      { status: "draft" },
+    );
+
+    const result = await owner.asCompany.query(api.opportunities.list, {
+      paginationOpts: { numItems: 10, cursor: null },
+    });
+
+    expect(result.page).toEqual([
+      await t.run(async (ctx) => await ctx.db.get("opportunities", owner.opportunityId)),
+    ]);
+  });
+
+  test("rejects a signed-out caller", async () => {
+    const t = convexTest(schema, modules);
+    await expectApiError(
+      () =>
+        t.query(api.opportunities.list, {
+          paginationOpts: { numItems: 10, cursor: null },
+        }),
+      "not_authenticated",
+    );
+  });
+
+  test("rejects a creator", async () => {
+    const t = convexTest(schema, modules);
+    const asCreator = await seedUser(t, { subject: "list_creator" });
+    await expectApiError(
+      () =>
+        asCreator.query(api.opportunities.list, {
+          paginationOpts: { numItems: 10, cursor: null },
+        }),
+      "forbidden",
+    );
+  });
+
+  test("rejects an operator", async () => {
+    const t = convexTest(schema, modules);
+    const asOperator = await seedOperator(t, "list_operator");
+    await expectApiError(
+      () =>
+        asOperator.query(api.opportunities.list, {
+          paginationOpts: { numItems: 10, cursor: null },
+        }),
+      "forbidden",
+    );
+  });
+
+  test("rejects a company caller claiming an organization they do not belong to", async () => {
+    const t = convexTest(schema, modules);
+    const asWrongOrg = await seedWrongOrgCaller(t);
+    await expectApiError(
+      () =>
+        asWrongOrg.query(api.opportunities.list, {
+          paginationOpts: { numItems: 10, cursor: null },
+        }),
+      "forbidden",
+    );
+  });
+
+  test("rejects an invalid status", async () => {
+    const t = convexTest(schema, modules);
+    const { asCompany } = await seedCampaign(t, { subject: "list_owner" });
+    await expect(
+      asCompany.query(api.opportunities.list, {
+        // @ts-expect-error Exercise the public argument validator.
+        status: "archived",
+        paginationOpts: { numItems: 10, cursor: null },
+      }),
+    ).rejects.toThrow(
+      'Validator error: Expected one of literal, literal, literal, literal, got `"archived"`',
+    );
+  });
+
+  test("rejects a client-supplied company scope", async () => {
+    const t = convexTest(schema, modules);
+    const { asCompany, membership } = await seedCampaign(t, { subject: "list_owner" });
+    await expect(
+      asCompany.query(api.opportunities.list, {
+        // @ts-expect-error Company scope must come from the authenticated membership.
+        companyId: membership.companyId,
+        paginationOpts: { numItems: 10, cursor: null },
+      }),
+    ).rejects.toThrow("Unexpected field `companyId`");
+  });
+});
+
 describe("opportunities.create", () => {
   test("rejects an inactive company through the shared membership guard", async () => {
     const t = convexTest(schema, modules);

@@ -120,6 +120,20 @@ export async function publishCampaign(
   await ctx.db.patch("campaigns", campaignId, { status: "open" });
 }
 
+/** Pauses an open campaign without changing its details, opportunities, or assignments. */
+export async function pauseCampaign(
+  ctx: MutationCtx,
+  campaignId: Id<"campaigns">,
+  companyId: Id<"companies">,
+): Promise<void> {
+  const campaign = await requireCampaign(ctx, campaignId, companyId);
+  if (campaign.status !== "open") {
+    throw apiError("invalid_state", { reason: "campaign_not_open" });
+  }
+
+  await ctx.db.patch("campaigns", campaignId, { status: "paused" });
+}
+
 /**
  * Creates a draft or open campaign with a trimmed, nonblank brief.
  *

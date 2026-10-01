@@ -4,6 +4,7 @@ import {
   campaignUpdate,
   createCampaign,
   listCampaigns,
+  pauseCampaign,
   publishCampaign,
   removeCampaign,
   requireCampaign,
@@ -84,6 +85,22 @@ export const publish = companyMutation({
   returns: v.null(),
   handler: async (ctx, args) => {
     await publishCampaign(ctx, args.campaignId, ctx.membership.companyId);
+    return null;
+  },
+});
+
+/**
+ * Pauses an open campaign in the caller's company without changing its opportunities.
+ * Open to any company member until the company-admin builder is available.
+ *
+ * @throws `not_found` if the campaign is missing or belongs to another company.
+ * @throws `invalid_state` if the campaign is not open.
+ */
+export const pause = companyMutation({
+  args: { campaignId: v.id("campaigns") },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    await pauseCampaign(ctx, args.campaignId, ctx.membership.companyId);
     return null;
   },
 });

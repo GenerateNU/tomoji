@@ -97,12 +97,13 @@ export const list = companyQuery({
 
 /**
  * Sends an offer on a pending application. `offerExpiresAt` defaults to 48
- * hours from now. Offers are not capped by open slots.
+ * hours from now, rounded up to the next :00 or :30 UTC; a chosen expiry must
+ * be on :00 or :30. Offers are not capped by open slots.
  *
  * @throws `not_found` if the application does not exist or belongs to another
  * company.
  * @throws `invalid_state` if the application is not pending, the opportunity is
- * paused or closed, or the expiry is not in the future.
+ * paused or closed, or the expiry is not a future :00/:30 UTC time.
  */
 export const offer = companyMutation({
   args: { applicationId: v.id("applications"), offerExpiresAt: v.optional(v.number()) },

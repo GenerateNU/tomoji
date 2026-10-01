@@ -179,6 +179,10 @@ export async function listApplicationsByOpportunityId(
 /** How long an offer stays open when the company does not choose an expiry. */
 export const DEFAULT_OFFER_DURATION_MS = 48 * 60 * 60 * 1000;
 
+// Offer expiries sit on :00/:30 UTC boundaries, the same times the expiry cron
+// runs, so an offer is marked expired exactly when it expires.
+const HALF_HOUR_MS = 30 * 60 * 1000;
+
 /**
  * Sends an offer on a pending application to one of the company's
  * opportunities. Offers are not capped by open slots: the first creators to
@@ -186,8 +190,12 @@ export const DEFAULT_OFFER_DURATION_MS = 48 * 60 * 60 * 1000;
  *
  * @throws `not_found` if the application does not exist or belongs to another
  * company.
+ * The default expiry is 48 hours, rounded up to the next :00 or :30 UTC. A
+ * company-chosen expiry must already be on :00 or :30; it is refused rather
+ * than rounded, like opportunity deadlines.
+ *
  * @throws `invalid_state` if the application is not pending, the opportunity is
- * not open, or `offerExpiresAt` is not in the future.
+ * not open, or `offerExpiresAt` is not a future :00/:30 UTC time.
  */
 export async function offerApplication(
   ctx: MutationCtx,
@@ -197,8 +205,14 @@ export async function offerApplication(
 ): Promise<Doc<"applications">> {
   const application = await requirePendingForReview(ctx, companyId, applicationId);
   const now = Date.now();
-  const offerExpiresAt = requestedExpiresAt ?? now + DEFAULT_OFFER_DURATION_MS;
-  if (!Number.isFinite(offerExpiresAt) || offerExpiresAt <= now) {
+  const offerExpiresAt =
+    requestedExpiresAt ??
+    Math.ceil((now + DEFAULT_OFFER_DURATION_MS) / HALF_HOUR_MS) * HALF_HOUR_MS;
+  if (
+    !Number.isSafeInteger(offerExpiresAt) ||
+    offerExpiresAt % HALF_HOUR_MS !== 0 ||
+    offerExpiresAt <= now
+  ) {
     throw apiError("invalid_state", { reason: "invalid_offer_expiry" });
   }
 

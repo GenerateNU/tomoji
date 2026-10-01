@@ -22,6 +22,10 @@ import { expectApiError, seedCreatorId, seedGatedOpportunity, type TestConvex } 
 const modules = import.meta.glob("../../**/*.ts");
 
 const DAY = 24 * 60 * 60 * 1000;
+const HALF_HOUR = 30 * 60 * 1000;
+
+/** The first :00 or :30 UTC boundary at or after `time`. */
+const nextHalfHour = (time: number) => Math.ceil(time / HALF_HOUR) * HALF_HOUR;
 
 type SeededIds = { opportunityId: Id<"opportunities"> };
 
@@ -425,13 +429,16 @@ describe("offerApplication", () => {
 
     expect(offered.status).toBe("offered");
     expect(offered.statusLastUpdatedAt).toBeGreaterThanOrEqual(before);
-    expect(offered.offerExpiresAt).toBe(offered.statusLastUpdatedAt! + DEFAULT_OFFER_DURATION_MS);
+    // Rounded up to :00/:30 so the expiry cron marks it exactly on time.
+    expect(offered.offerExpiresAt).toBe(
+      nextHalfHour(offered.statusLastUpdatedAt! + DEFAULT_OFFER_DURATION_MS),
+    );
   });
 
-  test("uses a company-chosen expiry", async () => {
+  test("uses a company-chosen expiry on :00 or :30", async () => {
     const t = convexTest(schema, modules);
     const { companyId, applicationId } = await seedPending(t);
-    const offerExpiresAt = Date.now() + 3 * DAY;
+    const offerExpiresAt = nextHalfHour(Date.now() + 3 * DAY);
 
     const offered = await t.run(
       async (ctx) => await offerApplication(ctx, companyId, applicationId, offerExpiresAt),
@@ -455,17 +462,15 @@ describe("offerApplication", () => {
   });
 
   test.each([
-    { name: "in the past", offset: -DAY },
-    { name: "right now", offset: 0 },
-  ])("rejects an expiry $name", async ({ offset }) => {
+    { name: "in the past", expiresAt: () => nextHalfHour(Date.now()) - HALF_HOUR },
+    { name: "off :00/:30", expiresAt: () => nextHalfHour(Date.now() + DAY) + 60_000 },
+  ])("rejects an expiry $name", async ({ expiresAt }) => {
     const t = convexTest(schema, modules);
     const { companyId, applicationId } = await seedPending(t);
 
     await expectReason(
       () =>
-        t.run(
-          async (ctx) => await offerApplication(ctx, companyId, applicationId, Date.now() + offset),
-        ),
+        t.run(async (ctx) => await offerApplication(ctx, companyId, applicationId, expiresAt())),
       "invalid_offer_expiry",
     );
   });

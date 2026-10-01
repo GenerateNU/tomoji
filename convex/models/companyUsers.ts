@@ -93,7 +93,8 @@ export async function listCompanyUsers(
 
 /**
  * Resolves the caller's membership in `orgId`, which is what proves they may
- * act on that company's data. Returns the `companyUsers` row so callers get
+ * act on that company's data. Inactive companies cannot use company endpoints.
+ * Returns the `companyUsers` row so callers get
  * both the `companyId` and the membership id for attribution.
  */
 export async function requireMembership(
@@ -104,6 +105,9 @@ export async function requireMembership(
   const company = await getCompanyByWorkosId(ctx, orgId);
   if (company === null) {
     throw apiError("not_synced", { orgId });
+  }
+  if (!company.isActive) {
+    throw apiError("forbidden");
   }
   const membership = await getCompanyUser(ctx, userId, company._id);
   if (membership === null) {

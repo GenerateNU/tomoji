@@ -178,7 +178,7 @@ describe("applications.list", () => {
   test("hides another company's opportunity as not found", async () => {
     const t = convexTest(schema, modules);
     const { opportunityId } = await seedApplication(t);
-    const other = await seedOpportunity(t, { subject: "other_owner", orgId: "org_other" });
+    const other = await seedGatedOpportunity(t, { subject: "other_owner", orgId: "org_other" });
 
     await expectApiError(
       () =>
@@ -226,7 +226,7 @@ describe("applications.offer", () => {
   test("hides another company's application as not found", async () => {
     const t = convexTest(schema, modules);
     const { applicationId } = await seedApplication(t);
-    const other = await seedOpportunity(t, { subject: "other_owner", orgId: "org_other" });
+    const other = await seedGatedOpportunity(t, { subject: "other_owner", orgId: "org_other" });
 
     await expectApiError(
       () => other.asCompany.mutation(api.applications.offer, { applicationId }),
@@ -261,7 +261,7 @@ describe("applications.reject", () => {
   test("hides another company's application as not found", async () => {
     const t = convexTest(schema, modules);
     const { applicationId } = await seedApplication(t);
-    const other = await seedOpportunity(t, { subject: "other_owner", orgId: "org_other" });
+    const other = await seedGatedOpportunity(t, { subject: "other_owner", orgId: "org_other" });
 
     await expectApiError(
       () => other.asCompany.mutation(api.applications.reject, { applicationId }),

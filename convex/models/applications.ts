@@ -193,16 +193,16 @@ export async function offerApplication(
   ctx: MutationCtx,
   companyId: Id<"companies">,
   applicationId: Id<"applications">,
-  args: { offerExpiresAt?: number },
+  requestedExpiresAt?: number,
 ): Promise<Doc<"applications">> {
   const application = await requirePendingForReview(ctx, companyId, applicationId);
   const now = Date.now();
-  const offerExpiresAt = args.offerExpiresAt ?? now + DEFAULT_OFFER_DURATION_MS;
+  const offerExpiresAt = requestedExpiresAt ?? now + DEFAULT_OFFER_DURATION_MS;
   if (!Number.isFinite(offerExpiresAt) || offerExpiresAt <= now) {
     throw apiError("invalid_state", { reason: "invalid_offer_expiry" });
   }
 
-  const patch = { status: "offered" as const, offerSentAt: now, offerExpiresAt };
+  const patch = { status: "offered" as const, statusLastUpdatedAt: now, offerExpiresAt };
   await ctx.db.patch("applications", application._id, patch);
   return { ...application, ...patch };
 }
@@ -221,8 +221,9 @@ export async function rejectApplication(
   applicationId: Id<"applications">,
 ): Promise<Doc<"applications">> {
   const application = await requirePendingForReview(ctx, companyId, applicationId);
-  await ctx.db.patch("applications", application._id, { status: "rejected" });
-  return { ...application, status: "rejected" };
+  const patch = { status: "rejected" as const, statusLastUpdatedAt: Date.now() };
+  await ctx.db.patch("applications", application._id, patch);
+  return { ...application, ...patch };
 }
 
 /** Loads a pending application the company may review while it is open. */

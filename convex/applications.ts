@@ -104,7 +104,12 @@ export const offer = companyMutation({
   args: { applicationId: v.id("applications"), offerExpiresAt: v.optional(v.number()) },
   returns: application,
   handler: async (ctx, args) => {
-    return await offerApplication(ctx, ctx.membership.companyId, args.applicationId, args);
+    return await offerApplication(
+      ctx,
+      ctx.membership.companyId,
+      args.applicationId,
+      args.offerExpiresAt,
+    );
   },
 });
 

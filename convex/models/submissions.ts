@@ -4,7 +4,7 @@ import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { apiError } from "../lib/errors";
 import { requireNonBlank } from "../lib/validation";
-import { submissionStatus } from "../schemas/submissions.schema";
+import { submissionShapes } from "../schemas/submissions.schema";
 
 // --- Validators and types ---
 
@@ -16,7 +16,10 @@ export const submissionDraft = v.object({
 });
 export type SubmissionDraft = Infer<typeof submissionDraft>;
 
-/** A review decision. A note is required when requesting changes. */
+/**
+ * A review decision. A note is required when requesting changes; on an
+ * approval it is optional, and a blank one is stored as none.
+ */
 export const submissionReview = v.union(
   v.object({ status: v.literal("approved"), reviewNote: v.optional(v.string()) }),
   v.object({ status: v.literal("changesRequested"), reviewNote: v.string() }),
@@ -29,25 +32,25 @@ export type CompanyUserReviewedSubmission = Extract<
 >;
 
 /**
- * A submission as creators see it: the draft and the review outcome, without
- * who reviewed it or any dispute details. Creator routes return this validator,
- * so Convex rejects any response that carries an extra field.
+ * A submission as `get` and `list` return it, to every caller: the stored row
+ * plus `closedWithoutReview`.
+ *
+ * - Reviewer identity (`reviewedBy`, `reviewedByOperator`, and `reviewedBy`
+ *   inside `overriddenReview`) is optional here: company users and operators
+ *   always get it, creators never do. `toSubmissionView` decides which.
+ * - `closedWithoutReview` is derived on every read, never stored: `true` when a
+ *   submission is still `pending` but its assignment is no longer active
+ *   (completed or cancelled), so it will never be reviewed. Clients show it as
+ *   closed.
  */
-export const creatorSubmission = v.object({
-  _id: v.id("submissions"),
-  _creationTime: v.number(),
-  assignmentId: v.id("assignments"),
-  draftUrl: v.string(),
-  draftDescription: v.string(),
-  status: submissionStatus,
-  usesAiReview: v.boolean(),
-  reviewNote: v.optional(v.string()),
-  reviewerType: v.optional(
-    v.union(v.literal("ai"), v.literal("companyUser"), v.literal("operator")),
-  ),
-  reviewedAt: v.optional(v.number()),
-});
-export type CreatorSubmission = Infer<typeof creatorSubmission>;
+export const submissionView = v.union(
+  ...submissionShapes(v.optional(v.id("companyUsers")), v.optional(v.id("users")), {
+    _id: v.id("submissions"),
+    _creationTime: v.number(),
+    closedWithoutReview: v.boolean(),
+  }),
+);
+export type SubmissionView = Infer<typeof submissionView>;
 
 /**
  * Who is reading or acting on submissions. Routes resolve it from the caller's
@@ -85,12 +88,29 @@ function requireText(value: string, field: keyof typeof MAX_LENGTH): string {
 }
 
 /**
- * Returns the trimmed draft URL.
+ * Like `requireText`, but for an optional field: returns `undefined` when the
+ * value is missing or blank instead of throwing.
+ *
+ * @throws `invalid_state` with reason `<field>_too_long`.
+ */
+function optionalText(
+  value: string | undefined,
+  field: keyof typeof MAX_LENGTH,
+): string | undefined {
+  if (value === undefined || value.trim() === "") return undefined;
+  return requireText(value, field);
+}
+
+/**
+ * Returns the draft URL in its parsed form: percent-encoded, with no stray
+ * whitespace and a lowercase scheme and host. That form is what gets stored,
+ * so reviewers open exactly the link that was validated.
  *
  * @throws `invalid_state` with reason `draftUrl_blank`, `draftUrl_too_long`, or
- * `draftUrl_invalid`.
+ * `draftUrl_invalid` (not http(s), or it includes login details).
  */
 function requireDraftUrl(value: string): string {
+  // Checks the raw text's length first, so oversized input is never parsed.
   const trimmed = requireText(value, "draftUrl");
   let url: URL;
   try {
@@ -102,7 +122,16 @@ function requireDraftUrl(value: string): string {
   if (url.protocol !== "http:" && url.protocol !== "https:") {
     throw apiError("invalid_state", { reason: "draftUrl_invalid" });
   }
-  return trimmed;
+  // `https://drive.google.com@evil.example` goes to evil.example. Draft links
+  // never need login details, so reject them rather than silently strip them.
+  if (url.username !== "" || url.password !== "") {
+    throw apiError("invalid_state", { reason: "draftUrl_invalid" });
+  }
+  // Encoding can make the URL longer than what was typed, so check again.
+  if (url.href.length > MAX_LENGTH.draftUrl) {
+    throw apiError("invalid_state", { reason: "draftUrl_too_long" });
+  }
+  return url.href;
 }
 
 // --- Access ---
@@ -174,30 +203,90 @@ async function requireSubmissionAccess(
   return { submission, assignment };
 }
 
-// --- Creator shape ---
+// --- Read shapes ---
 
 /**
- * Converts a stored submission to the creator shape. It copies an explicit list
- * of fields, so a field added to the schema later stays hidden from creators
- * until someone adds it here on purpose.
+ * Whether a submission will never be reviewed: it's still `pending`, but its
+ * assignment was completed or cancelled. A reviewed submission is never closed
+ * without review, whatever happened to its assignment later.
  */
-export function toCreatorSubmission(submission: Doc<"submissions">): CreatorSubmission {
-  const view: CreatorSubmission = {
+function isClosedWithoutReview(
+  submission: Doc<"submissions">,
+  assignment: Doc<"assignments">,
+): boolean {
+  return submission.status === "pending" && assignment.status !== "active";
+}
+
+/**
+ * Returns a submission as the viewer may see it. Company users and operators get
+ * the stored row; creators get it without reviewer identity. Both get
+ * `closedWithoutReview`.
+ */
+export function toSubmissionView(
+  viewer: SubmissionViewer,
+  submission: Doc<"submissions">,
+  closedWithoutReview: boolean,
+): SubmissionView {
+  switch (viewer.role) {
+    case "company":
+    case "operator":
+      return { ...submission, closedWithoutReview };
+    case "creator":
+      return toCreatorView(submission, closedWithoutReview);
+  }
+}
+
+/** A review's status and note, kept paired so a change request keeps its note. */
+function reviewOutcome(
+  review:
+    | { status: "approved"; reviewNote?: string }
+    | { status: "changesRequested"; reviewNote: string },
+) {
+  return review.status === "changesRequested"
+    ? { status: review.status, reviewNote: review.reviewNote }
+    : { status: review.status, reviewNote: review.reviewNote };
+}
+
+/**
+ * A submission without who reviewed it, at either level. It copies an explicit
+ * list of fields rather than removing the hidden ones, so a field added to the
+ * schema later stays hidden from creators until someone adds it here on purpose.
+ */
+function toCreatorView(
+  submission: Doc<"submissions">,
+  closedWithoutReview: boolean,
+): SubmissionView {
+  const draft = {
     _id: submission._id,
     _creationTime: submission._creationTime,
     assignmentId: submission.assignmentId,
     draftUrl: submission.draftUrl,
     draftDescription: submission.draftDescription,
-    status: submission.status,
     usesAiReview: submission.usesAiReview,
+    closedWithoutReview,
   };
-  if (submission.status === "pending") return view;
-  return {
-    ...view,
-    reviewNote: submission.reviewNote,
-    reviewerType: submission.reviewerType,
-    reviewedAt: submission.reviewedAt,
-  };
+  if (submission.status === "pending") return { ...draft, status: "pending" };
+
+  const review = { ...draft, ...reviewOutcome(submission), reviewedAt: submission.reviewedAt };
+  switch (submission.reviewerType) {
+    case "ai":
+      return { ...review, reviewerType: "ai" };
+    case "companyUser":
+      return { ...review, reviewerType: "companyUser" };
+    case "operator": {
+      const replaced = submission.overriddenReview;
+      return {
+        ...review,
+        reviewerType: "operator",
+        overriddenReview: {
+          ...reviewOutcome(replaced),
+          reviewerType: replaced.reviewerType,
+          reviewedAt: replaced.reviewedAt,
+        },
+        disputeId: submission.disputeId,
+      };
+    }
+  }
 }
 
 // --- Writes ---
@@ -230,11 +319,13 @@ async function getLatestSubmission(
 }
 
 /**
- * Submits a creator's draft for review on their own active assignment.
+ * Submits a creator's draft for review on their own active assignment. The URL
+ * is stored in its parsed form.
  *
  * @throws `not_found` if the assignment doesn't exist or isn't the creator's.
  * @throws `invalid_state` if the assignment isn't active, a draft is already
- * approved, or a draft field is blank, too long, or the URL isn't http(s).
+ * approved, a draft field is blank or too long, or the URL isn't http(s) or
+ * includes login details.
  * @throws `conflict` if a draft is already pending review.
  * @returns the new submission's id.
  */
@@ -269,11 +360,12 @@ export async function createSubmission(
 
 /**
  * Records a company user's review of a pending submission from their company.
- * Reviews are final: only a `pending` submission can be reviewed.
+ * Reviews are final: only a `pending` submission can be reviewed. A blank note
+ * on an approval is stored as no note.
  *
  * @throws `not_found` if the submission doesn't exist or isn't the company's.
  * @throws `invalid_state` if it was already reviewed, the assignment isn't
- * active, or the review note is blank or too long.
+ * active, the note on a change request is blank, or the note is too long.
  * @returns the reviewed submission as stored.
  */
 export async function reviewSubmission(
@@ -291,17 +383,23 @@ export async function reviewSubmission(
     throw apiError("invalid_state", { reason: "already_reviewed" });
   }
   // The assignment may have been cancelled or completed while the draft waited.
+  // Reads report such a draft as `closedWithoutReview`, so it isn't left looking
+  // like it's still awaiting review.
   if (assignment.status !== "active") {
     throw apiError("invalid_state", { reason: "assignment_not_active" });
   }
   // TODO(ai-layer): reject when `submission.usesAiReview` is true. Until the AI
   // layer exists, company users review every submission.
 
+  // A change request must tell the creator what to fix, so its note can't be
+  // blank. An approval's note is optional, so a blank one is stored as none.
+  // Built per branch so the type keeps each status paired with its note rule.
+  const outcome =
+    review.status === "changesRequested"
+      ? { status: review.status, reviewNote: requireText(review.reviewNote, "reviewNote") }
+      : { status: review.status, reviewNote: optionalText(review.reviewNote, "reviewNote") };
   const patch = {
-    status: review.status,
-    // The validator requires a note for `changesRequested` - this rejects blank ones.
-    reviewNote:
-      review.reviewNote === undefined ? undefined : requireText(review.reviewNote, "reviewNote"),
+    ...outcome,
     reviewerType: "companyUser" as const,
     reviewedBy: membership._id,
     reviewedAt: Date.now(),
@@ -311,22 +409,26 @@ export async function reviewSubmission(
 }
 
 // --- Reads ---
-// `requireSubmission` and `listSubmissions` return rows as stored. Creator
-// routes use the `…CreatorSubmission(s)` versions, which return the creator shape.
+// One pair for every caller: `toSubmissionView` decides what the viewer sees.
 
-/** @throws `not_found` if the submission doesn't exist or isn't the viewer's. */
+/**
+ * Returns one submission as the viewer may see it (see `toSubmissionView`).
+ *
+ * @throws `not_found` if the submission doesn't exist or isn't the viewer's.
+ */
 export async function requireSubmission(
   ctx: QueryCtx,
   viewer: SubmissionViewer,
   submissionId: Id<"submissions">,
-): Promise<Doc<"submissions">> {
-  const { submission } = await requireSubmissionAccess(ctx, viewer, submissionId);
-  return submission;
+): Promise<SubmissionView> {
+  const { submission, assignment } = await requireSubmissionAccess(ctx, viewer, submissionId);
+  return toSubmissionView(viewer, submission, isClosedWithoutReview(submission, assignment));
 }
 
 /**
- * Returns one page of an assignment's submissions, newest first. Access is
- * checked once, on the assignment.
+ * Returns one page of an assignment's submissions, newest first, as the viewer
+ * may see them. Access is checked once, on the assignment, which also gives
+ * every row its `closedWithoutReview` flag.
  *
  * @throws `not_found` if the assignment doesn't exist or isn't the viewer's.
  */
@@ -335,37 +437,17 @@ export async function listSubmissions(
   viewer: SubmissionViewer,
   assignmentId: Id<"assignments">,
   paginationOpts: PaginationOptions,
-): Promise<PaginationResult<Doc<"submissions">>> {
-  await requireAssignmentAccess(ctx, viewer, assignmentId);
-  return await ctx.db
+): Promise<PaginationResult<SubmissionView>> {
+  const assignment = await requireAssignmentAccess(ctx, viewer, assignmentId);
+  const result = await ctx.db
     .query("submissions")
     .withIndex("by_assignmentId", (q) => q.eq("assignmentId", assignmentId))
     .order("desc")
     .paginate(paginationOpts);
-}
-
-/** `requireSubmission` for a creator, in the creator shape. */
-export async function requireCreatorSubmission(
-  ctx: QueryCtx,
-  creatorId: Id<"creators">,
-  submissionId: Id<"submissions">,
-): Promise<CreatorSubmission> {
-  const submission = await requireSubmission(ctx, { role: "creator", creatorId }, submissionId);
-  return toCreatorSubmission(submission);
-}
-
-/** `listSubmissions` for a creator, in the creator shape. */
-export async function listCreatorSubmissions(
-  ctx: QueryCtx,
-  creatorId: Id<"creators">,
-  assignmentId: Id<"assignments">,
-  paginationOpts: PaginationOptions,
-): Promise<PaginationResult<CreatorSubmission>> {
-  const result = await listSubmissions(
-    ctx,
-    { role: "creator", creatorId },
-    assignmentId,
-    paginationOpts,
-  );
-  return { ...result, page: result.page.map(toCreatorSubmission) };
+  return {
+    ...result,
+    page: result.page.map((submission) =>
+      toSubmissionView(viewer, submission, isClosedWithoutReview(submission, assignment)),
+    ),
+  };
 }

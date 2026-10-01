@@ -244,6 +244,85 @@ export async function seedOneSubmission(
   return { fixture, submissionId };
 }
 
+/**
+ * Seeds an assignment with a submission an operator overrode to resolve the
+ * creator's dispute: the fixture's company member requested changes, then an
+ * operator approved it. It carries every reviewer-identity field a submission
+ * can hold, including the company reviewer inside `overriddenReview`.
+ */
+export async function seedOverriddenSubmission(t: TestConvex, prefix: string) {
+  const fixture = await seedAssignment(t, prefix);
+  const operatorSubject = `${prefix}-operator`;
+  await seedOperator(t, operatorSubject);
+
+  const submissionId = await t.run(async (ctx) => {
+    const operator = await getUserByWorkosId(ctx, operatorSubject);
+    const creator = await ctx.db.get("creators", fixture.creatorId);
+    if (operator === null || creator === null) throw new Error("expected seeded users");
+    const reviewedAt = Date.now();
+    const disputeId = await ctx.db.insert("disputes", {
+      assignmentId: fixture.assignmentId,
+      openedBy: creator.userId,
+      reason: "Review contradicts the brief",
+      description: "The brief allows showing the deploy log, which the review asked me to cut.",
+      isResolved: true,
+      resolvedBy: operator._id,
+      resolution: "The brief allows the deploy log; approved as submitted.",
+    });
+    return await ctx.db.insert("submissions", {
+      assignmentId: fixture.assignmentId,
+      draftUrl: "https://drive.example.com/drafts/driftwood-cli-screencast",
+      draftDescription: "Screencast: installing the Driftwood CLI and running a first deploy.",
+      usesAiReview: false,
+      status: "approved",
+      reviewerType: "operator",
+      reviewedByOperator: operator._id,
+      reviewedAt,
+      overriddenReview: {
+        status: "changesRequested",
+        reviewNote: "Cut the deploy log at 0:40.",
+        reviewerType: "companyUser",
+        reviewedBy: fixture.membership._id,
+        reviewedAt: reviewedAt - 60_000,
+      },
+      disputeId,
+    });
+  });
+  return { fixture, submissionId };
+}
+
+/**
+ * The fields that identify a reviewer: top level, and inside the review an
+ * operator replaced. Only company users and operators may see them.
+ */
+export function reviewerIdentityOf(view: object): unknown[] {
+  const fields = view as {
+    reviewedBy?: unknown;
+    reviewedByOperator?: unknown;
+    overriddenReview?: { reviewedBy?: unknown };
+  };
+  return [fields.reviewedBy, fields.reviewedByOperator, fields.overriddenReview?.reviewedBy].filter(
+    (value) => value !== undefined,
+  );
+}
+
+/**
+ * What a creator should get for a full view: everything except reviewer
+ * identity. Built by removing fields, independently of the model's own
+ * field-by-field copy, so the two check each other.
+ */
+export function withoutReviewerIdentity(view: object): object {
+  const copy: Record<string, unknown> = { ...view };
+  delete copy.reviewedBy;
+  delete copy.reviewedByOperator;
+  if (copy.overriddenReview !== undefined) {
+    const overriddenReview = { ...(copy.overriddenReview as Record<string, unknown>) };
+    delete overriddenReview.reviewedBy;
+    copy.overriddenReview = overriddenReview;
+  }
+  return copy;
+}
+
 // `TestConvex` loses the schema types, so rows read through `t.run` come back
 // untyped. These two helpers hold the only casts back to the submission type.
 

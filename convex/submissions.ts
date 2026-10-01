@@ -2,68 +2,51 @@ import { paginationOptsValidator, paginationResultValidator } from "convex/serve
 import { v } from "convex/values";
 import type { Doc } from "./_generated/dataModel";
 import type { QueryCtx } from "./_generated/server";
-import { apiError } from "./lib/errors";
-import {
-  authedQuery,
-  companyContext,
-  companyMutation,
-  creatorMutation,
-  creatorQuery,
-} from "./lib/functions";
+import { authedQuery, companyContext, companyMutation, creatorMutation } from "./lib/functions";
 import { requireCreatorProfile } from "./models/creators";
 import {
   createSubmission,
-  creatorSubmission,
-  listCreatorSubmissions,
   listSubmissions,
-  requireCreatorSubmission,
   requireSubmission,
   reviewSubmission,
   submissionDraft,
   submissionReview,
+  submissionView,
   type SubmissionViewer,
 } from "./models/submissions";
 import schema from "./schema";
 
-// Each read comes in two versions: full rows (`get` / `list`) for company users
-// and operators, and the creator shape (`getMine` / `listMine`) for creators.
-const oneSubmissionArgs = { submissionId: v.id("submissions") };
-const assignmentPageArgs = {
-  assignmentId: v.id("assignments"),
-  paginationOpts: paginationOptsValidator,
-};
-
 /**
- * Works out who is reading through `get` / `list`: company users and operators.
- * Company users go through `companyContext`, so their token's org must be one
- * they belong to.
- * Creators are refused; they read through `getMine` / `listMine`.
+ * Works out who is reading through `get` / `list`. Creators read as their
+ * creator profile. Company users go through `companyContext`, so their token's
+ * org must be one they belong to.
  *
- * @throws `forbidden` for creators, or `forbidden` / `not_synced` /
- * `misconfigured` from `companyContext`.
+ * @throws `not_found` for a creator without a creator profile, or `forbidden` /
+ * `not_synced` / `misconfigured` from `companyContext`.
  */
-async function requireFullReader(
-  ctx: QueryCtx,
-  user: Doc<"users">,
-): Promise<Exclude<SubmissionViewer, { role: "creator" }>> {
+async function requireViewer(ctx: QueryCtx, user: Doc<"users">): Promise<SubmissionViewer> {
   switch (user.role) {
+    case "creator": {
+      const { creatorId } = await requireCreatorProfile(ctx, user);
+      return { role: "creator", creatorId };
+    }
     case "company": {
       const { membership } = await companyContext(ctx);
       return { role: "company", companyId: membership.companyId };
     }
     case "operator":
       return { role: "operator" };
-    case "creator":
-      throw apiError("forbidden");
   }
 }
 
 /**
- * Submits a draft for review on the caller's own active assignment.
+ * Submits a draft for review on the caller's own active assignment. The URL is
+ * stored in its parsed form.
  *
  * @throws `not_found` if the assignment doesn't exist or isn't the caller's.
  * @throws `invalid_state` if the assignment isn't active, a draft is already
- * approved, or a draft field is blank, too long, or the URL isn't http(s).
+ * approved, a draft field is blank or too long, or the URL isn't http(s) or
+ * includes login details.
  * @throws `conflict` if a draft is already pending review.
  * @returns the new submission's id.
  */
@@ -78,11 +61,12 @@ export const create = creatorMutation({
 
 /**
  * Reviews a pending submission from the caller's company. Any company user in
- * that company can review. Reviews are final.
+ * that company can review. Reviews are final. A blank note on an approval is
+ * stored as no note.
  *
  * @throws `not_found` if the submission doesn't exist or isn't the company's.
  * @throws `invalid_state` if it was already reviewed, the assignment isn't
- * active, or the review note is blank or too long.
+ * active, the note on a change request is blank, or the note is too long.
  * @returns the reviewed submission.
  */
 export const review = companyMutation({
@@ -97,63 +81,36 @@ export const review = companyMutation({
 });
 
 /**
- * Returns one submission as stored, including who reviewed it. Company users
- * see their company's; operators see any.
+ * Returns one submission, plus `closedWithoutReview`: `true` if it's still
+ * pending but its assignment was completed or cancelled, so it will never be
+ * reviewed. Creators see their own, without who reviewed it; company users see
+ * their company's and operators see any, both including the reviewers.
  *
- * @throws `not_found` if it doesn't exist or isn't the caller's company's.
- * @throws `forbidden` for creators, who use `getMine`.
+ * @throws `not_found` if it doesn't exist or isn't the caller's to see.
  */
 export const get = authedQuery({
-  args: oneSubmissionArgs,
-  returns: schema.doc("submissions"),
+  args: { submissionId: v.id("submissions") },
+  returns: submissionView,
   handler: async (ctx, args) => {
-    const viewer = await requireFullReader(ctx, ctx.user);
+    const viewer = await requireViewer(ctx, ctx.user);
     return await requireSubmission(ctx, viewer, args.submissionId);
   },
 });
 
 /**
- * Lists an assignment's submissions as stored, newest first, with cursor
- * pagination. Company users see their company's; operators see any.
+ * Lists an assignment's submissions, newest first, with cursor pagination. Each
+ * row is what `get` returns to the same caller.
  *
- * @throws `not_found` if the assignment doesn't exist or isn't the caller's company's.
- * @throws `forbidden` for creators, who use `listMine`.
+ * @throws `not_found` if the assignment doesn't exist or isn't the caller's to see.
  */
 export const list = authedQuery({
-  args: assignmentPageArgs,
-  returns: paginationResultValidator(schema.doc("submissions")),
+  args: {
+    assignmentId: v.id("assignments"),
+    paginationOpts: paginationOptsValidator,
+  },
+  returns: paginationResultValidator(submissionView),
   handler: async (ctx, args) => {
-    const viewer = await requireFullReader(ctx, ctx.user);
+    const viewer = await requireViewer(ctx, ctx.user);
     return await listSubmissions(ctx, viewer, args.assignmentId, args.paginationOpts);
-  },
-});
-
-/**
- * Returns one of the caller's own submissions in the creator shape: the draft
- * and review outcome, without who reviewed it or any dispute details.
- *
- * @throws `not_found` if it doesn't exist or isn't the caller's.
- */
-export const getMine = creatorQuery({
-  args: oneSubmissionArgs,
-  returns: creatorSubmission,
-  handler: async (ctx, args) => {
-    const { creatorId } = await requireCreatorProfile(ctx, ctx.user);
-    return await requireCreatorSubmission(ctx, creatorId, args.submissionId);
-  },
-});
-
-/**
- * Lists the submissions on one of the caller's own assignments, newest first,
- * in the creator shape, with cursor pagination.
- *
- * @throws `not_found` if the assignment doesn't exist or isn't the caller's.
- */
-export const listMine = creatorQuery({
-  args: assignmentPageArgs,
-  returns: paginationResultValidator(creatorSubmission),
-  handler: async (ctx, args) => {
-    const { creatorId } = await requireCreatorProfile(ctx, ctx.user);
-    return await listCreatorSubmissions(ctx, creatorId, args.assignmentId, args.paginationOpts);
   },
 });

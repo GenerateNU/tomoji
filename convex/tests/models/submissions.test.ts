@@ -5,12 +5,10 @@ import type { Doc, Id } from "../../_generated/dataModel";
 import type { ApiErrorCode } from "../../lib/errors";
 import {
   createSubmission,
-  listCreatorSubmissions,
   listSubmissions,
-  requireCreatorSubmission,
   requireSubmission,
   reviewSubmission,
-  toCreatorSubmission,
+  toSubmissionView,
   type SubmissionDraft,
   type SubmissionReview,
   type SubmissionViewer,
@@ -18,13 +16,16 @@ import {
 import schema from "../../schema";
 import {
   expectApiError,
+  reviewerIdentityOf,
   seedAssignment,
   seedCreatorId,
   seedMembership,
   seedOneSubmission,
+  seedOverriddenSubmission,
   seedSubmission,
   storedSubmission,
   storedSubmissions,
+  withoutReviewerIdentity,
   type AssignmentFixture,
   type TestConvex,
 } from "../helpers";
@@ -85,13 +86,6 @@ const companyViewer = (fixture: AssignmentFixture): SubmissionViewer => ({
 });
 const operatorViewer: SubmissionViewer = { role: "operator" };
 
-// Fields that identify reviewers or disputes; creators must never receive them.
-const hiddenFromCreators = ["reviewedBy", "reviewedByOperator", "overriddenReview", "disputeId"];
-
-function expectCreatorShape(view: object) {
-  for (const field of hiddenFromCreators) expect(view).not.toHaveProperty(field);
-}
-
 async function getAs(t: TestConvex, viewer: SubmissionViewer, submissionId: Id<"submissions">) {
   return await t.run(async (ctx) => await requireSubmission(ctx, viewer, submissionId));
 }
@@ -107,22 +101,14 @@ async function listAs(
   );
 }
 
-async function getMineAs(
-  t: TestConvex,
-  creatorId: Id<"creators">,
-  submissionId: Id<"submissions">,
-) {
-  return await t.run(async (ctx) => await requireCreatorSubmission(ctx, creatorId, submissionId));
-}
-
-async function listMineAs(
-  t: TestConvex,
-  creatorId: Id<"creators">,
-  assignmentId: Id<"assignments">,
-) {
-  return await t.run(
-    async (ctx) => await listCreatorSubmissions(ctx, creatorId, assignmentId, firstPage),
-  );
+/**
+ * What a full read should return for a submission: the stored row plus the
+ * derived `closedWithoutReview` flag.
+ */
+async function expectedFull(t: TestConvex, submissionId: Id<"submissions">, closed = false) {
+  const stored = await storedSubmission(t, submissionId);
+  if (stored === null) throw new Error("expected a stored submission");
+  return { ...stored, closedWithoutReview: closed };
 }
 
 describe("createSubmission", () => {
@@ -253,6 +239,53 @@ describe("createSubmission", () => {
     },
   );
 
+  // Everything before `@` is login details, so the first link goes to
+  // evil.example while looking like a Google Drive link to the reviewer.
+  test.each([
+    "https://drive.google.com@evil.example/draft",
+    "https://user:pass@drive.example.com/draft",
+  ])("rejects draft URL %s with login details without writing a submission", async (draftUrl) => {
+    const t = convexTest(schema, modules);
+    const fixture = await seedAssignment(t, "cs-url-userinfo");
+
+    await expectReason(() => submit(t, fixture, { draftUrl }), "invalid_state", "draftUrl_invalid");
+
+    expect(await storedSubmissions(t)).toHaveLength(0);
+  });
+
+  // The parsed form is what reviewers get: no stray whitespace, markup-significant
+  // characters percent-encoded, and a lowercase scheme and host.
+  test.each([
+    ["https://drive.example.com/a\nb", "https://drive.example.com/ab"],
+    [
+      'https://drive.example.com/"><img src=x>',
+      "https://drive.example.com/%22%3E%3Cimg%20src=x%3E",
+    ],
+    ["HTTPS://Drive.Example.com/draft", "https://drive.example.com/draft"],
+  ])("stores draft URL %j in its parsed form", async (draftUrl, stored) => {
+    const t = convexTest(schema, modules);
+    const fixture = await seedAssignment(t, "cs-url-normalized");
+
+    const id = await submit(t, fixture, { draftUrl });
+
+    expect(await storedSubmission(t, id)).toMatchObject({ draftUrl: stored });
+  });
+
+  test("rejects a draft URL that goes over the length limit once encoded", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await seedAssignment(t, "cs-url-encoded-long");
+    // 726 characters as typed; each `"` becomes `%22`, making it 2,126.
+    const draftUrl = `https://drive.example.com/${'"'.repeat(700)}`;
+
+    await expectReason(
+      () => submit(t, fixture, { draftUrl }),
+      "invalid_state",
+      "draftUrl_too_long",
+    );
+
+    expect(await storedSubmissions(t)).toHaveLength(0);
+  });
+
   test.each([
     ["draftUrl", `https://drive.example.com/${"a".repeat(2048)}`],
     ["draftDescription", "a".repeat(5001)],
@@ -334,7 +367,22 @@ describe("reviewSubmission", () => {
     });
   });
 
-  test("rejects a blank note without reviewing", async () => {
+  // An empty optional textarea should approve, not fail.
+  test.each(["", "  \n"])("stores no note when an approval's note is blank (%j)", async (note) => {
+    const t = convexTest(schema, modules);
+    const { fixture, submissionId: id } = await seedOneSubmission(t, "rs-approve-blank");
+
+    const reviewed = await reviewAs(t, fixture.membership, id, {
+      status: "approved",
+      reviewNote: note,
+    });
+
+    expect(reviewed).toMatchObject({ status: "approved" });
+    expect(reviewed.reviewNote).toBeUndefined();
+    expect(await storedSubmission(t, id)).toEqual(reviewed);
+  });
+
+  test("rejects a blank note on a change request without reviewing", async () => {
     const t = convexTest(schema, modules);
     const { fixture, submissionId: id } = await seedOneSubmission(t, "rs-blank");
 
@@ -355,6 +403,23 @@ describe("reviewSubmission", () => {
       () =>
         reviewAs(t, fixture.membership, id, {
           status: "changesRequested",
+          reviewNote: "a".repeat(2001),
+        }),
+      "invalid_state",
+      "reviewNote_too_long",
+    );
+
+    expect(await storedSubmission(t, id)).toMatchObject({ status: "pending" });
+  });
+
+  test("rejects an approval note over the length limit without reviewing", async () => {
+    const t = convexTest(schema, modules);
+    const { fixture, submissionId: id } = await seedOneSubmission(t, "rs-approve-long");
+
+    await expectReason(
+      () =>
+        reviewAs(t, fixture.membership, id, {
+          status: "approved",
           reviewNote: "a".repeat(2001),
         }),
       "invalid_state",
@@ -458,7 +523,62 @@ describe("reviewSubmission", () => {
   });
 });
 
-describe("toCreatorSubmission", () => {
+// A pending draft whose assignment was completed or cancelled will never be
+// reviewed. Every read says so, so clients can show it as closed.
+describe("closedWithoutReview", () => {
+  /** Reads one submission through both read functions, as an operator and as its creator. */
+  async function readAll(t: TestConvex, fixture: AssignmentFixture, id: Id<"submissions">) {
+    return [
+      await getAs(t, operatorViewer, id),
+      (await listAs(t, operatorViewer, fixture.assignmentId)).page[0],
+      await getAs(t, creatorViewer(fixture), id),
+      (await listAs(t, creatorViewer(fixture), fixture.assignmentId)).page[0],
+    ];
+  }
+
+  test.each(["completed", "cancelled"] as const)(
+    "marks a pending draft on a %s assignment in every read",
+    async (status) => {
+      const t = convexTest(schema, modules);
+      const { fixture, submissionId: id } = await seedOneSubmission(t, `cwr-${status}`, "pending", {
+        status,
+      });
+
+      for (const view of await readAll(t, fixture, id)) {
+        expect(view).toHaveProperty("closedWithoutReview", true);
+      }
+    },
+  );
+
+  test("leaves a pending draft on an active assignment open in every read", async () => {
+    const t = convexTest(schema, modules);
+    const { fixture, submissionId: id } = await seedOneSubmission(t, "cwr-active");
+
+    for (const view of await readAll(t, fixture, id)) {
+      expect(view).toHaveProperty("closedWithoutReview", false);
+    }
+  });
+
+  // A reviewed submission got its review, so it wasn't closed without one.
+  test.each(["approved", "changesRequested"] as const)(
+    "doesn't mark a %s submission on a cancelled assignment",
+    async (reviewStatus) => {
+      const t = convexTest(schema, modules);
+      const { fixture, submissionId: id } = await seedOneSubmission(
+        t,
+        `cwr-reviewed-${reviewStatus}`,
+        reviewStatus,
+        { status: "cancelled" },
+      );
+
+      for (const view of await readAll(t, fixture, id)) {
+        expect(view).toHaveProperty("closedWithoutReview", false);
+      }
+    },
+  );
+});
+
+describe("toSubmissionView", () => {
   // Built directly: this is a pure function, so no database is needed.
   const base = {
     _id: "submissions|1" as Id<"submissions">,
@@ -467,56 +587,88 @@ describe("toCreatorSubmission", () => {
     ...draft,
     usesAiReview: false,
   };
+  const creator: SubmissionViewer = { role: "creator", creatorId: "creators|1" as Id<"creators"> };
+  const company: SubmissionViewer = {
+    role: "company",
+    companyId: "companies|1" as Id<"companies">,
+  };
 
-  test("returns a pending draft unchanged", () => {
-    const pending: Doc<"submissions"> = { ...base, status: "pending" };
-
-    expect(toCreatorSubmission(pending)).toEqual(pending);
-  });
-
-  test("keeps a company review's outcome but hides the reviewer", () => {
-    const reviewed: Doc<"submissions"> = {
-      ...base,
+  const companyReviewed: Doc<"submissions"> = {
+    ...base,
+    status: "changesRequested",
+    reviewNote: "Add #ad to the caption before posting.",
+    reviewerType: "companyUser",
+    reviewedBy: "companyUsers|1" as Id<"companyUsers">,
+    reviewedAt: 2,
+  };
+  const overridden: Doc<"submissions"> = {
+    ...base,
+    status: "approved",
+    reviewerType: "operator",
+    reviewedByOperator: "users|1" as Id<"users">,
+    reviewedAt: 3,
+    overriddenReview: {
       status: "changesRequested",
-      reviewNote: "Add #ad to the caption before posting.",
+      reviewNote: "Cut the deploy log at 0:40.",
       reviewerType: "companyUser",
       reviewedBy: "companyUsers|1" as Id<"companyUsers">,
       reviewedAt: 2,
-    };
+    },
+    disputeId: "disputes|1" as Id<"disputes">,
+  };
 
-    expect(toCreatorSubmission(reviewed)).toEqual({
+  test.each([
+    ["a company user", company],
+    ["an operator", operatorViewer],
+  ])("gives %s the stored row plus the flag", (_label, viewer) => {
+    expect(toSubmissionView(viewer, overridden, false)).toEqual({
+      ...overridden,
+      closedWithoutReview: false,
+    });
+  });
+
+  test("gives a creator a pending draft unchanged, plus the flag", () => {
+    const pending: Doc<"submissions"> = { ...base, status: "pending" };
+
+    expect(toSubmissionView(creator, pending, true)).toEqual({
+      ...pending,
+      closedWithoutReview: true,
+    });
+  });
+
+  test("gives a creator a company review's outcome without the reviewer", () => {
+    expect(toSubmissionView(creator, companyReviewed, false)).toEqual({
       ...base,
       status: "changesRequested",
       reviewNote: "Add #ad to the caption before posting.",
       reviewerType: "companyUser",
       reviewedAt: 2,
+      closedWithoutReview: false,
     });
   });
 
-  test("hides the operator, the overridden review, and the dispute", () => {
-    const overridden: Doc<"submissions"> = {
+  // The replaced review and the dispute are the creator's history too; only
+  // who reviewed it, at either level, stays hidden.
+  test("gives a creator the replaced review and the dispute, without any reviewer", () => {
+    expect(toSubmissionView(creator, overridden, false)).toEqual({
       ...base,
-      status: "changesRequested",
-      reviewNote: "Caption promises 99.99% uptime, which is a prohibited claim.",
-      reviewerType: "operator",
-      reviewedByOperator: "users|1" as Id<"users">,
-      reviewedAt: 3,
-      overriddenReview: { status: "approved", reviewerType: "ai", reviewedAt: 2 },
-      disputeId: "disputes|1" as Id<"disputes">,
-    };
-
-    expect(toCreatorSubmission(overridden)).toEqual({
-      ...base,
-      status: "changesRequested",
-      reviewNote: "Caption promises 99.99% uptime, which is a prohibited claim.",
+      status: "approved",
       reviewerType: "operator",
       reviewedAt: 3,
+      overriddenReview: {
+        status: "changesRequested",
+        reviewNote: "Cut the deploy log at 0:40.",
+        reviewerType: "companyUser",
+        reviewedAt: 2,
+      },
+      disputeId: "disputes|1",
+      closedWithoutReview: false,
     });
   });
 });
 
 describe("requireSubmission", () => {
-  test("lets a creator access their own submission", async () => {
+  test("gives a creator their own submission without the reviewer", async () => {
     const t = convexTest(schema, modules);
     const { fixture, submissionId: id } = await seedOneSubmission(
       t,
@@ -524,7 +676,32 @@ describe("requireSubmission", () => {
       "changesRequested",
     );
 
-    expect(await getAs(t, creatorViewer(fixture), id)).toEqual(await storedSubmission(t, id));
+    const view = await getAs(t, creatorViewer(fixture), id);
+
+    expect(view).toEqual(withoutReviewerIdentity(await expectedFull(t, id)));
+    expect(reviewerIdentityOf(view)).toEqual([]);
+  });
+
+  test("gives a creator an overridden submission without any reviewer", async () => {
+    const t = convexTest(schema, modules);
+    const { fixture, submissionId: id } = await seedOverriddenSubmission(t, "gs-creator-override");
+
+    const view = await getAs(t, creatorViewer(fixture), id);
+
+    expect(view).toEqual(withoutReviewerIdentity(await expectedFull(t, id)));
+    expect(view).toHaveProperty("disputeId");
+    expect(view).toHaveProperty("overriddenReview.status", "changesRequested");
+    expect(reviewerIdentityOf(view)).toEqual([]);
+  });
+
+  test("gives the company an overridden submission with every reviewer", async () => {
+    const t = convexTest(schema, modules);
+    const { fixture, submissionId: id } = await seedOverriddenSubmission(t, "gs-company-override");
+
+    const view = await getAs(t, companyViewer(fixture), id);
+
+    expect(view).toEqual(await expectedFull(t, id));
+    expect(reviewerIdentityOf(view)).toHaveLength(2);
   });
 
   test("gives the company its submission with reviewer details", async () => {
@@ -533,7 +710,7 @@ describe("requireSubmission", () => {
 
     const view = await getAs(t, companyViewer(fixture), id);
 
-    expect(view).toEqual(await storedSubmission(t, id));
+    expect(view).toEqual(await expectedFull(t, id));
     expect(view).toHaveProperty("reviewedBy", fixture.membership._id);
   });
 
@@ -541,7 +718,7 @@ describe("requireSubmission", () => {
     const t = convexTest(schema, modules);
     const { submissionId: id } = await seedOneSubmission(t, "gs-operator", "approved");
 
-    expect(await getAs(t, operatorViewer, id)).toEqual(await storedSubmission(t, id));
+    expect(await getAs(t, operatorViewer, id)).toEqual(await expectedFull(t, id));
   });
 
   test("hides another creator's submission", async () => {
@@ -607,6 +784,21 @@ describe("listSubmissions", () => {
     expect(pageTwo.page.map((s) => s._id)).toEqual([firstId]);
   });
 
+  test("gives a creator every submission without reviewers", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await seedAssignment(t, "ls-creator");
+    const firstId = await seedSubmission(t, fixture, "changesRequested");
+    const secondId = await seedSubmission(t, fixture, "approved");
+
+    const result = await listAs(t, creatorViewer(fixture), fixture.assignmentId);
+
+    expect(result.page).toEqual([
+      withoutReviewerIdentity(await expectedFull(t, secondId)),
+      withoutReviewerIdentity(await expectedFull(t, firstId)),
+    ]);
+    for (const view of result.page) expect(reviewerIdentityOf(view)).toEqual([]);
+  });
+
   test("returns an empty page for an assignment with no submissions", async () => {
     const t = convexTest(schema, modules);
     const fixture = await seedAssignment(t, "ls-empty");
@@ -644,50 +836,5 @@ describe("listSubmissions", () => {
     await t.run(async (ctx) => await ctx.db.delete("assignments", fixture.assignmentId));
 
     await expectApiError(() => listAs(t, operatorViewer, fixture.assignmentId), "not_found");
-  });
-});
-
-describe("requireCreatorSubmission", () => {
-  test("returns the creator's own submission in the creator shape", async () => {
-    const t = convexTest(schema, modules);
-    const { fixture, submissionId: id } = await seedOneSubmission(t, "gm-own", "approved");
-    const stored = await storedSubmission(t, id);
-
-    const view = await getMineAs(t, fixture.creatorId, id);
-
-    expect(view).toEqual(toCreatorSubmission(stored!));
-    expectCreatorShape(view);
-  });
-
-  test("hides another creator's submission", async () => {
-    const t = convexTest(schema, modules);
-    const { submissionId: id } = await seedOneSubmission(t, "gm-owner");
-    const intruderId = await seedCreatorId(t, "gm-intruder");
-
-    await expectApiError(() => getMineAs(t, intruderId, id), "not_found");
-  });
-});
-
-describe("listCreatorSubmissions", () => {
-  test("lists the creator's submissions newest first in the creator shape", async () => {
-    const t = convexTest(schema, modules);
-    const fixture = await seedAssignment(t, "lm-own");
-    const firstId = await seedSubmission(t, fixture, "changesRequested");
-    const secondId = await seedSubmission(t, fixture, "approved");
-
-    const result = await listMineAs(t, fixture.creatorId, fixture.assignmentId);
-
-    expect(result.page).toEqual([
-      toCreatorSubmission((await storedSubmission(t, secondId))!),
-      toCreatorSubmission((await storedSubmission(t, firstId))!),
-    ]);
-  });
-
-  test("hides another creator's assignment", async () => {
-    const t = convexTest(schema, modules);
-    const fixture = await seedAssignment(t, "lm-owner");
-    const intruderId = await seedCreatorId(t, "lm-intruder");
-
-    await expectApiError(() => listMineAs(t, intruderId, fixture.assignmentId), "not_found");
   });
 });

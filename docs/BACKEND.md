@@ -2,6 +2,8 @@
 
 This document covers how we structure and write Convex code. Setup instructions and common commands live in `CONTRIBUTING.md`.
 
+Shared S3 media configuration and upload guarantees are documented in [S3 media foundation](S3.md).
+
 ## Layout
 
 Convex maps the **file path directly to the API path**. For example, a function exported from `convex/creators.ts` is called as `api.creators.<name>`. There is no separate router because the filename itself defines the namespace.

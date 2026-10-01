@@ -98,6 +98,19 @@ just convex-env
 Convex reads `WORKOS_CLIENT_ID`, `WORKOS_API_KEY`, and `WORKOS_WEBHOOK_SECRET` from the
 deployment rather than `.env.local`, and this copies all three across.
 
+The S3 media foundation also requires a bucket and region on **your personal Convex dev
+deployment**. This is a one-time setup for new and existing contributors; pulling the PR
+does not copy deployment variables to your account. Run these after `just convex-env`:
+
+```bash
+bunx convex env set S3_MEDIA_BUCKET tomoji-dev-media-478867930449
+bunx convex env set S3_MEDIA_REGION us-east-1
+```
+
+These are server-side Convex settings, so do not add them to `.env.local` or prefix them
+with `NEXT_PUBLIC_`. See [S3 media foundation](docs/S3.md) for production/preview setup
+and the separate credentials and browser-upload prerequisites.
+
 Restart `just bd` and it should print `Convex functions ready!`.
 
 ## Step 5 — Run the app
@@ -126,6 +139,10 @@ If all four work, you're set up.
 **`WORKOS_CLIENT_ID is not set` or `Missing environment variables: WORKOS_WEBHOOK_SECRET`**
 — you skipped step 4, or never got a secret from a TL. Run `just convex-env`; it tells you
 which one is missing.
+
+**`Missing environment variables: S3_MEDIA_BUCKET, S3_MEDIA_REGION`** — set both on
+your personal Convex deployment with the commands in step 4. `just convex-env` only copies
+WorkOS values; it does not configure S3.
 
 **Signed in, but the app can't read your identity** — the token's `iss` doesn't match
 `convex/auth.config.ts`. Paste the access token into [jwt.io](https://jwt.io) and compare

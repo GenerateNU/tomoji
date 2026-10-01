@@ -4,6 +4,7 @@ import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { apiError } from "../lib/errors";
 import type { applicationStatus } from "../schemas/applications.schema";
+import { createAssignmentFromOffer } from "./assignments";
 
 /**
  * Creates a pending application from a creator to an open, gated opportunity.
@@ -179,6 +180,10 @@ export async function listApplicationsByOpportunityId(
 /** How long an offer stays open when the company does not choose an expiry. */
 export const DEFAULT_OFFER_DURATION_MS = 48 * 60 * 60 * 1000;
 
+// Offer expiries sit on :00/:30 UTC boundaries, the same times the expiry cron
+// runs, so an offer is marked expired exactly when it expires.
+const HALF_HOUR_MS = 30 * 60 * 1000;
+
 /**
  * Sends an offer on a pending application to one of the company's
  * opportunities. Offers are not capped by open slots: the first creators to
@@ -186,8 +191,12 @@ export const DEFAULT_OFFER_DURATION_MS = 48 * 60 * 60 * 1000;
  *
  * @throws `not_found` if the application does not exist or belongs to another
  * company.
+ * The default expiry is 48 hours, rounded up to the next :00 or :30 UTC. A
+ * company-chosen expiry must already be on :00 or :30; it is refused rather
+ * than rounded, like opportunity deadlines.
+ *
  * @throws `invalid_state` if the application is not pending, the opportunity is
- * not open, or `offerExpiresAt` is not in the future.
+ * not open, or `offerExpiresAt` is not a future :00/:30 UTC time.
  */
 export async function offerApplication(
   ctx: MutationCtx,
@@ -197,8 +206,14 @@ export async function offerApplication(
 ): Promise<Doc<"applications">> {
   const application = await requirePendingForReview(ctx, companyId, applicationId);
   const now = Date.now();
-  const offerExpiresAt = requestedExpiresAt ?? now + DEFAULT_OFFER_DURATION_MS;
-  if (!Number.isFinite(offerExpiresAt) || offerExpiresAt <= now) {
+  const offerExpiresAt =
+    requestedExpiresAt ??
+    Math.ceil((now + DEFAULT_OFFER_DURATION_MS) / HALF_HOUR_MS) * HALF_HOUR_MS;
+  if (
+    !Number.isSafeInteger(offerExpiresAt) ||
+    offerExpiresAt % HALF_HOUR_MS !== 0 ||
+    offerExpiresAt <= now
+  ) {
     throw apiError("invalid_state", { reason: "invalid_offer_expiry" });
   }
 
@@ -242,4 +257,127 @@ async function requirePendingForReview(
   }
   requireOpportunityOpen(opportunity);
   return application;
+}
+
+/**
+ * Accepts the creator's own unexpired offer. In one transaction this creates
+ * the assignment through `createAssignmentFromOffer` (which takes a slot), and,
+ * if that was the last slot, marks every remaining pending or offered
+ * application as `opportunityFull`. Offers can be accepted while the
+ * opportunity is paused.
+ *
+ * Two creators accepting the last slot at once both read the opportunity, so
+ * Convex retries one, which then sees the slot is taken.
+ *
+ * @throws `not_found` if the application does not exist or is not the
+ * creator's.
+ * @throws `invalid_state` if the application has no offer, the offer has
+ * expired, the opportunity is closed, or every slot is filled.
+ * @throws `conflict` if the creator already has an assignment on it.
+ */
+export async function acceptApplication(
+  ctx: MutationCtx,
+  creatorId: Id<"creators">,
+  applicationId: Id<"applications">,
+): Promise<Doc<"applications">> {
+  const application = await requireOfferedApplication(ctx, creatorId, applicationId);
+  const now = Date.now();
+  if (application.offerExpiresAt === undefined || application.offerExpiresAt <= now) {
+    throw apiError("invalid_state", { reason: "offer_expired" });
+  }
+  const opportunity = await ctx.db.get("opportunities", application.opportunityId);
+  if (opportunity === null) {
+    throw apiError("not_found", { resource: "application" });
+  }
+
+  // Refuses a closed opportunity or a full one, then takes the slot and creates
+  // the termsPending assignment with the opportunity's current terms.
+  await createAssignmentFromOffer(ctx, { opportunityId: opportunity._id, creatorId });
+  const patch = { status: "accepted" as const, offerAcceptedAt: now, statusLastUpdatedAt: now };
+  await ctx.db.patch("applications", application._id, patch);
+  if (opportunity.numFilledSlots + 1 >= opportunity.maxSlots) {
+    await markRemainingApplicationsFull(ctx, opportunity, now);
+  }
+  return { ...application, ...patch };
+}
+
+/**
+ * Declines the creator's own offer. Allowed whatever the opportunity's status,
+ * since saying no never takes a slot.
+ *
+ * @throws `not_found` if the application does not exist or is not the
+ * creator's.
+ * @throws `invalid_state` if the application has no offer.
+ */
+export async function declineApplication(
+  ctx: MutationCtx,
+  creatorId: Id<"creators">,
+  applicationId: Id<"applications">,
+): Promise<Doc<"applications">> {
+  const application = await requireOfferedApplication(ctx, creatorId, applicationId);
+  const patch = { status: "declined" as const, statusLastUpdatedAt: Date.now() };
+  await ctx.db.patch("applications", application._id, patch);
+  return { ...application, ...patch };
+}
+
+/** Loads the creator's own application and requires it to hold an offer. */
+async function requireOfferedApplication(
+  ctx: MutationCtx,
+  creatorId: Id<"creators">,
+  applicationId: Id<"applications">,
+): Promise<Doc<"applications">> {
+  const application = await requireApplication(ctx, { role: "creator", creatorId }, applicationId);
+  if (application.status !== "offered") {
+    throw apiError("invalid_state", { reason: "application_not_offered" });
+  }
+  return application;
+}
+
+/**
+ * Marks every pending or offered application to the opportunity as
+ * `opportunityFull` once its last slot is taken. An opportunity never has more
+ * than `maxApplications` applications, so this batch is bounded.
+ */
+async function markRemainingApplicationsFull(
+  ctx: MutationCtx,
+  opportunity: Doc<"opportunities">,
+  now: number,
+): Promise<void> {
+  for (const status of ["pending", "offered"] as const) {
+    const remaining = await ctx.db
+      .query("applications")
+      .withIndex("by_opportunityId_and_status", (q) =>
+        q.eq("opportunityId", opportunity._id).eq("status", status),
+      )
+      .take(opportunity.maxApplications);
+    for (const application of remaining) {
+      await ctx.db.patch("applications", application._id, {
+        status: "opportunityFull",
+        statusLastUpdatedAt: now,
+      });
+    }
+  }
+}
+
+/**
+ * Marks one bounded batch of offers past their expiry as `offerExpired` and
+ * reports whether more may remain. `acceptApplication` already refuses expired
+ * offers, so this only makes the status visible.
+ */
+export async function expireApplicationOffers(ctx: MutationCtx): Promise<boolean> {
+  const batchSize = 100;
+  const now = Date.now();
+  const expired = await ctx.db
+    .query("applications")
+    .withIndex("by_status_and_offerExpiresAt", (q) =>
+      q.eq("status", "offered").lte("offerExpiresAt", now),
+    )
+    .take(batchSize);
+  for (const application of expired) {
+    await ctx.db.patch("applications", application._id, {
+      status: "offerExpired",
+      statusLastUpdatedAt: now,
+    });
+  }
+  return expired.length === batchSize;
 }

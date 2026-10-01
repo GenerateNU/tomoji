@@ -279,3 +279,79 @@ describe("applications.reject", () => {
     );
   });
 });
+
+/** Seeds an application from `creator_a` that the company has offered. */
+async function seedOfferedApplication(t: TestConvex) {
+  const seeded = await seedApplication(t);
+  await seeded.asCompany.mutation(api.applications.offer, {
+    applicationId: seeded.applicationId,
+  });
+  return seeded;
+}
+
+describe("applications.accept", () => {
+  test("accepts the caller's offer, visible to the company", async () => {
+    const t = convexTest(schema, modules);
+    const { asCompany, asCreator, applicationId } = await seedOfferedApplication(t);
+
+    const accepted = await asCreator.mutation(api.applications.accept, { applicationId });
+
+    expect(accepted).toMatchObject({ _id: applicationId, status: "accepted" });
+    expect(await asCompany.query(api.applications.get, { applicationId })).toMatchObject({
+      status: "accepted",
+    });
+  });
+
+  test("hides another creator's offer as not found", async () => {
+    const t = convexTest(schema, modules);
+    const { applicationId } = await seedOfferedApplication(t);
+    const asOther = await seedUser(t, { subject: "creator_b" });
+
+    await expectApiError(
+      () => asOther.mutation(api.applications.accept, { applicationId }),
+      "not_found",
+    );
+  });
+
+  test("rejects a company user", async () => {
+    const t = convexTest(schema, modules);
+    const { asCompany, applicationId } = await seedOfferedApplication(t);
+
+    await expectApiError(
+      () => asCompany.mutation(api.applications.accept, { applicationId }),
+      "forbidden",
+    );
+  });
+});
+
+describe("applications.decline", () => {
+  test("declines the caller's offer", async () => {
+    const t = convexTest(schema, modules);
+    const { asCreator, applicationId } = await seedOfferedApplication(t);
+
+    const declined = await asCreator.mutation(api.applications.decline, { applicationId });
+
+    expect(declined).toMatchObject({ _id: applicationId, status: "declined" });
+  });
+
+  test("hides another creator's offer as not found", async () => {
+    const t = convexTest(schema, modules);
+    const { applicationId } = await seedOfferedApplication(t);
+    const asOther = await seedUser(t, { subject: "creator_b" });
+
+    await expectApiError(
+      () => asOther.mutation(api.applications.decline, { applicationId }),
+      "not_found",
+    );
+  });
+
+  test("rejects a company user", async () => {
+    const t = convexTest(schema, modules);
+    const { asCompany, applicationId } = await seedOfferedApplication(t);
+
+    await expectApiError(
+      () => asCompany.mutation(api.applications.decline, { applicationId }),
+      "forbidden",
+    );
+  });
+});

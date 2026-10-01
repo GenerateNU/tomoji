@@ -103,6 +103,45 @@ function validateOpportunityDeadline(deadline: number): void {
   }
 }
 
+/** Applies the shared, idempotent close transition without rewriting workflow records. */
+async function applyOpportunityClose(
+  ctx: MutationCtx,
+  opportunity: Doc<"opportunities">,
+): Promise<Doc<"opportunities">> {
+  if (opportunity.status === "closed") return opportunity;
+  await ctx.db.patch("opportunities", opportunity._id, { status: "closed" });
+  return { ...opportunity, status: "closed" };
+}
+
+/** Permanently closes an owned published opportunity, preserving existing commitments. */
+export async function closeOpportunity(
+  ctx: MutationCtx,
+  membership: Doc<"companyUsers">,
+  opportunityId: Id<"opportunities">,
+): Promise<Doc<"opportunities">> {
+  const { opportunity } = await requireOwnedOpportunity(ctx, membership, opportunityId);
+  if (opportunity.status === "draft") {
+    throw apiError("invalid_state", { reason: "opportunity_not_published" });
+  }
+  return await applyOpportunityClose(ctx, opportunity);
+}
+
+/** Closes a bounded batch of overdue published opportunities and reports whether more may remain. */
+export async function closeExpiredOpportunities(ctx: MutationCtx): Promise<boolean> {
+  const now = Date.now();
+  const batchSize = 50;
+  let hasMore = false;
+  for (const status of ["open", "paused"] as const) {
+    const opportunities = await ctx.db
+      .query("opportunities")
+      .withIndex("by_status_and_deadline", (q) => q.eq("status", status).lte("deadline", now))
+      .take(batchSize);
+    for (const opportunity of opportunities) await applyOpportunityClose(ctx, opportunity);
+    hasMore ||= opportunities.length === batchSize;
+  }
+  return hasMore;
+}
+
 /** Loads an owned opportunity and its campaign for company lifecycle transitions. */
 async function requireOwnedOpportunity(
   ctx: MutationCtx,
@@ -261,6 +300,10 @@ export async function updateOpportunity(
   }
   if (opportunity.status === "closed" || campaign.status === "closed") {
     throw apiError("invalid_state", { reason: "opportunity_not_editable" });
+  }
+  // Deadline closure is permanent even during the interval before the cron materializes it.
+  if (opportunity.status !== "draft" && opportunity.deadline <= Date.now()) {
+    throw apiError("invalid_state", { reason: "opportunity_expired" });
   }
 
   const patch: Partial<OpportunityCreate> = {};

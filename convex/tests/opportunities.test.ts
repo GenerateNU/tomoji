@@ -1,7 +1,7 @@
 /// <reference types="vite/client" />
 import { convexTest } from "convex-test";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import { api } from "../_generated/api";
+import { api, internal } from "../_generated/api";
 import { deactivateUser } from "../models/users";
 import schema from "../schema";
 import {
@@ -23,6 +23,191 @@ beforeEach(() => {
 });
 
 afterEach(() => vi.useRealTimers());
+
+describe("opportunities.close", () => {
+  test("lets a company member close an opportunity and hides its brief from creators", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(t, { subject: "close_member", role: "member" });
+    const asCreator = await seedUser(t, { subject: "close_creator" });
+    const before = await owner.asCompany.query(api.opportunities.get, {
+      opportunityId: owner.opportunityId,
+    });
+    expect(
+      await asCreator.query(api.opportunities.get, { opportunityId: owner.opportunityId }),
+    ).toMatchObject({ _id: owner.opportunityId, companyName: "Acme" });
+    const result = await owner.asCompany.mutation(api.opportunities.close, {
+      opportunityId: owner.opportunityId,
+    });
+    expect(result).toEqual({ ...before, status: "closed" });
+    await expectApiError(
+      () => asCreator.query(api.opportunities.get, { opportunityId: owner.opportunityId }),
+      "not_found",
+    );
+    const feed = await asCreator.query(api.opportunities.discover, {
+      paginationOpts: { numItems: 10, cursor: null },
+    });
+    expect(feed.page).toEqual([]);
+    expect(feed.isDone).toBe(true);
+  });
+
+  test("lets a company admin close a paused opportunity", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(t, { subject: "close_admin", role: "admin" });
+    await t.run(
+      async (ctx) => await ctx.db.patch("opportunities", owner.opportunityId, { status: "paused" }),
+    );
+    const result = await owner.asCompany.mutation(api.opportunities.close, {
+      opportunityId: owner.opportunityId,
+    });
+    expect(result.status).toBe("closed");
+    expect(
+      await t.run(async (ctx) => await ctx.db.get("opportunities", owner.opportunityId)),
+    ).toEqual(result);
+  });
+
+  test("rejects a signed-out caller", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(t, { subject: "close_owner" });
+    await expectApiError(
+      () => t.mutation(api.opportunities.close, { opportunityId: owner.opportunityId }),
+      "not_authenticated",
+    );
+  });
+
+  test("rejects a creator", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(t, { subject: "close_owner" });
+    const asCreator = await seedUser(t, { subject: "close_creator" });
+    await expectApiError(
+      () => asCreator.mutation(api.opportunities.close, { opportunityId: owner.opportunityId }),
+      "forbidden",
+    );
+  });
+
+  test("rejects an operator", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(t, { subject: "close_owner" });
+    const asOperator = await seedOperator(t, "close_operator");
+    await expectApiError(
+      () => asOperator.mutation(api.opportunities.close, { opportunityId: owner.opportunityId }),
+      "forbidden",
+    );
+  });
+
+  test("conceals another company's opportunity and leaves it unchanged", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(t, { subject: "close_owner" });
+    const other = await seedCampaign(t, { subject: "close_other", orgId: "org_other" });
+    const before = await t.run(
+      async (ctx) => await ctx.db.get("opportunities", owner.opportunityId),
+    );
+    await expectApiError(
+      () =>
+        other.asCompany.mutation(api.opportunities.close, { opportunityId: owner.opportunityId }),
+      "not_found",
+    );
+    expect(
+      await t.run(async (ctx) => await ctx.db.get("opportunities", owner.opportunityId)),
+    ).toEqual(before);
+  });
+
+  test("rejects a forged organization claim", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(t, { subject: "close_owner", orgId: "org_other" });
+    const asWrongOrg = await seedWrongOrgCaller(t);
+    await expectApiError(
+      () => asWrongOrg.mutation(api.opportunities.close, { opportunityId: owner.opportunityId }),
+      "forbidden",
+    );
+  });
+
+  test("rejects a deactivated company member", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(t, { subject: "close_owner" });
+    await t.run(async (ctx) => await deactivateUser(ctx, "close_owner"));
+    await expectApiError(
+      () =>
+        owner.asCompany.mutation(api.opportunities.close, { opportunityId: owner.opportunityId }),
+      "account_deactivated",
+    );
+  });
+
+  test("rejects edits bundled into a close request", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(t, { subject: "close_owner" });
+    const args = { opportunityId: owner.opportunityId, title: "Changed title" };
+    await expect(owner.asCompany.mutation(api.opportunities.close, args)).rejects.toThrow(
+      "Unexpected field `title`",
+    );
+  });
+});
+
+describe("opportunities.closeExpired", () => {
+  test("continues a full batch through scheduled mutations until all overdue rows are closed", async () => {
+    vi.useFakeTimers();
+    const t = convexTest(schema, modules);
+    const owner = await seedCampaign(t, { subject: "deadline_owner" });
+    const ids = await t.run(async (ctx) => {
+      const result = [];
+      for (const status of ["open", "paused"] as const) {
+        for (let i = 0; i < 51; i++) {
+          const id = await ctx.db.insert("opportunities", {
+            ...opportunityArgs(owner.campaignId, { deadline: Date.now() - 1 }),
+            companyId: owner.membership.companyId,
+            createdBy: owner.membership._id,
+            numFilledSlots: 0,
+            status,
+          });
+          result.push(id);
+        }
+      }
+      return result;
+    });
+
+    expect(await t.mutation(internal.opportunities.closeExpired, {})).toBeNull();
+    const firstPass = await t.run(async (ctx) =>
+      Promise.all(ids.map(async (id) => await ctx.db.get("opportunities", id))),
+    );
+    expect(firstPass.filter((opportunity) => opportunity?.status === "closed")).toHaveLength(100);
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    const finalPass = await t.run(async (ctx) =>
+      Promise.all(ids.map(async (id) => await ctx.db.get("opportunities", id))),
+    );
+    expect(finalPass.every((opportunity) => opportunity?.status === "closed")).toBe(true);
+    const jobs = await t.run(
+      async (ctx) => await ctx.db.system.query("_scheduled_functions").take(5),
+    );
+    expect(jobs).toHaveLength(1);
+    expect(jobs[0].state.kind).toBe("success");
+  });
+
+  test("does not schedule continuation when no opportunities are overdue", async () => {
+    const t = convexTest(schema, modules);
+    await seedOpportunity(t, { subject: "deadline_owner" });
+    expect(await t.mutation(internal.opportunities.closeExpired, {})).toBeNull();
+    expect(
+      await t.run(async (ctx) => await ctx.db.system.query("_scheduled_functions").take(1)),
+    ).toEqual([]);
+  });
+
+  test("deadline closure removes an opportunity from creator get and discovery", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(t, { subject: "deadline_owner" });
+    const asCreator = await seedUser(t, { subject: "deadline_creator" });
+    vi.advanceTimersByTime(86_400_000);
+    await t.mutation(internal.opportunities.closeExpired, {});
+    await expectApiError(
+      () => asCreator.query(api.opportunities.get, { opportunityId: owner.opportunityId }),
+      "not_found",
+    );
+    const feed = await asCreator.query(api.opportunities.discover, {
+      paginationOpts: { numItems: 10, cursor: null },
+    });
+    expect(feed.page).toEqual([]);
+    expect(feed.isDone).toBe(true);
+  });
+});
 
 describe("opportunities.pause", () => {
   test("lets a company member pause a brief and hides it from creator get and discovery", async () => {

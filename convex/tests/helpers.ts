@@ -1,4 +1,4 @@
-import type { convexTest } from "convex-test";
+import type { TestConvex as ConvexTest } from "convex-test";
 import type { UserIdentity } from "convex/server";
 import type { Infer } from "convex/values";
 import { expect } from "vitest";
@@ -10,8 +10,55 @@ import { companyContext } from "../lib/functions";
 import { createOpportunity, type OpportunityCreate } from "../models/opportunities";
 import { applyMembership, getUserByWorkosId, upsertUser } from "../models/users";
 import type { companyRole } from "../schemas/companyUsers.schema";
+import type schema from "../schema";
 
-export type TestConvex = ReturnType<typeof convexTest>;
+export type TestConvex = ConvexTest<typeof schema>;
+
+/** Reads bounded workflow fixtures so tests can assert that opportunity transitions preserve them. */
+export async function readOpportunityHistory(t: TestConvex, opportunityId: Id<"opportunities">) {
+  return await t.run(async (ctx) => ({
+    applications: await ctx.db
+      .query("applications")
+      .withIndex("by_opportunityId_and_status", (q) => q.eq("opportunityId", opportunityId))
+      .take(4),
+    assignments: await ctx.db
+      .query("assignments")
+      .withIndex("by_opportunityId_and_status", (q) => q.eq("opportunityId", opportunityId))
+      .take(2),
+  }));
+}
+
+/** Seeds pending, offered, and accepted applications plus independently agreed assignment terms. */
+export async function seedOpportunityHistory(t: TestConvex, opportunityId: Id<"opportunities">) {
+  for (const status of ["pending", "offered", "accepted"] as const) {
+    const creatorId = await seedCreatorId(t, `history_${status}`);
+    await t.run(async (ctx) => {
+      await ctx.db.insert("applications", {
+        opportunityId,
+        creatorId,
+        note: "Interested in the brief",
+        status,
+        ...(status !== "pending"
+          ? { offerSentAt: Date.now(), offerExpiresAt: Date.now() + 172_800_000 }
+          : {}),
+        ...(status === "accepted" ? { offerAcceptedAt: Date.now() } : {}),
+      });
+      if (status === "accepted") {
+        await ctx.db.insert("assignments", {
+          opportunityId,
+          creatorId,
+          fixedFeeCents: 20_000,
+          cpmRateCents: 700,
+          paymentCapCents: 40_000,
+          usesAiReview: false,
+          status: "active",
+        });
+        await ctx.db.patch("opportunities", opportunityId, { numFilledSlots: 1 });
+      }
+    });
+  }
+  return await readOpportunityHistory(t, opportunityId);
+}
 
 /** A fake WorkOS token. */
 export function workosIdentity(claims: {

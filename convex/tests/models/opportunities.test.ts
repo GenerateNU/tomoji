@@ -2,6 +2,8 @@
 import { convexTest } from "convex-test";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import {
+  closeOpportunity,
+  closeExpiredOpportunities,
   createOpportunity,
   discoverOpportunities,
   listOpportunities,
@@ -17,9 +19,11 @@ import schema from "../../schema";
 import {
   expectApiError,
   opportunityArgs,
+  readOpportunityHistory,
   seedCampaign,
   seedCreatorId,
   seedOpportunity,
+  seedOpportunityHistory,
   seedUser,
 } from "../helpers";
 
@@ -31,6 +35,186 @@ beforeEach(() => {
 });
 
 afterEach(() => vi.useRealTimers());
+
+describe("closeOpportunity", () => {
+  test("closes a paused opportunity even when its campaign is closed", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(t, { subject: "close_owner" });
+    await t.run(async (ctx) => {
+      await ctx.db.patch("opportunities", owner.opportunityId, { status: "paused" });
+      await ctx.db.patch("campaigns", owner.campaignId, { status: "closed" });
+    });
+    const result = await t.run(
+      async (ctx) => await closeOpportunity(ctx, owner.membership, owner.opportunityId),
+    );
+    expect(result.status).toBe("closed");
+  });
+
+  test("repeated close calls return the unchanged closed document", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(t, { subject: "close_owner" });
+    const first = await t.run(
+      async (ctx) => await closeOpportunity(ctx, owner.membership, owner.opportunityId),
+    );
+    const second = await t.run(
+      async (ctx) => await closeOpportunity(ctx, owner.membership, owner.opportunityId),
+    );
+    expect(second).toEqual(first);
+    expect(
+      await t.run(async (ctx) => await ctx.db.get("opportunities", owner.opportunityId)),
+    ).toEqual(first);
+  });
+
+  test("rejects a draft without modifying it", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(t, { subject: "close_owner" }, { status: "draft" });
+    const before = await t.run(
+      async (ctx) => await ctx.db.get("opportunities", owner.opportunityId),
+    );
+    await expectApiError(
+      () =>
+        t.run(async (ctx) => await closeOpportunity(ctx, owner.membership, owner.opportunityId)),
+      "invalid_state",
+    );
+    expect(
+      await t.run(async (ctx) => await ctx.db.get("opportunities", owner.opportunityId)),
+    ).toEqual(before);
+  });
+
+  test("conceals a missing opportunity", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(t, { subject: "close_owner" });
+    await t.run(async (ctx) => await ctx.db.delete("opportunities", owner.opportunityId));
+    await expectApiError(
+      () =>
+        t.run(async (ctx) => await closeOpportunity(ctx, owner.membership, owner.opportunityId)),
+      "not_found",
+    );
+  });
+
+  test("conceals an inactive company", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(t, { subject: "close_owner" });
+    await t.run(
+      async (ctx) =>
+        await ctx.db.patch("companies", owner.membership.companyId, { isActive: false }),
+    );
+    await expectApiError(
+      () =>
+        t.run(async (ctx) => await closeOpportunity(ctx, owner.membership, owner.opportunityId)),
+      "not_found",
+    );
+  });
+
+  test("closes an open opportunity without changing its brief or campaign", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(t, { subject: "close_owner" });
+    const history = await seedOpportunityHistory(t, owner.opportunityId);
+    const before = await t.run(
+      async (ctx) => await ctx.db.get("opportunities", owner.opportunityId),
+    );
+    const campaign = await t.run(async (ctx) => await ctx.db.get("campaigns", owner.campaignId));
+
+    const result = await t.run(
+      async (ctx) => await closeOpportunity(ctx, owner.membership, owner.opportunityId),
+    );
+
+    expect(result).toEqual({ ...before, status: "closed" });
+    expect(
+      await t.run(async (ctx) => await ctx.db.get("opportunities", owner.opportunityId)),
+    ).toEqual(result);
+    expect(await t.run(async (ctx) => await ctx.db.get("campaigns", owner.campaignId))).toEqual(
+      campaign,
+    );
+    expect(await readOpportunityHistory(t, owner.opportunityId)).toEqual(history);
+  });
+});
+
+describe("closeExpiredOpportunities", () => {
+  test("is safe to rerun after closing an expired opportunity", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(t, { subject: "deadline_owner" });
+    vi.advanceTimersByTime(86_400_000);
+    expect(await t.run(async (ctx) => await closeExpiredOpportunities(ctx))).toBe(false);
+    const first = await t.run(
+      async (ctx) => await ctx.db.get("opportunities", owner.opportunityId),
+    );
+    expect(await t.run(async (ctx) => await closeExpiredOpportunities(ctx))).toBe(false);
+    expect(
+      await t.run(async (ctx) => await ctx.db.get("opportunities", owner.opportunityId)),
+    ).toEqual(first);
+    expect(first).toMatchObject({ status: "closed" });
+  });
+
+  test("honors an extended deadline instead of closing from an old schedule", async () => {
+    const t = convexTest(schema, modules);
+    const deadline = Date.now() + 1_800_000;
+    const owner = await seedOpportunity(t, { subject: "deadline_owner" }, { deadline });
+    const updated = await t.run(
+      async (ctx) =>
+        await updateOpportunity(ctx, owner.membership, owner.opportunityId, {
+          deadline: deadline + 1_800_000,
+        }),
+    );
+    vi.setSystemTime(deadline);
+    expect(await t.run(async (ctx) => await closeExpiredOpportunities(ctx))).toBe(false);
+    expect(
+      await t.run(async (ctx) => await ctx.db.get("opportunities", owner.opportunityId)),
+    ).toEqual(updated);
+  });
+
+  test("closes expired open and paused opportunities but preserves drafts and future deadlines", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(
+      t,
+      { subject: "deadline_owner" },
+      { deadline: Date.now() + 1_800_000 },
+    );
+    const history = await seedOpportunityHistory(t, owner.opportunityId);
+    const before = await t.run(
+      async (ctx) => await ctx.db.get("opportunities", owner.opportunityId),
+    );
+    const ids = await t.run(async (ctx) => {
+      const paused = await createOpportunity(
+        ctx,
+        owner.membership,
+        opportunityArgs(owner.campaignId, { deadline: Date.now() + 1_800_000 }),
+      );
+      await ctx.db.patch("opportunities", paused, { status: "paused" });
+      const draft = await createOpportunity(
+        ctx,
+        owner.membership,
+        opportunityArgs(owner.campaignId, { status: "draft", deadline: Date.now() - 1_800_000 }),
+      );
+      const future = await createOpportunity(
+        ctx,
+        owner.membership,
+        opportunityArgs(owner.campaignId),
+      );
+      return { paused, draft, future };
+    });
+    vi.advanceTimersByTime(1_800_000);
+
+    expect(await t.run(async (ctx) => await closeExpiredOpportunities(ctx))).toBe(false);
+
+    expect(
+      await t.run(async (ctx) => await ctx.db.get("opportunities", owner.opportunityId)),
+    ).toMatchObject({ status: "closed" });
+    expect(
+      await t.run(async (ctx) => await ctx.db.get("opportunities", owner.opportunityId)),
+    ).toEqual({ ...before, status: "closed" });
+    expect(await readOpportunityHistory(t, owner.opportunityId)).toEqual(history);
+    expect(await t.run(async (ctx) => await ctx.db.get("opportunities", ids.paused))).toMatchObject(
+      { status: "closed" },
+    );
+    expect(await t.run(async (ctx) => await ctx.db.get("opportunities", ids.draft))).toMatchObject({
+      status: "draft",
+    });
+    expect(await t.run(async (ctx) => await ctx.db.get("opportunities", ids.future))).toMatchObject(
+      { status: "open" },
+    );
+  });
+});
 
 describe("pauseOpportunity", () => {
   test("rejects a draft", async () => {
@@ -887,6 +1071,61 @@ describe("updateOpportunity", () => {
           async (ctx) =>
             await updateOpportunity(ctx, owner.membership, owner.opportunityId, {
               deadline: Date.now() + 60_000,
+            }),
+        ),
+      "invalid_state",
+    );
+    expect(
+      await t.run(async (ctx) => await ctx.db.get("opportunities", owner.opportunityId)),
+    ).toEqual(before);
+  });
+
+  test("cannot revive an expired open opportunity by extending its deadline before cron runs", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(
+      t,
+      { subject: "update_expired" },
+      { deadline: Date.now() + 1_800_000 },
+    );
+    vi.advanceTimersByTime(1_800_000);
+    const before = await t.run(
+      async (ctx) => await ctx.db.get("opportunities", owner.opportunityId),
+    );
+    await expectApiError(
+      () =>
+        t.run(
+          async (ctx) =>
+            await updateOpportunity(ctx, owner.membership, owner.opportunityId, {
+              deadline: Date.now() + 1_800_000,
+            }),
+        ),
+      "invalid_state",
+    );
+    expect(
+      await t.run(async (ctx) => await ctx.db.get("opportunities", owner.opportunityId)),
+    ).toEqual(before);
+  });
+
+  test("cannot revive an expired paused opportunity by extending its deadline before cron runs", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(
+      t,
+      { subject: "update_expired" },
+      { deadline: Date.now() + 1_800_000 },
+    );
+    await t.run(
+      async (ctx) => await ctx.db.patch("opportunities", owner.opportunityId, { status: "paused" }),
+    );
+    vi.advanceTimersByTime(1_800_000);
+    const before = await t.run(
+      async (ctx) => await ctx.db.get("opportunities", owner.opportunityId),
+    );
+    await expectApiError(
+      () =>
+        t.run(
+          async (ctx) =>
+            await updateOpportunity(ctx, owner.membership, owner.opportunityId, {
+              deadline: Date.now() + 1_800_000,
             }),
         ),
       "invalid_state",

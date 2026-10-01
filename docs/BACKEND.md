@@ -106,7 +106,8 @@ Use the table name as the subject of the function instead of introducing a diffe
 
 Opportunity deadlines are Unix milliseconds on exact UTC half-hour boundaries
 (`:00` or `:30`, with zero seconds/milliseconds). Create, update, publish, and resume
-reject off-grid deadlines rather than rounding them.
+reject off-grid deadlines rather than rounding them. Deadline closure runs at those
+same boundaries through the internal cron, in bounded batches; drafts do not auto-close.
 
 ## Tests
 

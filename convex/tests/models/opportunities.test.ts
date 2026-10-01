@@ -317,6 +317,7 @@ describe("pauseOpportunity", () => {
       const applicationId = await ctx.db.insert("applications", {
         opportunityId: owner.opportunityId,
         creatorId,
+        companyId: owner.membership.companyId,
         note: "Interested",
         status: "offered",
         offerSentAt: Date.now(),
@@ -952,6 +953,7 @@ describe("removeOpportunity", () => {
         await ctx.db.insert("applications", {
           opportunityId: owner.opportunityId,
           creatorId,
+          companyId: owner.membership.companyId,
           note: "Interested",
           status: "declined",
         }),

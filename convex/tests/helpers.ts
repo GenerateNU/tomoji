@@ -33,9 +33,12 @@ export async function seedOpportunityHistory(t: TestConvex, opportunityId: Id<"o
   for (const status of ["pending", "offered", "accepted"] as const) {
     const creatorId = await seedCreatorId(t, `history_${status}`);
     await t.run(async (ctx) => {
+      const opportunity = await ctx.db.get("opportunities", opportunityId);
+      if (opportunity === null) throw new Error("expected seeded opportunity");
       await ctx.db.insert("applications", {
         opportunityId,
         creatorId,
+        companyId: opportunity.companyId,
         note: "Interested in the brief",
         status,
         ...(status !== "pending"

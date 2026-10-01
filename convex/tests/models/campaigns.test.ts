@@ -736,6 +736,8 @@ describe("pauseCampaign", () => {
           );
         }
         const assignmentId = await ctx.db.insert("assignments", {
+          companyId: owner.companyId,
+          campaignId,
           opportunityId: opportunityIds[1],
           creatorId,
           fixedFeeCents: 1500,
@@ -1105,6 +1107,8 @@ describe("resumeCampaign", () => {
         );
       }
       const assignmentId = await ctx.db.insert("assignments", {
+        companyId: owner.companyId,
+        campaignId,
         opportunityId: opportunityIds[1],
         creatorId,
         fixedFeeCents: 1500,
@@ -1288,6 +1292,8 @@ describe("closeCampaign", () => {
         );
       }
       const assignmentId = await ctx.db.insert("assignments", {
+        companyId: owner.companyId,
+        campaignId,
         opportunityId: opportunityIds[1],
         creatorId,
         fixedFeeCents: 1500,
@@ -1518,6 +1524,8 @@ describe("closeExpiredCampaigns", () => {
           );
         }
         const assignmentId = await ctx.db.insert("assignments", {
+          companyId: owner.companyId,
+          campaignId,
           opportunityId: opportunityIds[1],
           creatorId,
           fixedFeeCents: 1500,

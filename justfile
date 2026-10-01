@@ -51,6 +51,15 @@ format-check:
 dashboard:
     bunx convex dashboard
 
+# Generate openapi.yaml from the deployed public functions (internal ones are excluded)
+api-spec:
+    bunx convex-helpers open-api-spec --output-file openapi.yaml
+
+# Browse the public API in Scalar — paste a token to call the live deployment
+# --bun runs it on Bun's runtime; the CLI rejects Node below 24.
+api-docs port="5055": api-spec
+    bunx --bun @scalar/cli document serve openapi.yaml --port {{ port }}
+
 # Production build
 build:
     bun run build

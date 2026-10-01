@@ -9,6 +9,7 @@ import type { companyRole } from "../schemas/companyUsers.schema";
 import type { Infer } from "convex/values";
 import { getCompanyByWorkosId } from "./companies";
 import { getCompanyUser, getCompanyUserByUserId } from "./companyUsers";
+import { getCreatorByUserId } from "./creators";
 
 export async function getUserByWorkosId(
   ctx: QueryCtx | MutationCtx,
@@ -212,4 +213,15 @@ export async function requireRole(
     throw apiError("forbidden", { requiredRole: role });
   }
   return { identity, user, orgId: findOrgId(identity) };
+}
+
+export async function requireCallerCreatorId(
+  ctx: QueryCtx | MutationCtx,
+  user: Doc<"users">,
+): Promise<Id<"creators">> {
+  const creator = await getCreatorByUserId(ctx, user._id);
+  if (creator === null) {
+    throw apiError("not_found", { resource: "creator" });
+  }
+  return creator._id;
 }

@@ -5,4 +5,7 @@ const crons = cronJobs();
 
 crons.interval("close expired campaigns", { minutes: 1 }, internal.campaigns.closeExpired, {});
 
+// Deadlines and closure runs share exact :00/:30 UTC boundaries.
+crons.cron("close expired opportunities", "0,30 * * * *", internal.opportunities.closeExpired, {});
+
 export default crons;

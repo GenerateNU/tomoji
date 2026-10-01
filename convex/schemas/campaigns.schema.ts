@@ -17,6 +17,8 @@ export const campaignsTable = defineTable({
   audience: v.string(),
   description: v.string(),
   status: campaignStatus,
+  // Server-managed while a campaign pause is still updating its opportunities.
+  isPausingOpportunities: v.optional(v.boolean()),
   budgetCents: v.number(), // Nonnegative integer minor units; enforced by the model.
   startsAt: v.number(), // Unix timestamp in milliseconds.
   endsAt: v.optional(v.number()), // Unix timestamp in milliseconds.

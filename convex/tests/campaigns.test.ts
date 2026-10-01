@@ -8,7 +8,14 @@ import { getCompanyByWorkosId } from "../models/companies";
 import { getCompanyUser } from "../models/companyUsers";
 import { getUserByWorkosId, upsertUser } from "../models/users";
 import schema from "../schema";
-import { expectApiError, seedOperator, seedUser, workosIdentity, type TestConvex } from "./helpers";
+import {
+  expectApiError,
+  opportunityArgs,
+  seedOperator,
+  seedUser,
+  workosIdentity,
+  type TestConvex,
+} from "./helpers";
 
 const modules = import.meta.glob("../**/*.ts");
 
@@ -541,6 +548,114 @@ describe("campaigns.publish", () => {
 });
 
 describe("campaigns.pause", () => {
+  test("pauses in batches and requires explicit opportunity resume after campaign resume", async () => {
+    vi.useFakeTimers();
+    const t = convexTest(schema, modules);
+    try {
+      const asOwner = await seedUser(t, { subject: "cascade-owner", org: { id: "org_acme" } });
+      const asOther = await seedUser(t, { subject: "cascade-other", org: { id: "org_other" } });
+      const campaignId = await asOwner.mutation(api.campaigns.create, createArgs());
+      const opportunityIds: Id<"opportunities">[] = [];
+      for (let i = 0; i < 105; i++) {
+        opportunityIds.push(
+          await asOwner.mutation(
+            api.opportunities.create,
+            opportunityArgs(campaignId, { title: `Product launch post ${i}` }),
+          ),
+        );
+      }
+      const manuallyPausedId = await asOwner.mutation(
+        api.opportunities.create,
+        opportunityArgs(campaignId),
+      );
+      await asOwner.mutation(api.opportunities.pause, { opportunityId: manuallyPausedId });
+
+      await expectApiError(
+        () => asOther.mutation(api.campaigns.pause, { campaignId }),
+        "not_found",
+      );
+      expect(
+        await t.run(async (ctx) =>
+          Promise.all(
+            opportunityIds.map(async (id) => (await ctx.db.get("opportunities", id))?.status),
+          ),
+        ),
+      ).toEqual(opportunityIds.map(() => "open"));
+
+      expect(await asOwner.mutation(api.campaigns.pause, { campaignId })).toBeNull();
+      expect(await t.run(async (ctx) => ctx.db.get("campaigns", campaignId))).toMatchObject({
+        status: "paused",
+        isPausingOpportunities: true,
+      });
+      const firstBatch = await t.run(async (ctx) =>
+        Promise.all(
+          opportunityIds.map(async (id) => (await ctx.db.get("opportunities", id))?.status),
+        ),
+      );
+      expect(firstBatch.filter((status) => status === "paused")).toHaveLength(50);
+      await expect(asOwner.mutation(api.campaigns.resume, { campaignId })).rejects.toThrow(
+        "campaign_pause_in_progress",
+      );
+      await expect(
+        asOwner.mutation(api.opportunities.resume, { opportunityId: opportunityIds[0] }),
+      ).rejects.toThrow("campaign_not_open");
+
+      await t.finishAllScheduledFunctions(() => vi.runAllTimers());
+      expect(await t.run(async (ctx) => ctx.db.get("campaigns", campaignId))).not.toHaveProperty(
+        "isPausingOpportunities",
+      );
+      expect(await asOwner.mutation(api.campaigns.resume, { campaignId })).toBeNull();
+      expect(await t.run(async (ctx) => ctx.db.get("campaigns", campaignId))).toHaveProperty(
+        "status",
+        "open",
+      );
+      expect(
+        await t.run(async (ctx) =>
+          Promise.all(
+            opportunityIds.map(async (id) => (await ctx.db.get("opportunities", id))?.status),
+          ),
+        ),
+      ).toEqual(opportunityIds.map(() => "paused"));
+      expect(
+        await asOwner.mutation(api.opportunities.resume, { opportunityId: opportunityIds[0] }),
+      ).toHaveProperty("status", "open");
+      expect(
+        await t.run(async (ctx) =>
+          Promise.all(
+            [...opportunityIds.slice(1), manuallyPausedId].map(
+              async (id) => (await ctx.db.get("opportunities", id))?.status,
+            ),
+          ),
+        ),
+      ).toEqual(opportunityIds.map(() => "paused"));
+      const jobs = await t.run(async (ctx) =>
+        ctx.db.system.query("_scheduled_functions").collect(),
+      );
+      expect(jobs).toHaveLength(2);
+      expect(jobs.every((job) => job.state.kind === "success")).toBe(true);
+    } finally {
+      try {
+        await t.finishAllScheduledFunctions(() => vi.runAllTimers());
+      } finally {
+        vi.useRealTimers();
+      }
+    }
+  });
+
+  test("does not let clients set or clear the pause progress flag", async () => {
+    const t = convexTest(schema, modules);
+    const asOwner = await seedUser(t, { subject: "cascade-flag", org: { id: "org_acme" } });
+    const createWithFlag = { ...createArgs(), isPausingOpportunities: true };
+    await expect(asOwner.mutation(api.campaigns.create, createWithFlag)).rejects.toThrow(
+      "Unexpected field `isPausingOpportunities`",
+    );
+    const campaignId = await asOwner.mutation(api.campaigns.create, createArgs());
+    const updateWithFlag = { campaignId, isPausingOpportunities: false };
+    await expect(asOwner.mutation(api.campaigns.update, updateWithFlag)).rejects.toThrow(
+      "Unexpected field `isPausingOpportunities`",
+    );
+  });
+
   test.each(["admin", "member"] as const)(
     "lets a company %s pause a teammate's open campaign",
     async (role) => {

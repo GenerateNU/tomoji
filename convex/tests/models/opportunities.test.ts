@@ -5,6 +5,7 @@ import {
   createOpportunity,
   discoverOpportunities,
   listOpportunities,
+  removeOpportunity,
   requireOpportunity,
   updateOpportunity,
 } from "../../models/opportunities";
@@ -27,6 +28,221 @@ beforeEach(() => {
 });
 
 afterEach(() => vi.useRealTimers());
+
+describe("removeOpportunity", () => {
+  test("conceals a draft whose company is inactive", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(t, { subject: "remove_owner" }, { status: "draft" });
+    await t.run(
+      async (ctx) =>
+        await ctx.db.patch("companies", owner.membership.companyId, { isActive: false }),
+    );
+    await expectApiError(
+      () =>
+        t.run(async (ctx) => await removeOpportunity(ctx, owner.membership, owner.opportunityId)),
+      "not_found",
+    );
+    expect(
+      await t.run(async (ctx) => await ctx.db.get("opportunities", owner.opportunityId)),
+    ).not.toBeNull();
+  });
+
+  test("conceals a draft whose campaign is missing", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(t, { subject: "remove_owner" }, { status: "draft" });
+    await t.run(async (ctx) => await ctx.db.delete("campaigns", owner.campaignId));
+    await expectApiError(
+      () =>
+        t.run(async (ctx) => await removeOpportunity(ctx, owner.membership, owner.opportunityId)),
+      "not_found",
+    );
+    expect(
+      await t.run(async (ctx) => await ctx.db.get("opportunities", owner.opportunityId)),
+    ).not.toBeNull();
+  });
+
+  test("rejects an inconsistent draft with filled slots", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(t, { subject: "remove_owner" }, { status: "draft" });
+    await t.run(
+      async (ctx) =>
+        await ctx.db.patch("opportunities", owner.opportunityId, { numFilledSlots: 1 }),
+    );
+    await expectApiError(
+      () =>
+        t.run(async (ctx) => await removeOpportunity(ctx, owner.membership, owner.opportunityId)),
+      "invalid_state",
+    );
+    expect(
+      await t.run(async (ctx) => await ctx.db.get("opportunities", owner.opportunityId)),
+    ).toMatchObject({ numFilledSlots: 1 });
+  });
+
+  test("rejects an open opportunity without changing it", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(t, { subject: "remove_owner" });
+    const before = await t.run(
+      async (ctx) => await ctx.db.get("opportunities", owner.opportunityId),
+    );
+
+    await expectApiError(
+      () =>
+        t.run(async (ctx) => await removeOpportunity(ctx, owner.membership, owner.opportunityId)),
+      "invalid_state",
+    );
+    expect(
+      await t.run(async (ctx) => await ctx.db.get("opportunities", owner.opportunityId)),
+    ).toEqual(before);
+  });
+
+  test("rejects a paused opportunity", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(t, { subject: "remove_owner" });
+    await t.run(
+      async (ctx) => await ctx.db.patch("opportunities", owner.opportunityId, { status: "paused" }),
+    );
+    await expectApiError(
+      () =>
+        t.run(async (ctx) => await removeOpportunity(ctx, owner.membership, owner.opportunityId)),
+      "invalid_state",
+    );
+    expect(
+      await t.run(async (ctx) => await ctx.db.get("opportunities", owner.opportunityId)),
+    ).toMatchObject({ status: "paused" });
+  });
+
+  test("rejects a closed opportunity", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(t, { subject: "remove_owner" });
+    await t.run(
+      async (ctx) => await ctx.db.patch("opportunities", owner.opportunityId, { status: "closed" }),
+    );
+    await expectApiError(
+      () =>
+        t.run(async (ctx) => await removeOpportunity(ctx, owner.membership, owner.opportunityId)),
+      "invalid_state",
+    );
+    expect(
+      await t.run(async (ctx) => await ctx.db.get("opportunities", owner.opportunityId)),
+    ).toMatchObject({ status: "closed" });
+  });
+
+  test("preserves a draft and its declined application", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(t, { subject: "remove_owner" }, { status: "draft" });
+    const creatorId = await seedCreatorId(t, "remove_creator");
+    const applicationId = await t.run(
+      async (ctx) =>
+        await ctx.db.insert("applications", {
+          opportunityId: owner.opportunityId,
+          creatorId,
+          note: "Interested",
+          status: "declined",
+        }),
+    );
+    const before = await t.run(async (ctx) => ({
+      opportunity: await ctx.db.get("opportunities", owner.opportunityId),
+      application: await ctx.db.get("applications", applicationId),
+    }));
+
+    await expectApiError(
+      () =>
+        t.run(async (ctx) => await removeOpportunity(ctx, owner.membership, owner.opportunityId)),
+      "invalid_state",
+    );
+    expect(
+      await t.run(async (ctx) => ({
+        opportunity: await ctx.db.get("opportunities", owner.opportunityId),
+        application: await ctx.db.get("applications", applicationId),
+      })),
+    ).toEqual(before);
+  });
+
+  test("preserves a draft and its cancelled assignment even without an application", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(t, { subject: "remove_owner" }, { status: "draft" });
+    const creatorId = await seedCreatorId(t, "remove_creator");
+    const assignmentId = await t.run(
+      async (ctx) =>
+        await ctx.db.insert("assignments", {
+          opportunityId: owner.opportunityId,
+          creatorId,
+          fixedFeeCents: 10_000,
+          cpmRateCents: 500,
+          paymentCapCents: 25_000,
+          usesAiReview: true,
+          status: "cancelled",
+        }),
+    );
+    const before = await t.run(async (ctx) => ({
+      opportunity: await ctx.db.get("opportunities", owner.opportunityId),
+      assignment: await ctx.db.get("assignments", assignmentId),
+    }));
+
+    await expectApiError(
+      () =>
+        t.run(async (ctx) => await removeOpportunity(ctx, owner.membership, owner.opportunityId)),
+      "invalid_state",
+    );
+    expect(
+      await t.run(async (ctx) => ({
+        opportunity: await ctx.db.get("opportunities", owner.opportunityId),
+        assignment: await ctx.db.get("assignments", assignmentId),
+      })),
+    ).toEqual(before);
+  });
+
+  test("conceals a missing opportunity", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(t, { subject: "remove_owner" }, { status: "draft" });
+    await t.run(async (ctx) => await ctx.db.delete("opportunities", owner.opportunityId));
+    await expectApiError(
+      () =>
+        t.run(async (ctx) => await removeOpportunity(ctx, owner.membership, owner.opportunityId)),
+      "not_found",
+    );
+  });
+
+  test("can clean up an unused draft in a closed campaign", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(t, { subject: "remove_owner" }, { status: "draft" });
+    await t.run(
+      async (ctx) => await ctx.db.patch("campaigns", owner.campaignId, { status: "closed" }),
+    );
+    await t.run(async (ctx) => await removeOpportunity(ctx, owner.membership, owner.opportunityId));
+    expect(
+      await t.run(async (ctx) => await ctx.db.get("opportunities", owner.opportunityId)),
+    ).toBeNull();
+    expect(
+      await t.run(async (ctx) => await ctx.db.get("campaigns", owner.campaignId)),
+    ).toMatchObject({ status: "closed" });
+  });
+
+  test("deletes only the unused draft and preserves its campaign and sibling", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(t, { subject: "remove_owner" }, { status: "draft" });
+    const siblingId = await t.run(
+      async (ctx) =>
+        await createOpportunity(ctx, owner.membership, opportunityArgs(owner.campaignId)),
+    );
+    const before = await t.run(async (ctx) => ({
+      campaign: await ctx.db.get("campaigns", owner.campaignId),
+      sibling: await ctx.db.get("opportunities", siblingId),
+    }));
+
+    await t.run(async (ctx) => await removeOpportunity(ctx, owner.membership, owner.opportunityId));
+
+    expect(
+      await t.run(async (ctx) => await ctx.db.get("opportunities", owner.opportunityId)),
+    ).toBeNull();
+    expect(
+      await t.run(async (ctx) => ({
+        campaign: await ctx.db.get("campaigns", owner.campaignId),
+        sibling: await ctx.db.get("opportunities", siblingId),
+      })),
+    ).toEqual(before);
+  });
+});
 
 describe("updateOpportunity", () => {
   test("conceals an opportunity whose campaign is missing", async () => {

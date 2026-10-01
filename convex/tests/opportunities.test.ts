@@ -24,6 +24,111 @@ beforeEach(() => {
 
 afterEach(() => vi.useRealTimers());
 
+describe("opportunities.remove", () => {
+  test("lets a company member remove an unused draft and returns null", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(
+      t,
+      { subject: "remove_member", role: "member" },
+      { status: "draft" },
+    );
+    expect(
+      await owner.asCompany.mutation(api.opportunities.remove, {
+        opportunityId: owner.opportunityId,
+      }),
+    ).toBeNull();
+    expect(
+      await t.run(async (ctx) => await ctx.db.get("opportunities", owner.opportunityId)),
+    ).toBeNull();
+  });
+
+  test("lets a company admin remove an unused draft", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(
+      t,
+      { subject: "remove_admin", role: "admin" },
+      { status: "draft" },
+    );
+    await owner.asCompany.mutation(api.opportunities.remove, {
+      opportunityId: owner.opportunityId,
+    });
+    expect(
+      await t.run(async (ctx) => await ctx.db.get("opportunities", owner.opportunityId)),
+    ).toBeNull();
+  });
+
+  test("rejects a signed-out caller", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(t, { subject: "remove_owner" }, { status: "draft" });
+    await expectApiError(
+      () => t.mutation(api.opportunities.remove, { opportunityId: owner.opportunityId }),
+      "not_authenticated",
+    );
+  });
+
+  test("rejects a creator", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(t, { subject: "remove_owner" }, { status: "draft" });
+    const asCreator = await seedUser(t, { subject: "remove_creator" });
+    await expectApiError(
+      () => asCreator.mutation(api.opportunities.remove, { opportunityId: owner.opportunityId }),
+      "forbidden",
+    );
+  });
+
+  test("rejects an operator", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(t, { subject: "remove_owner" }, { status: "draft" });
+    const asOperator = await seedOperator(t, "remove_operator");
+    await expectApiError(
+      () => asOperator.mutation(api.opportunities.remove, { opportunityId: owner.opportunityId }),
+      "forbidden",
+    );
+  });
+
+  test("conceals another company's draft and leaves it unchanged", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(t, { subject: "remove_owner" }, { status: "draft" });
+    const other = await seedCampaign(t, { subject: "remove_other", orgId: "org_other" });
+    const before = await t.run(
+      async (ctx) => await ctx.db.get("opportunities", owner.opportunityId),
+    );
+    await expectApiError(
+      () =>
+        other.asCompany.mutation(api.opportunities.remove, { opportunityId: owner.opportunityId }),
+      "not_found",
+    );
+    expect(
+      await t.run(async (ctx) => await ctx.db.get("opportunities", owner.opportunityId)),
+    ).toEqual(before);
+  });
+
+  test("rejects a forged organization claim", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(
+      t,
+      { subject: "remove_owner", orgId: "org_other" },
+      { status: "draft" },
+    );
+    const asWrongOrg = await seedWrongOrgCaller(t);
+    await expectApiError(
+      () => asWrongOrg.mutation(api.opportunities.remove, { opportunityId: owner.opportunityId }),
+      "forbidden",
+    );
+  });
+
+  test("rejects a deactivated company member", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(t, { subject: "remove_owner" }, { status: "draft" });
+    await t.run(async (ctx) => await deactivateUser(ctx, "remove_owner"));
+    await expectApiError(
+      () =>
+        owner.asCompany.mutation(api.opportunities.remove, { opportunityId: owner.opportunityId }),
+      "account_deactivated",
+    );
+  });
+});
+
 describe("opportunities.update", () => {
   test("lets a company member update a brief and preserves omitted fields", async () => {
     const t = convexTest(schema, modules);

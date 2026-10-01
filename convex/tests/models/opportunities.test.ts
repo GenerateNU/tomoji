@@ -320,7 +320,7 @@ describe("pauseOpportunity", () => {
         companyId: owner.membership.companyId,
         note: "Interested",
         status: "offered",
-        offerSentAt: Date.now(),
+        statusLastUpdatedAt: Date.now(),
         offerExpiresAt: Date.now() + 60_000,
       });
       const assignmentId = await ctx.db.insert("assignments", {

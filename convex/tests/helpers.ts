@@ -42,7 +42,7 @@ export async function seedOpportunityHistory(t: TestConvex, opportunityId: Id<"o
         note: "Interested in the brief",
         status,
         ...(status !== "pending"
-          ? { offerSentAt: Date.now(), offerExpiresAt: Date.now() + 172_800_000 }
+          ? { statusLastUpdatedAt: Date.now(), offerExpiresAt: Date.now() + 172_800_000 }
           : {}),
         ...(status === "accepted" ? { offerAcceptedAt: Date.now() } : {}),
       });

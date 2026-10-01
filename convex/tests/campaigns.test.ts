@@ -419,6 +419,126 @@ describe("campaigns.remove", () => {
   });
 });
 
+describe("campaigns.publish", () => {
+  test.each(["admin", "member"] as const)(
+    "lets a company %s publish a teammate's draft",
+    async (role) => {
+      const t = convexTest(schema, modules);
+      const asAuthor = await seedUser(t, { subject: "cp-author", org: { id: "org_acme" } });
+      const asTeammate = await seedUser(t, {
+        subject: "cp-teammate",
+        org: { id: "org_acme", role },
+      });
+      const campaignId = await asAuthor.mutation(
+        api.campaigns.create,
+        createArgs({ status: "draft" }),
+      );
+      const before = await t.run(async (ctx) => ctx.db.get("campaigns", campaignId));
+
+      const result = await asTeammate.mutation(api.campaigns.publish, { campaignId });
+
+      expect(result).toBeNull();
+      expect(await t.run(async (ctx) => ctx.db.get("campaigns", campaignId))).toEqual({
+        ...before,
+        status: "open",
+      });
+    },
+  );
+
+  test("rejects another company's draft without changing it", async () => {
+    const t = convexTest(schema, modules);
+    const asOwner = await seedUser(t, { subject: "cp-owner", org: { id: "org_acme" } });
+    const asOther = await seedUser(t, { subject: "cp-other", org: { id: "org_other" } });
+    const campaignId = await asOwner.mutation(
+      api.campaigns.create,
+      createArgs({ status: "draft" }),
+    );
+    const before = await t.run(async (ctx) => ctx.db.get("campaigns", campaignId));
+
+    await expectApiError(
+      () => asOther.mutation(api.campaigns.publish, { campaignId }),
+      "not_found",
+    );
+    expect(await t.run(async (ctx) => ctx.db.get("campaigns", campaignId))).toEqual(before);
+  });
+
+  test("rejects a client-supplied company identity", async () => {
+    const t = convexTest(schema, modules);
+    const asOwner = await seedUser(t, { subject: "cp-owner", org: { id: "org_acme" } });
+    const asOther = await seedUser(t, { subject: "cp-other", org: { id: "org_other" } });
+    const campaignId = await asOwner.mutation(
+      api.campaigns.create,
+      createArgs({ status: "draft" }),
+    );
+    const campaign = await t.run(async (ctx) => ctx.db.get("campaigns", campaignId));
+    const args = { campaignId, companyId: campaign!.companyId };
+
+    await expect(asOther.mutation(api.campaigns.publish, args)).rejects.toThrow(
+      "Unexpected field `companyId`",
+    );
+    expect(await t.run(async (ctx) => ctx.db.get("campaigns", campaignId))).toEqual(campaign);
+  });
+
+  test("rejects a signed-out caller", async () => {
+    const t = convexTest(schema, modules);
+    const asOwner = await seedUser(t, { subject: "cp-owner", org: { id: "org_acme" } });
+    const campaignId = await asOwner.mutation(
+      api.campaigns.create,
+      createArgs({ status: "draft" }),
+    );
+
+    await expectApiError(
+      () => t.mutation(api.campaigns.publish, { campaignId }),
+      "not_authenticated",
+    );
+    expect(await t.run(async (ctx) => ctx.db.get("campaigns", campaignId))).toHaveProperty(
+      "status",
+      "draft",
+    );
+  });
+
+  test("rejects a creator", async () => {
+    const t = convexTest(schema, modules);
+    const asOwner = await seedUser(t, { subject: "cp-owner", org: { id: "org_acme" } });
+    const asCreator = await seedUser(t, { subject: "cp-creator" });
+    const campaignId = await asOwner.mutation(
+      api.campaigns.create,
+      createArgs({ status: "draft" }),
+    );
+
+    await expectApiError(
+      () => asCreator.mutation(api.campaigns.publish, { campaignId }),
+      "forbidden",
+    );
+    expect(await t.run(async (ctx) => ctx.db.get("campaigns", campaignId))).toHaveProperty(
+      "status",
+      "draft",
+    );
+  });
+
+  test("rejects a caller claiming the owner's org without membership", async () => {
+    const t = convexTest(schema, modules);
+    const asOwner = await seedUser(t, { subject: "cp-owner", org: { id: "org_acme" } });
+    await seedUser(t, { subject: "cp-outsider", org: { id: "org_other" } });
+    const campaignId = await asOwner.mutation(
+      api.campaigns.create,
+      createArgs({ status: "draft" }),
+    );
+    const asWrongOrg = t.withIdentity(
+      workosIdentity({ subject: "cp-outsider", org_id: "org_acme" }),
+    );
+
+    await expectApiError(
+      () => asWrongOrg.mutation(api.campaigns.publish, { campaignId }),
+      "forbidden",
+    );
+    expect(await t.run(async (ctx) => ctx.db.get("campaigns", campaignId))).toHaveProperty(
+      "status",
+      "draft",
+    );
+  });
+});
+
 describe("campaigns.create", () => {
   test.each([
     { role: "admin", status: "draft" },

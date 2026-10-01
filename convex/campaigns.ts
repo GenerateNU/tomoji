@@ -4,6 +4,7 @@ import {
   campaignUpdate,
   createCampaign,
   listCampaigns,
+  publishCampaign,
   removeCampaign,
   requireCampaign,
   updateCampaign,
@@ -67,6 +68,22 @@ export const remove = companyMutation({
   returns: v.null(),
   handler: async (ctx, args) => {
     await removeCampaign(ctx, args.campaignId, ctx.membership.companyId);
+    return null;
+  },
+});
+
+/**
+ * Publishes a valid draft in the caller's company.
+ * Open to any company member until the company-admin builder is available.
+ *
+ * @throws `not_found` if the campaign is missing or belongs to another company.
+ * @throws `invalid_state` if it is not a draft, has invalid details, or has expired.
+ */
+export const publish = companyMutation({
+  args: { campaignId: v.id("campaigns") },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    await publishCampaign(ctx, args.campaignId, ctx.membership.companyId);
     return null;
   },
 });

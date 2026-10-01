@@ -102,6 +102,13 @@ Model functions are imported directly, so their names should make sense on their
 
 Use the table name as the subject of the function instead of introducing a different term for the same thing. This keeps naming consistent from the schema to the model and route layers. Only add `By<Field>` when the table supports multiple lookups and the function name would otherwise be unclear. In most cases, the arguments already make it obvious what field is being matched.
 
+## Opportunity deadlines
+
+Opportunity deadlines are Unix milliseconds on exact UTC half-hour boundaries
+(`:00` or `:30`, with zero seconds/milliseconds). Create, update, publish, and resume
+reject off-grid deadlines rather than rounding them. Deadline closure runs at those
+same boundaries through the internal cron, in bounded batches; drafts do not auto-close.
+
 ## Tests
 
 `convex/tests/` should mirror the source tree. For example:

@@ -17,7 +17,13 @@ import {
   updateCampaign,
 } from "../../models/campaigns";
 import schema from "../../schema";
-import { expectApiError, seedCreatorId, seedUser, type TestConvex } from "../helpers";
+import {
+  expectApiError,
+  seedCreatorId,
+  seedOpportunity,
+  seedUser,
+  type TestConvex,
+} from "../helpers";
 
 const modules = import.meta.glob("../../**/*.ts");
 
@@ -252,6 +258,77 @@ describe("listCampaigns", () => {
 });
 
 describe("updateCampaign", () => {
+  test.each(["draft", "open", "paused", "closed"] as const)(
+    "rejects an end before an existing %s opportunity deadline without changing either record",
+    async (status) => {
+      const t = convexTest(schema, modules);
+      const { campaignId, opportunityId, membership } = await seedOpportunity(t, {
+        subject: "cu-child-deadline",
+      });
+      const before = await t.run(async (ctx) => {
+        await ctx.db.patch("opportunities", opportunityId, { status });
+        return {
+          campaign: await ctx.db.get("campaigns", campaignId),
+          opportunity: await ctx.db.get("opportunities", opportunityId),
+        };
+      });
+
+      await expect(
+        t.run(async (ctx) =>
+          updateCampaign(ctx, campaignId, membership.companyId, {
+            title: "Do not save",
+            endsAt: before.opportunity!.deadline - HOUR,
+          }),
+        ),
+      ).rejects.toMatchObject({
+        data: { code: "invalid_state", reason: "end_before_opportunity_deadline" },
+      });
+
+      expect(
+        await t.run(async (ctx) => ({
+          campaign: await ctx.db.get("campaigns", campaignId),
+          opportunity: await ctx.db.get("opportunities", opportunityId),
+        })),
+      ).toEqual(before);
+    },
+  );
+
+  test("accepts an end equal to the latest child deadline and allows clearing it", async () => {
+    const t = convexTest(schema, modules);
+    const { campaignId, opportunityId, membership } = await seedOpportunity(t, {
+      subject: "cu-child-end",
+    });
+    const opportunity = await t.run(async (ctx) => ctx.db.get("opportunities", opportunityId));
+    await seedOpportunity(
+      t,
+      { subject: "cu-other-child", orgId: "org_other" },
+      { deadline: opportunity!.deadline + HOUR },
+    );
+    await t.run(async (ctx) =>
+      updateCampaign(ctx, campaignId, membership.companyId, {
+        endsAt: opportunity!.deadline + HOUR,
+      }),
+    );
+
+    await t.run(async (ctx) =>
+      updateCampaign(ctx, campaignId, membership.companyId, { endsAt: opportunity!.deadline }),
+    );
+    expect(await t.run(async (ctx) => ctx.db.get("campaigns", campaignId))).toHaveProperty(
+      "endsAt",
+      opportunity!.deadline,
+    );
+
+    await t.run(async (ctx) =>
+      updateCampaign(ctx, campaignId, membership.companyId, { endsAt: null }),
+    );
+    expect(await t.run(async (ctx) => ctx.db.get("campaigns", campaignId))).not.toHaveProperty(
+      "endsAt",
+    );
+    expect(await t.run(async (ctx) => ctx.db.get("opportunities", opportunityId))).toEqual(
+      opportunity,
+    );
+  });
+
   test.each(["draft", "open", "paused", "closed"] as const)(
     "updates a %s campaign while preserving ownership and omitted fields",
     async (status) => {
@@ -497,6 +574,7 @@ describe("publishCampaign", () => {
           await ctx.db.insert("opportunities", {
             ...opportunityFields,
             campaignId,
+            companyId: owner.companyId,
             createdBy: owner.createdBy,
             status,
           }),
@@ -647,6 +725,7 @@ describe("pauseCampaign", () => {
           await ctx.db.insert("opportunities", {
             ...opportunityFields,
             campaignId,
+            companyId: owner.companyId,
             createdBy: owner.createdBy,
             status,
           }),
@@ -781,6 +860,7 @@ describe("resumeCampaign", () => {
           await ctx.db.insert("opportunities", {
             ...opportunityFields,
             campaignId,
+            companyId: owner.companyId,
             createdBy: owner.createdBy,
             status,
           }),
@@ -963,6 +1043,7 @@ describe("closeCampaign", () => {
           await ctx.db.insert("opportunities", {
             ...opportunityFields,
             campaignId,
+            companyId: owner.companyId,
             createdBy: owner.createdBy,
             status,
           }),
@@ -1192,6 +1273,7 @@ describe("closeExpiredCampaigns", () => {
             await ctx.db.insert("opportunities", {
               ...opportunityFields,
               campaignId,
+              companyId: owner.companyId,
               createdBy: owner.createdBy,
               status,
             }),
@@ -1243,6 +1325,7 @@ describe("removeCampaign", () => {
       const opportunityId = await ctx.db.insert("opportunities", {
         ...opportunityFields,
         campaignId: otherCampaignId,
+        companyId: owner.companyId,
         createdBy: owner.createdBy,
         status: "open",
       });
@@ -1295,6 +1378,7 @@ describe("removeCampaign", () => {
         const opportunityId = await ctx.db.insert("opportunities", {
           ...opportunityFields,
           campaignId,
+          companyId: owner.companyId,
           createdBy: owner.createdBy,
           status,
         });

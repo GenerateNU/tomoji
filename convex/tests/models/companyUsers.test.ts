@@ -105,6 +105,18 @@ describe("getCompanyUser", () => {
 });
 
 describe("requireMembership", () => {
+  test("rejects membership in an inactive company", async () => {
+    const t = convexTest(schema, modules);
+    await seedUser(t, { subject: "cu_inactive", org: { id: "org_inactive" } });
+    const { userId, companyId } = await idsFor(t, "cu_inactive", "org_inactive");
+    await t.run(async (ctx) => await ctx.db.patch("companies", companyId, { isActive: false }));
+
+    await expectApiError(
+      () => t.run(async (ctx) => await requireMembership(ctx, userId, "org_inactive")),
+      "forbidden",
+    );
+  });
+
   test("returns the membership that proves access to the org", async () => {
     const t = convexTest(schema, modules);
     await seedUser(t, { subject: "cu6", org: { id: "org_acme", role: "admin" } });

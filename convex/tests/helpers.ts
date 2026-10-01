@@ -1,14 +1,64 @@
-import type { convexTest } from "convex-test";
+import type { TestConvex as ConvexTest } from "convex-test";
 import type { UserIdentity } from "convex/server";
 import type { Infer } from "convex/values";
 import { expect } from "vitest";
-import type { Id } from "../_generated/dataModel";
+import type { Doc, Id } from "../_generated/dataModel";
 import type { ApiErrorCode } from "../lib/errors";
 import { getCreatorByUserId } from "../models/creators";
+import { createCampaign } from "../models/campaigns";
+import { companyContext } from "../lib/functions";
+import { createOpportunity, type OpportunityCreate } from "../models/opportunities";
 import { applyMembership, getUserByWorkosId, upsertUser } from "../models/users";
 import type { companyRole } from "../schemas/companyUsers.schema";
+import type schema from "../schema";
 
-export type TestConvex = ReturnType<typeof convexTest>;
+export type TestConvex = ConvexTest<typeof schema>;
+
+/** Reads bounded workflow fixtures so tests can assert that opportunity transitions preserve them. */
+export async function readOpportunityHistory(t: TestConvex, opportunityId: Id<"opportunities">) {
+  return await t.run(async (ctx) => ({
+    applications: await ctx.db
+      .query("applications")
+      .withIndex("by_opportunityId_and_status", (q) => q.eq("opportunityId", opportunityId))
+      .take(4),
+    assignments: await ctx.db
+      .query("assignments")
+      .withIndex("by_opportunityId_and_status", (q) => q.eq("opportunityId", opportunityId))
+      .take(2),
+  }));
+}
+
+/** Seeds pending, offered, and accepted applications plus independently agreed assignment terms. */
+export async function seedOpportunityHistory(t: TestConvex, opportunityId: Id<"opportunities">) {
+  for (const status of ["pending", "offered", "accepted"] as const) {
+    const creatorId = await seedCreatorId(t, `history_${status}`);
+    await t.run(async (ctx) => {
+      await ctx.db.insert("applications", {
+        opportunityId,
+        creatorId,
+        note: "Interested in the brief",
+        status,
+        ...(status !== "pending"
+          ? { offerSentAt: Date.now(), offerExpiresAt: Date.now() + 172_800_000 }
+          : {}),
+        ...(status === "accepted" ? { offerAcceptedAt: Date.now() } : {}),
+      });
+      if (status === "accepted") {
+        await ctx.db.insert("assignments", {
+          opportunityId,
+          creatorId,
+          fixedFeeCents: 20_000,
+          cpmRateCents: 700,
+          paymentCapCents: 40_000,
+          usesAiReview: false,
+          status: "active",
+        });
+        await ctx.db.patch("opportunities", opportunityId, { numFilledSlots: 1 });
+      }
+    });
+  }
+  return await readOpportunityHistory(t, opportunityId);
+}
 
 /** A fake WorkOS token. */
 export function workosIdentity(claims: {
@@ -92,4 +142,80 @@ export async function seedWrongOrgCaller(t: TestConvex) {
   await seedUser(t, { subject: "outsider", org: { id: "org_acme" } });
   await seedUser(t, { subject: "insider", org: { id: "org_other", name: "Other" } });
   return t.withIdentity(workosIdentity({ subject: "outsider", org_id: "org_other" }));
+}
+
+export type SeedCampaignOptions = {
+  subject: string;
+  orgId?: string;
+  role?: Infer<typeof companyRole>;
+  status?: Doc<"campaigns">["status"];
+};
+
+/** Seeds a company caller and its campaign with server-derived ownership. */
+export async function seedCampaign(t: TestConvex, options: SeedCampaignOptions) {
+  const asCompany = await seedUser(t, {
+    subject: options.subject,
+    org: { id: options.orgId ?? "org_acme", role: options.role },
+  });
+  const { campaignId, membership } = await asCompany.run(async (ctx) => {
+    const { membership } = await companyContext(ctx);
+    const campaignId = await createCampaign(ctx, {
+      companyId: membership.companyId,
+      createdBy: membership._id,
+      title: "Spring launch",
+      objective: "Introduce the new skincare range",
+      product: "Daily moisturizer",
+      audience: "Skincare enthusiasts",
+      description: "Campaign supporting the spring launch.",
+      status: "open",
+      budgetCents: 250_000,
+      startsAt: Date.now(),
+    });
+    if (options.status !== undefined) {
+      await ctx.db.patch("campaigns", campaignId, { status: options.status });
+    }
+    return { campaignId, membership };
+  });
+  return { asCompany, campaignId, membership };
+}
+
+/** A complete opportunity brief without server-owned fields. */
+export function opportunityArgs(
+  campaignId: Id<"campaigns">,
+  overrides: Partial<OpportunityCreate> = {},
+): OpportunityCreate {
+  return {
+    campaignId,
+    title: "Moisturizer launch video",
+    description: "Show the product in your daily skincare routine.",
+    status: "open",
+    isGated: false,
+    usesAiReviewDefault: true,
+    targetApplicant: "Skincare creators",
+    maxSlots: 5,
+    maxApplications: 5,
+    deadline: Math.ceil((Date.now() + 86_400_000) / 1_800_000) * 1_800_000,
+    fixedFeeCents: 10_000,
+    cpmRateCents: 500,
+    paymentCapCents: 25_000,
+    contentRequirements: "One 30-second video",
+    prohibitedClaims: "No medical claims",
+    disclosureRequirements: "Disclose the paid partnership",
+    usageRights: "Organic reposting for 30 days",
+    ...overrides,
+  };
+}
+
+/** Seeds a campaign and an opportunity through the model, bypassing route authorization. */
+export async function seedOpportunity(
+  t: TestConvex,
+  options: SeedCampaignOptions,
+  overrides: Partial<OpportunityCreate> = {},
+) {
+  const owner = await seedCampaign(t, options);
+  const opportunityId = await t.run(
+    async (ctx) =>
+      await createOpportunity(ctx, owner.membership, opportunityArgs(owner.campaignId, overrides)),
+  );
+  return { ...owner, opportunityId };
 }

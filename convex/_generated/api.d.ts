@@ -13,6 +13,7 @@ import type * as campaigns from "../campaigns.js";
 import type * as companies from "../companies.js";
 import type * as companyUsers from "../companyUsers.js";
 import type * as creators from "../creators.js";
+import type * as crons from "../crons.js";
 import type * as http from "../http.js";
 import type * as lib_authz from "../lib/authz.js";
 import type * as lib_errors from "../lib/errors.js";
@@ -42,6 +43,7 @@ declare const fullApi: ApiFromModules<{
   companies: typeof companies;
   companyUsers: typeof companyUsers;
   creators: typeof creators;
+  crons: typeof crons;
   http: typeof http;
   "lib/authz": typeof lib_authz;
   "lib/errors": typeof lib_errors;

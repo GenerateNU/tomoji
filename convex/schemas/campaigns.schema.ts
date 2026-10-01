@@ -22,4 +22,5 @@ export const campaignsTable = defineTable({
   endsAt: v.optional(v.number()), // Unix timestamp in milliseconds.
 })
   .index("by_companyId", ["companyId"])
-  .index("by_companyId_and_status", ["companyId", "status"]);
+  .index("by_companyId_and_status", ["companyId", "status"])
+  .index("by_status_and_endsAt", ["status", "endsAt"]);

@@ -1,8 +1,11 @@
 import { paginationOptsValidator, paginationResultValidator } from "convex/server";
 import { v } from "convex/values";
+import { internal } from "./_generated/api";
+import { internalMutation } from "./_generated/server";
 import {
   campaignUpdate,
   closeCampaign,
+  closeExpiredCampaigns,
   createCampaign,
   listCampaigns,
   pauseCampaign,
@@ -158,5 +161,18 @@ export const create = companyMutation({
       companyId: ctx.membership.companyId,
       createdBy: ctx.membership._id,
     });
+  },
+});
+
+/** Closes a bounded batch of expired campaigns and continues until the backlog is drained. */
+export const closeExpired = internalMutation({
+  args: {},
+  returns: v.null(),
+  handler: async (ctx): Promise<null> => {
+    const shouldContinue = await closeExpiredCampaigns(ctx);
+    if (shouldContinue) {
+      await ctx.scheduler.runAfter(0, internal.campaigns.closeExpired, {});
+    }
+    return null;
   },
 });

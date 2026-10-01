@@ -156,6 +156,32 @@ export async function closeCampaign(
   await ctx.db.patch("campaigns", campaignId, { status: "closed" });
 }
 
+/** Closes up to 50 expired campaigns per eligible status; true means another batch may remain. */
+export async function closeExpiredCampaigns(ctx: MutationCtx): Promise<boolean> {
+  const now = Date.now();
+  const batchSize = 50;
+  let shouldContinue = false;
+
+  for (const status of ["open", "paused"] as const) {
+    const campaigns = await ctx.db
+      .query("campaigns")
+      .withIndex("by_status_and_endsAt", (q) =>
+        // Missing end dates sort first; exclude them from the index range.
+        q.eq("status", status).gt("endsAt", undefined).lte("endsAt", now),
+      )
+      .take(batchSize);
+
+    for (const campaign of campaigns) {
+      await ctx.db.patch("campaigns", campaign._id, { status: "closed" });
+    }
+    if (campaigns.length === batchSize) {
+      shouldContinue = true;
+    }
+  }
+
+  return shouldContinue;
+}
+
 /**
  * Creates a draft or open campaign with a trimmed, nonblank brief.
  *

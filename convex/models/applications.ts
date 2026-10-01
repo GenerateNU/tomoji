@@ -4,6 +4,7 @@ import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { apiError } from "../lib/errors";
 import type { applicationStatus } from "../schemas/applications.schema";
+import { createAssignmentFromOffer } from "./assignments";
 
 /**
  * Creates a pending application from a creator to an open, gated opportunity.
@@ -259,10 +260,11 @@ async function requirePendingForReview(
 }
 
 /**
- * Accepts the creator's own unexpired offer. In one transaction this takes a
- * slot, creates the assignment with the opportunity's current terms, and, if
- * that was the last slot, marks every remaining pending or offered application
- * as `opportunityFull`. Offers can be accepted while the opportunity is paused.
+ * Accepts the creator's own unexpired offer. In one transaction this creates
+ * the assignment through `createAssignmentFromOffer` (which takes a slot), and,
+ * if that was the last slot, marks every remaining pending or offered
+ * application as `opportunityFull`. Offers can be accepted while the
+ * opportunity is paused.
  *
  * Two creators accepting the last slot at once both read the opportunity, so
  * Convex retries one, which then sees the slot is taken.
@@ -271,6 +273,7 @@ async function requirePendingForReview(
  * creator's.
  * @throws `invalid_state` if the application has no offer, the offer has
  * expired, the opportunity is closed, or every slot is filled.
+ * @throws `conflict` if the creator already has an assignment on it.
  */
 export async function acceptApplication(
   ctx: MutationCtx,
@@ -286,30 +289,13 @@ export async function acceptApplication(
   if (opportunity === null) {
     throw apiError("not_found", { resource: "application" });
   }
-  if (opportunity.status !== "open" && opportunity.status !== "paused") {
-    throw apiError("invalid_state", { reason: "opportunity_closed" });
-  }
-  if (opportunity.numFilledSlots >= opportunity.maxSlots) {
-    throw apiError("invalid_state", { reason: "opportunity_full" });
-  }
 
+  // Refuses a closed opportunity or a full one, then takes the slot and creates
+  // the termsPending assignment with the opportunity's current terms.
+  await createAssignmentFromOffer(ctx, { opportunityId: opportunity._id, creatorId });
   const patch = { status: "accepted" as const, offerAcceptedAt: now, statusLastUpdatedAt: now };
   await ctx.db.patch("applications", application._id, patch);
-  // Accept creates the assignment directly for now; a follow-up
-  // ticket moves this into the assignments model once that ticket lands.
-
-  await ctx.db.insert("assignments", {
-    opportunityId: opportunity._id,
-    creatorId,
-    fixedFeeCents: opportunity.fixedFeeCents,
-    cpmRateCents: opportunity.cpmRateCents,
-    paymentCapCents: opportunity.paymentCapCents,
-    usesAiReview: opportunity.usesAiReviewDefault,
-    status: "termsPending",
-  });
-  const numFilledSlots = opportunity.numFilledSlots + 1;
-  await ctx.db.patch("opportunities", opportunity._id, { numFilledSlots });
-  if (numFilledSlots >= opportunity.maxSlots) {
+  if (opportunity.numFilledSlots + 1 >= opportunity.maxSlots) {
     await markRemainingApplicationsFull(ctx, opportunity, now);
   }
   return { ...application, ...patch };

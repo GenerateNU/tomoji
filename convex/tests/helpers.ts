@@ -11,6 +11,7 @@ import { createOpportunity, type OpportunityCreate } from "../models/opportuniti
 import { applyMembership, getUserByWorkosId, upsertUser } from "../models/users";
 import type { companyRole } from "../schemas/companyUsers.schema";
 import type schema from "../schema";
+import type { submissionStatus } from "../schemas/submissions.schema";
 
 export type TestConvex = ConvexTest<typeof schema>;
 
@@ -114,7 +115,11 @@ export async function seedUser(t: TestConvex, opts: SeedOptions) {
   });
 
   return t.withIdentity(
-    workosIdentity({ subject: opts.subject, org_id: opts.org?.id, role: opts.org?.role }),
+    workosIdentity({
+      subject: opts.subject,
+      org_id: opts.org?.id,
+      role: opts.org?.role,
+    }),
   );
 }
 
@@ -147,7 +152,10 @@ export async function seedOperator(t: TestConvex, subject: string) {
  */
 export async function seedWrongOrgCaller(t: TestConvex) {
   await seedUser(t, { subject: "outsider", org: { id: "org_acme" } });
-  await seedUser(t, { subject: "insider", org: { id: "org_other", name: "Other" } });
+  await seedUser(t, {
+    subject: "insider",
+    org: { id: "org_other", name: "Other" },
+  });
   return t.withIdentity(workosIdentity({ subject: "outsider", org_id: "org_other" }));
 }
 
@@ -275,4 +283,168 @@ export async function seedGatedOpportunity(t: TestConvex, opts: SeedGatedOpportu
     await t.run(async (ctx) => await ctx.db.patch("opportunities", seeded.opportunityId, patch));
   }
   return { ...seeded, companyId: seeded.membership.companyId };
+}
+
+/** Seeds a company member and returns their client and membership row. */
+export async function seedMembership(t: TestConvex, subject: string, orgId = `org_${subject}`) {
+  const asMember = await seedUser(t, { subject, org: { id: orgId } });
+  const { membership } = await asMember.run(async (ctx) => await companyContext(ctx));
+  return { asMember, membership };
+}
+
+export type AssignmentFixture = {
+  assignmentId: Id<"assignments">;
+  creatorId: Id<"creators">;
+  membership: Doc<"companyUsers">;
+  asCreator: ReturnType<TestConvex["withIdentity"]>;
+  asCompany: ReturnType<TestConvex["withIdentity"]>;
+};
+
+// Subjects the assignment fixture seeds. Every test gets a fresh database and
+// seeds at most one assignment, so fixed names never collide.
+const FIXTURE_COMPANY = "fixture-company";
+const FIXTURE_CREATOR = "fixture-creator";
+const FIXTURE_OPERATOR = "fixture-operator";
+
+/**
+ * Seeds a company member and a creator linked by an `active` assignment, through
+ * the shared opportunity and assignment helpers.
+ */
+export async function seedAssignmentFixture(
+  t: TestConvex,
+  assignment: Partial<Pick<Doc<"assignments">, "status" | "usesAiReview">> = {},
+): Promise<AssignmentFixture> {
+  const { asCompany, membership, opportunityId } = await seedOpportunity(t, {
+    subject: FIXTURE_COMPANY,
+    orgId: "org_fixture",
+  });
+  const creatorId = await seedCreatorId(t, FIXTURE_CREATOR);
+  const assignmentId = await seedAssignment(t, {
+    opportunityId,
+    creatorId,
+    status: assignment.status ?? "active",
+  });
+  const usesAiReview = assignment.usesAiReview ?? false;
+  await t.run(async (ctx) => await ctx.db.patch("assignments", assignmentId, { usesAiReview }));
+
+  return {
+    assignmentId,
+    creatorId,
+    membership,
+    asCreator: t.withIdentity(workosIdentity({ subject: FIXTURE_CREATOR })),
+    asCompany,
+  };
+}
+
+/** Inserts a submission in the given state, bypassing the create rules. */
+export async function seedSubmission(
+  t: TestConvex,
+  fixture: AssignmentFixture,
+  status: Infer<typeof submissionStatus>,
+): Promise<Id<"submissions">> {
+  return await t.run(async (ctx) => {
+    const assignment = await ctx.db.get("assignments", fixture.assignmentId);
+    if (assignment === null) throw new Error("expected seeded assignment");
+    const draft = {
+      assignmentId: fixture.assignmentId,
+      draftUrl: "https://drive.example.com/drafts/driftwood-cli-screencast",
+      draftDescription: "Screencast: installing the Driftwood CLI and running a first deploy.",
+      usesAiReview: assignment.usesAiReview,
+    };
+    if (status === "pending") {
+      return await ctx.db.insert("submissions", { ...draft, status });
+    }
+    const review = {
+      reviewerType: "companyUser" as const,
+      reviewedBy: fixture.membership._id,
+      reviewedAt: Date.now(),
+    };
+    if (status === "approved") {
+      return await ctx.db.insert("submissions", { ...draft, ...review, status });
+    }
+    return await ctx.db.insert("submissions", {
+      ...draft,
+      ...review,
+      status,
+      reviewNote: "Add #ad to the caption before posting.",
+    });
+  });
+}
+
+/** Seeds an assignment with one submission in the given state. */
+export async function seedOneSubmission(
+  t: TestConvex,
+  status: Infer<typeof submissionStatus> = "pending",
+  assignment: Partial<Pick<Doc<"assignments">, "status" | "usesAiReview">> = {},
+) {
+  const fixture = await seedAssignmentFixture(t, assignment);
+  const submissionId = await seedSubmission(t, fixture, status);
+  return { fixture, submissionId };
+}
+
+/** Seeds a submission an operator overrode after a dispute, with every reviewer-identity field set. */
+export async function seedOverriddenSubmission(t: TestConvex) {
+  const fixture = await seedAssignmentFixture(t);
+  await seedOperator(t, FIXTURE_OPERATOR);
+
+  const submissionId = await t.run(async (ctx) => {
+    const operator = await getUserByWorkosId(ctx, FIXTURE_OPERATOR);
+    const creator = await ctx.db.get("creators", fixture.creatorId);
+    if (operator === null || creator === null) throw new Error("expected seeded users");
+    const reviewedAt = Date.now();
+    const disputeId = await ctx.db.insert("disputes", {
+      assignmentId: fixture.assignmentId,
+      openedBy: creator.userId,
+      reason: "Review contradicts the brief",
+      description: "The brief allows showing the deploy log, which the review asked me to cut.",
+      isResolved: true,
+      resolvedBy: operator._id,
+      resolution: "The brief allows the deploy log; approved as submitted.",
+    });
+    return await ctx.db.insert("submissions", {
+      assignmentId: fixture.assignmentId,
+      draftUrl: "https://drive.example.com/drafts/driftwood-cli-screencast",
+      draftDescription: "Screencast: installing the Driftwood CLI and running a first deploy.",
+      usesAiReview: false,
+      status: "approved",
+      reviewerType: "operator",
+      reviewedByOperator: operator._id,
+      reviewedAt,
+      overriddenReview: {
+        status: "changesRequested",
+        reviewNote: "Cut the deploy log at 0:40.",
+        reviewerType: "companyUser",
+        reviewedBy: fixture.membership._id,
+        reviewedAt: reviewedAt - 60_000,
+      },
+      disputeId,
+    });
+  });
+  return { fixture, submissionId };
+}
+
+/**
+ * A full view minus reviewer identity. Deletes fields rather than copying them,
+ * so it cross-checks the model's field-by-field copy.
+ */
+export function withoutReviewerIdentity(view: object): object {
+  const copy: Record<string, unknown> = { ...view };
+  delete copy.reviewedBy;
+  delete copy.reviewedByOperator;
+  if (copy.overriddenReview !== undefined) {
+    const overriddenReview = { ...(copy.overriddenReview as Record<string, unknown>) };
+    delete overriddenReview.reviewedBy;
+    copy.overriddenReview = overriddenReview;
+  }
+  return copy;
+}
+
+/** Reads one submission as stored, or `null` if it doesn't exist. */
+export async function storedSubmission(t: TestConvex, submissionId: Id<"submissions">) {
+  return await t.run(async (ctx) => await ctx.db.get("submissions", submissionId));
+}
+
+/** Reads every submission in the test's database, oldest first. */
+export async function storedSubmissions(t: TestConvex) {
+  return await t.run(async (ctx) => await ctx.db.query("submissions").collect());
 }

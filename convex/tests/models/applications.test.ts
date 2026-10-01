@@ -2,12 +2,43 @@
 import { convexTest } from "convex-test";
 import type { WithoutSystemFields } from "convex/server";
 import { describe, expect, test } from "vitest";
-import type { Doc } from "../../_generated/dataModel";
-import { createApplication, listApplications, requireApplication } from "../../models/applications";
+import type { Doc, Id } from "../../_generated/dataModel";
+import type { MutationCtx } from "../../_generated/server";
+import {
+  createApplication,
+  DEFAULT_OFFER_DURATION_MS,
+  listApplications,
+  listApplicationsByOpportunityId,
+  offerApplication,
+  rejectApplication,
+  requireApplication,
+} from "../../models/applications";
 import schema from "../../schema";
 import { expectApiError, seedCreatorId, seedGatedOpportunity, type TestConvex } from "../helpers";
 
 const modules = import.meta.glob("../../**/*.ts");
+
+const DAY = 24 * 60 * 60 * 1000;
+
+type SeededIds = { opportunityId: Id<"opportunities"> };
+
+/** Opportunity states where only creators may act, so company review actions are refused. */
+const pausedOrClosed: {
+  name: string;
+  patch: (ctx: MutationCtx, ids: SeededIds) => Promise<void>;
+  reason: string;
+}[] = [
+  {
+    name: "the opportunity is paused",
+    patch: (ctx, ids) => ctx.db.patch("opportunities", ids.opportunityId, { status: "paused" }),
+    reason: "opportunity_not_open",
+  },
+  {
+    name: "the opportunity is closed",
+    patch: (ctx, ids) => ctx.db.patch("opportunities", ids.opportunityId, { status: "closed" }),
+    reason: "opportunity_not_open",
+  },
+];
 
 /** Asserts a call fails with a specific API error reason. */
 async function expectReason(call: () => Promise<unknown>, reason: string) {
@@ -44,7 +75,7 @@ describe("createApplication", () => {
       note: "I film daily.",
       status: "pending",
     });
-    expect(stored?.offerSentAt).toBeUndefined();
+    expect(stored?.statusLastUpdatedAt).toBeUndefined();
   });
 
   test("rejects an opportunity that does not exist", async () => {
@@ -313,5 +344,218 @@ describe("listApplications", () => {
 
     expect(page1.page.map((application) => application._id)).toEqual([newerId]);
     expect(page2.page.map((application) => application._id)).toEqual([olderId]);
+  });
+});
+
+describe("listApplicationsByOpportunityId", () => {
+  const firstPage = { numItems: 10, cursor: null };
+
+  test("returns applications to one of the company's opportunities, filtered by status", async () => {
+    const t = convexTest(schema, modules);
+    const { companyId, opportunityId } = await seedGatedOpportunity(t);
+    const pendingId = await applyAs(t, await seedCreatorId(t, "creator_a"), opportunityId);
+    const rejectedId = await applyAs(t, await seedCreatorId(t, "creator_b"), opportunityId);
+    await t.run(
+      async (ctx) => await ctx.db.patch("applications", rejectedId, { status: "rejected" }),
+    );
+
+    const all = await t.run(
+      async (ctx) =>
+        await listApplicationsByOpportunityId(ctx, companyId, {
+          opportunityId,
+          paginationOpts: firstPage,
+        }),
+    );
+    const pending = await t.run(
+      async (ctx) =>
+        await listApplicationsByOpportunityId(ctx, companyId, {
+          opportunityId,
+          status: "pending",
+          paginationOpts: firstPage,
+        }),
+    );
+
+    expect(all.page.map((application) => application._id).sort()).toEqual(
+      [pendingId, rejectedId].sort(),
+    );
+    expect(pending.page.map((application) => application._id)).toEqual([pendingId]);
+  });
+
+  test("hides another company's opportunity as not found", async () => {
+    const t = convexTest(schema, modules);
+    const { opportunityId } = await seedGatedOpportunity(t);
+    const other = await seedGatedOpportunity(t, { subject: "other_owner", orgId: "org_other" });
+
+    await expectApiError(
+      () =>
+        t.run(
+          async (ctx) =>
+            await listApplicationsByOpportunityId(ctx, other.companyId, {
+              opportunityId,
+              paginationOpts: firstPage,
+            }),
+        ),
+      "not_found",
+    );
+  });
+});
+
+describe("offerApplication", () => {
+  async function seedPending(t: TestConvex, opts: Parameters<typeof seedGatedOpportunity>[1] = {}) {
+    const seeded = await seedGatedOpportunity(t, opts);
+    const applicationId = await applyAs(
+      t,
+      await seedCreatorId(t, "creator_a"),
+      seeded.opportunityId,
+    );
+    return { ...seeded, applicationId };
+  }
+
+  test("offers a pending application with the default expiry", async () => {
+    const t = convexTest(schema, modules);
+    const { companyId, applicationId } = await seedPending(t);
+    const before = Date.now();
+
+    const offered = await t.run(
+      async (ctx) => await offerApplication(ctx, companyId, applicationId),
+    );
+
+    expect(offered.status).toBe("offered");
+    expect(offered.statusLastUpdatedAt).toBeGreaterThanOrEqual(before);
+    expect(offered.offerExpiresAt).toBe(offered.statusLastUpdatedAt! + DEFAULT_OFFER_DURATION_MS);
+  });
+
+  test("uses a company-chosen expiry", async () => {
+    const t = convexTest(schema, modules);
+    const { companyId, applicationId } = await seedPending(t);
+    const offerExpiresAt = Date.now() + 3 * DAY;
+
+    const offered = await t.run(
+      async (ctx) => await offerApplication(ctx, companyId, applicationId, offerExpiresAt),
+    );
+
+    expect(offered.offerExpiresAt).toBe(offerExpiresAt);
+  });
+
+  test("does not cap offers by open slots", async () => {
+    const t = convexTest(schema, modules);
+    const { companyId, opportunityId } = await seedGatedOpportunity(t, {
+      opportunity: { maxSlots: 1 },
+    });
+    const first = await applyAs(t, await seedCreatorId(t, "creator_a"), opportunityId);
+    const second = await applyAs(t, await seedCreatorId(t, "creator_b"), opportunityId);
+
+    await t.run(async (ctx) => await offerApplication(ctx, companyId, first));
+    const offered = await t.run(async (ctx) => await offerApplication(ctx, companyId, second));
+
+    expect(offered.status).toBe("offered");
+  });
+
+  test.each([
+    { name: "in the past", offset: -DAY },
+    { name: "right now", offset: 0 },
+  ])("rejects an expiry $name", async ({ offset }) => {
+    const t = convexTest(schema, modules);
+    const { companyId, applicationId } = await seedPending(t);
+
+    await expectReason(
+      () =>
+        t.run(
+          async (ctx) => await offerApplication(ctx, companyId, applicationId, Date.now() + offset),
+        ),
+      "invalid_offer_expiry",
+    );
+  });
+
+  test("rejects an application that is not pending", async () => {
+    const t = convexTest(schema, modules);
+    const { companyId, applicationId } = await seedPending(t);
+    await t.run(async (ctx) => await offerApplication(ctx, companyId, applicationId));
+
+    await expectReason(
+      () => t.run(async (ctx) => await offerApplication(ctx, companyId, applicationId)),
+      "application_not_pending",
+    );
+  });
+
+  test("hides another company's application as not found", async () => {
+    const t = convexTest(schema, modules);
+    const { applicationId } = await seedPending(t);
+    const other = await seedGatedOpportunity(t, { subject: "other_owner", orgId: "org_other" });
+
+    await expectApiError(
+      () => t.run(async (ctx) => await offerApplication(ctx, other.companyId, applicationId)),
+      "not_found",
+    );
+  });
+
+  test.each(pausedOrClosed)("rejects offering while $name", async ({ patch, reason }) => {
+    const t = convexTest(schema, modules);
+    const { companyId, opportunityId, applicationId } = await seedPending(t);
+    await t.run(async (ctx) => await patch(ctx, { opportunityId }));
+
+    await expectReason(
+      () => t.run(async (ctx) => await offerApplication(ctx, companyId, applicationId)),
+      reason,
+    );
+  });
+});
+
+describe("rejectApplication", () => {
+  async function seedPending(t: TestConvex) {
+    const seeded = await seedGatedOpportunity(t);
+    const applicationId = await applyAs(
+      t,
+      await seedCreatorId(t, "creator_a"),
+      seeded.opportunityId,
+    );
+    return { ...seeded, applicationId };
+  }
+
+  test("rejects a pending application", async () => {
+    const t = convexTest(schema, modules);
+    const { companyId, applicationId } = await seedPending(t);
+    const before = Date.now();
+
+    const rejected = await t.run(
+      async (ctx) => await rejectApplication(ctx, companyId, applicationId),
+    );
+    const stored = await t.run(async (ctx) => await ctx.db.get("applications", applicationId));
+
+    expect(rejected.status).toBe("rejected");
+    expect(stored?.statusLastUpdatedAt).toBeGreaterThanOrEqual(before);
+  });
+
+  test("refuses an application that is not pending", async () => {
+    const t = convexTest(schema, modules);
+    const { companyId, applicationId } = await seedPending(t);
+    await t.run(async (ctx) => await offerApplication(ctx, companyId, applicationId));
+
+    await expectReason(
+      () => t.run(async (ctx) => await rejectApplication(ctx, companyId, applicationId)),
+      "application_not_pending",
+    );
+  });
+
+  test("hides another company's application as not found", async () => {
+    const t = convexTest(schema, modules);
+    const { applicationId } = await seedPending(t);
+    const other = await seedGatedOpportunity(t, { subject: "other_owner", orgId: "org_other" });
+
+    await expectApiError(
+      () => t.run(async (ctx) => await rejectApplication(ctx, other.companyId, applicationId)),
+      "not_found",
+    );
+  });
+
+  test.each(pausedOrClosed)("refuses rejecting while $name", async ({ patch, reason }) => {
+    const t = convexTest(schema, modules);
+    const { companyId, opportunityId, applicationId } = await seedPending(t);
+    await t.run(async (ctx) => await patch(ctx, { opportunityId }));
+
+    await expectReason(
+      () => t.run(async (ctx) => await rejectApplication(ctx, companyId, applicationId)),
+      reason,
+    );
   });
 });

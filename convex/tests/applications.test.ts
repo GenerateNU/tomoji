@@ -160,3 +160,122 @@ describe("applications.get", () => {
     );
   });
 });
+
+describe("applications.list", () => {
+  test("lists applications to the company's opportunity for any teammate", async () => {
+    const t = convexTest(schema, modules);
+    const { opportunityId, applicationId } = await seedApplication(t);
+    const asTeammate = await seedUser(t, { subject: "teammate", org: { id: "org_acme" } });
+
+    const result = await asTeammate.query(api.applications.list, {
+      opportunityId,
+      paginationOpts: firstPage,
+    });
+
+    expect(result.page.map((application) => application._id)).toEqual([applicationId]);
+  });
+
+  test("hides another company's opportunity as not found", async () => {
+    const t = convexTest(schema, modules);
+    const { opportunityId } = await seedApplication(t);
+    const other = await seedGatedOpportunity(t, { subject: "other_owner", orgId: "org_other" });
+
+    await expectApiError(
+      () =>
+        other.asCompany.query(api.applications.list, { opportunityId, paginationOpts: firstPage }),
+      "not_found",
+    );
+  });
+
+  test("rejects a creator", async () => {
+    const t = convexTest(schema, modules);
+    const { opportunityId, asCreator } = await seedApplication(t);
+
+    await expectApiError(
+      () => asCreator.query(api.applications.list, { opportunityId, paginationOpts: firstPage }),
+      "forbidden",
+    );
+  });
+
+  test("rejects a caller acting on an org they are not a member of", async () => {
+    const t = convexTest(schema, modules);
+    const { opportunityId } = await seedApplication(t);
+    const asWrongOrg = await seedWrongOrgCaller(t);
+
+    await expectApiError(
+      () => asWrongOrg.query(api.applications.list, { opportunityId, paginationOpts: firstPage }),
+      "forbidden",
+    );
+  });
+});
+
+describe("applications.offer", () => {
+  test("sends an offer the creator can then see", async () => {
+    const t = convexTest(schema, modules);
+    const { asCompany, asCreator, applicationId } = await seedApplication(t);
+
+    const offered = await asCompany.mutation(api.applications.offer, { applicationId });
+
+    expect(offered).toMatchObject({ _id: applicationId, status: "offered" });
+    expect(await asCreator.query(api.applications.get, { applicationId })).toMatchObject({
+      status: "offered",
+      offerExpiresAt: offered.offerExpiresAt,
+    });
+  });
+
+  test("hides another company's application as not found", async () => {
+    const t = convexTest(schema, modules);
+    const { applicationId } = await seedApplication(t);
+    const other = await seedGatedOpportunity(t, { subject: "other_owner", orgId: "org_other" });
+
+    await expectApiError(
+      () => other.asCompany.mutation(api.applications.offer, { applicationId }),
+      "not_found",
+    );
+  });
+
+  test("rejects a creator", async () => {
+    const t = convexTest(schema, modules);
+    const { asCreator, applicationId } = await seedApplication(t);
+
+    await expectApiError(
+      () => asCreator.mutation(api.applications.offer, { applicationId }),
+      "forbidden",
+    );
+  });
+});
+
+describe("applications.reject", () => {
+  test("rejects a pending application", async () => {
+    const t = convexTest(schema, modules);
+    const { asCompany, asCreator, applicationId } = await seedApplication(t);
+
+    const rejected = await asCompany.mutation(api.applications.reject, { applicationId });
+
+    expect(rejected).toMatchObject({ _id: applicationId, status: "rejected" });
+    expect(await asCreator.query(api.applications.get, { applicationId })).toMatchObject({
+      status: "rejected",
+    });
+  });
+
+  test("hides another company's application as not found", async () => {
+    const t = convexTest(schema, modules);
+    const { applicationId } = await seedApplication(t);
+    const other = await seedGatedOpportunity(t, { subject: "other_owner", orgId: "org_other" });
+
+    await expectApiError(
+      () => other.asCompany.mutation(api.applications.reject, { applicationId }),
+      "not_found",
+    );
+  });
+
+  test("rejects a creator", async () => {
+    const t = convexTest(schema, modules);
+    const { asCreator, applicationId } = await seedApplication(t);
+
+    await expectApiError(
+      () => asCreator.mutation(api.applications.reject, { applicationId }),
+      "forbidden",
+    );
+  });
+});

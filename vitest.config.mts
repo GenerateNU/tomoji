@@ -10,7 +10,16 @@ export default defineConfig({
           name: "convex",
           environment: "edge-runtime",
           include: ["convex/tests/**/*.test.ts"],
+          exclude: ["convex/tests/lib/s3.test.ts"],
           server: { deps: { inline: ["convex-test"] } },
+        },
+      },
+      {
+        // The S3 SDK and signing helpers run in Convex's Node.js action runtime.
+        test: {
+          name: "convex-node",
+          environment: "node",
+          include: ["convex/tests/lib/s3.test.ts"],
         },
       },
       {

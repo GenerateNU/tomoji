@@ -24,6 +24,187 @@ beforeEach(() => {
 
 afterEach(() => vi.useRealTimers());
 
+describe("opportunities.pause", () => {
+  test("lets a company member pause a brief and hides it from creator get and discovery", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(t, { subject: "pause_member", role: "member" });
+    const asCreator = await seedUser(t, { subject: "pause_creator" });
+    const before = await owner.asCompany.query(api.opportunities.get, {
+      opportunityId: owner.opportunityId,
+    });
+    expect(
+      await asCreator.query(api.opportunities.get, { opportunityId: owner.opportunityId }),
+    ).toMatchObject({ _id: owner.opportunityId, companyName: "Acme" });
+
+    const result = await owner.asCompany.mutation(api.opportunities.pause, {
+      opportunityId: owner.opportunityId,
+    });
+
+    expect(result).toEqual({ ...before, status: "paused" });
+    expect(
+      await t.run(async (ctx) => await ctx.db.get("opportunities", owner.opportunityId)),
+    ).toEqual(result);
+    await expectApiError(
+      () => asCreator.query(api.opportunities.get, { opportunityId: owner.opportunityId }),
+      "not_found",
+    );
+    const feed = await asCreator.query(api.opportunities.discover, {
+      paginationOpts: { numItems: 10, cursor: null },
+    });
+    expect(feed.page).toEqual([]);
+    expect(feed.isDone).toBe(true);
+  });
+
+  test("rejects a signed-out caller", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(t, { subject: "pause_owner" });
+    await expectApiError(
+      () => t.mutation(api.opportunities.pause, { opportunityId: owner.opportunityId }),
+      "not_authenticated",
+    );
+  });
+
+  test("rejects a creator", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(t, { subject: "pause_owner" });
+    const asCreator = await seedUser(t, { subject: "pause_creator" });
+    await expectApiError(
+      () => asCreator.mutation(api.opportunities.pause, { opportunityId: owner.opportunityId }),
+      "forbidden",
+    );
+  });
+
+  test("rejects an operator", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(t, { subject: "pause_owner" });
+    const asOperator = await seedOperator(t, "pause_operator");
+    await expectApiError(
+      () => asOperator.mutation(api.opportunities.pause, { opportunityId: owner.opportunityId }),
+      "forbidden",
+    );
+  });
+
+  test("conceals another company's opportunity without changing it", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(t, { subject: "pause_owner" });
+    const other = await seedCampaign(t, { subject: "pause_other", orgId: "org_other" });
+    const before = await t.run(
+      async (ctx) => await ctx.db.get("opportunities", owner.opportunityId),
+    );
+    await expectApiError(
+      () =>
+        other.asCompany.mutation(api.opportunities.pause, { opportunityId: owner.opportunityId }),
+      "not_found",
+    );
+    expect(
+      await t.run(async (ctx) => await ctx.db.get("opportunities", owner.opportunityId)),
+    ).toEqual(before);
+  });
+
+  test("rejects a forged organization claim", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(t, { subject: "pause_owner", orgId: "org_other" });
+    const asWrongOrg = await seedWrongOrgCaller(t);
+    await expectApiError(
+      () => asWrongOrg.mutation(api.opportunities.pause, { opportunityId: owner.opportunityId }),
+      "forbidden",
+    );
+  });
+});
+
+describe("opportunities.resume", () => {
+  test("lets a company admin resume a brief and restores creator get and discovery visibility", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(t, { subject: "resume_admin", role: "admin" });
+    await t.run(
+      async (ctx) => await ctx.db.patch("opportunities", owner.opportunityId, { status: "paused" }),
+    );
+    const asCreator = await seedUser(t, { subject: "resume_creator" });
+    const before = await t.run(
+      async (ctx) => await ctx.db.get("opportunities", owner.opportunityId),
+    );
+
+    const result = await owner.asCompany.mutation(api.opportunities.resume, {
+      opportunityId: owner.opportunityId,
+    });
+
+    expect(result).toEqual({ ...before, status: "open" });
+    const creatorView = await asCreator.query(api.opportunities.get, {
+      opportunityId: owner.opportunityId,
+    });
+    expect(creatorView).toMatchObject({
+      _id: owner.opportunityId,
+      status: "open",
+      companyName: "Acme",
+    });
+    expect(creatorView).not.toHaveProperty("createdBy");
+    const feed = await asCreator.query(api.opportunities.discover, {
+      paginationOpts: { numItems: 10, cursor: null },
+    });
+    expect(feed.page).toEqual([creatorView]);
+    expect(feed.isDone).toBe(true);
+  });
+
+  test("rejects a signed-out caller", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(t, { subject: "resume_owner" });
+    await expectApiError(
+      () => t.mutation(api.opportunities.resume, { opportunityId: owner.opportunityId }),
+      "not_authenticated",
+    );
+  });
+
+  test("rejects a creator", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(t, { subject: "resume_owner" });
+    const asCreator = await seedUser(t, { subject: "resume_creator" });
+    await expectApiError(
+      () => asCreator.mutation(api.opportunities.resume, { opportunityId: owner.opportunityId }),
+      "forbidden",
+    );
+  });
+
+  test("rejects an operator", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(t, { subject: "resume_owner" });
+    const asOperator = await seedOperator(t, "resume_operator");
+    await expectApiError(
+      () => asOperator.mutation(api.opportunities.resume, { opportunityId: owner.opportunityId }),
+      "forbidden",
+    );
+  });
+
+  test("conceals another company's paused opportunity without changing it", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(t, { subject: "resume_owner" });
+    await t.run(
+      async (ctx) => await ctx.db.patch("opportunities", owner.opportunityId, { status: "paused" }),
+    );
+    const other = await seedCampaign(t, { subject: "resume_other", orgId: "org_other" });
+    const before = await t.run(
+      async (ctx) => await ctx.db.get("opportunities", owner.opportunityId),
+    );
+    await expectApiError(
+      () =>
+        other.asCompany.mutation(api.opportunities.resume, { opportunityId: owner.opportunityId }),
+      "not_found",
+    );
+    expect(
+      await t.run(async (ctx) => await ctx.db.get("opportunities", owner.opportunityId)),
+    ).toEqual(before);
+  });
+
+  test("rejects a forged organization claim", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(t, { subject: "resume_owner", orgId: "org_other" });
+    const asWrongOrg = await seedWrongOrgCaller(t);
+    await expectApiError(
+      () => asWrongOrg.mutation(api.opportunities.resume, { opportunityId: owner.opportunityId }),
+      "forbidden",
+    );
+  });
+});
+
 describe("opportunities.publish", () => {
   test("lets a company member publish a draft, making its brief visible to creators", async () => {
     const t = convexTest(schema, modules);

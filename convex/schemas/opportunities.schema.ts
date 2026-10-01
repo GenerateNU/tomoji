@@ -21,7 +21,7 @@ export const opportunitiesTable = defineTable({
   // Future assignment mutations must maintain this count transactionally.
   numFilledSlots: v.number(),
   maxApplications: v.number(),
-  deadline: v.number(), // Unix milliseconds.
+  deadline: v.number(), // Unix milliseconds at exact :00/:30 UTC; enforced by the model.
   status: opportunityStatus,
   // Default compensation: integer cents; CPM is cents per 1,000 eligible views.
   fixedFeeCents: v.number(),

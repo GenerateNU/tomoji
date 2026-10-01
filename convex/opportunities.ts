@@ -12,11 +12,31 @@ import {
   opportunityDiscover,
   opportunityList,
   opportunityUpdate,
+  pauseOpportunity,
   publishOpportunity,
   removeOpportunity,
+  resumeOpportunity,
   updateOpportunity,
 } from "./models/opportunities";
 import schema from "./schema";
+
+/** Pauses an open opportunity owned by the caller's company, preserving existing workflow records. */
+export const pause = companyMutation({
+  args: { opportunityId: v.id("opportunities") },
+  returns: schema.doc("opportunities"),
+  handler: async (ctx, { opportunityId }) => {
+    return await pauseOpportunity(ctx, ctx.membership, opportunityId);
+  },
+});
+
+/** Resumes a paused opportunity in an open campaign before its deadline. */
+export const resume = companyMutation({
+  args: { opportunityId: v.id("opportunities") },
+  returns: schema.doc("opportunities"),
+  handler: async (ctx, { opportunityId }) => {
+    return await resumeOpportunity(ctx, ctx.membership, opportunityId);
+  },
+});
 
 /** Publishes a valid draft in an open campaign owned by the caller's company. */
 export const publish = companyMutation({

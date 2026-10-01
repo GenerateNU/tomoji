@@ -44,9 +44,13 @@ export async function seedOpportunityHistory(t: TestConvex, opportunityId: Id<"o
         ...(status === "accepted" ? { offerAcceptedAt: Date.now() } : {}),
       });
       if (status === "accepted") {
+        const opportunity = await ctx.db.get("opportunities", opportunityId);
+        if (opportunity === null) throw new Error("expected seeded opportunity");
         await ctx.db.insert("assignments", {
           opportunityId,
           creatorId,
+          companyId: opportunity.companyId,
+          campaignId: opportunity.campaignId,
           fixedFeeCents: 20_000,
           cpmRateCents: 700,
           paymentCapCents: 40_000,

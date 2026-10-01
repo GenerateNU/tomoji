@@ -47,7 +47,8 @@ export const list = companyQuery({
  * Omitted fields stay unchanged; `endsAt: null` removes the end date.
  *
  * @throws `not_found` if the campaign is missing or belongs to another company.
- * @throws `invalid_state` for blank fields or an invalid resulting budget or schedule.
+ * @throws `invalid_state` for blank fields, an invalid budget or schedule,
+ * or an end date before an existing opportunity deadline.
  */
 export const update = companyMutation({
   args: { campaignId: v.id("campaigns"), ...campaignUpdate.fields },

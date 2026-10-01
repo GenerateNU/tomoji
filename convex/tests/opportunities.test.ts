@@ -24,6 +24,144 @@ beforeEach(() => {
 
 afterEach(() => vi.useRealTimers());
 
+describe("opportunities.publish", () => {
+  test("lets a company member publish a draft, making its brief visible to creators", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(
+      t,
+      { subject: "publish_member", role: "member" },
+      { status: "draft" },
+    );
+    const asCreator = await seedUser(t, { subject: "publish_creator" });
+    await expectApiError(
+      () => asCreator.query(api.opportunities.get, { opportunityId: owner.opportunityId }),
+      "not_found",
+    );
+    const before = await t.run(
+      async (ctx) => await ctx.db.get("opportunities", owner.opportunityId),
+    );
+
+    const result = await owner.asCompany.mutation(api.opportunities.publish, {
+      opportunityId: owner.opportunityId,
+    });
+
+    expect(result).toEqual({ ...before, status: "open" });
+    const creatorView = await asCreator.query(api.opportunities.get, {
+      opportunityId: owner.opportunityId,
+    });
+    expect(creatorView).toMatchObject({
+      _id: owner.opportunityId,
+      status: "open",
+      companyName: "Acme",
+    });
+    expect(creatorView).not.toHaveProperty("createdBy");
+    const feed = await asCreator.query(api.opportunities.discover, {
+      paginationOpts: { numItems: 10, cursor: null },
+    });
+    expect(feed.page).toEqual([creatorView]);
+    expect(feed.isDone).toBe(true);
+  });
+
+  test("lets a company admin publish a draft", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(
+      t,
+      { subject: "publish_admin", role: "admin" },
+      { status: "draft" },
+    );
+    const result = await owner.asCompany.mutation(api.opportunities.publish, {
+      opportunityId: owner.opportunityId,
+    });
+    expect(result.status).toBe("open");
+    expect(
+      await t.run(async (ctx) => await ctx.db.get("opportunities", owner.opportunityId)),
+    ).toEqual(result);
+  });
+
+  test("rejects a signed-out caller", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(t, { subject: "publish_owner" }, { status: "draft" });
+    await expectApiError(
+      () => t.mutation(api.opportunities.publish, { opportunityId: owner.opportunityId }),
+      "not_authenticated",
+    );
+  });
+
+  test("rejects a creator", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(t, { subject: "publish_owner" }, { status: "draft" });
+    const asCreator = await seedUser(t, { subject: "publish_creator" });
+    await expectApiError(
+      () => asCreator.mutation(api.opportunities.publish, { opportunityId: owner.opportunityId }),
+      "forbidden",
+    );
+  });
+
+  test("rejects an operator", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(t, { subject: "publish_owner" }, { status: "draft" });
+    const asOperator = await seedOperator(t, "publish_operator");
+    await expectApiError(
+      () => asOperator.mutation(api.opportunities.publish, { opportunityId: owner.opportunityId }),
+      "forbidden",
+    );
+  });
+
+  test("conceals another company's draft and leaves it unchanged", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(t, { subject: "publish_owner" }, { status: "draft" });
+    const other = await seedCampaign(t, { subject: "publish_other", orgId: "org_other" });
+    const before = await t.run(
+      async (ctx) => await ctx.db.get("opportunities", owner.opportunityId),
+    );
+    await expectApiError(
+      () =>
+        other.asCompany.mutation(api.opportunities.publish, { opportunityId: owner.opportunityId }),
+      "not_found",
+    );
+    expect(
+      await t.run(async (ctx) => await ctx.db.get("opportunities", owner.opportunityId)),
+    ).toEqual(before);
+  });
+
+  test("rejects a forged organization claim", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(
+      t,
+      { subject: "publish_owner", orgId: "org_other" },
+      { status: "draft" },
+    );
+    const asWrongOrg = await seedWrongOrgCaller(t);
+    await expectApiError(
+      () => asWrongOrg.mutation(api.opportunities.publish, { opportunityId: owner.opportunityId }),
+      "forbidden",
+    );
+  });
+
+  test("rejects a deactivated company member", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(t, { subject: "publish_owner" }, { status: "draft" });
+    await t.run(async (ctx) => await deactivateUser(ctx, "publish_owner"));
+    await expectApiError(
+      () =>
+        owner.asCompany.mutation(api.opportunities.publish, { opportunityId: owner.opportunityId }),
+      "account_deactivated",
+    );
+  });
+
+  test("rejects fields that try to edit the draft while publishing", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(t, { subject: "publish_owner" }, { status: "draft" });
+    const args = { opportunityId: owner.opportunityId, deadline: Date.now() + 172_800_000 };
+    await expect(owner.asCompany.mutation(api.opportunities.publish, args)).rejects.toThrow(
+      "Unexpected field `deadline`",
+    );
+    expect(
+      await t.run(async (ctx) => await ctx.db.get("opportunities", owner.opportunityId)),
+    ).toMatchObject({ status: "draft" });
+  });
+});
+
 describe("opportunities.remove", () => {
   test("lets a company member remove an unused draft and returns null", async () => {
     const t = convexTest(schema, modules);

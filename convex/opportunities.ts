@@ -12,10 +12,20 @@ import {
   opportunityDiscover,
   opportunityList,
   opportunityUpdate,
+  publishOpportunity,
   removeOpportunity,
   updateOpportunity,
 } from "./models/opportunities";
 import schema from "./schema";
+
+/** Publishes a valid draft in an open campaign owned by the caller's company. */
+export const publish = companyMutation({
+  args: { opportunityId: v.id("opportunities") },
+  returns: schema.doc("opportunities"),
+  handler: async (ctx, { opportunityId }) => {
+    return await publishOpportunity(ctx, ctx.membership, opportunityId);
+  },
+});
 
 /** Removes a draft owned by the caller's company only when it has no workflow history. */
 export const remove = companyMutation({

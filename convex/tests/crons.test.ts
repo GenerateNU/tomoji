@@ -12,11 +12,11 @@ describe("opportunity deadline cron", () => {
 });
 
 describe("application offer expiry cron", () => {
-  test("runs the internal expiry mutation every five minutes", () => {
+  test("runs the internal expiry mutation at :00 and :30 UTC", () => {
     expect(crons.crons["expire application offers"]).toEqual({
       name: "applications:expireOffers",
       args: [{}],
-      schedule: { type: "interval", minutes: 5 },
+      schedule: { type: "cron", cron: "0,30 * * * *" },
     });
   });
 });

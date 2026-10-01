@@ -2,10 +2,19 @@
 import { convexTest } from "convex-test";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import type { Doc, Id } from "../../_generated/dataModel";
-import { claimAssignment, createAssignmentFromOffer } from "../../models/assignments";
+import {
+  claimAssignment,
+  createAssignmentFromOffer,
+  listAssignments,
+  listCreatorAssignments,
+  requireAssignment,
+} from "../../models/assignments";
+import { createOpportunity } from "../../models/opportunities";
 import schema from "../../schema";
 import {
   expectApiError,
+  opportunityArgs,
+  seedAssignment,
   seedCampaign,
   seedCreatorId,
   seedOpportunity,
@@ -359,5 +368,340 @@ describe("createAssignmentFromOffer", () => {
 
     const assignment = await t.run(async (ctx) => await ctx.db.get("assignments", assignmentId));
     expect(assignment?.companyId).toBe(owner.membership.companyId);
+  });
+});
+
+const firstPage = { numItems: 10, cursor: null };
+
+/** Moves the clock forward so each seeded row gets a later creation time. */
+function tick() {
+  vi.setSystemTime(Date.now() + 1000);
+}
+
+type Owner = Awaited<ReturnType<typeof seedOpportunity>>;
+
+/** Adds another opportunity to the owner's campaign. */
+async function addOpportunity(t: TestConvex, owner: Owner): Promise<Id<"opportunities">> {
+  return await t.run(
+    async (ctx) =>
+      await createOpportunity(ctx, owner.membership, opportunityArgs(owner.campaignId)),
+  );
+}
+
+/** Seeds an assignment on the owner's opportunity (or another of its opportunities). */
+async function assign(
+  t: TestConvex,
+  owner: Owner,
+  creatorId: Id<"creators">,
+  status: Doc<"assignments">["status"] = "termsPending",
+  opportunityId: Id<"opportunities"> = owner.opportunityId,
+) {
+  tick();
+  return await seedAssignment(t, {
+    opportunityId,
+    creatorId,
+    status,
+  });
+}
+
+const ids = (page: Doc<"assignments">[]) => page.map((assignment) => assignment._id);
+
+describe("listAssignments", () => {
+  test("lists only the company's assignments, grouped by status and newest first", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(t, { subject: "owner" });
+    const other = await seedOpportunity(t, { subject: "other", orgId: "org_other" });
+    const creatorId = await seedCreatorId(t, "creator");
+    const olderPending = await assign(t, owner, creatorId, "termsPending");
+    const active = await assign(t, owner, creatorId, "active");
+    const newerPending = await assign(t, owner, creatorId, "termsPending");
+    await assign(t, other, creatorId, "active");
+
+    const result = await t.run(
+      async (ctx) =>
+        await listAssignments(ctx, owner.membership.companyId, { paginationOpts: firstPage }),
+    );
+
+    expect(ids(result.page)).toEqual([newerPending, olderPending, active]);
+    expect(result.isDone).toBe(true);
+  });
+
+  test("filters by status", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(t, { subject: "owner" });
+    const creatorId = await seedCreatorId(t, "creator");
+    await assign(t, owner, creatorId, "termsPending");
+    const active = await assign(t, owner, creatorId, "active");
+
+    const result = await t.run(
+      async (ctx) =>
+        await listAssignments(ctx, owner.membership.companyId, {
+          status: "active",
+          paginationOpts: firstPage,
+        }),
+    );
+
+    expect(ids(result.page)).toEqual([active]);
+  });
+
+  test("filters by opportunity and status", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(t, { subject: "owner" });
+    const otherOpportunityId = await addOpportunity(t, owner);
+    const creatorId = await seedCreatorId(t, "creator");
+    const wanted = await assign(t, owner, creatorId, "active");
+    await assign(t, owner, creatorId, "termsPending");
+    await assign(t, owner, creatorId, "active", otherOpportunityId);
+
+    const result = await t.run(
+      async (ctx) =>
+        await listAssignments(ctx, owner.membership.companyId, {
+          opportunityId: owner.opportunityId,
+          status: "active",
+          paginationOpts: firstPage,
+        }),
+    );
+
+    expect(ids(result.page)).toEqual([wanted]);
+  });
+
+  test("conceals another company's opportunity", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(t, { subject: "owner" });
+    const other = await seedOpportunity(t, { subject: "other", orgId: "org_other" });
+
+    await expectApiError(
+      () =>
+        t.run(
+          async (ctx) =>
+            await listAssignments(ctx, owner.membership.companyId, {
+              opportunityId: other.opportunityId,
+              paginationOpts: firstPage,
+            }),
+        ),
+      "not_found",
+    );
+  });
+
+  test("refuses an opportunity outside the requested campaign", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(t, { subject: "owner" });
+    const second = await seedOpportunity(t, { subject: "owner" });
+
+    await expectApiError(
+      () =>
+        t.run(
+          async (ctx) =>
+            await listAssignments(ctx, owner.membership.companyId, {
+              campaignId: owner.campaignId,
+              opportunityId: second.opportunityId,
+              paginationOpts: firstPage,
+            }),
+        ),
+      "not_found",
+    );
+  });
+
+  test("lists every assignment across a campaign's opportunities and excludes other campaigns", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(t, { subject: "owner" });
+    const secondOpportunityId = await addOpportunity(t, owner);
+    const otherCampaign = await seedOpportunity(t, { subject: "owner" });
+    const creatorId = await seedCreatorId(t, "creator");
+    const first = await assign(t, owner, creatorId, "active");
+    await assign(t, otherCampaign, creatorId, "active");
+    const second = await assign(t, owner, creatorId, "active", secondOpportunityId);
+    const pending = await assign(t, owner, creatorId, "termsPending", secondOpportunityId);
+
+    const all = await t.run(
+      async (ctx) =>
+        await listAssignments(ctx, owner.membership.companyId, {
+          campaignId: owner.campaignId,
+          paginationOpts: firstPage,
+        }),
+    );
+    const active = await t.run(
+      async (ctx) =>
+        await listAssignments(ctx, owner.membership.companyId, {
+          campaignId: owner.campaignId,
+          status: "active",
+          paginationOpts: firstPage,
+        }),
+    );
+
+    expect(ids(all.page)).toEqual([pending, second, first]);
+    expect(ids(active.page)).toEqual([second, first]);
+  });
+
+  test("pages through a campaign without skipping or repeating assignments", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(t, { subject: "owner" });
+    const opportunities = [
+      owner.opportunityId,
+      await addOpportunity(t, owner),
+      await addOpportunity(t, owner),
+    ];
+    const creatorId = await seedCreatorId(t, "creator");
+    const seeded = [];
+    for (let i = 0; i < 7; i++) {
+      seeded.push(await assign(t, owner, creatorId, "active", opportunities[i % 3]));
+    }
+
+    const seen: Id<"assignments">[] = [];
+    let cursor: string | null = null;
+    for (let pages = 0; pages < 10; pages++) {
+      const result = await t.run(
+        async (ctx) =>
+          await listAssignments(ctx, owner.membership.companyId, {
+            campaignId: owner.campaignId,
+            paginationOpts: { numItems: 3, cursor },
+          }),
+      );
+      seen.push(...ids(result.page));
+      if (result.isDone) break;
+      cursor = result.continueCursor;
+    }
+
+    expect(seen).toEqual(seeded.reverse());
+  });
+
+  test("returns an empty page for a campaign with no opportunities", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(t, { subject: "owner" });
+    await t.run(async (ctx) => await ctx.db.delete("opportunities", owner.opportunityId));
+
+    const result = await t.run(
+      async (ctx) =>
+        await listAssignments(ctx, owner.membership.companyId, {
+          campaignId: owner.campaignId,
+          paginationOpts: firstPage,
+        }),
+    );
+
+    expect(result.page).toEqual([]);
+    expect(result.isDone).toBe(true);
+  });
+
+  test("conceals another company's campaign", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(t, { subject: "owner" });
+    const other = await seedOpportunity(t, { subject: "other", orgId: "org_other" });
+
+    await expectApiError(
+      () =>
+        t.run(
+          async (ctx) =>
+            await listAssignments(ctx, owner.membership.companyId, {
+              campaignId: other.campaignId,
+              paginationOpts: firstPage,
+            }),
+        ),
+      "not_found",
+    );
+  });
+});
+
+describe("listCreatorAssignments", () => {
+  test("splits the creator's assignments into current and past, newest first", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(t, { subject: "owner" });
+    const creatorId = await seedCreatorId(t, "creator");
+    const otherCreatorId = await seedCreatorId(t, "other_creator");
+    const active = await assign(t, owner, creatorId, "active");
+    const completed = await assign(t, owner, creatorId, "completed");
+    const pending = await assign(t, owner, creatorId, "termsPending");
+    const cancelled = await assign(t, owner, creatorId, "cancelled");
+    await assign(t, owner, otherCreatorId, "active");
+    await assign(t, owner, otherCreatorId, "completed");
+
+    const list = async (phase: "current" | "past") =>
+      await t.run(
+        async (ctx) =>
+          await listCreatorAssignments(ctx, creatorId, { phase, paginationOpts: firstPage }),
+      );
+
+    expect(ids((await list("current")).page)).toEqual([pending, active]);
+    expect(ids((await list("past")).page)).toEqual([cancelled, completed]);
+  });
+
+  test("pages through current assignments across both statuses", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(t, { subject: "owner" });
+    const creatorId = await seedCreatorId(t, "creator");
+    const seeded = [];
+    for (let i = 0; i < 5; i++) {
+      seeded.push(await assign(t, owner, creatorId, i % 2 === 0 ? "termsPending" : "active"));
+    }
+
+    const first = await t.run(
+      async (ctx) =>
+        await listCreatorAssignments(ctx, creatorId, {
+          phase: "current",
+          paginationOpts: { numItems: 3, cursor: null },
+        }),
+    );
+    const second = await t.run(
+      async (ctx) =>
+        await listCreatorAssignments(ctx, creatorId, {
+          phase: "current",
+          paginationOpts: { numItems: 3, cursor: first.continueCursor },
+        }),
+    );
+
+    expect([...ids(first.page), ...ids(second.page)]).toEqual(seeded.reverse());
+    expect(second.isDone).toBe(true);
+  });
+});
+
+describe("requireAssignment", () => {
+  async function seedOne(t: TestConvex) {
+    const owner = await seedOpportunity(t, { subject: "owner" });
+    const creatorId = await seedCreatorId(t, "creator");
+    const assignmentId = await assign(t, owner, creatorId);
+    return { owner, creatorId, assignmentId };
+  }
+
+  test("returns the assignment to its creator, its company, and operators", async () => {
+    const t = convexTest(schema, modules);
+    const { owner, creatorId, assignmentId } = await seedOne(t);
+
+    for (const viewer of [
+      { role: "creator" as const, creatorId },
+      { role: "company" as const, companyId: owner.membership.companyId },
+      { role: "operator" as const },
+    ]) {
+      const assignment = await t.run(
+        async (ctx) => await requireAssignment(ctx, viewer, assignmentId),
+      );
+      expect(assignment._id).toBe(assignmentId);
+    }
+  });
+
+  test("conceals the assignment from other creators and companies", async () => {
+    const t = convexTest(schema, modules);
+    const { assignmentId } = await seedOne(t);
+    const otherCreatorId = await seedCreatorId(t, "other_creator");
+    const other = await seedOpportunity(t, { subject: "other", orgId: "org_other" });
+
+    for (const viewer of [
+      { role: "creator" as const, creatorId: otherCreatorId },
+      { role: "company" as const, companyId: other.membership.companyId },
+    ]) {
+      await expectApiError(
+        () => t.run(async (ctx) => await requireAssignment(ctx, viewer, assignmentId)),
+        "not_found",
+      );
+    }
+  });
+
+  test("reports a missing assignment as not found", async () => {
+    const t = convexTest(schema, modules);
+    const { assignmentId } = await seedOne(t);
+    await t.run(async (ctx) => await ctx.db.delete("assignments", assignmentId));
+
+    await expectApiError(
+      () => t.run(async (ctx) => await requireAssignment(ctx, { role: "operator" }, assignmentId)),
+      "not_found",
+    );
   });
 });

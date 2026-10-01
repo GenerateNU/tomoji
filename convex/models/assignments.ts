@@ -1,6 +1,10 @@
+import { paginationOptsValidator, type PaginationResult } from "convex/server";
+import { mergedStream, stream } from "convex-helpers/server/stream";
+import { v, type Infer } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
-import type { MutationCtx } from "../_generated/server";
+import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { apiError } from "../lib/errors";
+import schema from "../schema";
 
 /**
  * Creates a creator's assignment on an open, ungated opportunity.
@@ -119,4 +123,140 @@ async function createAssignment(
     numFilledSlots: opportunity.numFilledSlots + 1,
   });
   return assignmentId;
+}
+
+/** Who is reading an assignment, resolved from the caller by the route. */
+export type AssignmentViewer =
+  | { role: "operator" }
+  | { role: "creator"; creatorId: Id<"creators"> }
+  | { role: "company"; companyId: Id<"companies"> };
+
+/**
+ * Returns an assignment the viewer may see: creators see their own, company
+ * users see their company's, and operators see all.
+ *
+ * @throws `not_found` if the assignment does not exist or the viewer may not
+ * see it, so callers cannot probe for other assignments.
+ */
+export async function requireAssignment(
+  ctx: QueryCtx | MutationCtx,
+  viewer: AssignmentViewer,
+  assignmentId: Id<"assignments">,
+): Promise<Doc<"assignments">> {
+  const assignment = await ctx.db.get("assignments", assignmentId);
+  if (assignment === null || !canViewAssignment(viewer, assignment)) {
+    throw apiError("not_found", { resource: "assignment" });
+  }
+  return assignment;
+}
+
+function canViewAssignment(viewer: AssignmentViewer, assignment: Doc<"assignments">): boolean {
+  switch (viewer.role) {
+    case "operator":
+      return true;
+    case "creator":
+      return assignment.creatorId === viewer.creatorId;
+    case "company":
+      return assignment.companyId === viewer.companyId;
+  }
+}
+
+export const assignmentListFilters = schema
+  .doc("assignments")
+  .pick("opportunityId", "status")
+  .partial()
+  .extend({
+    campaignId: v.optional(v.id("campaigns")),
+    paginationOpts: paginationOptsValidator,
+  });
+
+/**
+ * Returns one page of the company's assignments, optionally filtered by
+ * opportunity, campaign, and status. Results are ordered by status, then
+ * newest first within each status.
+ *
+ * @throws `not_found` if the opportunity or campaign belongs to another
+ * company, or the opportunity is not in the given campaign.
+ */
+export async function listAssignments(
+  ctx: QueryCtx,
+  companyId: Id<"companies">,
+  options: Infer<typeof assignmentListFilters>,
+): Promise<PaginationResult<Doc<"assignments">>> {
+  const { opportunityId, campaignId, status, paginationOpts } = options;
+
+  if (opportunityId !== undefined) {
+    const opportunity = await ctx.db.get("opportunities", opportunityId);
+    const campaign = opportunity && (await ctx.db.get("campaigns", opportunity.campaignId));
+    if (
+      !opportunity ||
+      !campaign ||
+      campaign.companyId !== companyId ||
+      (campaignId !== undefined && opportunity.campaignId !== campaignId)
+    ) {
+      throw apiError("not_found", { resource: "opportunity" });
+    }
+    return await ctx.db
+      .query("assignments")
+      .withIndex("by_opportunityId_and_status", (q) => {
+        const range = q.eq("opportunityId", opportunityId);
+        return status === undefined ? range : range.eq("status", status);
+      })
+      .order("desc")
+      .paginate(paginationOpts);
+  }
+
+  if (campaignId !== undefined) {
+    const campaign = await ctx.db.get("campaigns", campaignId);
+    if (campaign === null || campaign.companyId !== companyId) {
+      throw apiError("not_found", { resource: "campaign" });
+    }
+    return await ctx.db
+      .query("assignments")
+      .withIndex("by_campaignId_and_status", (q) => {
+        const range = q.eq("campaignId", campaignId);
+        return status === undefined ? range : range.eq("status", status);
+      })
+      .order("desc")
+      .paginate(paginationOpts);
+  }
+
+  return await ctx.db
+    .query("assignments")
+    .withIndex("by_companyId_and_status", (q) => {
+      const range = q.eq("companyId", companyId);
+      return status === undefined ? range : range.eq("status", status);
+    })
+    .order("desc")
+    .paginate(paginationOpts);
+}
+
+/** Current assignments still need work; past ones are finished either way. */
+export const assignmentPhase = v.union(v.literal("current"), v.literal("past"));
+
+const PHASE_STATUSES = {
+  current: ["termsPending", "active"],
+  past: ["completed", "cancelled"],
+} as const satisfies Record<Infer<typeof assignmentPhase>, Doc<"assignments">["status"][]>;
+
+export const creatorAssignmentListFilters = v.object({
+  phase: assignmentPhase,
+  paginationOpts: paginationOptsValidator,
+});
+
+/** Returns one page of a creator's current or past assignments, newest first. */
+export async function listCreatorAssignments(
+  ctx: QueryCtx,
+  creatorId: Id<"creators">,
+  options: Infer<typeof creatorAssignmentListFilters>,
+): Promise<PaginationResult<Doc<"assignments">>> {
+  const streams = PHASE_STATUSES[options.phase].map((status) =>
+    stream(ctx.db, schema)
+      .query("assignments")
+      .withIndex("by_creatorId_and_status", (q) =>
+        q.eq("creatorId", creatorId).eq("status", status),
+      )
+      .order("desc"),
+  );
+  return await mergedStream(streams, ["_creationTime"]).paginate(options.paginationOpts);
 }

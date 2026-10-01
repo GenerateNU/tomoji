@@ -2,6 +2,7 @@
 import { convexTest } from "convex-test";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { api } from "../_generated/api";
+import { deactivateUser } from "../models/users";
 import schema from "../schema";
 import {
   expectApiError,
@@ -22,6 +23,118 @@ beforeEach(() => {
 });
 
 afterEach(() => vi.useRealTimers());
+
+describe("opportunities.discover", () => {
+  test("returns public briefs with company names to a creator", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(
+      t,
+      { subject: "discover_owner" },
+      {
+        isGated: true,
+        productAccessLink: "https://example.com/private-product",
+      },
+    );
+    await t.run(
+      async (ctx) =>
+        await ctx.db.patch("companies", owner.membership.companyId, { name: "Discovery Brand" }),
+    );
+    const asCreator = await seedUser(t, { subject: "discover_creator" });
+
+    const result = await asCreator.query(api.opportunities.discover, {
+      paginationOpts: { numItems: 10, cursor: null },
+    });
+
+    expect(result.page).toMatchObject([
+      { _id: owner.opportunityId, companyName: "Discovery Brand", isGated: true },
+    ]);
+    expect(Object.keys(result.page[0]).sort()).toEqual(
+      [
+        "_id",
+        "_creationTime",
+        "companyName",
+        "title",
+        "description",
+        "isGated",
+        "usesAiReviewDefault",
+        "targetApplicant",
+        "maxSlots",
+        "numFilledSlots",
+        "maxApplications",
+        "deadline",
+        "status",
+        "fixedFeeCents",
+        "cpmRateCents",
+        "paymentCapCents",
+        "contentRequirements",
+        "prohibitedClaims",
+        "disclosureRequirements",
+        "usageRights",
+      ].sort(),
+    );
+    expect(result.isDone).toBe(true);
+  });
+
+  test("rejects a signed-out caller", async () => {
+    const t = convexTest(schema, modules);
+    await expectApiError(
+      () =>
+        t.query(api.opportunities.discover, {
+          paginationOpts: { numItems: 10, cursor: null },
+        }),
+      "not_authenticated",
+    );
+  });
+
+  test("rejects a company caller", async () => {
+    const t = convexTest(schema, modules);
+    const { asCompany } = await seedCampaign(t, { subject: "discover_company" });
+    await expectApiError(
+      () =>
+        asCompany.query(api.opportunities.discover, {
+          paginationOpts: { numItems: 10, cursor: null },
+        }),
+      "forbidden",
+    );
+  });
+
+  test("rejects an operator", async () => {
+    const t = convexTest(schema, modules);
+    const asOperator = await seedOperator(t, "discover_operator");
+    await expectApiError(
+      () =>
+        asOperator.query(api.opportunities.discover, {
+          paginationOpts: { numItems: 10, cursor: null },
+        }),
+      "forbidden",
+    );
+  });
+
+  test("rejects an unsynced creator", async () => {
+    const t = convexTest(schema, modules);
+    const asUnsynced = t.withIdentity(workosIdentity({ subject: "discover_unsynced" }));
+    await expectApiError(
+      () =>
+        asUnsynced.query(api.opportunities.discover, {
+          paginationOpts: { numItems: 10, cursor: null },
+        }),
+      "not_synced",
+    );
+  });
+
+  test("rejects an inactive creator", async () => {
+    const t = convexTest(schema, modules);
+    const asCreator = await seedUser(t, { subject: "discover_inactive_creator" });
+    await t.run(async (ctx) => await deactivateUser(ctx, "discover_inactive_creator"));
+    await expectApiError(
+      () =>
+        asCreator.query(api.opportunities.discover, {
+          paginationOpts: { numItems: 10, cursor: null },
+        }),
+      "account_deactivated",
+    );
+  });
+});
 
 describe("opportunities.list", () => {
   test("allows a company member to list their company's stored opportunities", async () => {

@@ -279,7 +279,7 @@ export async function acceptApplication(
     throw apiError("invalid_state", { reason: "opportunity_full" });
   }
 
-  const patch = { status: "accepted" as const, offerAcceptedAt: now };
+  const patch = { status: "accepted" as const, offerAcceptedAt: now, statusLastUpdatedAt: now };
   await ctx.db.patch("applications", application._id, patch);
   // Accept creates the assignment directly for now; a follow-up
   // ticket moves this into the assignments model once that ticket lands.
@@ -296,7 +296,7 @@ export async function acceptApplication(
   const numFilledSlots = opportunity.numFilledSlots + 1;
   await ctx.db.patch("opportunities", opportunity._id, { numFilledSlots });
   if (numFilledSlots >= opportunity.maxSlots) {
-    await markRemainingApplicationsFull(ctx, opportunity);
+    await markRemainingApplicationsFull(ctx, opportunity, now);
   }
   return { ...application, ...patch };
 }
@@ -315,8 +315,9 @@ export async function declineApplication(
   applicationId: Id<"applications">,
 ): Promise<Doc<"applications">> {
   const application = await requireOfferedApplication(ctx, creatorId, applicationId);
-  await ctx.db.patch("applications", application._id, { status: "declined" });
-  return { ...application, status: "declined" };
+  const patch = { status: "declined" as const, statusLastUpdatedAt: Date.now() };
+  await ctx.db.patch("applications", application._id, patch);
+  return { ...application, ...patch };
 }
 
 /** Loads the creator's own application and requires it to hold an offer. */
@@ -340,6 +341,7 @@ async function requireOfferedApplication(
 async function markRemainingApplicationsFull(
   ctx: MutationCtx,
   opportunity: Doc<"opportunities">,
+  now: number,
 ): Promise<void> {
   for (const status of ["pending", "offered"] as const) {
     const remaining = await ctx.db
@@ -349,7 +351,10 @@ async function markRemainingApplicationsFull(
       )
       .take(opportunity.maxApplications);
     for (const application of remaining) {
-      await ctx.db.patch("applications", application._id, { status: "opportunityFull" });
+      await ctx.db.patch("applications", application._id, {
+        status: "opportunityFull",
+        statusLastUpdatedAt: now,
+      });
     }
   }
 }
@@ -361,14 +366,18 @@ async function markRemainingApplicationsFull(
  */
 export async function expireApplicationOffers(ctx: MutationCtx): Promise<boolean> {
   const batchSize = 100;
+  const now = Date.now();
   const expired = await ctx.db
     .query("applications")
     .withIndex("by_status_and_offerExpiresAt", (q) =>
-      q.eq("status", "offered").lte("offerExpiresAt", Date.now()),
+      q.eq("status", "offered").lte("offerExpiresAt", now),
     )
     .take(batchSize);
   for (const application of expired) {
-    await ctx.db.patch("applications", application._id, { status: "offerExpired" });
+    await ctx.db.patch("applications", application._id, {
+      status: "offerExpired",
+      statusLastUpdatedAt: now,
+    });
   }
   return expired.length === batchSize;
 }

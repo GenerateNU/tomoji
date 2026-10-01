@@ -16,7 +16,7 @@ import {
 import schema from "../../schema";
 import {
   expectApiError,
-  seedAssignment,
+  seedAssignmentFixture,
   seedCreatorId,
   seedMembership,
   seedOneSubmission,
@@ -102,7 +102,7 @@ describe("createSubmission", () => {
     "stores a pending draft and copies usesAiReview=%s from the assignment",
     async (usesAiReview) => {
       const t = convexTest(schema, modules);
-      const fixture = await seedAssignment(t, { usesAiReview });
+      const fixture = await seedAssignmentFixture(t, { usesAiReview });
 
       const id = await submit(t, fixture);
 
@@ -117,7 +117,7 @@ describe("createSubmission", () => {
 
   test("trims the draft fields", async () => {
     const t = convexTest(schema, modules);
-    const fixture = await seedAssignment(t);
+    const fixture = await seedAssignmentFixture(t);
 
     const id = await submit(t, fixture, {
       draftUrl: `  ${draft.draftUrl}  `,
@@ -129,7 +129,7 @@ describe("createSubmission", () => {
 
   test("rejects another creator's assignment without writing a submission", async () => {
     const t = convexTest(schema, modules);
-    const fixture = await seedAssignment(t);
+    const fixture = await seedAssignmentFixture(t);
     const intruderId = await seedCreatorId(t, "cs-intruder");
 
     await expectApiError(() => submit(t, fixture, {}, intruderId), "not_found");
@@ -139,7 +139,7 @@ describe("createSubmission", () => {
 
   test("rejects an assignment that no longer exists", async () => {
     const t = convexTest(schema, modules);
-    const fixture = await seedAssignment(t);
+    const fixture = await seedAssignmentFixture(t);
     await t.run(async (ctx) => await ctx.db.delete("assignments", fixture.assignmentId));
 
     await expectApiError(() => submit(t, fixture), "not_found");
@@ -149,7 +149,7 @@ describe("createSubmission", () => {
     "rejects a %s assignment without writing a submission",
     async (status) => {
       const t = convexTest(schema, modules);
-      const fixture = await seedAssignment(t, { status });
+      const fixture = await seedAssignmentFixture(t, { status });
 
       await expectReason(() => submit(t, fixture), "invalid_state", "assignment_not_active");
 
@@ -168,7 +168,7 @@ describe("createSubmission", () => {
 
   test("rejects a new draft once one is approved", async () => {
     const t = convexTest(schema, modules);
-    const fixture = await seedAssignment(t);
+    const fixture = await seedAssignmentFixture(t);
     await seedSubmission(t, fixture, "changesRequested");
     await seedSubmission(t, fixture, "approved");
 
@@ -195,7 +195,7 @@ describe("createSubmission", () => {
     ["draftDescription", " \n "],
   ] as const)("rejects a blank %s without writing a submission", async (field, value) => {
     const t = convexTest(schema, modules);
-    const fixture = await seedAssignment(t);
+    const fixture = await seedAssignmentFixture(t);
 
     await expectReason(
       () => submit(t, fixture, { [field]: value } as Partial<SubmissionDraft>),
@@ -215,7 +215,7 @@ describe("createSubmission", () => {
     "https://user:pass@drive.example.com/draft",
   ])("rejects draft URL %s without writing a submission", async (draftUrl) => {
     const t = convexTest(schema, modules);
-    const fixture = await seedAssignment(t);
+    const fixture = await seedAssignmentFixture(t);
 
     await expectReason(() => submit(t, fixture, { draftUrl }), "invalid_state", "draftUrl_invalid");
 
@@ -231,7 +231,7 @@ describe("createSubmission", () => {
     ["HTTPS://Drive.Example.com/draft", "https://drive.example.com/draft"],
   ])("stores draft URL %j in its parsed form", async (draftUrl, stored) => {
     const t = convexTest(schema, modules);
-    const fixture = await seedAssignment(t);
+    const fixture = await seedAssignmentFixture(t);
 
     const id = await submit(t, fixture, { draftUrl });
 
@@ -240,7 +240,7 @@ describe("createSubmission", () => {
 
   test("rejects a draft URL that goes over the length limit once encoded", async () => {
     const t = convexTest(schema, modules);
-    const fixture = await seedAssignment(t);
+    const fixture = await seedAssignmentFixture(t);
     // 726 characters as typed; each `"` becomes `%22`, making it 2,126.
     const draftUrl = `https://drive.example.com/${'"'.repeat(700)}`;
 
@@ -258,7 +258,7 @@ describe("createSubmission", () => {
     ["draftDescription", "a".repeat(5001)],
   ] as const)("rejects a %s over the length limit", async (field, value) => {
     const t = convexTest(schema, modules);
-    const fixture = await seedAssignment(t);
+    const fixture = await seedAssignmentFixture(t);
 
     await expectReason(
       () => submit(t, fixture, { [field]: value } as Partial<SubmissionDraft>),
@@ -271,7 +271,7 @@ describe("createSubmission", () => {
 
   test("accepts a description exactly at the limit, measured after trimming", async () => {
     const t = convexTest(schema, modules);
-    const fixture = await seedAssignment(t);
+    const fixture = await seedAssignmentFixture(t);
     const description = "a".repeat(5000);
 
     const id = await submit(t, fixture, { draftDescription: `  ${description}  ` });
@@ -655,7 +655,7 @@ describe("requireSubmission", () => {
 describe("listSubmissions", () => {
   test("lists an assignment's submissions newest first", async () => {
     const t = convexTest(schema, modules);
-    const fixture = await seedAssignment(t);
+    const fixture = await seedAssignmentFixture(t);
     const firstId = await seedSubmission(t, fixture, "changesRequested");
     const secondId = await seedSubmission(t, fixture, "pending");
 
@@ -667,7 +667,7 @@ describe("listSubmissions", () => {
 
   test("paginates with the returned cursor", async () => {
     const t = convexTest(schema, modules);
-    const fixture = await seedAssignment(t);
+    const fixture = await seedAssignmentFixture(t);
     const firstId = await seedSubmission(t, fixture, "changesRequested");
     const secondId = await seedSubmission(t, fixture, "pending");
 
@@ -686,7 +686,7 @@ describe("listSubmissions", () => {
 
   test("gives a creator every submission without reviewers", async () => {
     const t = convexTest(schema, modules);
-    const fixture = await seedAssignment(t);
+    const fixture = await seedAssignmentFixture(t);
     const firstId = await seedSubmission(t, fixture, "changesRequested");
     const secondId = await seedSubmission(t, fixture, "approved");
 
@@ -700,7 +700,7 @@ describe("listSubmissions", () => {
 
   test("returns an empty page for an assignment with no submissions", async () => {
     const t = convexTest(schema, modules);
-    const fixture = await seedAssignment(t);
+    const fixture = await seedAssignmentFixture(t);
 
     const result = await listAs(t, creatorViewer(fixture), fixture.assignmentId);
 
@@ -709,7 +709,7 @@ describe("listSubmissions", () => {
 
   test("hides another creator's assignment", async () => {
     const t = convexTest(schema, modules);
-    const fixture = await seedAssignment(t);
+    const fixture = await seedAssignmentFixture(t);
     const intruderId = await seedCreatorId(t, "ls-intruder");
 
     await expectApiError(
@@ -720,7 +720,7 @@ describe("listSubmissions", () => {
 
   test("hides another company's assignment", async () => {
     const t = convexTest(schema, modules);
-    const fixture = await seedAssignment(t);
+    const fixture = await seedAssignmentFixture(t);
     const { membership: outsider } = await seedMembership(t, "ls-outsider");
 
     await expectApiError(
@@ -731,7 +731,7 @@ describe("listSubmissions", () => {
 
   test("rejects an assignment that no longer exists", async () => {
     const t = convexTest(schema, modules);
-    const fixture = await seedAssignment(t);
+    const fixture = await seedAssignmentFixture(t);
     await t.run(async (ctx) => await ctx.db.delete("assignments", fixture.assignmentId));
 
     await expectApiError(() => listAs(t, operatorViewer, fixture.assignmentId), "not_found");

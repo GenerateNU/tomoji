@@ -2,7 +2,7 @@
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
 import schema from "../../schema";
-import { seedAssignment, type TestConvex } from "../helpers";
+import { seedAssignmentFixture, type TestConvex } from "../helpers";
 
 const modules = import.meta.glob("../../**/*.ts");
 
@@ -11,7 +11,7 @@ const reviewerKinds: ReviewerKind[] = ["ai", "companyUser", "operator"];
 
 /** Inserts reviewed submissions straight into the table, so only the schema decides. */
 async function rawReviewInserter(t: TestConvex) {
-  const fixture = await seedAssignment(t);
+  const fixture = await seedAssignmentFixture(t);
   const operatorId = await t.run(
     async (ctx) =>
       await ctx.db.insert("users", {

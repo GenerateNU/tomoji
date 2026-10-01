@@ -5,6 +5,7 @@ import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { apiError } from "../lib/errors";
 import { requireNonBlank } from "../lib/validation";
 import { submissionShapes } from "../schemas/submissions.schema";
+import { requireAssignment, type AssignmentViewer } from "./assignments";
 
 /** The creator-supplied fields of a new submission. */
 export const submissionDraft = v.object({
@@ -40,11 +41,8 @@ export const submissionView = v.union(
 );
 export type SubmissionView = Infer<typeof submissionView>;
 
-/** Who is reading or acting on submissions. */
-export type SubmissionViewer =
-  | { role: "creator"; creatorId: Id<"creators"> }
-  | { role: "company"; companyId: Id<"companies"> }
-  | { role: "operator" };
+/** Who is reading or acting on submissions. Access follows the assignment's. */
+export type SubmissionViewer = AssignmentViewer;
 
 // Limits on free text after trimming. `.length` counts UTF-16 units, so an emoji counts as two.
 const MAX_LENGTH = {
@@ -93,47 +91,10 @@ function requireDraftUrl(value: string): string {
   return url.href;
 }
 
-// TODO(assignments): move this lookup into models/assignments.ts once that
-// domain has a model.
-/** Returns the company that owns an assignment, via its opportunity and campaign. */
-async function getAssignmentCompanyId(
-  ctx: QueryCtx | MutationCtx,
-  assignment: Doc<"assignments">,
-): Promise<Id<"companies"> | null> {
-  const opportunity = await ctx.db.get("opportunities", assignment.opportunityId);
-  if (opportunity === null) return null;
-  const campaign = await ctx.db.get("campaigns", opportunity.campaignId);
-  return campaign?.companyId ?? null;
-}
-
 /**
- * Returns the assignment if the viewer may see it, or throws `not_found` whether
- * it's missing or not theirs. Only a matching case grants access, so a role
- * added later sees nothing until it's handled here.
+ * The submission and its assignment, if the viewer may see the assignment.
+ * Throws `not_found` whether either is missing or not theirs.
  */
-async function requireAssignmentAccess(
-  ctx: QueryCtx | MutationCtx,
-  viewer: SubmissionViewer,
-  assignmentId: Id<"assignments">,
-  resource: "assignment" | "submission" = "assignment",
-): Promise<Doc<"assignments">> {
-  const assignment = await ctx.db.get("assignments", assignmentId);
-  if (assignment !== null) {
-    switch (viewer.role) {
-      case "operator":
-        return assignment;
-      case "creator":
-        if (assignment.creatorId === viewer.creatorId) return assignment;
-        break;
-      case "company":
-        if ((await getAssignmentCompanyId(ctx, assignment)) === viewer.companyId) return assignment;
-        break;
-    }
-  }
-  throw apiError("not_found", { resource });
-}
-
-/** `requireAssignmentAccess`, starting from a submission. */
 async function requireSubmissionAccess(
   ctx: QueryCtx | MutationCtx,
   viewer: SubmissionViewer,
@@ -141,12 +102,7 @@ async function requireSubmissionAccess(
 ): Promise<{ submission: Doc<"submissions">; assignment: Doc<"assignments"> }> {
   const submission = await ctx.db.get("submissions", submissionId);
   if (submission === null) throw apiError("not_found", { resource: "submission" });
-  const assignment = await requireAssignmentAccess(
-    ctx,
-    viewer,
-    submission.assignmentId,
-    "submission",
-  );
+  const assignment = await requireAssignment(ctx, viewer, submission.assignmentId);
   return { submission, assignment };
 }
 
@@ -250,7 +206,7 @@ export async function createSubmission(
   creatorId: Id<"creators">,
   draft: SubmissionDraft,
 ): Promise<Id<"submissions">> {
-  const assignment = await requireAssignmentAccess(
+  const assignment = await requireAssignment(
     ctx,
     { role: "creator", creatorId },
     draft.assignmentId,
@@ -325,7 +281,7 @@ export async function listSubmissions(
   assignmentId: Id<"assignments">,
   paginationOpts: PaginationOptions,
 ): Promise<PaginationResult<SubmissionView>> {
-  const assignment = await requireAssignmentAccess(ctx, viewer, assignmentId);
+  const assignment = await requireAssignment(ctx, viewer, assignmentId);
   const result = await ctx.db
     .query("submissions")
     .withIndex("by_assignmentId", (q) => q.eq("assignmentId", assignmentId))

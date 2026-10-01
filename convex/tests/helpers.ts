@@ -1,16 +1,72 @@
-import type { convexTest } from "convex-test";
-import type { UserIdentity } from "convex/server";
+import type { TestConvex as ConvexTest } from "convex-test";
+import type { UserIdentity, WithoutSystemFields } from "convex/server";
 import type { Infer } from "convex/values";
 import { expect } from "vitest";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { ApiErrorCode } from "../lib/errors";
 import { companyContext } from "../lib/functions";
 import { getCreatorByUserId } from "../models/creators";
+import { createCampaign } from "../models/campaigns";
+import { createOpportunity, type OpportunityCreate } from "../models/opportunities";
 import { applyMembership, getUserByWorkosId, upsertUser } from "../models/users";
 import type { companyRole } from "../schemas/companyUsers.schema";
+import type schema from "../schema";
 import type { submissionStatus } from "../schemas/submissions.schema";
 
-export type TestConvex = ReturnType<typeof convexTest>;
+export type TestConvex = ConvexTest<typeof schema>;
+
+/** Reads bounded workflow fixtures so tests can assert that opportunity transitions preserve them. */
+export async function readOpportunityHistory(t: TestConvex, opportunityId: Id<"opportunities">) {
+  return await t.run(async (ctx) => ({
+    applications: await ctx.db
+      .query("applications")
+      .withIndex("by_opportunityId_and_status", (q) => q.eq("opportunityId", opportunityId))
+      .take(4),
+    assignments: await ctx.db
+      .query("assignments")
+      .withIndex("by_opportunityId_and_status", (q) => q.eq("opportunityId", opportunityId))
+      .take(2),
+  }));
+}
+
+/** Seeds pending, offered, and accepted applications plus independently agreed assignment terms. */
+export async function seedOpportunityHistory(t: TestConvex, opportunityId: Id<"opportunities">) {
+  for (const status of ["pending", "offered", "accepted"] as const) {
+    const creatorId = await seedCreatorId(t, `history_${status}`);
+    await t.run(async (ctx) => {
+      const opportunity = await ctx.db.get("opportunities", opportunityId);
+      if (opportunity === null) throw new Error("expected seeded opportunity");
+      await ctx.db.insert("applications", {
+        opportunityId,
+        creatorId,
+        companyId: opportunity.companyId,
+        note: "Interested in the brief",
+        status,
+        ...(status !== "pending"
+          ? { statusLastUpdatedAt: Date.now(), offerExpiresAt: Date.now() + 172_800_000 }
+          : {}),
+        ...(status === "accepted" ? { offerAcceptedAt: Date.now() } : {}),
+      });
+      if (status === "accepted") {
+        const opportunity = await ctx.db.get("opportunities", opportunityId);
+        if (opportunity === null) throw new Error("expected seeded opportunity");
+        await ctx.db.insert("assignments", {
+          opportunityId,
+          creatorId,
+          companyId: opportunity.companyId,
+          campaignId: opportunity.campaignId,
+          fixedFeeCents: 20_000,
+          cpmRateCents: 700,
+          paymentCapCents: 40_000,
+          usesAiReview: false,
+          status: "active",
+        });
+        await ctx.db.patch("opportunities", opportunityId, { numFilledSlots: 1 });
+      }
+    });
+  }
+  return await readOpportunityHistory(t, opportunityId);
+}
 
 /** A fake WorkOS token. */
 export function workosIdentity(claims: {
@@ -103,6 +159,132 @@ export async function seedWrongOrgCaller(t: TestConvex) {
   return t.withIdentity(workosIdentity({ subject: "outsider", org_id: "org_other" }));
 }
 
+export type SeedCampaignOptions = {
+  subject: string;
+  orgId?: string;
+  role?: Infer<typeof companyRole>;
+  status?: Doc<"campaigns">["status"];
+};
+
+/** Seeds a company caller and its campaign with server-derived ownership. */
+export async function seedCampaign(t: TestConvex, options: SeedCampaignOptions) {
+  const asCompany = await seedUser(t, {
+    subject: options.subject,
+    org: { id: options.orgId ?? "org_acme", role: options.role },
+  });
+  const { campaignId, membership } = await asCompany.run(async (ctx) => {
+    const { membership } = await companyContext(ctx);
+    const campaignId = await createCampaign(ctx, {
+      companyId: membership.companyId,
+      createdBy: membership._id,
+      title: "Spring launch",
+      objective: "Introduce the new skincare range",
+      product: "Daily moisturizer",
+      audience: "Skincare enthusiasts",
+      description: "Campaign supporting the spring launch.",
+      status: "open",
+      budgetCents: 250_000,
+      startsAt: Date.now(),
+    });
+    if (options.status !== undefined) {
+      await ctx.db.patch("campaigns", campaignId, { status: options.status });
+    }
+    return { campaignId, membership };
+  });
+  return { asCompany, campaignId, membership };
+}
+
+/** A complete opportunity brief without server-owned fields. */
+export function opportunityArgs(
+  campaignId: Id<"campaigns">,
+  overrides: Partial<OpportunityCreate> = {},
+): OpportunityCreate {
+  return {
+    campaignId,
+    title: "Moisturizer launch video",
+    description: "Show the product in your daily skincare routine.",
+    status: "open",
+    isGated: false,
+    usesAiReviewDefault: true,
+    targetApplicant: "Skincare creators",
+    maxSlots: 5,
+    maxApplications: 5,
+    deadline: Math.ceil((Date.now() + 86_400_000) / 1_800_000) * 1_800_000,
+    fixedFeeCents: 10_000,
+    cpmRateCents: 500,
+    paymentCapCents: 25_000,
+    contentRequirements: "One 30-second video",
+    prohibitedClaims: "No medical claims",
+    disclosureRequirements: "Disclose the paid partnership",
+    usageRights: "Organic reposting for 30 days",
+    ...overrides,
+  };
+}
+
+/** Seeds a campaign and an opportunity through the model, bypassing route authorization. */
+export async function seedOpportunity(
+  t: TestConvex,
+  options: SeedCampaignOptions,
+  overrides: Partial<OpportunityCreate> = {},
+) {
+  const owner = await seedCampaign(t, options);
+  const opportunityId = await t.run(
+    async (ctx) =>
+      await createOpportunity(ctx, owner.membership, opportunityArgs(owner.campaignId, overrides)),
+  );
+  return { ...owner, opportunityId };
+}
+
+/**
+ * Inserts an assignment directly, in any status, with the seeded opportunity's
+ * default terms. Ownership fields are copied from the opportunity.
+ */
+export async function seedAssignment(
+  t: TestConvex,
+  fields: Pick<Doc<"assignments">, "opportunityId" | "creatorId"> &
+    Partial<Pick<Doc<"assignments">, "status">>,
+): Promise<Id<"assignments">> {
+  return await t.run(async (ctx) => {
+    const opportunity = await ctx.db.get("opportunities", fields.opportunityId);
+    if (opportunity === null) throw new Error("expected seeded opportunity");
+    return await ctx.db.insert("assignments", {
+      companyId: opportunity.companyId,
+      campaignId: opportunity.campaignId,
+      fixedFeeCents: 10_000,
+      cpmRateCents: 500,
+      paymentCapCents: 25_000,
+      usesAiReview: true,
+      status: "termsPending",
+      ...fields,
+    });
+  });
+}
+
+export type SeedGatedOpportunityOptions = {
+  /** Company member who owns the opportunity. Defaults to a member of `org_acme`. */
+  subject?: string;
+  orgId?: string;
+  /** Applied after creation, so states creation cannot produce (paused, closed) work too. */
+  opportunity?: Partial<WithoutSystemFields<Doc<"opportunities">>>;
+};
+
+/**
+ * Seeds an open, gated opportunity through `seedOpportunity` for application
+ * tests, and returns the owning company's ID alongside its other IDs.
+ */
+export async function seedGatedOpportunity(t: TestConvex, opts: SeedGatedOpportunityOptions = {}) {
+  const seeded = await seedOpportunity(
+    t,
+    { subject: opts.subject ?? "company_owner", orgId: opts.orgId },
+    { isGated: true, maxSlots: 10, maxApplications: 10 },
+  );
+  const patch = opts.opportunity;
+  if (patch !== undefined) {
+    await t.run(async (ctx) => await ctx.db.patch("opportunities", seeded.opportunityId, patch));
+  }
+  return { ...seeded, companyId: seeded.membership.companyId };
+}
+
 /** Seeds a company member and returns their client and membership row. */
 export async function seedMembership(t: TestConvex, subject: string, orgId = `org_${subject}`) {
   const asMember = await seedUser(t, { subject, org: { id: orgId } });
@@ -125,61 +307,25 @@ const FIXTURE_CREATOR = "fixture-creator";
 const FIXTURE_OPERATOR = "fixture-operator";
 
 /**
- * Seeds a company member and a creator linked by an assignment. The rows are
- * inserted directly because assignments have no model functions yet.
+ * Seeds a company member and a creator linked by an `active` assignment, through
+ * the shared opportunity and assignment helpers.
  */
-export async function seedAssignment(
+export async function seedAssignmentFixture(
   t: TestConvex,
   assignment: Partial<Pick<Doc<"assignments">, "status" | "usesAiReview">> = {},
 ): Promise<AssignmentFixture> {
-  const { asMember: asCompany, membership } = await seedMembership(t, FIXTURE_COMPANY);
-  const creatorId = await seedCreatorId(t, FIXTURE_CREATOR);
-
-  const assignmentId = await t.run(async (ctx) => {
-    const campaignId = await ctx.db.insert("campaigns", {
-      companyId: membership.companyId,
-      createdBy: membership._id,
-      title: "Driftwood CLI launch week",
-      objective: "Drive installs of the Driftwood deployment CLI",
-      product: "Driftwood CLI",
-      audience: "Backend and platform engineers",
-      description: "Creator walkthroughs showing a first deploy with the Driftwood CLI.",
-      status: "open",
-      budgetCents: 250_000,
-      startsAt: Date.now(),
-    });
-    const opportunityId = await ctx.db.insert("opportunities", {
-      campaignId,
-      createdBy: membership._id,
-      title: "Terminal walkthrough video",
-      description: "A 60-second screen recording taking a sample app from install to first deploy.",
-      isGated: false,
-      usesAiReviewDefault: false,
-      targetApplicant: "Developer educators and tech creators",
-      maxSlots: 5,
-      numFilledSlots: 1,
-      maxApplications: 50,
-      deadline: Date.now() + 7 * 24 * 60 * 60 * 1000,
-      status: "open",
-      fixedFeeCents: 10_000,
-      cpmRateCents: 500,
-      paymentCapCents: 50_000,
-      contentRequirements: "Run `driftwood init` in a real terminal within the first 10 seconds.",
-      prohibitedClaims: "No uptime, latency, or cost-savings guarantees.",
-      disclosureRequirements: "Include #ad or 'sponsored by Driftwood' in the caption.",
-      usageRights: "Organic reposts on Driftwood's channels for 90 days.",
-    });
-    return await ctx.db.insert("assignments", {
-      opportunityId,
-      creatorId,
-      fixedFeeCents: 10_000,
-      cpmRateCents: 500,
-      paymentCapCents: 50_000,
-      usesAiReview: false,
-      status: "active",
-      ...assignment,
-    });
+  const { asCompany, membership, opportunityId } = await seedOpportunity(t, {
+    subject: FIXTURE_COMPANY,
+    orgId: "org_fixture",
   });
+  const creatorId = await seedCreatorId(t, FIXTURE_CREATOR);
+  const assignmentId = await seedAssignment(t, {
+    opportunityId,
+    creatorId,
+    status: assignment.status ?? "active",
+  });
+  const usesAiReview = assignment.usesAiReview ?? false;
+  await t.run(async (ctx) => await ctx.db.patch("assignments", assignmentId, { usesAiReview }));
 
   return {
     assignmentId,
@@ -208,14 +354,19 @@ export async function seedSubmission(
     if (status === "pending") {
       return await ctx.db.insert("submissions", { ...draft, status });
     }
-    return await ctx.db.insert("submissions", {
-      ...draft,
-      status,
-      reviewNote:
-        status === "changesRequested" ? "Add #ad to the caption before posting." : undefined,
-      reviewerType: "companyUser",
+    const review = {
+      reviewerType: "companyUser" as const,
       reviewedBy: fixture.membership._id,
       reviewedAt: Date.now(),
+    };
+    if (status === "approved") {
+      return await ctx.db.insert("submissions", { ...draft, ...review, status });
+    }
+    return await ctx.db.insert("submissions", {
+      ...draft,
+      ...review,
+      status,
+      reviewNote: "Add #ad to the caption before posting.",
     });
   });
 }
@@ -226,14 +377,14 @@ export async function seedOneSubmission(
   status: Infer<typeof submissionStatus> = "pending",
   assignment: Partial<Pick<Doc<"assignments">, "status" | "usesAiReview">> = {},
 ) {
-  const fixture = await seedAssignment(t, assignment);
+  const fixture = await seedAssignmentFixture(t, assignment);
   const submissionId = await seedSubmission(t, fixture, status);
   return { fixture, submissionId };
 }
 
 /** Seeds a submission an operator overrode after a dispute, with every reviewer-identity field set. */
 export async function seedOverriddenSubmission(t: TestConvex) {
-  const fixture = await seedAssignment(t);
+  const fixture = await seedAssignmentFixture(t);
   await seedOperator(t, FIXTURE_OPERATOR);
 
   const submissionId = await t.run(async (ctx) => {
@@ -288,22 +439,12 @@ export function withoutReviewerIdentity(view: object): object {
   return copy;
 }
 
-// `TestConvex` loses the schema types, so rows read through `t.run` come back
-// untyped. These two helpers hold the only casts back to the submission type.
-
 /** Reads one submission as stored, or `null` if it doesn't exist. */
-export async function storedSubmission(
-  t: TestConvex,
-  submissionId: Id<"submissions">,
-): Promise<Doc<"submissions"> | null> {
-  return (await t.run(
-    async (ctx) => await ctx.db.get("submissions", submissionId),
-  )) as Doc<"submissions"> | null;
+export async function storedSubmission(t: TestConvex, submissionId: Id<"submissions">) {
+  return await t.run(async (ctx) => await ctx.db.get("submissions", submissionId));
 }
 
 /** Reads every submission in the test's database, oldest first. */
-export async function storedSubmissions(t: TestConvex): Promise<Doc<"submissions">[]> {
-  return (await t.run(
-    async (ctx) => await ctx.db.query("submissions").collect(),
-  )) as Doc<"submissions">[];
+export async function storedSubmissions(t: TestConvex) {
+  return await t.run(async (ctx) => await ctx.db.query("submissions").collect());
 }

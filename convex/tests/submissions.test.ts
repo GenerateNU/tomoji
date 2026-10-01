@@ -8,7 +8,7 @@ import type { ApiErrorCode } from "../lib/errors";
 import schema from "../schema";
 import {
   expectApiError,
-  seedAssignment,
+  seedAssignmentFixture,
   seedMembership,
   seedOneSubmission,
   seedOperator,
@@ -82,7 +82,7 @@ const nonReaders: [string, Caller, ApiErrorCode][] = [
 describe("submissions.create", () => {
   test("submits a pending draft on the caller's own assignment", async () => {
     const t = convexTest(schema, modules);
-    const fixture = await seedAssignment(t, { usesAiReview: true });
+    const fixture = await seedAssignmentFixture(t, { usesAiReview: true });
 
     const id = await fixture.asCreator.mutation(api.submissions.create, createArgs(fixture));
 
@@ -98,7 +98,7 @@ describe("submissions.create", () => {
     ["usesAiReview", true],
   ] as const)("rejects a client-supplied %s", async (field, value) => {
     const t = convexTest(schema, modules);
-    const fixture = await seedAssignment(t);
+    const fixture = await seedAssignmentFixture(t);
 
     await expect(
       fixture.asCreator.mutation(api.submissions.create, {
@@ -113,7 +113,7 @@ describe("submissions.create", () => {
 
   test("rejects another creator's assignment", async () => {
     const t = convexTest(schema, modules);
-    const fixture = await seedAssignment(t);
+    const fixture = await seedAssignmentFixture(t);
     const asIntruder = await seedUser(t, { subject: "sc-intruder" });
 
     await expectApiError(
@@ -128,7 +128,7 @@ describe("submissions.create", () => {
     "rejects %s without writing a submission",
     async (_label, caller, code) => {
       const t = convexTest(schema, modules);
-      const fixture = await seedAssignment(t);
+      const fixture = await seedAssignmentFixture(t);
       const client = await caller(t, fixture);
 
       await expectApiError(
@@ -328,7 +328,7 @@ describe("submissions.list", () => {
     "gives %s every submission, newest first, as stored",
     async (_label, caller) => {
       const t = convexTest(schema, modules);
-      const fixture = await seedAssignment(t);
+      const fixture = await seedAssignmentFixture(t);
       const firstId = await seedSubmission(t, fixture, "changesRequested");
       const secondId = await seedSubmission(t, fixture, "approved");
       const client = await caller(t, fixture);
@@ -341,7 +341,7 @@ describe("submissions.list", () => {
 
   test("gives the creator every submission, newest first, without reviewers", async () => {
     const t = convexTest(schema, modules);
-    const fixture = await seedAssignment(t);
+    const fixture = await seedAssignmentFixture(t);
     const firstId = await seedSubmission(t, fixture, "changesRequested");
     const secondId = await seedSubmission(t, fixture, "approved");
 
@@ -363,7 +363,7 @@ describe("submissions.list", () => {
 
   test("hides the assignment from another creator", async () => {
     const t = convexTest(schema, modules);
-    const fixture = await seedAssignment(t);
+    const fixture = await seedAssignmentFixture(t);
     const asIntruder = await seedUser(t, { subject: "sl-intruder" });
 
     await expectApiError(
@@ -374,7 +374,7 @@ describe("submissions.list", () => {
 
   test.each(nonReaders)("rejects %s", async (_label, caller, code) => {
     const t = convexTest(schema, modules);
-    const fixture = await seedAssignment(t);
+    const fixture = await seedAssignmentFixture(t);
     const client = await caller(t, fixture);
 
     await expectApiError(() => client.query(api.submissions.list, pageArgs(fixture)), code);

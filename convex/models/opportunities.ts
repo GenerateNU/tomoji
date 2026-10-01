@@ -1,8 +1,9 @@
 import { v, type Infer } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
-import type { MutationCtx } from "../_generated/server";
+import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { apiError } from "../lib/errors";
 import { requireNonBlank } from "../lib/validation";
+import { requireMembership } from "./companyUsers";
 import schema from "../schema";
 
 export const opportunityCreate = schema
@@ -11,6 +12,79 @@ export const opportunityCreate = schema
   .extend({ status: v.union(v.literal("draft"), v.literal("open")) });
 
 export type OpportunityCreate = Infer<typeof opportunityCreate>;
+
+// Allowlist creator fields so new stored fields do not become public by default.
+export const creatorOpportunity = schema
+  .doc("opportunities")
+  .pick(
+    "_id",
+    "_creationTime",
+    "title",
+    "description",
+    "isGated",
+    "usesAiReviewDefault",
+    "targetApplicant",
+    "maxSlots",
+    "numFilledSlots",
+    "maxApplications",
+    "deadline",
+    "status",
+    "fixedFeeCents",
+    "cpmRateCents",
+    "paymentCapCents",
+    "contentRequirements",
+    "prohibitedClaims",
+    "disclosureRequirements",
+    "usageRights",
+  )
+  .extend({ companyName: v.string() });
+
+export type CreatorOpportunity = Infer<typeof creatorOpportunity>;
+
+/** Builds the allowlisted creator-facing brief from an opportunity and its company. */
+export function toCreatorOpportunity(
+  opportunity: Doc<"opportunities">,
+  company: Doc<"companies">,
+): CreatorOpportunity {
+  return {
+    _id: opportunity._id,
+    _creationTime: opportunity._creationTime,
+    title: opportunity.title,
+    description: opportunity.description,
+    isGated: opportunity.isGated,
+    usesAiReviewDefault: opportunity.usesAiReviewDefault,
+    targetApplicant: opportunity.targetApplicant,
+    maxSlots: opportunity.maxSlots,
+    numFilledSlots: opportunity.numFilledSlots,
+    maxApplications: opportunity.maxApplications,
+    deadline: opportunity.deadline,
+    status: opportunity.status,
+    fixedFeeCents: opportunity.fixedFeeCents,
+    cpmRateCents: opportunity.cpmRateCents,
+    paymentCapCents: opportunity.paymentCapCents,
+    contentRequirements: opportunity.contentRequirements,
+    prohibitedClaims: opportunity.prohibitedClaims,
+    disclosureRequirements: opportunity.disclosureRequirements,
+    usageRights: opportunity.usageRights,
+    companyName: company.name,
+  };
+}
+
+/** Returns a role-appropriate opportunity response after enforcing visibility. */
+export async function getOpportunity(
+  ctx: QueryCtx,
+  opportunityId: Id<"opportunities">,
+  caller: { user: Doc<"users">; orgId: string | null },
+): Promise<Doc<"opportunities"> | CreatorOpportunity> {
+  const opportunity = await requireOpportunity(ctx, opportunityId, caller);
+  if (caller.user.role === "company" || caller.user.role === "operator") return opportunity;
+
+  const company = await ctx.db.get("companies", opportunity.companyId);
+  if (company === null) {
+    throw apiError("not_found", { resource: "opportunity" });
+  }
+  return toCreatorOpportunity(opportunity, company);
+}
 
 /** Creates a draft or open opportunity in the caller's campaign; ownership is server-derived. */
 export async function createOpportunity(
@@ -57,4 +131,43 @@ export async function createOpportunity(
     createdBy: membership._id,
     numFilledSlots: 0,
   });
+}
+
+/** Returns an opportunity visible to its company, a creator, or an operator. */
+export async function requireOpportunity(
+  ctx: QueryCtx | MutationCtx,
+  opportunityId: Id<"opportunities">,
+  caller: { user: Doc<"users">; orgId: string | null },
+): Promise<Doc<"opportunities">> {
+  const opportunity = await ctx.db.get("opportunities", opportunityId);
+  if (opportunity === null) {
+    throw apiError("not_found", { resource: "opportunity" });
+  }
+  if (caller.user.role === "operator") return opportunity;
+
+  const campaign = await ctx.db.get("campaigns", opportunity.campaignId);
+  if (campaign === null || campaign.companyId !== opportunity.companyId) {
+    throw apiError("not_found", { resource: "opportunity" });
+  }
+  if (caller.user.role === "company") {
+    if (caller.orgId === null) {
+      throw apiError("misconfigured", { reason: "company account has no organization" });
+    }
+    const membership = await requireMembership(ctx, caller.user._id, caller.orgId);
+    if (membership.companyId !== opportunity.companyId) {
+      throw apiError("not_found", { resource: "opportunity" });
+    }
+    return opportunity;
+  }
+
+  const company = await ctx.db.get("companies", opportunity.companyId);
+  if (
+    opportunity.status !== "open" ||
+    campaign.status !== "open" ||
+    company === null ||
+    !company.isActive
+  ) {
+    throw apiError("not_found", { resource: "opportunity" });
+  }
+  return opportunity;
 }

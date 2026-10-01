@@ -8,8 +8,10 @@ import {
   opportunityArgs,
   seedCampaign,
   seedOperator,
+  seedOpportunity,
   seedUser,
   seedWrongOrgCaller,
+  workosIdentity,
 } from "./helpers";
 
 const modules = import.meta.glob("../**/*.ts");
@@ -154,5 +156,201 @@ describe("opportunities.create", () => {
       createdBy: membership._id,
       numFilledSlots: 0,
     });
+  });
+});
+
+describe("opportunities.get", () => {
+  test("allows a creator to view a gated open opportunity", async () => {
+    const t = convexTest(schema, modules);
+    const { opportunityId } = await seedOpportunity(t, { subject: "op_owner" }, { isGated: true });
+    const asCreator = await seedUser(t, { subject: "op_creator" });
+
+    expect(await asCreator.query(api.opportunities.get, { opportunityId })).toMatchObject({
+      _id: opportunityId,
+      isGated: true,
+    });
+  });
+
+  test("allows the owner to read its own draft", async () => {
+    const t = convexTest(schema, modules);
+    const { asCompany, opportunityId } = await seedOpportunity(
+      t,
+      { subject: "op_owner" },
+      { status: "draft" },
+    );
+
+    expect(await asCompany.query(api.opportunities.get, { opportunityId })).toMatchObject({
+      _id: opportunityId,
+      status: "draft",
+    });
+  });
+
+  test("allows another member of the same company to read a draft", async () => {
+    const t = convexTest(schema, modules);
+    const { opportunityId } = await seedOpportunity(
+      t,
+      { subject: "op_owner" },
+      { status: "draft" },
+    );
+    const asColleague = await seedUser(t, { subject: "op_colleague", org: { id: "org_acme" } });
+
+    expect(await asColleague.query(api.opportunities.get, { opportunityId })).toMatchObject({
+      _id: opportunityId,
+      status: "draft",
+    });
+  });
+
+  test("allows an operator to inspect a closed opportunity", async () => {
+    const t = convexTest(schema, modules);
+    const { opportunityId } = await seedOpportunity(t, { subject: "op_owner" });
+    await t.run(
+      async (ctx) => await ctx.db.patch("opportunities", opportunityId, { status: "closed" }),
+    );
+    const asOperator = await seedOperator(t, "op_operator");
+
+    expect(await asOperator.query(api.opportunities.get, { opportunityId })).toMatchObject({
+      _id: opportunityId,
+      status: "closed",
+    });
+  });
+
+  test("hides even open opportunities from another company", async () => {
+    const t = convexTest(schema, modules);
+    const { opportunityId } = await seedOpportunity(t, { subject: "op_owner" });
+    const asOther = await seedUser(t, { subject: "op_other", org: { id: "org_other" } });
+
+    await expectApiError(
+      () => asOther.query(api.opportunities.get, { opportunityId }),
+      "not_found",
+    );
+  });
+
+  test("rejects a forged organization claim on reads", async () => {
+    const t = convexTest(schema, modules);
+    const { opportunityId } = await seedOpportunity(t, { subject: "op_owner", orgId: "org_other" });
+    const asWrongOrg = await seedWrongOrgCaller(t);
+
+    await expectApiError(
+      () => asWrongOrg.query(api.opportunities.get, { opportunityId }),
+      "forbidden",
+    );
+  });
+
+  test("rejects a company token without an organization", async () => {
+    const t = convexTest(schema, modules);
+    const { opportunityId } = await seedOpportunity(t, { subject: "op_owner" });
+    const asNoOrg = t.withIdentity(workosIdentity({ subject: "op_owner" }));
+
+    await expectApiError(
+      () => asNoOrg.query(api.opportunities.get, { opportunityId }),
+      "misconfigured",
+    );
+  });
+
+  test("hides drafts from a creator through the route", async () => {
+    const t = convexTest(schema, modules);
+    const { opportunityId } = await seedOpportunity(
+      t,
+      { subject: "op_owner" },
+      { status: "draft" },
+    );
+    const asCreator = await seedUser(t, { subject: "op_creator" });
+
+    await expectApiError(
+      () => asCreator.query(api.opportunities.get, { opportunityId }),
+      "not_found",
+    );
+  });
+
+  test("rejects a signed-out reader", async () => {
+    const t = convexTest(schema, modules);
+    const { opportunityId } = await seedOpportunity(t, { subject: "op_owner" });
+
+    await expectApiError(
+      () => t.query(api.opportunities.get, { opportunityId }),
+      "not_authenticated",
+    );
+  });
+
+  test("rejects an unsynced reader", async () => {
+    const t = convexTest(schema, modules);
+    const { opportunityId } = await seedOpportunity(t, { subject: "op_owner" });
+    const asUnsynced = t.withIdentity(workosIdentity({ subject: "op_missing" }));
+
+    await expectApiError(
+      () => asUnsynced.query(api.opportunities.get, { opportunityId }),
+      "not_synced",
+    );
+  });
+
+  test("rejects a deactivated reader", async () => {
+    const t = convexTest(schema, modules);
+    const { asCompany, opportunityId, membership } = await seedOpportunity(t, {
+      subject: "op_owner",
+    });
+    await t.run(async (ctx) => await ctx.db.patch("users", membership.userId, { isActive: false }));
+
+    await expectApiError(
+      () => asCompany.query(api.opportunities.get, { opportunityId }),
+      "account_deactivated",
+    );
+  });
+
+  test("returns only the public brief and company name to a creator", async () => {
+    const t = convexTest(schema, modules);
+    const { opportunityId, membership } = await seedOpportunity(
+      t,
+      { subject: "op_owner" },
+      { productAccessLink: "https://example.com/private-product" },
+    );
+    await t.run(
+      async (ctx) => await ctx.db.patch("companies", membership.companyId, { name: "New Brand" }),
+    );
+    const asCreator = await seedUser(t, { subject: "op_creator" });
+
+    const result = await asCreator.query(api.opportunities.get, { opportunityId });
+    expect(result).toMatchObject({
+      _id: opportunityId,
+      companyName: "New Brand",
+      title: "Moisturizer launch video",
+    });
+    expect(Object.keys(result).sort()).toEqual(
+      [
+        "_id",
+        "_creationTime",
+        "companyName",
+        "title",
+        "description",
+        "isGated",
+        "usesAiReviewDefault",
+        "targetApplicant",
+        "maxSlots",
+        "numFilledSlots",
+        "maxApplications",
+        "deadline",
+        "status",
+        "fixedFeeCents",
+        "cpmRateCents",
+        "paymentCapCents",
+        "contentRequirements",
+        "prohibitedClaims",
+        "disclosureRequirements",
+        "usageRights",
+      ].sort(),
+    );
+  });
+
+  test("keeps the complete document for the owning company and operators", async () => {
+    const t = convexTest(schema, modules);
+    const { asCompany, opportunityId } = await seedOpportunity(
+      t,
+      { subject: "op_owner" },
+      { productAccessLink: "https://example.com/private-product" },
+    );
+    const asOperator = await seedOperator(t, "op_operator");
+    const stored = await t.run(async (ctx) => await ctx.db.get("opportunities", opportunityId));
+
+    expect(await asCompany.query(api.opportunities.get, { opportunityId })).toEqual(stored);
+    expect(await asOperator.query(api.opportunities.get, { opportunityId })).toEqual(stored);
   });
 });

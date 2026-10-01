@@ -5,7 +5,7 @@ import { describe, expect, test } from "vitest";
 import type { Doc } from "../../_generated/dataModel";
 import { createApplication, listApplications, requireApplication } from "../../models/applications";
 import schema from "../../schema";
-import { expectApiError, seedCreatorId, seedOpportunity, type TestConvex } from "../helpers";
+import { expectApiError, seedCreatorId, seedGatedOpportunity, type TestConvex } from "../helpers";
 
 const modules = import.meta.glob("../../**/*.ts");
 
@@ -17,7 +17,7 @@ async function expectReason(call: () => Promise<unknown>, reason: string) {
 async function applyAs(
   t: TestConvex,
   creatorId: Awaited<ReturnType<typeof seedCreatorId>>,
-  opportunityId: Awaited<ReturnType<typeof seedOpportunity>>["opportunityId"],
+  opportunityId: Awaited<ReturnType<typeof seedGatedOpportunity>>["opportunityId"],
   note = "I film daily.",
 ) {
   return await t.run(
@@ -28,7 +28,7 @@ async function applyAs(
 describe("createApplication", () => {
   test("stores a pending application with the trimmed note and company", async () => {
     const t = convexTest(schema, modules);
-    const { companyId, opportunityId } = await seedOpportunity(t);
+    const { companyId, opportunityId } = await seedGatedOpportunity(t);
     const creatorId = await seedCreatorId(t, "creator_a");
 
     const id = await t.run(
@@ -49,7 +49,7 @@ describe("createApplication", () => {
 
   test("rejects an opportunity that does not exist", async () => {
     const t = convexTest(schema, modules);
-    const { opportunityId } = await seedOpportunity(t);
+    const { opportunityId } = await seedGatedOpportunity(t);
     const creatorId = await seedCreatorId(t, "creator_a");
     await t.run(async (ctx) => await ctx.db.delete("opportunities", opportunityId));
 
@@ -83,7 +83,7 @@ describe("createApplication", () => {
     },
   ])("rejects $name", async ({ opportunity, reason }) => {
     const t = convexTest(schema, modules);
-    const { opportunityId } = await seedOpportunity(t, { opportunity });
+    const { opportunityId } = await seedGatedOpportunity(t, { opportunity });
     const creatorId = await seedCreatorId(t, "creator_a");
 
     await expectReason(() => applyAs(t, creatorId, opportunityId), reason);
@@ -94,7 +94,7 @@ describe("createApplication", () => {
     { name: "a blank note", note: "   " },
   ])("leaves the note out when given $name", async ({ note }) => {
     const t = convexTest(schema, modules);
-    const { opportunityId } = await seedOpportunity(t);
+    const { opportunityId } = await seedGatedOpportunity(t);
     const creatorId = await seedCreatorId(t, "creator_a");
 
     const id = await t.run(
@@ -107,7 +107,7 @@ describe("createApplication", () => {
 
   test("rejects a second application from the same creator", async () => {
     const t = convexTest(schema, modules);
-    const { opportunityId } = await seedOpportunity(t);
+    const { opportunityId } = await seedGatedOpportunity(t);
     const creatorId = await seedCreatorId(t, "creator_a");
     await applyAs(t, creatorId, opportunityId);
 
@@ -116,8 +116,8 @@ describe("createApplication", () => {
 
   test("allows the same creator to apply to a different opportunity", async () => {
     const t = convexTest(schema, modules);
-    const first = await seedOpportunity(t);
-    const second = await seedOpportunity(t, { subject: "company_other", orgId: "org_other" });
+    const first = await seedGatedOpportunity(t);
+    const second = await seedGatedOpportunity(t, { subject: "company_other", orgId: "org_other" });
     const creatorId = await seedCreatorId(t, "creator_a");
 
     await applyAs(t, creatorId, first.opportunityId);
@@ -134,7 +134,7 @@ describe("createApplication", () => {
 
   test("allows a different creator to apply to the same opportunity", async () => {
     const t = convexTest(schema, modules);
-    const { opportunityId } = await seedOpportunity(t);
+    const { opportunityId } = await seedGatedOpportunity(t);
     await applyAs(t, await seedCreatorId(t, "creator_a"), opportunityId);
     const otherCreatorId = await seedCreatorId(t, "creator_b");
 
@@ -146,7 +146,9 @@ describe("createApplication", () => {
 
   test("rejects applications once maxApplications is reached, counting every status", async () => {
     const t = convexTest(schema, modules);
-    const { opportunityId } = await seedOpportunity(t, { opportunity: { maxApplications: 2 } });
+    const { opportunityId } = await seedGatedOpportunity(t, {
+      opportunity: { maxApplications: 2 },
+    });
     const rejectedId = await applyAs(t, await seedCreatorId(t, "creator_a"), opportunityId);
     await t.run(
       async (ctx) => await ctx.db.patch("applications", rejectedId, { status: "rejected" }),
@@ -160,7 +162,7 @@ describe("createApplication", () => {
 
 describe("requireApplication", () => {
   async function seedApplication(t: TestConvex) {
-    const seeded = await seedOpportunity(t);
+    const seeded = await seedGatedOpportunity(t);
     const creatorId = await seedCreatorId(t, "creator_a");
     const applicationId = await applyAs(t, creatorId, seeded.opportunityId);
     return { ...seeded, creatorId, applicationId };
@@ -221,7 +223,7 @@ describe("requireApplication", () => {
   test("hides another company's application as not found", async () => {
     const t = convexTest(schema, modules);
     const { applicationId } = await seedApplication(t);
-    const other = await seedOpportunity(t, { subject: "other_owner", orgId: "org_other" });
+    const other = await seedGatedOpportunity(t, { subject: "other_owner", orgId: "org_other" });
 
     await expectApiError(
       () =>
@@ -255,8 +257,8 @@ describe("listApplications", () => {
 
   test("returns only the creator's applications", async () => {
     const t = convexTest(schema, modules);
-    const first = await seedOpportunity(t);
-    const second = await seedOpportunity(t, { subject: "other_owner", orgId: "org_other" });
+    const first = await seedGatedOpportunity(t);
+    const second = await seedGatedOpportunity(t, { subject: "other_owner", orgId: "org_other" });
     const creatorId = await seedCreatorId(t, "creator_a");
     const olderId = await applyAs(t, creatorId, first.opportunityId);
     const newerId = await applyAs(t, creatorId, second.opportunityId);
@@ -272,8 +274,8 @@ describe("listApplications", () => {
 
   test("filters by status", async () => {
     const t = convexTest(schema, modules);
-    const first = await seedOpportunity(t);
-    const second = await seedOpportunity(t, { subject: "other_owner", orgId: "org_other" });
+    const first = await seedGatedOpportunity(t);
+    const second = await seedGatedOpportunity(t, { subject: "other_owner", orgId: "org_other" });
     const creatorId = await seedCreatorId(t, "creator_a");
     const rejectedId = await applyAs(t, creatorId, first.opportunityId);
     await applyAs(t, creatorId, second.opportunityId);
@@ -291,8 +293,8 @@ describe("listApplications", () => {
 
   test("paginates with a cursor", async () => {
     const t = convexTest(schema, modules);
-    const first = await seedOpportunity(t);
-    const second = await seedOpportunity(t, { subject: "other_owner", orgId: "org_other" });
+    const first = await seedGatedOpportunity(t);
+    const second = await seedGatedOpportunity(t, { subject: "other_owner", orgId: "org_other" });
     const creatorId = await seedCreatorId(t, "creator_a");
     const olderId = await applyAs(t, creatorId, first.opportunityId);
     const newerId = await applyAs(t, creatorId, second.opportunityId);

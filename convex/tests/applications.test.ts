@@ -6,7 +6,7 @@ import schema from "../schema";
 import {
   expectApiError,
   seedCreatorId,
-  seedOpportunity,
+  seedGatedOpportunity,
   seedOperator,
   seedUser,
   seedWrongOrgCaller,
@@ -20,7 +20,7 @@ const firstPage = { numItems: 10, cursor: null };
 
 /** Seeds an opportunity and a creator client that has applied to it. */
 async function seedApplication(t: TestConvex) {
-  const seeded = await seedOpportunity(t);
+  const seeded = await seedGatedOpportunity(t);
   await seedCreatorId(t, "creator_a");
   const asCreator = t.withIdentity(workosIdentity({ subject: "creator_a" }));
   const applicationId = await asCreator.mutation(api.applications.create, {
@@ -42,7 +42,7 @@ describe("applications.create", () => {
 
   test("accepts an application without a note", async () => {
     const t = convexTest(schema, modules);
-    const { opportunityId } = await seedOpportunity(t);
+    const { opportunityId } = await seedGatedOpportunity(t);
     const asCreator = await seedUser(t, { subject: "creator_a" });
 
     const applicationId = await asCreator.mutation(api.applications.create, { opportunityId });
@@ -54,7 +54,7 @@ describe("applications.create", () => {
 
   test("rejects a signed-out caller", async () => {
     const t = convexTest(schema, modules);
-    const { opportunityId } = await seedOpportunity(t);
+    const { opportunityId } = await seedGatedOpportunity(t);
 
     await expectApiError(
       () => t.mutation(api.applications.create, { opportunityId, note: "Hi" }),
@@ -64,7 +64,7 @@ describe("applications.create", () => {
 
   test("rejects a company user", async () => {
     const t = convexTest(schema, modules);
-    const { asCompany, opportunityId } = await seedOpportunity(t);
+    const { asCompany, opportunityId } = await seedGatedOpportunity(t);
 
     await expectApiError(
       () => asCompany.mutation(api.applications.create, { opportunityId, note: "Hi" }),
@@ -87,7 +87,7 @@ describe("applications.listMine", () => {
 
   test("rejects a company user", async () => {
     const t = convexTest(schema, modules);
-    const { asCompany } = await seedOpportunity(t);
+    const { asCompany } = await seedGatedOpportunity(t);
 
     await expectApiError(
       () => asCompany.query(api.applications.listMine, { paginationOpts: firstPage }),
@@ -124,7 +124,7 @@ describe("applications.get", () => {
     const t = convexTest(schema, modules);
     const { applicationId } = await seedApplication(t);
     const asOtherCreator = await seedUser(t, { subject: "creator_b" });
-    const { asCompany: asOtherCompany } = await seedOpportunity(t, {
+    const { asCompany: asOtherCompany } = await seedGatedOpportunity(t, {
       subject: "other_owner",
       orgId: "org_other",
     });

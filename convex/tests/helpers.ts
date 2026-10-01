@@ -265,7 +265,7 @@ export async function seedGatedOpportunity(t: TestConvex, opts: SeedGatedOpportu
   const seeded = await seedOpportunity(
     t,
     { subject: opts.subject ?? "company_owner", orgId: opts.orgId },
-    { isGated: true, maxSlots: 2, maxApplications: 10 },
+    { isGated: true, maxSlots: 10, maxApplications: 10 },
   );
   const patch = opts.opportunity;
   if (patch !== undefined) {

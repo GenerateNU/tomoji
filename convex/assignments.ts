@@ -1,7 +1,6 @@
 import { v } from "convex/values";
-import { internalMutation } from "./_generated/server";
 import { creatorMutation } from "./lib/functions";
-import { claimAssignment, createAssignmentFromOffer } from "./models/assignments";
+import { claimAssignment } from "./models/assignments";
 import { requireCallerCreatorId } from "./models/users";
 
 /**
@@ -20,18 +19,5 @@ export const claim = creatorMutation({
   handler: async (ctx, args) => {
     const creatorId = await requireCallerCreatorId(ctx, ctx.user);
     return await claimAssignment(ctx, creatorId, args.opportunityId);
-  },
-});
-
-/**
- * Creates the assignment for an accepted offer on a gated opportunity.
- * Mutations that accept offers should call `createAssignmentFromOffer`
- * directly so the application and assignment are written in one transaction.
- */
-export const createFromOffer = internalMutation({
-  args: { opportunityId: v.id("opportunities"), creatorId: v.id("creators") },
-  returns: v.id("assignments"),
-  handler: async (ctx, args) => {
-    return await createAssignmentFromOffer(ctx, args);
   },
 });

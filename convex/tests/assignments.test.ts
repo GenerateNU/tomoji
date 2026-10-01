@@ -1,7 +1,7 @@
 /// <reference types="vite/client" />
 import { convexTest } from "convex-test";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import { api, internal } from "../_generated/api";
+import { api } from "../_generated/api";
 import { deactivateUser } from "../models/users";
 import schema from "../schema";
 import { expectApiError, seedCreatorId, seedOperator, seedOpportunity, seedUser } from "./helpers";
@@ -83,21 +83,5 @@ describe("assignments.claim", () => {
     await expect(asCreator.mutation(api.assignments.claim, args)).rejects.toThrow(
       "Unexpected field `creatorId`",
     );
-  });
-});
-
-describe("assignments.createFromOffer", () => {
-  test("creates an assignment on a gated opportunity for server-side callers", async () => {
-    const t = convexTest(schema, modules);
-    const owner = await seedOpportunity(t, { subject: "owner" }, { isGated: true });
-    const creatorId = await seedCreatorId(t, "creator");
-
-    const assignmentId = await t.mutation(internal.assignments.createFromOffer, {
-      opportunityId: owner.opportunityId,
-      creatorId,
-    });
-
-    const assignment = await t.run(async (ctx) => await ctx.db.get("assignments", assignmentId));
-    expect(assignment).toMatchObject({ creatorId, status: "termsPending" });
   });
 });

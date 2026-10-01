@@ -46,7 +46,7 @@ export async function listCampaigns(
   return await campaigns.order("desc").paginate(options.paginationOpts);
 }
 
-/** Updates campaign details without changing ownership, status, or assignment terms. */
+/** Updates campaign details while keeping child deadlines within its end and preserving agreed terms. */
 export async function updateCampaign(
   ctx: MutationCtx,
   campaignId: Id<"campaigns">,
@@ -73,6 +73,18 @@ export async function updateCampaign(
   }
 
   validateCampaignBudgetAndSchedule({ ...campaign, ...patch });
+  const endsAt = fields.endsAt;
+  if (typeof endsAt === "number" && endsAt !== campaign.endsAt) {
+    const opportunity = await ctx.db
+      .query("opportunities")
+      .withIndex("by_campaignId_and_deadline", (q) =>
+        q.eq("campaignId", campaignId).gt("deadline", endsAt),
+      )
+      .first();
+    if (opportunity !== null) {
+      throw apiError("invalid_state", { reason: "end_before_opportunity_deadline" });
+    }
+  }
   await ctx.db.patch("campaigns", campaignId, patch);
 }
 

@@ -10,6 +10,7 @@ export const opportunityStatus = v.union(
 
 export const opportunitiesTable = defineTable({
   campaignId: v.id("campaigns"),
+  companyId: v.id("companies"),
   createdBy: v.id("companyUsers"),
   title: v.string(),
   description: v.string(),
@@ -20,7 +21,7 @@ export const opportunitiesTable = defineTable({
   // Future assignment mutations must maintain this count transactionally.
   numFilledSlots: v.number(),
   maxApplications: v.number(),
-  deadline: v.number(), // Unix milliseconds.
+  deadline: v.number(), // Unix milliseconds at exact :00/:30 UTC; enforced by the model.
   status: opportunityStatus,
   // Default compensation: integer cents; CPM is cents per 1,000 eligible views.
   fixedFeeCents: v.number(),
@@ -32,6 +33,8 @@ export const opportunitiesTable = defineTable({
   usageRights: v.string(),
   productAccessLink: v.optional(v.string()),
 })
+  .index("by_companyId_and_status", ["companyId", "status"])
   .index("by_campaignId_and_status", ["campaignId", "status"])
+  .index("by_campaignId_and_deadline", ["campaignId", "deadline"])
   .index("by_createdBy", ["createdBy"])
   .index("by_status_and_deadline", ["status", "deadline"]);

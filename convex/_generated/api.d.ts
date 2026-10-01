@@ -13,6 +13,7 @@ import type * as campaigns from "../campaigns.js";
 import type * as companies from "../companies.js";
 import type * as companyUsers from "../companyUsers.js";
 import type * as creators from "../creators.js";
+import type * as crons from "../crons.js";
 import type * as http from "../http.js";
 import type * as lib_authz from "../lib/authz.js";
 import type * as lib_errors from "../lib/errors.js";
@@ -26,7 +27,9 @@ import type * as models_campaigns from "../models/campaigns.js";
 import type * as models_companies from "../models/companies.js";
 import type * as models_companyUsers from "../models/companyUsers.js";
 import type * as models_creators from "../models/creators.js";
+import type * as models_opportunities from "../models/opportunities.js";
 import type * as models_users from "../models/users.js";
+import type * as opportunities from "../opportunities.js";
 import type * as tests_helpers from "../tests/helpers.js";
 import type * as users from "../users.js";
 
@@ -42,6 +45,7 @@ declare const fullApi: ApiFromModules<{
   companies: typeof companies;
   companyUsers: typeof companyUsers;
   creators: typeof creators;
+  crons: typeof crons;
   http: typeof http;
   "lib/authz": typeof lib_authz;
   "lib/errors": typeof lib_errors;
@@ -55,7 +59,9 @@ declare const fullApi: ApiFromModules<{
   "models/companies": typeof models_companies;
   "models/companyUsers": typeof models_companyUsers;
   "models/creators": typeof models_creators;
+  "models/opportunities": typeof models_opportunities;
   "models/users": typeof models_users;
+  opportunities: typeof opportunities;
   "tests/helpers": typeof tests_helpers;
   users: typeof users;
 }>;

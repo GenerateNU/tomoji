@@ -24,9 +24,8 @@ const submissionFields = {
 };
 
 /**
- * One variant per review outcome, each with `fields`. A change request must tell
- * the creator what to fix, so its note is required; an approval's is optional.
- * Convex can't nest a union inside an object, so each outcome is its own variant.
+ * One variant per outcome, since Convex can't nest a union inside an object. A
+ * change request must tell the creator what to fix, so its note is required.
  */
 function reviewOutcomeVariants<Fields extends PropertyValidators>(fields: Fields) {
   return [
@@ -43,18 +42,11 @@ type ReviewerIdValidator<TableName extends "companyUsers" | "users"> = Validator
 >;
 
 /**
- * Every shape a submission can take: no review yet, an AI review, an attributed
- * company-user review, or an operator override. A human ID cannot be attached
- * to an AI review, and a recorded review always has a timestamp.
+ * Every shape a submission can take. The table and the read view
+ * (`submissionView`) are both built from this, so they can't drift apart.
  *
- * The stored table and the read view (`submissionView` in models/submissions)
- * are both built from this, so they can't drift apart. The reviewer IDs are
- * required in the table and optional in the view, which leaves them out for
- * creators; `extraFields` adds the view's system fields and derived flag.
- *
- * Each validator is its own type parameter, used directly: reading it off a
- * generic object (`identity.reviewedBy`) makes TypeScript fall back to the
- * constraint, and the stored types would lose their exact IDs.
+ * Each reviewer-ID validator is its own type parameter: read off a generic
+ * object instead, TypeScript falls back to the constraint and the IDs become `any`.
  */
 export function submissionShapes<
   ReviewedBy extends ReviewerIdValidator<"companyUsers">,
@@ -71,8 +63,7 @@ export function submissionShapes<
     reviewedBy,
     reviewedAt: v.number(), // Unix milliseconds.
   };
-  // The review an operator replaced, kept so the original decision is not lost.
-  // Operator reviews cannot themselves be overridden, so only these two appear.
+  // The review an operator replaced. Operator reviews can't be overridden themselves.
   const overriddenReview = v.union(
     ...reviewOutcomeVariants(aiReview),
     ...reviewOutcomeVariants(companyUserReview),

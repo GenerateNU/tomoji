@@ -16,14 +16,7 @@ import {
 } from "./models/submissions";
 import schema from "./schema";
 
-/**
- * Works out who is reading through `get` / `list`. Creators read as their
- * creator profile. Company users go through `companyContext`, so their token's
- * org must be one they belong to.
- *
- * @throws `not_found` for a creator without a creator profile, or `forbidden` /
- * `not_synced` / `misconfigured` from `companyContext`.
- */
+/** Company users go through `companyContext`, so their token's org must be one they belong to. */
 async function requireViewer(ctx: QueryCtx, user: Doc<"users">): Promise<SubmissionViewer> {
   switch (user.role) {
     case "creator": {
@@ -82,11 +75,11 @@ export const review = companyMutation({
 
 /**
  * Returns one submission, plus `closedWithoutReview`: `true` if it's still
- * pending but its assignment was completed or cancelled, so it will never be
- * reviewed. Creators see their own, without who reviewed it; company users see
- * their company's and operators see any, both including the reviewers.
+ * pending but its assignment was completed or cancelled.
+ * Creators see their own, without reviewer IDs; company users see their company's
+ * and operators see any.
  *
- * @throws `not_found` if it doesn't exist or isn't the caller's to see.
+ * @throws `not_found` if it doesn't exist or isn't the caller's.
  */
 export const get = authedQuery({
   args: { submissionId: v.id("submissions") },
@@ -101,7 +94,7 @@ export const get = authedQuery({
  * Lists an assignment's submissions, newest first, with cursor pagination. Each
  * row is what `get` returns to the same caller.
  *
- * @throws `not_found` if the assignment doesn't exist or isn't the caller's to see.
+ * @throws `not_found` if the assignment doesn't exist or isn't the caller's.
  */
 export const list = authedQuery({
   args: {

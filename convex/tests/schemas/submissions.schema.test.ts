@@ -9,13 +9,9 @@ const modules = import.meta.glob("../../**/*.ts");
 type ReviewerKind = "ai" | "companyUser" | "operator";
 const reviewerKinds: ReviewerKind[] = ["ai", "companyUser", "operator"];
 
-/**
- * Seeds an assignment and returns a function that inserts a reviewed submission
- * on it straight into the table, bypassing every model rule so only the schema
- * decides whether the row is accepted.
- */
+/** Inserts reviewed submissions straight into the table, so only the schema decides. */
 async function rawReviewInserter(t: TestConvex) {
-  const fixture = await seedAssignment(t, "schema");
+  const fixture = await seedAssignment(t);
   const operatorId = await t.run(
     async (ctx) =>
       await ctx.db.insert("users", {
@@ -46,13 +42,11 @@ async function rawReviewInserter(t: TestConvex) {
           reviewedAt: 2,
           ...reviewerFields[kind],
           ...review,
-          // Bypasses the compile-time check so the schema's runtime validation decides.
+          // Bypasses the type check to hit the schema validator.
         } as never),
     );
 }
 
-// A change request is how the creator learns what to fix, so every writer - the
-// review route, the AI layer, the dispute override - must store a note with it.
 describe("submissions schema: review notes", () => {
   test.each(reviewerKinds)("rejects a change request with no note (reviewer: %s)", async (kind) => {
     const t = convexTest(schema, modules);

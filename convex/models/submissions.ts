@@ -6,9 +6,7 @@ import { apiError } from "../lib/errors";
 import { requireNonBlank } from "../lib/validation";
 import { submissionShapes } from "../schemas/submissions.schema";
 
-// --- Validators and types ---
-
-/** The creator-supplied fields of a new submission */
+/** The creator-supplied fields of a new submission. */
 export const submissionDraft = v.object({
   assignmentId: v.id("assignments"),
   draftUrl: v.string(),
@@ -16,10 +14,7 @@ export const submissionDraft = v.object({
 });
 export type SubmissionDraft = Infer<typeof submissionDraft>;
 
-/**
- * A review decision. A note is required when requesting changes; on an
- * approval it is optional, and a blank one is stored as none.
- */
+/** A review decision. A change request needs a note; an approval's is optional. */
 export const submissionReview = v.union(
   v.object({ status: v.literal("approved"), reviewNote: v.optional(v.string()) }),
   v.object({ status: v.literal("changesRequested"), reviewNote: v.string() }),
@@ -32,53 +27,32 @@ export type CompanyUserReviewedSubmission = Extract<
 >;
 
 /**
- * A submission as `get` and `list` return it, to every caller: the stored row
- * plus `closedWithoutReview`.
- *
- * - Reviewer identity (`reviewedBy`, `reviewedByOperator`, and `reviewedBy`
- *   inside `overriddenReview`) is optional here: company users and operators
- *   always get it, creators never do. `toSubmissionView` decides which.
- * - `closedWithoutReview` is derived on every read, never stored: `true` when a
- *   submission is still `pending` but its assignment is no longer active
- *   (completed or cancelled), so it will never be reviewed. Clients show it as
- *   closed.
+ * What `get` and `list` return. Reviewer IDs are optional because creators never
+ * get them (see `toSubmissionView`).
  */
 export const submissionView = v.union(
   ...submissionShapes(v.optional(v.id("companyUsers")), v.optional(v.id("users")), {
     _id: v.id("submissions"),
     _creationTime: v.number(),
+    // Derived on read, never stored. See `isClosedWithoutReview`.
     closedWithoutReview: v.boolean(),
   }),
 );
 export type SubmissionView = Infer<typeof submissionView>;
 
-/**
- * Who is reading or acting on submissions. Routes resolve it from the caller's
- * auth context, so the model never trusts a client-supplied identity.
- */
+/** Who is reading or acting on submissions. */
 export type SubmissionViewer =
   | { role: "creator"; creatorId: Id<"creators"> }
   | { role: "company"; companyId: Id<"companies"> }
   | { role: "operator" };
 
-// --- Input validation ---
-
-// Upper bounds on free text, measured after trimming. They keep documents and
-// list pages small; `.length` counts UTF-16 units, so an emoji counts as two.
+// Limits on free text after trimming. `.length` counts UTF-16 units, so an emoji counts as two.
 const MAX_LENGTH = {
   draftUrl: 2048,
   draftDescription: 5000,
   reviewNote: 2000,
 } as const;
 
-/**
- * Validates a free-text field: trims it, rejects blank input, and enforces the
- * field's limit from `MAX_LENGTH`, measured after trimming. Every text field goes
- * through here, so each one is guaranteed a limit.
- *
- * @returns the trimmed value, which is what gets stored.
- * @throws `invalid_state` with reason `<field>_blank` or `<field>_too_long`.
- */
 function requireText(value: string, field: keyof typeof MAX_LENGTH): string {
   const trimmed = requireNonBlank(value, field);
   if (trimmed.length > MAX_LENGTH[field]) {
@@ -87,12 +61,7 @@ function requireText(value: string, field: keyof typeof MAX_LENGTH): string {
   return trimmed;
 }
 
-/**
- * Like `requireText`, but for an optional field: returns `undefined` when the
- * value is missing or blank instead of throwing.
- *
- * @throws `invalid_state` with reason `<field>_too_long`.
- */
+/** Like `requireText`, but a missing or blank value becomes `undefined`. */
 function optionalText(
   value: string | undefined,
   field: keyof typeof MAX_LENGTH,
@@ -101,16 +70,8 @@ function optionalText(
   return requireText(value, field);
 }
 
-/**
- * Returns the draft URL in its parsed form: percent-encoded, with no stray
- * whitespace and a lowercase scheme and host. That form is what gets stored,
- * so reviewers open exactly the link that was validated.
- *
- * @throws `invalid_state` with reason `draftUrl_blank`, `draftUrl_too_long`, or
- * `draftUrl_invalid` (not http(s), or it includes login details).
- */
+/** Returns the URL in its parsed form, so reviewers open exactly the link that was checked. */
 function requireDraftUrl(value: string): string {
-  // Checks the raw text's length first, so oversized input is never parsed.
   const trimmed = requireText(value, "draftUrl");
   let url: URL;
   try {
@@ -118,12 +79,10 @@ function requireDraftUrl(value: string): string {
   } catch {
     throw apiError("invalid_state", { reason: "draftUrl_invalid" });
   }
-  // Only web links: rejects `javascript:`, `data:`, `ftp:`, and similar schemes.
   if (url.protocol !== "http:" && url.protocol !== "https:") {
     throw apiError("invalid_state", { reason: "draftUrl_invalid" });
   }
-  // `https://drive.google.com@evil.example` goes to evil.example. Draft links
-  // never need login details, so reject them rather than silently strip them.
+  // Draft links never need login details, and `drive.google.com@evil.example` goes to evil.example.
   if (url.username !== "" || url.password !== "") {
     throw apiError("invalid_state", { reason: "draftUrl_invalid" });
   }
@@ -133,8 +92,6 @@ function requireDraftUrl(value: string): string {
   }
   return url.href;
 }
-
-// --- Access ---
 
 // TODO(assignments): move this lookup into models/assignments.ts once that
 // domain has a model.
@@ -150,14 +107,9 @@ async function getAssignmentCompanyId(
 }
 
 /**
- * Returns the assignment if the viewer may see it: creators their own,
- * companies theirs, operators all.
- *
- * Access is granted only by a matching case; anything else falls through to
- * the throw, so a role added later sees nothing until it is handled here.
- *
- * @throws `not_found` for `resource` if it doesn't exist or isn't theirs, so
- * callers can't tell the two apart.
+ * Returns the assignment if the viewer may see it, or throws `not_found` whether
+ * it's missing or not theirs. Only a matching case grants access, so a role
+ * added later sees nothing until it's handled here.
  */
 async function requireAssignmentAccess(
   ctx: QueryCtx | MutationCtx,
@@ -181,12 +133,7 @@ async function requireAssignmentAccess(
   throw apiError("not_found", { resource });
 }
 
-/**
- * Returns the submission and its assignment if the viewer may see them.
- *
- * @throws `not_found` for `submission` whichever link fails, so callers can't
- * tell a missing submission from someone else's.
- */
+/** `requireAssignmentAccess`, starting from a submission. */
 async function requireSubmissionAccess(
   ctx: QueryCtx | MutationCtx,
   viewer: SubmissionViewer,
@@ -203,13 +150,7 @@ async function requireSubmissionAccess(
   return { submission, assignment };
 }
 
-// --- Read shapes ---
-
-/**
- * Whether a submission will never be reviewed: it's still `pending`, but its
- * assignment was completed or cancelled. A reviewed submission is never closed
- * without review, whatever happened to its assignment later.
- */
+/** Still `pending` on an assignment that's no longer active, so it will never be reviewed. */
 function isClosedWithoutReview(
   submission: Doc<"submissions">,
   assignment: Doc<"assignments">,
@@ -217,11 +158,7 @@ function isClosedWithoutReview(
   return submission.status === "pending" && assignment.status !== "active";
 }
 
-/**
- * Returns a submission as the viewer may see it. Company users and operators get
- * the stored row; creators get it without reviewer identity. Both get
- * `closedWithoutReview`.
- */
+/** Company users and operators get the stored row; creators get it without reviewer IDs. */
 export function toSubmissionView(
   viewer: SubmissionViewer,
   submission: Doc<"submissions">,
@@ -248,9 +185,8 @@ function reviewOutcome(
 }
 
 /**
- * A submission without who reviewed it, at either level. It copies an explicit
- * list of fields rather than removing the hidden ones, so a field added to the
- * schema later stays hidden from creators until someone adds it here on purpose.
+ * Copies an explicit list of fields rather than removing reviewer IDs, so a field
+ * added to the schema later stays hidden from creators until it's added here.
  */
 function toCreatorView(
   submission: Doc<"submissions">,
@@ -289,13 +225,6 @@ function toCreatorView(
   }
 }
 
-// --- Writes ---
-
-/**
- * Throws unless the creator may submit a draft on this assignment right now.
- *
- * @throws `invalid_state` with reason `assignment_not_active`.
- */
 function requireSubmissionWindowOpen(assignment: Doc<"assignments">): void {
   if (assignment.status !== "active") {
     throw apiError("invalid_state", { reason: "assignment_not_active" });
@@ -303,10 +232,7 @@ function requireSubmissionWindowOpen(assignment: Doc<"assignments">): void {
   // TODO(dueAt): reject after `assignment.dueAt` once assignments have it.
 }
 
-/**
- * Returns the assignment's newest submission, or `null` if it has none.
- * Indexes end in `_creationTime`, so descending order reads the newest row first.
- */
+/** Indexes end in `_creationTime`, so descending order reads the newest row first. */
 async function getLatestSubmission(
   ctx: QueryCtx | MutationCtx,
   assignmentId: Id<"assignments">,
@@ -318,17 +244,7 @@ async function getLatestSubmission(
     .first();
 }
 
-/**
- * Submits a creator's draft for review on their own active assignment. The URL
- * is stored in its parsed form.
- *
- * @throws `not_found` if the assignment doesn't exist or isn't the creator's.
- * @throws `invalid_state` if the assignment isn't active, a draft is already
- * approved, a draft field is blank or too long, or the URL isn't http(s) or
- * includes login details.
- * @throws `conflict` if a draft is already pending review.
- * @returns the new submission's id.
- */
+/** Submits a creator's draft for review. Errors are listed on the `submissions.create` route. */
 export async function createSubmission(
   ctx: MutationCtx,
   creatorId: Id<"creators">,
@@ -358,16 +274,7 @@ export async function createSubmission(
   });
 }
 
-/**
- * Records a company user's review of a pending submission from their company.
- * Reviews are final: only a `pending` submission can be reviewed. A blank note
- * on an approval is stored as no note.
- *
- * @throws `not_found` if the submission doesn't exist or isn't the company's.
- * @throws `invalid_state` if it was already reviewed, the assignment isn't
- * active, the note on a change request is blank, or the note is too long.
- * @returns the reviewed submission as stored.
- */
+/** Records a company user's review. Errors are listed on the `submissions.review` route. */
 export async function reviewSubmission(
   ctx: MutationCtx,
   membership: Doc<"companyUsers">,
@@ -382,18 +289,11 @@ export async function reviewSubmission(
   if (submission.status !== "pending") {
     throw apiError("invalid_state", { reason: "already_reviewed" });
   }
-  // The assignment may have been cancelled or completed while the draft waited.
-  // Reads report such a draft as `closedWithoutReview`, so it isn't left looking
-  // like it's still awaiting review.
   if (assignment.status !== "active") {
     throw apiError("invalid_state", { reason: "assignment_not_active" });
   }
-  // TODO(ai-layer): reject when `submission.usesAiReview` is true. Until the AI
-  // layer exists, company users review every submission.
+  // TODO(ai-layer): reject when `submission.usesAiReview` is true.
 
-  // A change request must tell the creator what to fix, so its note can't be
-  // blank. An approval's note is optional, so a blank one is stored as none.
-  // Built per branch so the type keeps each status paired with its note rule.
   const outcome =
     review.status === "changesRequested"
       ? { status: review.status, reviewNote: requireText(review.reviewNote, "reviewNote") }
@@ -408,14 +308,7 @@ export async function reviewSubmission(
   return { ...submission, ...patch };
 }
 
-// --- Reads ---
-// One pair for every caller: `toSubmissionView` decides what the viewer sees.
-
-/**
- * Returns one submission as the viewer may see it (see `toSubmissionView`).
- *
- * @throws `not_found` if the submission doesn't exist or isn't the viewer's.
- */
+/** One submission, as the viewer may see it. */
 export async function requireSubmission(
   ctx: QueryCtx,
   viewer: SubmissionViewer,
@@ -425,13 +318,7 @@ export async function requireSubmission(
   return toSubmissionView(viewer, submission, isClosedWithoutReview(submission, assignment));
 }
 
-/**
- * Returns one page of an assignment's submissions, newest first, as the viewer
- * may see them. Access is checked once, on the assignment, which also gives
- * every row its `closedWithoutReview` flag.
- *
- * @throws `not_found` if the assignment doesn't exist or isn't the viewer's.
- */
+/** One page of an assignment's submissions, newest first, as the viewer may see them. */
 export async function listSubmissions(
   ctx: QueryCtx,
   viewer: SubmissionViewer,

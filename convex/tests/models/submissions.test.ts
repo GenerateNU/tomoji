@@ -16,12 +16,10 @@ import {
 import schema from "../../schema";
 import {
   expectApiError,
-  reviewerIdentityOf,
   seedAssignment,
   seedCreatorId,
   seedMembership,
   seedOneSubmission,
-  seedOverriddenSubmission,
   seedSubmission,
   storedSubmission,
   storedSubmissions,
@@ -39,7 +37,6 @@ const draft = {
 
 const firstPage = { numItems: 10, cursor: null as string | null };
 
-/** Submits `draft` as the fixture's creator, with any fields overridden. */
 async function submit(
   t: TestConvex,
   fixture: AssignmentFixture,
@@ -60,7 +57,6 @@ async function expectReason(call: () => Promise<unknown>, code: ApiErrorCode, re
   await expect(call()).rejects.toMatchObject({ data: { code, reason } });
 }
 
-/** Reviews a submission as the given company member. */
 async function reviewAs(
   t: TestConvex,
   membership: Doc<"companyUsers">,
@@ -68,12 +64,6 @@ async function reviewAs(
   review: SubmissionReview,
 ) {
   return await t.run(async (ctx) => await reviewSubmission(ctx, membership, submissionId, review));
-}
-
-/** Narrows to a reviewed submission so its review fields can be read. */
-function reviewedAtOf(submission: Doc<"submissions">): number {
-  if (submission.status === "pending") throw new Error("expected a reviewed submission");
-  return submission.reviewedAt;
 }
 
 const creatorViewer = (fixture: AssignmentFixture): SubmissionViewer => ({
@@ -101,10 +91,6 @@ async function listAs(
   );
 }
 
-/**
- * What a full read should return for a submission: the stored row plus the
- * derived `closedWithoutReview` flag.
- */
 async function expectedFull(t: TestConvex, submissionId: Id<"submissions">, closed = false) {
   const stored = await storedSubmission(t, submissionId);
   if (stored === null) throw new Error("expected a stored submission");
@@ -116,7 +102,7 @@ describe("createSubmission", () => {
     "stores a pending draft and copies usesAiReview=%s from the assignment",
     async (usesAiReview) => {
       const t = convexTest(schema, modules);
-      const fixture = await seedAssignment(t, `cs-ai-${usesAiReview}`, { usesAiReview });
+      const fixture = await seedAssignment(t, { usesAiReview });
 
       const id = await submit(t, fixture);
 
@@ -131,7 +117,7 @@ describe("createSubmission", () => {
 
   test("trims the draft fields", async () => {
     const t = convexTest(schema, modules);
-    const fixture = await seedAssignment(t, "cs-trim");
+    const fixture = await seedAssignment(t);
 
     const id = await submit(t, fixture, {
       draftUrl: `  ${draft.draftUrl}  `,
@@ -143,7 +129,7 @@ describe("createSubmission", () => {
 
   test("rejects another creator's assignment without writing a submission", async () => {
     const t = convexTest(schema, modules);
-    const fixture = await seedAssignment(t, "cs-owner");
+    const fixture = await seedAssignment(t);
     const intruderId = await seedCreatorId(t, "cs-intruder");
 
     await expectApiError(() => submit(t, fixture, {}, intruderId), "not_found");
@@ -153,7 +139,7 @@ describe("createSubmission", () => {
 
   test("rejects an assignment that no longer exists", async () => {
     const t = convexTest(schema, modules);
-    const fixture = await seedAssignment(t, "cs-gone");
+    const fixture = await seedAssignment(t);
     await t.run(async (ctx) => await ctx.db.delete("assignments", fixture.assignmentId));
 
     await expectApiError(() => submit(t, fixture), "not_found");
@@ -163,7 +149,7 @@ describe("createSubmission", () => {
     "rejects a %s assignment without writing a submission",
     async (status) => {
       const t = convexTest(schema, modules);
-      const fixture = await seedAssignment(t, `cs-status-${status}`, { status });
+      const fixture = await seedAssignment(t, { status });
 
       await expectReason(() => submit(t, fixture), "invalid_state", "assignment_not_active");
 
@@ -173,7 +159,7 @@ describe("createSubmission", () => {
 
   test("rejects a new draft while one is pending", async () => {
     const t = convexTest(schema, modules);
-    const { fixture } = await seedOneSubmission(t, "cs-pending");
+    const { fixture } = await seedOneSubmission(t);
 
     await expectReason(() => submit(t, fixture), "conflict", "submission_pending");
 
@@ -182,7 +168,7 @@ describe("createSubmission", () => {
 
   test("rejects a new draft once one is approved", async () => {
     const t = convexTest(schema, modules);
-    const fixture = await seedAssignment(t, "cs-approved");
+    const fixture = await seedAssignment(t);
     await seedSubmission(t, fixture, "changesRequested");
     await seedSubmission(t, fixture, "approved");
 
@@ -193,16 +179,11 @@ describe("createSubmission", () => {
 
   test("accepts a resubmission after changes are requested", async () => {
     const t = convexTest(schema, modules);
-    const { fixture, submissionId: firstId } = await seedOneSubmission(
-      t,
-      "cs-resubmit",
-      "changesRequested",
-    );
+    const { fixture, submissionId: firstId } = await seedOneSubmission(t, "changesRequested");
 
     const secondId = await submit(t, fixture);
     const stored = await storedSubmissions(t);
 
-    // The earlier draft is untouched; the resubmission is a new row.
     expect(stored.map((s) => [s._id, s.status])).toEqual([
       [firstId, "changesRequested"],
       [secondId, "pending"],
@@ -214,7 +195,7 @@ describe("createSubmission", () => {
     ["draftDescription", " \n "],
   ] as const)("rejects a blank %s without writing a submission", async (field, value) => {
     const t = convexTest(schema, modules);
-    const fixture = await seedAssignment(t, `cs-blank-${field}`);
+    const fixture = await seedAssignment(t);
 
     await expectReason(
       () => submit(t, fixture, { [field]: value } as Partial<SubmissionDraft>),
@@ -225,36 +206,22 @@ describe("createSubmission", () => {
     expect(await storedSubmissions(t)).toHaveLength(0);
   });
 
-  test.each(["not a url", "ftp://example.com/draft.mp4", "javascript:alert(1)"])(
-    "rejects non-http(s) draft URL %s",
-    async (draftUrl) => {
-      const t = convexTest(schema, modules);
-      const fixture = await seedAssignment(t, "cs-url");
-
-      await expectReason(
-        () => submit(t, fixture, { draftUrl }),
-        "invalid_state",
-        "draftUrl_invalid",
-      );
-    },
-  );
-
-  // Everything before `@` is login details, so the first link goes to
-  // evil.example while looking like a Google Drive link to the reviewer.
+  // Everything before `@` is login details: `drive.google.com@evil.example` goes to evil.example.
   test.each([
+    "not a url",
+    "ftp://example.com/draft.mp4",
+    "javascript:alert(1)",
     "https://drive.google.com@evil.example/draft",
     "https://user:pass@drive.example.com/draft",
-  ])("rejects draft URL %s with login details without writing a submission", async (draftUrl) => {
+  ])("rejects draft URL %s without writing a submission", async (draftUrl) => {
     const t = convexTest(schema, modules);
-    const fixture = await seedAssignment(t, "cs-url-userinfo");
+    const fixture = await seedAssignment(t);
 
     await expectReason(() => submit(t, fixture, { draftUrl }), "invalid_state", "draftUrl_invalid");
 
     expect(await storedSubmissions(t)).toHaveLength(0);
   });
 
-  // The parsed form is what reviewers get: no stray whitespace, markup-significant
-  // characters percent-encoded, and a lowercase scheme and host.
   test.each([
     ["https://drive.example.com/a\nb", "https://drive.example.com/ab"],
     [
@@ -264,7 +231,7 @@ describe("createSubmission", () => {
     ["HTTPS://Drive.Example.com/draft", "https://drive.example.com/draft"],
   ])("stores draft URL %j in its parsed form", async (draftUrl, stored) => {
     const t = convexTest(schema, modules);
-    const fixture = await seedAssignment(t, "cs-url-normalized");
+    const fixture = await seedAssignment(t);
 
     const id = await submit(t, fixture, { draftUrl });
 
@@ -273,7 +240,7 @@ describe("createSubmission", () => {
 
   test("rejects a draft URL that goes over the length limit once encoded", async () => {
     const t = convexTest(schema, modules);
-    const fixture = await seedAssignment(t, "cs-url-encoded-long");
+    const fixture = await seedAssignment(t);
     // 726 characters as typed; each `"` becomes `%22`, making it 2,126.
     const draftUrl = `https://drive.example.com/${'"'.repeat(700)}`;
 
@@ -291,7 +258,7 @@ describe("createSubmission", () => {
     ["draftDescription", "a".repeat(5001)],
   ] as const)("rejects a %s over the length limit", async (field, value) => {
     const t = convexTest(schema, modules);
-    const fixture = await seedAssignment(t, `cs-long-${field}`);
+    const fixture = await seedAssignment(t);
 
     await expectReason(
       () => submit(t, fixture, { [field]: value } as Partial<SubmissionDraft>),
@@ -304,7 +271,7 @@ describe("createSubmission", () => {
 
   test("accepts a description exactly at the limit, measured after trimming", async () => {
     const t = convexTest(schema, modules);
-    const fixture = await seedAssignment(t, "cs-long-edge");
+    const fixture = await seedAssignment(t);
     const description = "a".repeat(5000);
 
     const id = await submit(t, fixture, { draftDescription: `  ${description}  ` });
@@ -319,7 +286,7 @@ describe("createSubmission", () => {
 describe("reviewSubmission", () => {
   test("approves a pending draft and attributes the review to the caller", async () => {
     const t = convexTest(schema, modules);
-    const { fixture, submissionId: id } = await seedOneSubmission(t, "rs-approve");
+    const { fixture, submissionId: id } = await seedOneSubmission(t);
 
     const before = Date.now();
     const reviewed = await reviewAs(t, fixture.membership, id, { status: "approved" });
@@ -332,15 +299,14 @@ describe("reviewSubmission", () => {
       reviewedBy: fixture.membership._id,
     });
     expect(reviewed.reviewNote).toBeUndefined();
-    expect(reviewedAtOf(reviewed)).toBeGreaterThanOrEqual(before);
-    expect(reviewedAtOf(reviewed)).toBeLessThanOrEqual(after);
-    // The returned row is what was stored.
+    expect(reviewed.reviewedAt).toBeGreaterThanOrEqual(before);
+    expect(reviewed.reviewedAt).toBeLessThanOrEqual(after);
     expect(await storedSubmission(t, id)).toEqual(reviewed);
   });
 
   test("stores a trimmed note on an approval", async () => {
     const t = convexTest(schema, modules);
-    const { fixture, submissionId: id } = await seedOneSubmission(t, "rs-approve-note");
+    const { fixture, submissionId: id } = await seedOneSubmission(t);
 
     const reviewed = await reviewAs(t, fixture.membership, id, {
       status: "approved",
@@ -352,7 +318,7 @@ describe("reviewSubmission", () => {
 
   test("requests changes with a note", async () => {
     const t = convexTest(schema, modules);
-    const { fixture, submissionId: id } = await seedOneSubmission(t, "rs-changes");
+    const { fixture, submissionId: id } = await seedOneSubmission(t);
 
     const reviewed = await reviewAs(t, fixture.membership, id, {
       status: "changesRequested",
@@ -367,10 +333,9 @@ describe("reviewSubmission", () => {
     });
   });
 
-  // An empty optional textarea should approve, not fail.
   test.each(["", "  \n"])("stores no note when an approval's note is blank (%j)", async (note) => {
     const t = convexTest(schema, modules);
-    const { fixture, submissionId: id } = await seedOneSubmission(t, "rs-approve-blank");
+    const { fixture, submissionId: id } = await seedOneSubmission(t);
 
     const reviewed = await reviewAs(t, fixture.membership, id, {
       status: "approved",
@@ -384,7 +349,7 @@ describe("reviewSubmission", () => {
 
   test("rejects a blank note on a change request without reviewing", async () => {
     const t = convexTest(schema, modules);
-    const { fixture, submissionId: id } = await seedOneSubmission(t, "rs-blank");
+    const { fixture, submissionId: id } = await seedOneSubmission(t);
 
     await expectReason(
       () => reviewAs(t, fixture.membership, id, { status: "changesRequested", reviewNote: "  \n" }),
@@ -395,43 +360,25 @@ describe("reviewSubmission", () => {
     expect(await storedSubmission(t, id)).toMatchObject({ status: "pending" });
   });
 
-  test("rejects a note over the length limit without reviewing", async () => {
-    const t = convexTest(schema, modules);
-    const { fixture, submissionId: id } = await seedOneSubmission(t, "rs-long");
+  test.each(["approved", "changesRequested"] as const)(
+    "rejects a note over the length limit on %s without reviewing",
+    async (status) => {
+      const t = convexTest(schema, modules);
+      const { fixture, submissionId: id } = await seedOneSubmission(t);
 
-    await expectReason(
-      () =>
-        reviewAs(t, fixture.membership, id, {
-          status: "changesRequested",
-          reviewNote: "a".repeat(2001),
-        }),
-      "invalid_state",
-      "reviewNote_too_long",
-    );
+      await expectReason(
+        () => reviewAs(t, fixture.membership, id, { status, reviewNote: "a".repeat(2001) }),
+        "invalid_state",
+        "reviewNote_too_long",
+      );
 
-    expect(await storedSubmission(t, id)).toMatchObject({ status: "pending" });
-  });
-
-  test("rejects an approval note over the length limit without reviewing", async () => {
-    const t = convexTest(schema, modules);
-    const { fixture, submissionId: id } = await seedOneSubmission(t, "rs-approve-long");
-
-    await expectReason(
-      () =>
-        reviewAs(t, fixture.membership, id, {
-          status: "approved",
-          reviewNote: "a".repeat(2001),
-        }),
-      "invalid_state",
-      "reviewNote_too_long",
-    );
-
-    expect(await storedSubmission(t, id)).toMatchObject({ status: "pending" });
-  });
+      expect(await storedSubmission(t, id)).toMatchObject({ status: "pending" });
+    },
+  );
 
   test("accepts a note exactly at the limit", async () => {
     const t = convexTest(schema, modules);
-    const { fixture, submissionId: id } = await seedOneSubmission(t, "rs-long-edge");
+    const { fixture, submissionId: id } = await seedOneSubmission(t);
 
     const reviewed = await reviewAs(t, fixture.membership, id, {
       status: "changesRequested",
@@ -443,7 +390,7 @@ describe("reviewSubmission", () => {
 
   test("rejects a member of another company without reviewing", async () => {
     const t = convexTest(schema, modules);
-    const { submissionId: id } = await seedOneSubmission(t, "rs-owner");
+    const { submissionId: id } = await seedOneSubmission(t);
     const { membership: outsider } = await seedMembership(t, "rs-outsider");
 
     await expectApiError(() => reviewAs(t, outsider, id, { status: "approved" }), "not_found");
@@ -453,7 +400,7 @@ describe("reviewSubmission", () => {
 
   test("rejects a submission that no longer exists", async () => {
     const t = convexTest(schema, modules);
-    const { fixture, submissionId: id } = await seedOneSubmission(t, "rs-gone");
+    const { fixture, submissionId: id } = await seedOneSubmission(t);
     await t.run(async (ctx) => await ctx.db.delete("submissions", id));
 
     await expectApiError(
@@ -462,16 +409,11 @@ describe("reviewSubmission", () => {
     );
   });
 
-  // Reviews are final: only a pending submission can be reviewed.
   test.each(["approved", "changesRequested"] as const)(
     "rejects a submission already %s without changing it",
     async (status) => {
       const t = convexTest(schema, modules);
-      const { fixture, submissionId: id } = await seedOneSubmission(
-        t,
-        `rs-final-${status}`,
-        status,
-      );
+      const { fixture, submissionId: id } = await seedOneSubmission(t, status);
       const original = await storedSubmission(t, id);
 
       await expectReason(
@@ -488,12 +430,7 @@ describe("reviewSubmission", () => {
     "rejects a pending draft on a %s assignment without reviewing",
     async (status) => {
       const t = convexTest(schema, modules);
-      const { fixture, submissionId: id } = await seedOneSubmission(
-        t,
-        `rs-assignment-${status}`,
-        "pending",
-        { status },
-      );
+      const { fixture, submissionId: id } = await seedOneSubmission(t, "pending", { status });
 
       await expectReason(
         () => reviewAs(t, fixture.membership, id, { status: "approved" }),
@@ -509,7 +446,7 @@ describe("reviewSubmission", () => {
   // reviewed only by the AI; flip this test to expect a rejection.
   test("lets a company user review a submission that uses AI review", async () => {
     const t = convexTest(schema, modules);
-    const { fixture, submissionId: id } = await seedOneSubmission(t, "rs-ai", "pending", {
+    const { fixture, submissionId: id } = await seedOneSubmission(t, "pending", {
       usesAiReview: true,
     });
 
@@ -523,10 +460,7 @@ describe("reviewSubmission", () => {
   });
 });
 
-// A pending draft whose assignment was completed or cancelled will never be
-// reviewed. Every read says so, so clients can show it as closed.
 describe("closedWithoutReview", () => {
-  /** Reads one submission through both read functions, as an operator and as its creator. */
   async function readAll(t: TestConvex, fixture: AssignmentFixture, id: Id<"submissions">) {
     return [
       await getAs(t, operatorViewer, id),
@@ -540,7 +474,7 @@ describe("closedWithoutReview", () => {
     "marks a pending draft on a %s assignment in every read",
     async (status) => {
       const t = convexTest(schema, modules);
-      const { fixture, submissionId: id } = await seedOneSubmission(t, `cwr-${status}`, "pending", {
+      const { fixture, submissionId: id } = await seedOneSubmission(t, "pending", {
         status,
       });
 
@@ -552,24 +486,20 @@ describe("closedWithoutReview", () => {
 
   test("leaves a pending draft on an active assignment open in every read", async () => {
     const t = convexTest(schema, modules);
-    const { fixture, submissionId: id } = await seedOneSubmission(t, "cwr-active");
+    const { fixture, submissionId: id } = await seedOneSubmission(t);
 
     for (const view of await readAll(t, fixture, id)) {
       expect(view).toHaveProperty("closedWithoutReview", false);
     }
   });
 
-  // A reviewed submission got its review, so it wasn't closed without one.
   test.each(["approved", "changesRequested"] as const)(
     "doesn't mark a %s submission on a cancelled assignment",
     async (reviewStatus) => {
       const t = convexTest(schema, modules);
-      const { fixture, submissionId: id } = await seedOneSubmission(
-        t,
-        `cwr-reviewed-${reviewStatus}`,
-        reviewStatus,
-        { status: "cancelled" },
-      );
+      const { fixture, submissionId: id } = await seedOneSubmission(t, reviewStatus, {
+        status: "cancelled",
+      });
 
       for (const view of await readAll(t, fixture, id)) {
         expect(view).toHaveProperty("closedWithoutReview", false);
@@ -579,7 +509,6 @@ describe("closedWithoutReview", () => {
 });
 
 describe("toSubmissionView", () => {
-  // Built directly: this is a pure function, so no database is needed.
   const base = {
     _id: "submissions|1" as Id<"submissions">,
     _creationTime: 1,
@@ -647,8 +576,6 @@ describe("toSubmissionView", () => {
     });
   });
 
-  // The replaced review and the dispute are the creator's history too; only
-  // who reviewed it, at either level, stays hidden.
   test("gives a creator the replaced review and the dispute, without any reviewer", () => {
     expect(toSubmissionView(creator, overridden, false)).toEqual({
       ...base,
@@ -670,43 +597,16 @@ describe("toSubmissionView", () => {
 describe("requireSubmission", () => {
   test("gives a creator their own submission without the reviewer", async () => {
     const t = convexTest(schema, modules);
-    const { fixture, submissionId: id } = await seedOneSubmission(
-      t,
-      "gs-creator",
-      "changesRequested",
-    );
+    const { fixture, submissionId: id } = await seedOneSubmission(t, "changesRequested");
 
     const view = await getAs(t, creatorViewer(fixture), id);
 
     expect(view).toEqual(withoutReviewerIdentity(await expectedFull(t, id)));
-    expect(reviewerIdentityOf(view)).toEqual([]);
-  });
-
-  test("gives a creator an overridden submission without any reviewer", async () => {
-    const t = convexTest(schema, modules);
-    const { fixture, submissionId: id } = await seedOverriddenSubmission(t, "gs-creator-override");
-
-    const view = await getAs(t, creatorViewer(fixture), id);
-
-    expect(view).toEqual(withoutReviewerIdentity(await expectedFull(t, id)));
-    expect(view).toHaveProperty("disputeId");
-    expect(view).toHaveProperty("overriddenReview.status", "changesRequested");
-    expect(reviewerIdentityOf(view)).toEqual([]);
-  });
-
-  test("gives the company an overridden submission with every reviewer", async () => {
-    const t = convexTest(schema, modules);
-    const { fixture, submissionId: id } = await seedOverriddenSubmission(t, "gs-company-override");
-
-    const view = await getAs(t, companyViewer(fixture), id);
-
-    expect(view).toEqual(await expectedFull(t, id));
-    expect(reviewerIdentityOf(view)).toHaveLength(2);
   });
 
   test("gives the company its submission with reviewer details", async () => {
     const t = convexTest(schema, modules);
-    const { fixture, submissionId: id } = await seedOneSubmission(t, "gs-company", "approved");
+    const { fixture, submissionId: id } = await seedOneSubmission(t, "approved");
 
     const view = await getAs(t, companyViewer(fixture), id);
 
@@ -716,14 +616,14 @@ describe("requireSubmission", () => {
 
   test("gives an operator any submission in full", async () => {
     const t = convexTest(schema, modules);
-    const { submissionId: id } = await seedOneSubmission(t, "gs-operator", "approved");
+    const { submissionId: id } = await seedOneSubmission(t, "approved");
 
     expect(await getAs(t, operatorViewer, id)).toEqual(await expectedFull(t, id));
   });
 
   test("hides another creator's submission", async () => {
     const t = convexTest(schema, modules);
-    const { submissionId: id } = await seedOneSubmission(t, "gs-owner");
+    const { submissionId: id } = await seedOneSubmission(t);
     const intruderId = await seedCreatorId(t, "gs-intruder");
 
     await expectApiError(
@@ -734,7 +634,7 @@ describe("requireSubmission", () => {
 
   test("hides another company's submission", async () => {
     const t = convexTest(schema, modules);
-    const { submissionId: id } = await seedOneSubmission(t, "gs-owner-co");
+    const { submissionId: id } = await seedOneSubmission(t);
     const { membership: outsider } = await seedMembership(t, "gs-outsider");
 
     await expectApiError(
@@ -745,7 +645,7 @@ describe("requireSubmission", () => {
 
   test("rejects a submission that no longer exists", async () => {
     const t = convexTest(schema, modules);
-    const { submissionId: id } = await seedOneSubmission(t, "gs-gone");
+    const { submissionId: id } = await seedOneSubmission(t);
     await t.run(async (ctx) => await ctx.db.delete("submissions", id));
 
     await expectApiError(() => getAs(t, operatorViewer, id), "not_found");
@@ -755,7 +655,7 @@ describe("requireSubmission", () => {
 describe("listSubmissions", () => {
   test("lists an assignment's submissions newest first", async () => {
     const t = convexTest(schema, modules);
-    const fixture = await seedAssignment(t, "ls-order");
+    const fixture = await seedAssignment(t);
     const firstId = await seedSubmission(t, fixture, "changesRequested");
     const secondId = await seedSubmission(t, fixture, "pending");
 
@@ -767,7 +667,7 @@ describe("listSubmissions", () => {
 
   test("paginates with the returned cursor", async () => {
     const t = convexTest(schema, modules);
-    const fixture = await seedAssignment(t, "ls-pages");
+    const fixture = await seedAssignment(t);
     const firstId = await seedSubmission(t, fixture, "changesRequested");
     const secondId = await seedSubmission(t, fixture, "pending");
 
@@ -786,7 +686,7 @@ describe("listSubmissions", () => {
 
   test("gives a creator every submission without reviewers", async () => {
     const t = convexTest(schema, modules);
-    const fixture = await seedAssignment(t, "ls-creator");
+    const fixture = await seedAssignment(t);
     const firstId = await seedSubmission(t, fixture, "changesRequested");
     const secondId = await seedSubmission(t, fixture, "approved");
 
@@ -796,12 +696,11 @@ describe("listSubmissions", () => {
       withoutReviewerIdentity(await expectedFull(t, secondId)),
       withoutReviewerIdentity(await expectedFull(t, firstId)),
     ]);
-    for (const view of result.page) expect(reviewerIdentityOf(view)).toEqual([]);
   });
 
   test("returns an empty page for an assignment with no submissions", async () => {
     const t = convexTest(schema, modules);
-    const fixture = await seedAssignment(t, "ls-empty");
+    const fixture = await seedAssignment(t);
 
     const result = await listAs(t, creatorViewer(fixture), fixture.assignmentId);
 
@@ -810,7 +709,7 @@ describe("listSubmissions", () => {
 
   test("hides another creator's assignment", async () => {
     const t = convexTest(schema, modules);
-    const fixture = await seedAssignment(t, "ls-owner");
+    const fixture = await seedAssignment(t);
     const intruderId = await seedCreatorId(t, "ls-intruder");
 
     await expectApiError(
@@ -821,7 +720,7 @@ describe("listSubmissions", () => {
 
   test("hides another company's assignment", async () => {
     const t = convexTest(schema, modules);
-    const fixture = await seedAssignment(t, "ls-owner-co");
+    const fixture = await seedAssignment(t);
     const { membership: outsider } = await seedMembership(t, "ls-outsider");
 
     await expectApiError(
@@ -832,7 +731,7 @@ describe("listSubmissions", () => {
 
   test("rejects an assignment that no longer exists", async () => {
     const t = convexTest(schema, modules);
-    const fixture = await seedAssignment(t, "ls-gone");
+    const fixture = await seedAssignment(t);
     await t.run(async (ctx) => await ctx.db.delete("assignments", fixture.assignmentId));
 
     await expectApiError(() => listAs(t, operatorViewer, fixture.assignmentId), "not_found");

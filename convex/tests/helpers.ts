@@ -118,27 +118,22 @@ export type AssignmentFixture = {
   asCompany: ReturnType<TestConvex["withIdentity"]>;
 };
 
+// Subjects the assignment fixture seeds. Every test gets a fresh database and
+// seeds at most one assignment, so fixed names never collide.
+const FIXTURE_COMPANY = "fixture-company";
+const FIXTURE_CREATOR = "fixture-creator";
+const FIXTURE_OPERATOR = "fixture-operator";
+
 /**
- * Seeds a company member and a creator, linked by an assignment through a
- * campaign and opportunity. `prefix` keeps subjects and orgs unique per test.
- *
- * The rows are inserted directly because the assignments and opportunities
- * domains have no model functions yet.
+ * Seeds a company member and a creator linked by an assignment. The rows are
+ * inserted directly because assignments have no model functions yet.
  */
 export async function seedAssignment(
   t: TestConvex,
-  prefix: string,
   assignment: Partial<Pick<Doc<"assignments">, "status" | "usesAiReview">> = {},
 ): Promise<AssignmentFixture> {
-  const companySubject = `${prefix}-company`;
-  const creatorSubject = `${prefix}-creator`;
-
-  const { asMember: asCompany, membership } = await seedMembership(
-    t,
-    companySubject,
-    `org_${prefix}`,
-  );
-  const creatorId = await seedCreatorId(t, creatorSubject);
+  const { asMember: asCompany, membership } = await seedMembership(t, FIXTURE_COMPANY);
+  const creatorId = await seedCreatorId(t, FIXTURE_CREATOR);
 
   const assignmentId = await t.run(async (ctx) => {
     const campaignId = await ctx.db.insert("campaigns", {
@@ -190,16 +185,12 @@ export async function seedAssignment(
     assignmentId,
     creatorId,
     membership,
-    asCreator: t.withIdentity(workosIdentity({ subject: creatorSubject })),
+    asCreator: t.withIdentity(workosIdentity({ subject: FIXTURE_CREATOR })),
     asCompany,
   };
 }
 
-/**
- * Inserts a submission in a given state on a fixture's assignment, bypassing
- * the create rules. Like a real draft, it copies `usesAiReview` from the
- * assignment. Reviewed submissions are attributed to the fixture's company member.
- */
+/** Inserts a submission in the given state, bypassing the create rules. */
 export async function seedSubmission(
   t: TestConvex,
   fixture: AssignmentFixture,
@@ -229,34 +220,24 @@ export async function seedSubmission(
   });
 }
 
-/**
- * Seeds an assignment with one submission in the given state. `assignment`
- * overrides the assignment's status or AI review flag.
- */
+/** Seeds an assignment with one submission in the given state. */
 export async function seedOneSubmission(
   t: TestConvex,
-  prefix: string,
   status: Infer<typeof submissionStatus> = "pending",
   assignment: Partial<Pick<Doc<"assignments">, "status" | "usesAiReview">> = {},
 ) {
-  const fixture = await seedAssignment(t, prefix, assignment);
+  const fixture = await seedAssignment(t, assignment);
   const submissionId = await seedSubmission(t, fixture, status);
   return { fixture, submissionId };
 }
 
-/**
- * Seeds an assignment with a submission an operator overrode to resolve the
- * creator's dispute: the fixture's company member requested changes, then an
- * operator approved it. It carries every reviewer-identity field a submission
- * can hold, including the company reviewer inside `overriddenReview`.
- */
-export async function seedOverriddenSubmission(t: TestConvex, prefix: string) {
-  const fixture = await seedAssignment(t, prefix);
-  const operatorSubject = `${prefix}-operator`;
-  await seedOperator(t, operatorSubject);
+/** Seeds a submission an operator overrode after a dispute, with every reviewer-identity field set. */
+export async function seedOverriddenSubmission(t: TestConvex) {
+  const fixture = await seedAssignment(t);
+  await seedOperator(t, FIXTURE_OPERATOR);
 
   const submissionId = await t.run(async (ctx) => {
-    const operator = await getUserByWorkosId(ctx, operatorSubject);
+    const operator = await getUserByWorkosId(ctx, FIXTURE_OPERATOR);
     const creator = await ctx.db.get("creators", fixture.creatorId);
     if (operator === null || creator === null) throw new Error("expected seeded users");
     const reviewedAt = Date.now();
@@ -292,24 +273,8 @@ export async function seedOverriddenSubmission(t: TestConvex, prefix: string) {
 }
 
 /**
- * The fields that identify a reviewer: top level, and inside the review an
- * operator replaced. Only company users and operators may see them.
- */
-export function reviewerIdentityOf(view: object): unknown[] {
-  const fields = view as {
-    reviewedBy?: unknown;
-    reviewedByOperator?: unknown;
-    overriddenReview?: { reviewedBy?: unknown };
-  };
-  return [fields.reviewedBy, fields.reviewedByOperator, fields.overriddenReview?.reviewedBy].filter(
-    (value) => value !== undefined,
-  );
-}
-
-/**
- * What a creator should get for a full view: everything except reviewer
- * identity. Built by removing fields, independently of the model's own
- * field-by-field copy, so the two check each other.
+ * A full view minus reviewer identity. Deletes fields rather than copying them,
+ * so it cross-checks the model's field-by-field copy.
  */
 export function withoutReviewerIdentity(view: object): object {
   const copy: Record<string, unknown> = { ...view };
@@ -336,10 +301,7 @@ export async function storedSubmission(
   )) as Doc<"submissions"> | null;
 }
 
-/**
- * Reads every submission in the test's database, oldest first. Each test has
- * its own database, so with one assignment these are all that assignment's.
- */
+/** Reads every submission in the test's database, oldest first. */
 export async function storedSubmissions(t: TestConvex): Promise<Doc<"submissions">[]> {
   return (await t.run(
     async (ctx) => await ctx.db.query("submissions").collect(),

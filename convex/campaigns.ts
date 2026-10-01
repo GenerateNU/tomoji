@@ -8,6 +8,7 @@ import {
   publishCampaign,
   removeCampaign,
   requireCampaign,
+  resumeCampaign,
   updateCampaign,
 } from "./models/campaigns";
 import { companyMutation, companyQuery } from "./lib/functions";
@@ -101,6 +102,22 @@ export const pause = companyMutation({
   returns: v.null(),
   handler: async (ctx, args) => {
     await pauseCampaign(ctx, args.campaignId, ctx.membership.companyId);
+    return null;
+  },
+});
+
+/**
+ * Resumes a valid paused campaign without changing its opportunities or assignments.
+ * Open to any company member until the company-admin builder is available.
+ *
+ * @throws `not_found` if the campaign is missing or belongs to another company.
+ * @throws `invalid_state` if it is not paused, has invalid details, or has expired.
+ */
+export const resume = companyMutation({
+  args: { campaignId: v.id("campaigns") },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    await resumeCampaign(ctx, args.campaignId, ctx.membership.companyId);
     return null;
   },
 });

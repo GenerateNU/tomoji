@@ -109,14 +109,7 @@ export async function publishCampaign(
     throw apiError("invalid_state", { reason: "campaign_not_draft" });
   }
 
-  validateCampaignBudgetAndSchedule(campaign);
-  for (const field of ["title", "objective", "product", "audience", "description"] as const) {
-    requireNonBlank(campaign[field], `campaign_${field}`);
-  }
-  if (campaign.endsAt !== undefined && campaign.endsAt <= Date.now()) {
-    throw apiError("invalid_state", { reason: "campaign_expired" });
-  }
-
+  validateCampaignForOpening(campaign);
   await ctx.db.patch("campaigns", campaignId, { status: "open" });
 }
 
@@ -132,6 +125,21 @@ export async function pauseCampaign(
   }
 
   await ctx.db.patch("campaigns", campaignId, { status: "paused" });
+}
+
+/** Reopens a valid paused campaign, preserving individual opportunity and assignment states. */
+export async function resumeCampaign(
+  ctx: MutationCtx,
+  campaignId: Id<"campaigns">,
+  companyId: Id<"companies">,
+): Promise<void> {
+  const campaign = await requireCampaign(ctx, campaignId, companyId);
+  if (campaign.status !== "paused") {
+    throw apiError("invalid_state", { reason: "campaign_not_paused" });
+  }
+
+  validateCampaignForOpening(campaign);
+  await ctx.db.patch("campaigns", campaignId, { status: "open" });
 }
 
 /**
@@ -157,6 +165,16 @@ export async function createCampaign(
     audience: requireNonBlank(campaign.audience, "campaign_audience"),
     description: requireNonBlank(campaign.description, "campaign_description"),
   });
+}
+
+function validateCampaignForOpening(campaign: Doc<"campaigns">): void {
+  validateCampaignBudgetAndSchedule(campaign);
+  for (const field of ["title", "objective", "product", "audience", "description"] as const) {
+    requireNonBlank(campaign[field], `campaign_${field}`);
+  }
+  if (campaign.endsAt !== undefined && campaign.endsAt <= Date.now()) {
+    throw apiError("invalid_state", { reason: "campaign_expired" });
+  }
 }
 
 function validateCampaignBudgetAndSchedule(

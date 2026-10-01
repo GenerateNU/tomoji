@@ -11,6 +11,7 @@ import {
   publishCampaign,
   removeCampaign,
   requireCampaign,
+  resumeCampaign,
   updateCampaign,
 } from "../../models/campaigns";
 import schema from "../../schema";
@@ -731,6 +732,196 @@ describe("pauseCampaign", () => {
 
       await expect(
         t.run(async (ctx) => pauseCampaign(ctx, campaignId, caller.companyId)),
+      ).rejects.toHaveProperty("data", { code: "not_found", message: "Not found", campaignId });
+
+      expect(await t.run(async (ctx) => ctx.db.get("campaigns", campaignId))).toEqual(before);
+    },
+  );
+});
+
+describe("resumeCampaign", () => {
+  test.each(["past", "future"] as const)(
+    "resumes a paused campaign with a %s start and no end, changing only status",
+    async (start) => {
+      const t = convexTest(schema, modules);
+      const owner = await seedOwner(t, "cres-owner");
+      const campaignId = await t.run(async (ctx) =>
+        ctx.db.insert(
+          "campaigns",
+          campaignDoc(owner, {
+            status: "paused",
+            startsAt: start === "past" ? 0 : Date.now() + HOUR,
+            title: "  Original title  ",
+            description: "\nOriginal paragraph.\n\nAnother paragraph.\n",
+          }),
+        ),
+      );
+      const before = await t.run(async (ctx) => ctx.db.get("campaigns", campaignId));
+
+      await t.run(async (ctx) => resumeCampaign(ctx, campaignId, owner.companyId));
+
+      expect(await t.run(async (ctx) => ctx.db.get("campaigns", campaignId))).toEqual({
+        ...before,
+        status: "open",
+      });
+    },
+  );
+
+  test("preserves every opportunity status and the existing assignment", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOwner(t, "cres-children");
+    const creatorId = await seedCreatorId(t, "cres-creator");
+    const { campaignId, opportunityIds, assignmentId } = await t.run(async (ctx) => {
+      const campaignId = await ctx.db.insert("campaigns", campaignDoc(owner, { status: "paused" }));
+      const opportunityIds: Id<"opportunities">[] = [];
+      for (const status of ["draft", "open", "paused", "closed"] as const) {
+        opportunityIds.push(
+          await ctx.db.insert("opportunities", {
+            ...opportunityFields,
+            campaignId,
+            createdBy: owner.createdBy,
+            status,
+          }),
+        );
+      }
+      const assignmentId = await ctx.db.insert("assignments", {
+        opportunityId: opportunityIds[1],
+        creatorId,
+        fixedFeeCents: 1500,
+        cpmRateCents: 200,
+        paymentCapCents: 3000,
+        usesAiReview: false,
+        status: "active",
+      });
+      return { campaignId, opportunityIds, assignmentId };
+    });
+    const before = await t.run(async (ctx) => ({
+      campaign: await ctx.db.get("campaigns", campaignId),
+      opportunities: await Promise.all(opportunityIds.map((id) => ctx.db.get("opportunities", id))),
+      assignment: await ctx.db.get("assignments", assignmentId),
+    }));
+
+    await t.run(async (ctx) => resumeCampaign(ctx, campaignId, owner.companyId));
+
+    expect(
+      await t.run(async (ctx) => ({
+        campaign: await ctx.db.get("campaigns", campaignId),
+        opportunities: await Promise.all(
+          opportunityIds.map((id) => ctx.db.get("opportunities", id)),
+        ),
+        assignment: await ctx.db.get("assignments", assignmentId),
+      })),
+    ).toEqual({ ...before, campaign: { ...before.campaign, status: "open" } });
+  });
+
+  test.each(["draft", "open", "closed"] as const)(
+    "rejects resuming a %s campaign without changing it",
+    async (status) => {
+      const t = convexTest(schema, modules);
+      const owner = await seedOwner(t, "cres-status");
+      const campaignId = await t.run(async (ctx) =>
+        ctx.db.insert("campaigns", campaignDoc(owner, { status })),
+      );
+      const before = await t.run(async (ctx) => ctx.db.get("campaigns", campaignId));
+
+      await expect(
+        t.run(async (ctx) => resumeCampaign(ctx, campaignId, owner.companyId)),
+      ).rejects.toMatchObject({ data: { code: "invalid_state", reason: "campaign_not_paused" } });
+
+      expect(await t.run(async (ctx) => ctx.db.get("campaigns", campaignId))).toEqual(before);
+    },
+  );
+
+  test.each([
+    { fields: { title: " \t\n " }, reason: "campaign_title_blank" },
+    { fields: { budgetCents: 0.5 }, reason: "invalid_budget" },
+    { fields: { startsAt: 2000, endsAt: 1000 }, reason: "end_not_after_start" },
+  ])("rejects invalid paused campaign details with $reason", async ({ fields, reason }) => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOwner(t, "cres-invalid");
+    const campaignId = await t.run(async (ctx) =>
+      ctx.db.insert("campaigns", campaignDoc(owner, { status: "paused", ...fields })),
+    );
+    const before = await t.run(async (ctx) => ctx.db.get("campaigns", campaignId));
+
+    await expect(
+      t.run(async (ctx) => resumeCampaign(ctx, campaignId, owner.companyId)),
+    ).rejects.toMatchObject({ data: { code: "invalid_state", reason } });
+
+    expect(await t.run(async (ctx) => ctx.db.get("campaigns", campaignId))).toEqual(before);
+  });
+
+  test.each([-1, 0, 1])("checks expiry when endsAt is now plus %i milliseconds", async (offset) => {
+    const now = 1_800_000_000_000;
+    const clock = vi.spyOn(Date, "now").mockReturnValue(now);
+    try {
+      const t = convexTest(schema, modules);
+      const owner = await seedOwner(t, "cres-expiry");
+      const campaignId = await t.run(async (ctx) =>
+        ctx.db.insert(
+          "campaigns",
+          campaignDoc(owner, { status: "paused", startsAt: now - HOUR, endsAt: now + offset }),
+        ),
+      );
+      const before = await t.run(async (ctx) => ctx.db.get("campaigns", campaignId));
+
+      if (offset <= 0) {
+        await expect(
+          t.run(async (ctx) => resumeCampaign(ctx, campaignId, owner.companyId)),
+        ).rejects.toMatchObject({ data: { code: "invalid_state", reason: "campaign_expired" } });
+        expect(await t.run(async (ctx) => ctx.db.get("campaigns", campaignId))).toEqual(before);
+      } else {
+        await t.run(async (ctx) => resumeCampaign(ctx, campaignId, owner.companyId));
+        expect(await t.run(async (ctx) => ctx.db.get("campaigns", campaignId))).toEqual({
+          ...before,
+          status: "open",
+        });
+      }
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
+  test("can resume after the company extends an expired end date", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOwner(t, "cres-extended");
+    const campaignId = await t.run(async (ctx) =>
+      ctx.db.insert("campaigns", campaignDoc(owner, { status: "paused", startsAt: 0, endsAt: 1 })),
+    );
+    const before = await t.run(async (ctx) => ctx.db.get("campaigns", campaignId));
+
+    await expect(
+      t.run(async (ctx) => resumeCampaign(ctx, campaignId, owner.companyId)),
+    ).rejects.toMatchObject({ data: { code: "invalid_state", reason: "campaign_expired" } });
+    const endsAt = Date.now() + HOUR;
+    await t.run(async (ctx) => updateCampaign(ctx, campaignId, owner.companyId, { endsAt }));
+    await t.run(async (ctx) => resumeCampaign(ctx, campaignId, owner.companyId));
+
+    expect(await t.run(async (ctx) => ctx.db.get("campaigns", campaignId))).toEqual({
+      ...before,
+      endsAt,
+      status: "open",
+    });
+  });
+
+  test.each(["missing", "foreign"] as const)(
+    "rejects a %s campaign before inspecting its status or details",
+    async (kind) => {
+      const t = convexTest(schema, modules);
+      const owner = await seedOwner(t, "cres-owner");
+      const caller = await seedOwner(t, "cres-caller", "org_other");
+      const campaignId = await t.run(async (ctx) => {
+        const id = await ctx.db.insert(
+          "campaigns",
+          campaignDoc(owner, { status: "closed", title: "" }),
+        );
+        if (kind === "missing") await ctx.db.delete("campaigns", id);
+        return id;
+      });
+      const before = await t.run(async (ctx) => ctx.db.get("campaigns", campaignId));
+
+      await expect(
+        t.run(async (ctx) => resumeCampaign(ctx, campaignId, caller.companyId)),
       ).rejects.toHaveProperty("data", { code: "not_found", message: "Not found", campaignId });
 
       expect(await t.run(async (ctx) => ctx.db.get("campaigns", campaignId))).toEqual(before);

@@ -108,6 +108,7 @@ async function createAssignment(
     opportunityId: opportunity._id,
     creatorId,
     companyId: campaign.companyId,
+    campaignId: campaign._id,
     fixedFeeCents: opportunity.fixedFeeCents,
     cpmRateCents: opportunity.cpmRateCents,
     paymentCapCents: opportunity.paymentCapCents,

@@ -215,6 +215,7 @@ export async function requireRole(
   return { identity, user, orgId: findOrgId(identity) };
 }
 
+/** Returns the caller's creator ID, or throws if their creator row is missing. */
 export async function requireCallerCreatorId(
   ctx: QueryCtx | MutationCtx,
   user: Doc<"users">,

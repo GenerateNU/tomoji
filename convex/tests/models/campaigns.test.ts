@@ -329,7 +329,7 @@ describe("updateCampaign", () => {
     );
   });
 
-  test.each(["draft", "open", "paused", "closed"] as const)(
+  test.each(["draft", "open", "paused"] as const)(
     "updates a %s campaign while preserving ownership and omitted fields",
     async (status) => {
       const t = convexTest(schema, modules);
@@ -339,7 +339,7 @@ describe("updateCampaign", () => {
       );
       const before = await t.run(async (ctx) => ctx.db.get("campaigns", campaignId));
 
-      await t.run(async (ctx) =>
+      const result = await t.run(async (ctx) =>
         updateCampaign(ctx, campaignId, owner.companyId, {
           title: "  Updated title  ",
           budgetCents: 0,
@@ -349,6 +349,27 @@ describe("updateCampaign", () => {
 
       const after = await t.run(async (ctx) => ctx.db.get("campaigns", campaignId));
       expect(after).toEqual({ ...before, title: "Updated title", budgetCents: 0, startsAt: 0 });
+      expect(result).toStrictEqual(after);
+    },
+  );
+
+  test.each([{ title: "Changed" }, {}, { title: "", budgetCents: -1 }])(
+    "rejects a closed campaign update %j without changing it",
+    async (fields) => {
+      const t = convexTest(schema, modules);
+      const owner = await seedOwner(t, "cu-closed");
+      const campaignId = await t.run(async (ctx) =>
+        ctx.db.insert("campaigns", campaignDoc(owner, { status: "closed" })),
+      );
+      const before = await t.run(async (ctx) => ctx.db.get("campaigns", campaignId));
+
+      await expect(
+        t.run(async (ctx) => updateCampaign(ctx, campaignId, owner.companyId, fields)),
+      ).rejects.toMatchObject({
+        data: { code: "invalid_state", reason: "campaign_closed" },
+      });
+
+      expect(await t.run(async (ctx) => ctx.db.get("campaigns", campaignId))).toEqual(before);
     },
   );
 
@@ -461,12 +482,13 @@ describe("updateCampaign", () => {
       );
     }
 
-    await t.run(async (ctx) =>
+    const result = await t.run(async (ctx) =>
       updateCampaign(ctx, campaignId, owner.companyId, { startsAt: 3000, endsAt: null }),
     );
     const after = await t.run(async (ctx) => ctx.db.get("campaigns", campaignId));
     expect(after).not.toHaveProperty("endsAt");
     expect(after?.startsAt).toBe(3000);
+    expect(result).toStrictEqual(after);
   });
 
   test("does not revalidate omitted legacy brief fields", async () => {
@@ -502,19 +524,20 @@ describe("updateCampaign", () => {
     const campaignId = await t.run(async (ctx) => ctx.db.insert("campaigns", campaignDoc(owner)));
     const before = await t.run(async (ctx) => ctx.db.get("campaigns", campaignId));
 
-    await t.run(async (ctx) => updateCampaign(ctx, campaignId, owner.companyId, {}));
+    const result = await t.run(async (ctx) => updateCampaign(ctx, campaignId, owner.companyId, {}));
 
     expect(await t.run(async (ctx) => ctx.db.get("campaigns", campaignId))).toEqual(before);
+    expect(result).toStrictEqual(before);
   });
 
   test.each(["missing", "foreign"] as const)(
-    "rejects a %s campaign before validating fields",
+    "rejects a %s campaign before checking its status or validating fields",
     async (kind) => {
       const t = convexTest(schema, modules);
       const owner = await seedOwner(t, "cu-owner");
       const caller = await seedOwner(t, "cu-caller", "org_other");
       const campaignId = await t.run(async (ctx) => {
-        const id = await ctx.db.insert("campaigns", campaignDoc(owner));
+        const id = await ctx.db.insert("campaigns", campaignDoc(owner, { status: "closed" }));
         if (kind === "missing") await ctx.db.delete("campaigns", id);
         return id;
       });

@@ -50,16 +50,16 @@ export const list = companyQuery({
  * Omitted fields stay unchanged; `endsAt: null` removes the end date.
  *
  * @throws `not_found` if the campaign is missing or belongs to another company.
- * @throws `invalid_state` for blank fields, an invalid budget or schedule,
+ * @throws `invalid_state` if the campaign is closed, or for blank fields, an invalid budget or schedule,
  * or an end date before an existing opportunity deadline.
+ * @returns the updated campaign document.
  */
 export const update = companyMutation({
   args: { campaignId: v.id("campaigns"), ...campaignUpdate.fields },
-  returns: v.null(),
+  returns: schema.doc("campaigns"),
   handler: async (ctx, args) => {
     const { campaignId, ...fields } = args;
-    await updateCampaign(ctx, campaignId, ctx.membership.companyId, fields);
-    return null;
+    return await updateCampaign(ctx, campaignId, ctx.membership.companyId, fields);
   },
 });
 

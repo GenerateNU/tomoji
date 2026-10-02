@@ -1,22 +1,50 @@
 /// <reference types="vite/client" />
 import { convexTest } from "convex-test";
 import type { WithoutSystemFields } from "convex/server";
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import type { Doc, Id } from "../../_generated/dataModel";
 import { companyContext } from "../../lib/functions";
 import {
+  closeCampaign,
   createCampaign,
   listCampaigns,
+  pauseCampaign,
+  publishCampaign,
   removeCampaign,
   requireCampaign,
+  resumeCampaign,
   updateCampaign,
 } from "../../models/campaigns";
 import schema from "../../schema";
-import { expectApiError, seedOpportunity, seedUser, type TestConvex } from "../helpers";
+import {
+  expectApiError,
+  seedCreatorId,
+  seedOpportunity,
+  seedUser,
+  type TestConvex,
+} from "../helpers";
 
 const modules = import.meta.glob("../../**/*.ts");
 
 const HOUR = 60 * 60 * 1000;
+const opportunityFields = {
+  title: "Product launch post",
+  description: "Introduce the moisturizer to your audience.",
+  isGated: false,
+  usesAiReviewDefault: false,
+  targetApplicant: "Skincare creators",
+  maxSlots: 5,
+  numFilledSlots: 0,
+  maxApplications: 20,
+  deadline: 2000,
+  fixedFeeCents: 1000,
+  cpmRateCents: 100,
+  paymentCapCents: 2000,
+  contentRequirements: "Share your experience with the product.",
+  prohibitedClaims: "No medical claims.",
+  disclosureRequirements: "Disclose the sponsorship.",
+  usageRights: "Organic reposting only.",
+};
 
 async function seedOwner(t: TestConvex, subject: string, orgId = "org_acme") {
   const as = await seedUser(t, { subject, org: { id: orgId } });
@@ -525,26 +553,618 @@ describe("updateCampaign", () => {
   );
 });
 
-describe("removeCampaign", () => {
-  const opportunityFields = {
-    title: "Product launch post",
-    description: "Introduce the moisturizer to your audience.",
-    isGated: false,
-    usesAiReviewDefault: false,
-    targetApplicant: "Skincare creators",
-    maxSlots: 5,
-    numFilledSlots: 0,
-    maxApplications: 20,
-    deadline: 2000,
-    fixedFeeCents: 1000,
-    cpmRateCents: 100,
-    paymentCapCents: 2000,
-    contentRequirements: "Share your experience with the product.",
-    prohibitedClaims: "No medical claims.",
-    disclosureRequirements: "Disclose the sponsorship.",
-    usageRights: "Organic reposting only.",
-  };
+describe("publishCampaign", () => {
+  test.each(["past", "future"] as const)(
+    "publishes an empty draft with a %s start and no end, changing only status",
+    async (start) => {
+      const t = convexTest(schema, modules);
+      const owner = await seedOwner(t, "cp-owner");
+      const campaignId = await t.run(async (ctx) =>
+        ctx.db.insert(
+          "campaigns",
+          campaignDoc(owner, {
+            status: "draft",
+            startsAt: start === "past" ? 0 : Date.now() + HOUR,
+            budgetCents: 0,
+            title: "  Spring launch  ",
+            objective: "  Introduce the new range  ",
+            product: "  Daily moisturizer  ",
+            audience: "  Skincare enthusiasts  ",
+            description: "\nFirst paragraph.\n\nSecond paragraph.\n",
+          }),
+        ),
+      );
+      const before = await t.run(async (ctx) => ctx.db.get("campaigns", campaignId));
 
+      await t.run(async (ctx) => publishCampaign(ctx, campaignId, owner.companyId));
+
+      expect(await t.run(async (ctx) => ctx.db.get("campaigns", campaignId))).toEqual({
+        ...before,
+        status: "open",
+      });
+    },
+  );
+
+  test("preserves all existing opportunity statuses and details", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOwner(t, "cp-opportunities");
+    const { campaignId, opportunityIds } = await t.run(async (ctx) => {
+      const campaignId = await ctx.db.insert("campaigns", campaignDoc(owner, { status: "draft" }));
+      const opportunityIds: Id<"opportunities">[] = [];
+      for (const status of ["draft", "open", "paused", "closed"] as const) {
+        opportunityIds.push(
+          await ctx.db.insert("opportunities", {
+            ...opportunityFields,
+            campaignId,
+            companyId: owner.companyId,
+            createdBy: owner.createdBy,
+            status,
+          }),
+        );
+      }
+      return { campaignId, opportunityIds };
+    });
+    const before = await t.run(async (ctx) =>
+      Promise.all(opportunityIds.map((id) => ctx.db.get("opportunities", id))),
+    );
+
+    await t.run(async (ctx) => publishCampaign(ctx, campaignId, owner.companyId));
+
+    expect(await t.run(async (ctx) => ctx.db.get("campaigns", campaignId))).toHaveProperty(
+      "status",
+      "open",
+    );
+    expect(
+      await t.run(async (ctx) =>
+        Promise.all(opportunityIds.map((id) => ctx.db.get("opportunities", id))),
+      ),
+    ).toEqual(before);
+  });
+
+  test.each(["open", "paused", "closed"] as const)(
+    "rejects publishing a %s campaign without changing it",
+    async (status) => {
+      const t = convexTest(schema, modules);
+      const owner = await seedOwner(t, "cp-status");
+      const campaignId = await t.run(async (ctx) =>
+        ctx.db.insert("campaigns", campaignDoc(owner, { status })),
+      );
+      const before = await t.run(async (ctx) => ctx.db.get("campaigns", campaignId));
+
+      await expect(
+        t.run(async (ctx) => publishCampaign(ctx, campaignId, owner.companyId)),
+      ).rejects.toMatchObject({ data: { code: "invalid_state", reason: "campaign_not_draft" } });
+
+      expect(await t.run(async (ctx) => ctx.db.get("campaigns", campaignId))).toEqual(before);
+    },
+  );
+
+  test.each(["title", "objective", "product", "audience", "description"] as const)(
+    "rejects a draft whose %s is blank without changing it",
+    async (field) => {
+      const t = convexTest(schema, modules);
+      const owner = await seedOwner(t, "cp-blank");
+      const campaignId = await t.run(async (ctx) =>
+        ctx.db.insert("campaigns", campaignDoc(owner, { status: "draft", [field]: " \t\n " })),
+      );
+      const before = await t.run(async (ctx) => ctx.db.get("campaigns", campaignId));
+
+      await expect(
+        t.run(async (ctx) => publishCampaign(ctx, campaignId, owner.companyId)),
+      ).rejects.toMatchObject({
+        data: { code: "invalid_state", reason: `campaign_${field}_blank` },
+      });
+
+      expect(await t.run(async (ctx) => ctx.db.get("campaigns", campaignId))).toEqual(before);
+    },
+  );
+
+  test.each([
+    { fields: { budgetCents: 0.5 }, reason: "invalid_budget" },
+    { fields: { startsAt: Number.NaN }, reason: "invalid_schedule" },
+    { fields: { startsAt: 2000, endsAt: 2000 }, reason: "end_not_after_start" },
+  ])("rejects an invalid stored draft with $reason", async ({ fields, reason }) => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOwner(t, "cp-invalid");
+    const campaignId = await t.run(async (ctx) =>
+      ctx.db.insert("campaigns", campaignDoc(owner, { status: "draft", ...fields })),
+    );
+    const before = await t.run(async (ctx) => ctx.db.get("campaigns", campaignId));
+
+    await expect(
+      t.run(async (ctx) => publishCampaign(ctx, campaignId, owner.companyId)),
+    ).rejects.toMatchObject({ data: { code: "invalid_state", reason } });
+
+    expect(await t.run(async (ctx) => ctx.db.get("campaigns", campaignId))).toEqual(before);
+  });
+
+  test.each([-1, 0, 1])("checks expiry when endsAt is now plus %i milliseconds", async (offset) => {
+    const now = 1_800_000_000_000;
+    const clock = vi.spyOn(Date, "now").mockReturnValue(now);
+    try {
+      const t = convexTest(schema, modules);
+      const owner = await seedOwner(t, "cp-expiry");
+      const campaignId = await t.run(async (ctx) =>
+        ctx.db.insert(
+          "campaigns",
+          campaignDoc(owner, { status: "draft", startsAt: now - HOUR, endsAt: now + offset }),
+        ),
+      );
+      const before = await t.run(async (ctx) => ctx.db.get("campaigns", campaignId));
+
+      if (offset <= 0) {
+        await expect(
+          t.run(async (ctx) => publishCampaign(ctx, campaignId, owner.companyId)),
+        ).rejects.toMatchObject({ data: { code: "invalid_state", reason: "campaign_expired" } });
+        expect(await t.run(async (ctx) => ctx.db.get("campaigns", campaignId))).toEqual(before);
+      } else {
+        await t.run(async (ctx) => publishCampaign(ctx, campaignId, owner.companyId));
+        expect(await t.run(async (ctx) => ctx.db.get("campaigns", campaignId))).toEqual({
+          ...before,
+          status: "open",
+        });
+      }
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
+  test.each(["missing", "foreign"] as const)(
+    "rejects a %s campaign before inspecting its status or details",
+    async (kind) => {
+      const t = convexTest(schema, modules);
+      const owner = await seedOwner(t, "cp-owner");
+      const caller = await seedOwner(t, "cp-caller", "org_other");
+      const campaignId = await t.run(async (ctx) => {
+        const id = await ctx.db.insert(
+          "campaigns",
+          campaignDoc(owner, { status: "closed", title: "" }),
+        );
+        if (kind === "missing") await ctx.db.delete("campaigns", id);
+        return id;
+      });
+      const before = await t.run(async (ctx) => ctx.db.get("campaigns", campaignId));
+
+      await expect(
+        t.run(async (ctx) => publishCampaign(ctx, campaignId, caller.companyId)),
+      ).rejects.toHaveProperty("data", { code: "not_found", message: "Not found", campaignId });
+
+      expect(await t.run(async (ctx) => ctx.db.get("campaigns", campaignId))).toEqual(before);
+    },
+  );
+});
+
+describe("pauseCampaign", () => {
+  test("changes only the campaign status, preserving all opportunities and agreed assignment terms", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOwner(t, "cpause-owner");
+    const creatorId = await seedCreatorId(t, "cpause-creator");
+    const { campaignId, opportunityIds, assignmentId } = await t.run(async (ctx) => {
+      const campaignId = await ctx.db.insert("campaigns", campaignDoc(owner));
+      const opportunityIds: Id<"opportunities">[] = [];
+      for (const status of ["draft", "open", "paused", "closed"] as const) {
+        opportunityIds.push(
+          await ctx.db.insert("opportunities", {
+            ...opportunityFields,
+            campaignId,
+            companyId: owner.companyId,
+            createdBy: owner.createdBy,
+            status,
+          }),
+        );
+      }
+      const assignmentId = await ctx.db.insert("assignments", {
+        companyId: owner.companyId,
+        campaignId,
+        opportunityId: opportunityIds[1],
+        creatorId,
+        fixedFeeCents: 1500,
+        cpmRateCents: 200,
+        paymentCapCents: 3000,
+        usesAiReview: false,
+        status: "active",
+      });
+      return { campaignId, opportunityIds, assignmentId };
+    });
+    const before = await t.run(async (ctx) => ({
+      campaign: await ctx.db.get("campaigns", campaignId),
+      opportunities: await Promise.all(opportunityIds.map((id) => ctx.db.get("opportunities", id))),
+      assignment: await ctx.db.get("assignments", assignmentId),
+    }));
+
+    await t.run(async (ctx) => pauseCampaign(ctx, campaignId, owner.companyId));
+
+    expect(
+      await t.run(async (ctx) => ({
+        campaign: await ctx.db.get("campaigns", campaignId),
+        opportunities: await Promise.all(
+          opportunityIds.map((id) => ctx.db.get("opportunities", id)),
+        ),
+        assignment: await ctx.db.get("assignments", assignmentId),
+      })),
+    ).toEqual({ ...before, campaign: { ...before.campaign, status: "paused" } });
+  });
+
+  test("allows pausing an open campaign without revalidating legacy details", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOwner(t, "cpause-legacy");
+    const campaignId = await t.run(async (ctx) =>
+      ctx.db.insert(
+        "campaigns",
+        campaignDoc(owner, { title: "", budgetCents: -1, startsAt: 2000, endsAt: 1000 }),
+      ),
+    );
+    const before = await t.run(async (ctx) => ctx.db.get("campaigns", campaignId));
+
+    await t.run(async (ctx) => pauseCampaign(ctx, campaignId, owner.companyId));
+
+    expect(await t.run(async (ctx) => ctx.db.get("campaigns", campaignId))).toEqual({
+      ...before,
+      status: "paused",
+    });
+  });
+
+  test.each(["draft", "paused", "closed"] as const)(
+    "rejects pausing a %s campaign without changing it",
+    async (status) => {
+      const t = convexTest(schema, modules);
+      const owner = await seedOwner(t, "cpause-status");
+      const campaignId = await t.run(async (ctx) =>
+        ctx.db.insert("campaigns", campaignDoc(owner, { status })),
+      );
+      const before = await t.run(async (ctx) => ctx.db.get("campaigns", campaignId));
+
+      await expect(
+        t.run(async (ctx) => pauseCampaign(ctx, campaignId, owner.companyId)),
+      ).rejects.toMatchObject({ data: { code: "invalid_state", reason: "campaign_not_open" } });
+
+      expect(await t.run(async (ctx) => ctx.db.get("campaigns", campaignId))).toEqual(before);
+    },
+  );
+
+  test.each(["missing", "foreign"] as const)(
+    "rejects a %s campaign before inspecting its status",
+    async (kind) => {
+      const t = convexTest(schema, modules);
+      const owner = await seedOwner(t, "cpause-owner");
+      const caller = await seedOwner(t, "cpause-caller", "org_other");
+      const campaignId = await t.run(async (ctx) => {
+        const id = await ctx.db.insert("campaigns", campaignDoc(owner, { status: "closed" }));
+        if (kind === "missing") await ctx.db.delete("campaigns", id);
+        return id;
+      });
+      const before = await t.run(async (ctx) => ctx.db.get("campaigns", campaignId));
+
+      await expect(
+        t.run(async (ctx) => pauseCampaign(ctx, campaignId, caller.companyId)),
+      ).rejects.toHaveProperty("data", { code: "not_found", message: "Not found", campaignId });
+
+      expect(await t.run(async (ctx) => ctx.db.get("campaigns", campaignId))).toEqual(before);
+    },
+  );
+});
+
+describe("resumeCampaign", () => {
+  test.each(["past", "future"] as const)(
+    "resumes a paused campaign with a %s start and no end, changing only status",
+    async (start) => {
+      const t = convexTest(schema, modules);
+      const owner = await seedOwner(t, "cres-owner");
+      const campaignId = await t.run(async (ctx) =>
+        ctx.db.insert(
+          "campaigns",
+          campaignDoc(owner, {
+            status: "paused",
+            startsAt: start === "past" ? 0 : Date.now() + HOUR,
+            title: "  Original title  ",
+            description: "\nOriginal paragraph.\n\nAnother paragraph.\n",
+          }),
+        ),
+      );
+      const before = await t.run(async (ctx) => ctx.db.get("campaigns", campaignId));
+
+      await t.run(async (ctx) => resumeCampaign(ctx, campaignId, owner.companyId));
+
+      expect(await t.run(async (ctx) => ctx.db.get("campaigns", campaignId))).toEqual({
+        ...before,
+        status: "open",
+      });
+    },
+  );
+
+  test("preserves every opportunity status and the existing assignment", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOwner(t, "cres-children");
+    const creatorId = await seedCreatorId(t, "cres-creator");
+    const { campaignId, opportunityIds, assignmentId } = await t.run(async (ctx) => {
+      const campaignId = await ctx.db.insert("campaigns", campaignDoc(owner, { status: "paused" }));
+      const opportunityIds: Id<"opportunities">[] = [];
+      for (const status of ["draft", "open", "paused", "closed"] as const) {
+        opportunityIds.push(
+          await ctx.db.insert("opportunities", {
+            ...opportunityFields,
+            campaignId,
+            companyId: owner.companyId,
+            createdBy: owner.createdBy,
+            status,
+          }),
+        );
+      }
+      const assignmentId = await ctx.db.insert("assignments", {
+        companyId: owner.companyId,
+        campaignId,
+        opportunityId: opportunityIds[1],
+        creatorId,
+        fixedFeeCents: 1500,
+        cpmRateCents: 200,
+        paymentCapCents: 3000,
+        usesAiReview: false,
+        status: "active",
+      });
+      return { campaignId, opportunityIds, assignmentId };
+    });
+    const before = await t.run(async (ctx) => ({
+      campaign: await ctx.db.get("campaigns", campaignId),
+      opportunities: await Promise.all(opportunityIds.map((id) => ctx.db.get("opportunities", id))),
+      assignment: await ctx.db.get("assignments", assignmentId),
+    }));
+
+    await t.run(async (ctx) => resumeCampaign(ctx, campaignId, owner.companyId));
+
+    expect(
+      await t.run(async (ctx) => ({
+        campaign: await ctx.db.get("campaigns", campaignId),
+        opportunities: await Promise.all(
+          opportunityIds.map((id) => ctx.db.get("opportunities", id)),
+        ),
+        assignment: await ctx.db.get("assignments", assignmentId),
+      })),
+    ).toEqual({ ...before, campaign: { ...before.campaign, status: "open" } });
+  });
+
+  test.each(["draft", "open", "closed"] as const)(
+    "rejects resuming a %s campaign without changing it",
+    async (status) => {
+      const t = convexTest(schema, modules);
+      const owner = await seedOwner(t, "cres-status");
+      const campaignId = await t.run(async (ctx) =>
+        ctx.db.insert("campaigns", campaignDoc(owner, { status })),
+      );
+      const before = await t.run(async (ctx) => ctx.db.get("campaigns", campaignId));
+
+      await expect(
+        t.run(async (ctx) => resumeCampaign(ctx, campaignId, owner.companyId)),
+      ).rejects.toMatchObject({ data: { code: "invalid_state", reason: "campaign_not_paused" } });
+
+      expect(await t.run(async (ctx) => ctx.db.get("campaigns", campaignId))).toEqual(before);
+    },
+  );
+
+  test.each([
+    { fields: { title: " \t\n " }, reason: "campaign_title_blank" },
+    { fields: { budgetCents: 0.5 }, reason: "invalid_budget" },
+    { fields: { startsAt: 2000, endsAt: 1000 }, reason: "end_not_after_start" },
+  ])("rejects invalid paused campaign details with $reason", async ({ fields, reason }) => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOwner(t, "cres-invalid");
+    const campaignId = await t.run(async (ctx) =>
+      ctx.db.insert("campaigns", campaignDoc(owner, { status: "paused", ...fields })),
+    );
+    const before = await t.run(async (ctx) => ctx.db.get("campaigns", campaignId));
+
+    await expect(
+      t.run(async (ctx) => resumeCampaign(ctx, campaignId, owner.companyId)),
+    ).rejects.toMatchObject({ data: { code: "invalid_state", reason } });
+
+    expect(await t.run(async (ctx) => ctx.db.get("campaigns", campaignId))).toEqual(before);
+  });
+
+  test.each([-1, 0, 1])("checks expiry when endsAt is now plus %i milliseconds", async (offset) => {
+    const now = 1_800_000_000_000;
+    const clock = vi.spyOn(Date, "now").mockReturnValue(now);
+    try {
+      const t = convexTest(schema, modules);
+      const owner = await seedOwner(t, "cres-expiry");
+      const campaignId = await t.run(async (ctx) =>
+        ctx.db.insert(
+          "campaigns",
+          campaignDoc(owner, { status: "paused", startsAt: now - HOUR, endsAt: now + offset }),
+        ),
+      );
+      const before = await t.run(async (ctx) => ctx.db.get("campaigns", campaignId));
+
+      if (offset <= 0) {
+        await expect(
+          t.run(async (ctx) => resumeCampaign(ctx, campaignId, owner.companyId)),
+        ).rejects.toMatchObject({ data: { code: "invalid_state", reason: "campaign_expired" } });
+        expect(await t.run(async (ctx) => ctx.db.get("campaigns", campaignId))).toEqual(before);
+      } else {
+        await t.run(async (ctx) => resumeCampaign(ctx, campaignId, owner.companyId));
+        expect(await t.run(async (ctx) => ctx.db.get("campaigns", campaignId))).toEqual({
+          ...before,
+          status: "open",
+        });
+      }
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
+  test("can resume after the company extends an expired end date", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOwner(t, "cres-extended");
+    const campaignId = await t.run(async (ctx) =>
+      ctx.db.insert("campaigns", campaignDoc(owner, { status: "paused", startsAt: 0, endsAt: 1 })),
+    );
+    const before = await t.run(async (ctx) => ctx.db.get("campaigns", campaignId));
+
+    await expect(
+      t.run(async (ctx) => resumeCampaign(ctx, campaignId, owner.companyId)),
+    ).rejects.toMatchObject({ data: { code: "invalid_state", reason: "campaign_expired" } });
+    const endsAt = Date.now() + HOUR;
+    await t.run(async (ctx) => updateCampaign(ctx, campaignId, owner.companyId, { endsAt }));
+    await t.run(async (ctx) => resumeCampaign(ctx, campaignId, owner.companyId));
+
+    expect(await t.run(async (ctx) => ctx.db.get("campaigns", campaignId))).toEqual({
+      ...before,
+      endsAt,
+      status: "open",
+    });
+  });
+
+  test.each(["missing", "foreign"] as const)(
+    "rejects a %s campaign before inspecting its status or details",
+    async (kind) => {
+      const t = convexTest(schema, modules);
+      const owner = await seedOwner(t, "cres-owner");
+      const caller = await seedOwner(t, "cres-caller", "org_other");
+      const campaignId = await t.run(async (ctx) => {
+        const id = await ctx.db.insert(
+          "campaigns",
+          campaignDoc(owner, { status: "closed", title: "" }),
+        );
+        if (kind === "missing") await ctx.db.delete("campaigns", id);
+        return id;
+      });
+      const before = await t.run(async (ctx) => ctx.db.get("campaigns", campaignId));
+
+      await expect(
+        t.run(async (ctx) => resumeCampaign(ctx, campaignId, caller.companyId)),
+      ).rejects.toHaveProperty("data", { code: "not_found", message: "Not found", campaignId });
+
+      expect(await t.run(async (ctx) => ctx.db.get("campaigns", campaignId))).toEqual(before);
+    },
+  );
+});
+
+describe("closeCampaign", () => {
+  test.each(["draft", "open", "paused"] as const)(
+    "closes a %s campaign without changing its details or ownership",
+    async (status) => {
+      const t = convexTest(schema, modules);
+      const owner = await seedOwner(t, "cclose-owner");
+      const campaignId = await t.run(async (ctx) =>
+        ctx.db.insert("campaigns", campaignDoc(owner, { status, title: "  Original title  " })),
+      );
+      const before = await t.run(async (ctx) => ctx.db.get("campaigns", campaignId));
+
+      await t.run(async (ctx) => closeCampaign(ctx, campaignId, owner.companyId));
+
+      expect(await t.run(async (ctx) => ctx.db.get("campaigns", campaignId))).toEqual({
+        ...before,
+        status: "closed",
+      });
+    },
+  );
+
+  test("preserves all opportunity statuses and the active assignment", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOwner(t, "cclose-children");
+    const creatorId = await seedCreatorId(t, "cclose-creator");
+    const { campaignId, opportunityIds, assignmentId } = await t.run(async (ctx) => {
+      const campaignId = await ctx.db.insert("campaigns", campaignDoc(owner));
+      const opportunityIds: Id<"opportunities">[] = [];
+      for (const status of ["draft", "open", "paused", "closed"] as const) {
+        opportunityIds.push(
+          await ctx.db.insert("opportunities", {
+            ...opportunityFields,
+            campaignId,
+            companyId: owner.companyId,
+            createdBy: owner.createdBy,
+            status,
+          }),
+        );
+      }
+      const assignmentId = await ctx.db.insert("assignments", {
+        companyId: owner.companyId,
+        campaignId,
+        opportunityId: opportunityIds[1],
+        creatorId,
+        fixedFeeCents: 1500,
+        cpmRateCents: 200,
+        paymentCapCents: 3000,
+        usesAiReview: false,
+        status: "active",
+      });
+      return { campaignId, opportunityIds, assignmentId };
+    });
+    const before = await t.run(async (ctx) => ({
+      campaign: await ctx.db.get("campaigns", campaignId),
+      opportunities: await Promise.all(opportunityIds.map((id) => ctx.db.get("opportunities", id))),
+      assignment: await ctx.db.get("assignments", assignmentId),
+    }));
+
+    await t.run(async (ctx) => closeCampaign(ctx, campaignId, owner.companyId));
+
+    expect(
+      await t.run(async (ctx) => ({
+        campaign: await ctx.db.get("campaigns", campaignId),
+        opportunities: await Promise.all(
+          opportunityIds.map((id) => ctx.db.get("opportunities", id)),
+        ),
+        assignment: await ctx.db.get("assignments", assignmentId),
+      })),
+    ).toEqual({ ...before, campaign: { ...before.campaign, status: "closed" } });
+  });
+
+  test("closing an already closed campaign succeeds without further changes", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOwner(t, "cclose-repeat");
+    const campaignId = await t.run(async (ctx) => ctx.db.insert("campaigns", campaignDoc(owner)));
+    await t.run(async (ctx) => closeCampaign(ctx, campaignId, owner.companyId));
+    const closed = await t.run(async (ctx) => ctx.db.get("campaigns", campaignId));
+
+    await t.run(async (ctx) => closeCampaign(ctx, campaignId, owner.companyId));
+
+    expect(closed?.status).toBe("closed");
+    expect(await t.run(async (ctx) => ctx.db.get("campaigns", campaignId))).toEqual(closed);
+  });
+
+  test("can close an expired campaign with invalid legacy details", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOwner(t, "cclose-legacy");
+    const campaignId = await t.run(async (ctx) =>
+      ctx.db.insert(
+        "campaigns",
+        campaignDoc(owner, { title: "", budgetCents: -1, startsAt: 2000, endsAt: 1000 }),
+      ),
+    );
+    const before = await t.run(async (ctx) => ctx.db.get("campaigns", campaignId));
+
+    await t.run(async (ctx) => closeCampaign(ctx, campaignId, owner.companyId));
+
+    expect(await t.run(async (ctx) => ctx.db.get("campaigns", campaignId))).toEqual({
+      ...before,
+      status: "closed",
+    });
+  });
+
+  test.each(["missing", "foreign-open", "foreign-closed"] as const)(
+    "rejects a %s campaign before deciding whether it is already closed",
+    async (kind) => {
+      const t = convexTest(schema, modules);
+      const owner = await seedOwner(t, "cclose-owner");
+      const caller = await seedOwner(t, "cclose-caller", "org_other");
+      const campaignId = await t.run(async (ctx) => {
+        const id = await ctx.db.insert(
+          "campaigns",
+          campaignDoc(owner, { status: kind === "foreign-open" ? "open" : "closed" }),
+        );
+        if (kind === "missing") await ctx.db.delete("campaigns", id);
+        return id;
+      });
+      const before = await t.run(async (ctx) => ctx.db.get("campaigns", campaignId));
+
+      await expect(
+        t.run(async (ctx) => closeCampaign(ctx, campaignId, caller.companyId)),
+      ).rejects.toHaveProperty("data", { code: "not_found", message: "Not found", campaignId });
+
+      expect(await t.run(async (ctx) => ctx.db.get("campaigns", campaignId))).toEqual(before);
+    },
+  );
+});
+
+describe("removeCampaign", () => {
   test("removes an empty draft while preserving another campaign and its opportunity", async () => {
     const t = convexTest(schema, modules);
     const owner = await seedOwner(t, "cr-owner");

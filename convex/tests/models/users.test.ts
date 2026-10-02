@@ -6,13 +6,14 @@ import {
   getUserByWorkosId,
   deactivateUser,
   removeMembership,
+  requireCallerCreatorId,
   requireRole,
   requireUser,
   syncMembership,
   upsertUser,
 } from "../../models/users";
 import schema from "../../schema";
-import { expectApiError, seedUser, workosIdentity } from "../helpers";
+import { expectApiError, seedCreatorId, seedUser, workosIdentity } from "../helpers";
 
 const modules = import.meta.glob("../../**/*.ts");
 
@@ -394,6 +395,37 @@ describe("requireUser / requireRole", () => {
 
     expect(result.user.role).toBe("company");
     expect(result.orgId).toBe("org_acme");
+  });
+});
+
+describe("requireCallerCreatorId", () => {
+  test("returns the creator ID for a creator user", async () => {
+    const t = convexTest(schema, modules);
+    const creatorId = await seedCreatorId(t, "u30");
+
+    const result = await t.run(async (ctx) => {
+      const user = await getUserByWorkosId(ctx, "u30");
+      if (user === null) throw new Error("expected seeded user");
+      return await requireCallerCreatorId(ctx, user);
+    });
+
+    expect(result).toBe(creatorId);
+  });
+
+  test("throws not_found when the user has no creator row", async () => {
+    const t = convexTest(schema, modules);
+    const creatorId = await seedCreatorId(t, "u31");
+    await t.run(async (ctx) => await ctx.db.delete("creators", creatorId));
+
+    await expectApiError(
+      () =>
+        t.run(async (ctx) => {
+          const user = await getUserByWorkosId(ctx, "u31");
+          if (user === null) throw new Error("expected seeded user");
+          return await requireCallerCreatorId(ctx, user);
+        }),
+      "not_found",
+    );
   });
 });
 

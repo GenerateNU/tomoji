@@ -1,12 +1,12 @@
 import type { TestConvex as ConvexTest } from "convex-test";
-import type { UserIdentity } from "convex/server";
+import type { UserIdentity, WithoutSystemFields } from "convex/server";
 import type { Infer } from "convex/values";
 import { expect } from "vitest";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { ApiErrorCode } from "../lib/errors";
+import { companyContext } from "../lib/functions";
 import { getCreatorByUserId } from "../models/creators";
 import { createCampaign } from "../models/campaigns";
-import { companyContext } from "../lib/functions";
 import { createOpportunity, type OpportunityCreate } from "../models/opportunities";
 import { applyMembership, getUserByWorkosId, upsertUser } from "../models/users";
 import type { companyRole } from "../schemas/companyUsers.schema";
@@ -33,13 +33,16 @@ export async function seedOpportunityHistory(t: TestConvex, opportunityId: Id<"o
   for (const status of ["pending", "offered", "accepted"] as const) {
     const creatorId = await seedCreatorId(t, `history_${status}`);
     await t.run(async (ctx) => {
+      const opportunity = await ctx.db.get("opportunities", opportunityId);
+      if (opportunity === null) throw new Error("expected seeded opportunity");
       await ctx.db.insert("applications", {
         opportunityId,
         creatorId,
+        companyId: opportunity.companyId,
         note: "Interested in the brief",
         status,
         ...(status !== "pending"
-          ? { offerSentAt: Date.now(), offerExpiresAt: Date.now() + 172_800_000 }
+          ? { statusLastUpdatedAt: Date.now(), offerExpiresAt: Date.now() + 172_800_000 }
           : {}),
         ...(status === "accepted" ? { offerAcceptedAt: Date.now() } : {}),
       });
@@ -247,4 +250,29 @@ export async function seedAssignment(
       ...fields,
     });
   });
+}
+
+export type SeedGatedOpportunityOptions = {
+  /** Company member who owns the opportunity. Defaults to a member of `org_acme`. */
+  subject?: string;
+  orgId?: string;
+  /** Applied after creation, so states creation cannot produce (paused, closed) work too. */
+  opportunity?: Partial<WithoutSystemFields<Doc<"opportunities">>>;
+};
+
+/**
+ * Seeds an open, gated opportunity through `seedOpportunity` for application
+ * tests, and returns the owning company's ID alongside its other IDs.
+ */
+export async function seedGatedOpportunity(t: TestConvex, opts: SeedGatedOpportunityOptions = {}) {
+  const seeded = await seedOpportunity(
+    t,
+    { subject: opts.subject ?? "company_owner", orgId: opts.orgId },
+    { isGated: true, maxSlots: 10, maxApplications: 10 },
+  );
+  const patch = opts.opportunity;
+  if (patch !== undefined) {
+    await t.run(async (ctx) => await ctx.db.patch("opportunities", seeded.opportunityId, patch));
+  }
+  return { ...seeded, companyId: seeded.membership.companyId };
 }

@@ -8,6 +8,7 @@
  * @module
  */
 
+import type * as applications from "../applications.js";
 import type * as assignments from "../assignments.js";
 import type * as auth from "../auth.js";
 import type * as campaigns from "../campaigns.js";
@@ -24,6 +25,7 @@ import type * as lib_validation from "../lib/validation.js";
 import type * as migrations_2026_09_26_backfill_creator_usernames from "../migrations/2026_09_26_backfill_creator_usernames.js";
 import type * as migrations_2026_09_26_backfill_user_names from "../migrations/2026_09_26_backfill_user_names.js";
 import type * as migrations_runner from "../migrations/runner.js";
+import type * as models_applications from "../models/applications.js";
 import type * as models_assignments from "../models/assignments.js";
 import type * as models_campaigns from "../models/campaigns.js";
 import type * as models_companies from "../models/companies.js";
@@ -42,6 +44,7 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  applications: typeof applications;
   assignments: typeof assignments;
   auth: typeof auth;
   campaigns: typeof campaigns;
@@ -58,6 +61,7 @@ declare const fullApi: ApiFromModules<{
   "migrations/2026_09_26_backfill_creator_usernames": typeof migrations_2026_09_26_backfill_creator_usernames;
   "migrations/2026_09_26_backfill_user_names": typeof migrations_2026_09_26_backfill_user_names;
   "migrations/runner": typeof migrations_runner;
+  "models/applications": typeof models_applications;
   "models/assignments": typeof models_assignments;
   "models/campaigns": typeof models_campaigns;
   "models/companies": typeof models_companies;

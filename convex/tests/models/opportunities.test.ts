@@ -317,14 +317,17 @@ describe("pauseOpportunity", () => {
       const applicationId = await ctx.db.insert("applications", {
         opportunityId: owner.opportunityId,
         creatorId,
+        companyId: owner.membership.companyId,
         note: "Interested",
         status: "offered",
-        offerSentAt: Date.now(),
+        statusLastUpdatedAt: Date.now(),
         offerExpiresAt: Date.now() + 60_000,
       });
       const assignmentId = await ctx.db.insert("assignments", {
         opportunityId: owner.opportunityId,
         creatorId,
+        companyId: owner.membership.companyId,
+        campaignId: owner.campaignId,
         fixedFeeCents: 20_000,
         cpmRateCents: 700,
         paymentCapCents: 40_000,
@@ -950,6 +953,7 @@ describe("removeOpportunity", () => {
         await ctx.db.insert("applications", {
           opportunityId: owner.opportunityId,
           creatorId,
+          companyId: owner.membership.companyId,
           note: "Interested",
           status: "declined",
         }),
@@ -981,6 +985,8 @@ describe("removeOpportunity", () => {
         await ctx.db.insert("assignments", {
           opportunityId: owner.opportunityId,
           creatorId,
+          companyId: owner.membership.companyId,
+          campaignId: owner.campaignId,
           fixedFeeCents: 10_000,
           cpmRateCents: 500,
           paymentCapCents: 25_000,
@@ -1244,6 +1250,8 @@ describe("updateOpportunity", () => {
         await ctx.db.insert("assignments", {
           opportunityId: owner.opportunityId,
           creatorId,
+          companyId: owner.membership.companyId,
+          campaignId: owner.campaignId,
           fixedFeeCents: 15_000,
           cpmRateCents: 750,
           paymentCapCents: 35_000,

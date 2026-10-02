@@ -81,7 +81,15 @@ export async function inspectMediaObject(
   kind: MediaKind,
 ) {
   requireStagingKey(kind, key);
-  const object = await client.send(new HeadObjectCommand({ Bucket: config.bucket, Key: key }));
+  let object;
+  try {
+    object = await client.send(new HeadObjectCommand({ Bucket: config.bucket, Key: key }));
+  } catch (error) {
+    const status = (error as { $metadata?: { httpStatusCode?: number } } | null)?.$metadata
+      ?.httpStatusCode;
+    if (status === 404) throw apiError("invalid_state", { reason: "upload_missing" });
+    throw apiError("upstream_failure");
+  }
   const size = object.ContentLength;
   const contentType = object.ContentType;
   const etag = object.ETag;

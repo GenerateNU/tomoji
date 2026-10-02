@@ -165,6 +165,15 @@ async function requireOwnedOpportunity(
   return { opportunity, campaign };
 }
 
+/** Shared pause transition; callers must first authorize the scope and verify the opportunity is open. */
+export async function applyOpportunityPause(
+  ctx: MutationCtx,
+  opportunity: Doc<"opportunities">,
+): Promise<Doc<"opportunities">> {
+  await ctx.db.patch("opportunities", opportunity._id, { status: "paused" });
+  return { ...opportunity, status: "paused" };
+}
+
 /** Pauses an owned open opportunity without changing its existing workflow records. */
 export async function pauseOpportunity(
   ctx: MutationCtx,
@@ -178,8 +187,7 @@ export async function pauseOpportunity(
   if (campaign.status === "closed") {
     throw apiError("invalid_state", { reason: "campaign_closed" });
   }
-  await ctx.db.patch("opportunities", opportunityId, { status: "paused" });
-  return { ...opportunity, status: "paused" };
+  return await applyOpportunityPause(ctx, opportunity);
 }
 
 /** Resumes an owned paused opportunity without altering its campaign or agreed terms. */

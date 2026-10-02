@@ -12,8 +12,8 @@ import { createAssignmentFromOffer } from "./assignments";
  * @throws `not_found` if the opportunity does not exist.
  * The note is optional; a missing or blank note is left out.
  *
- * @throws `invalid_state` if the opportunity is not open or ungated, or it
- * already has `maxApplications` applications.
+ * @throws `invalid_state` if the opportunity or its campaign is not open, the
+ * opportunity is ungated, or it already has `maxApplications` applications.
  * @throws `conflict` if the creator has already applied.
  */
 export async function createApplication(
@@ -26,16 +26,11 @@ export async function createApplication(
   if (opportunity === null) {
     throw apiError("not_found", { resource: "opportunity" });
   }
-  requireOpportunityOpen(opportunity);
+  const campaign = await requireOpportunityOpen(ctx, opportunity);
   // Ungated opportunities are joined directly, without an application.
   if (!opportunity.isGated) {
     throw apiError("invalid_state", { reason: "opportunity_not_gated" });
   }
-  const campaign = await ctx.db.get("campaigns", opportunity.campaignId);
-  if (campaign === null) {
-    throw apiError("not_found", { resource: "opportunity" });
-  }
-
   // One application per creator per opportunity: blocks double-submits and
   // retries, which the non-unique index cannot prevent on its own.
   const existing = await ctx.db
@@ -69,17 +64,27 @@ export async function createApplication(
 }
 
 /**
- * Requires the opportunity to be open. While it is paused or closed, only
- * creators may act on existing offers, so applying, offering, and rejecting are
- * all refused. Pausing a campaign pauses its opportunities, so the
- * opportunity's own status is enough.
+ * Requires the opportunity and its campaign to be open. While paused or closed,
+ * only creators may act on existing offers, so applying, offering, and rejecting
+ * are all refused. Check the campaign because its opportunities pause in batches.
  *
- * @throws `invalid_state` with `opportunity_not_open`.
+ * @throws `invalid_state` with `opportunity_not_open` or `campaign_not_open`.
  */
-function requireOpportunityOpen(opportunity: Doc<"opportunities">): void {
+async function requireOpportunityOpen(
+  ctx: MutationCtx,
+  opportunity: Doc<"opportunities">,
+): Promise<Doc<"campaigns">> {
   if (opportunity.status !== "open") {
     throw apiError("invalid_state", { reason: "opportunity_not_open" });
   }
+  const campaign = await ctx.db.get("campaigns", opportunity.campaignId);
+  if (campaign === null) {
+    throw apiError("not_found", { resource: "opportunity" });
+  }
+  if (campaign.status !== "open") {
+    throw apiError("invalid_state", { reason: "campaign_not_open" });
+  }
+  return campaign;
 }
 
 /** Who is reading an application, resolved from the caller by the route. */
@@ -195,8 +200,8 @@ const HALF_HOUR_MS = 30 * 60 * 1000;
  * company-chosen expiry must already be on :00 or :30; it is refused rather
  * than rounded, like opportunity deadlines.
  *
- * @throws `invalid_state` if the application is not pending, the opportunity is
- * not open, or `offerExpiresAt` is not a future :00/:30 UTC time.
+ * @throws `invalid_state` if the application is not pending, the opportunity or
+ * its campaign is not open, or `offerExpiresAt` is not a future :00/:30 UTC time.
  */
 export async function offerApplication(
   ctx: MutationCtx,
@@ -228,7 +233,7 @@ export async function offerApplication(
  * @throws `not_found` if the application does not exist or belongs to another
  * company.
  * @throws `invalid_state` if the application is not pending or the opportunity
- * is not open.
+ * or its campaign is not open.
  */
 export async function rejectApplication(
   ctx: MutationCtx,
@@ -255,7 +260,7 @@ async function requirePendingForReview(
   if (opportunity === null) {
     throw apiError("not_found", { resource: "application" });
   }
-  requireOpportunityOpen(opportunity);
+  await requireOpportunityOpen(ctx, opportunity);
   return application;
 }
 

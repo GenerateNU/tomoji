@@ -41,6 +41,7 @@ export const companyMember = v.object({
   lastName: v.optional(v.string()),
   email: v.string(),
   profilePicture: v.optional(v.string()),
+  profilePictureMediaId: v.optional(v.id("mediaUploads")),
 });
 
 export type CompanyMember = Infer<typeof companyMember>;
@@ -81,6 +82,7 @@ export async function listCompanyUsers(
         lastName: user.lastName,
         email: user.email,
         profilePicture: user.profilePicture,
+        profilePictureMediaId: user.profilePictureMediaId,
       };
     }),
   );

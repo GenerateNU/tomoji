@@ -215,12 +215,13 @@ describe("campaigns.update", () => {
         budgetCents: 0,
       });
 
-      expect(result).toBeNull();
-      expect(await t.run(async (ctx) => await ctx.db.get("campaigns", campaignId))).toEqual({
+      const stored = await t.run(async (ctx) => ctx.db.get("campaigns", campaignId));
+      expect(stored).toEqual({
         ...before,
         title: "Revised launch",
         budgetCents: 0,
       });
+      expect(result).toStrictEqual(stored);
     },
   );
 
@@ -269,10 +270,27 @@ describe("campaigns.update", () => {
       createArgs({ endsAt: Date.now() + 2 * HOUR }),
     );
 
-    await asMember.mutation(api.campaigns.update, { campaignId, endsAt: null });
+    const result = await asMember.mutation(api.campaigns.update, { campaignId, endsAt: null });
 
     const stored = await t.run(async (ctx) => await ctx.db.get("campaigns", campaignId));
     expect(stored).not.toHaveProperty("endsAt");
+    expect(result).toStrictEqual(stored);
+  });
+
+  test("rejects updates to a closed campaign without changing it", async () => {
+    const t = convexTest(schema, modules);
+    const asMember = await seedUser(t, { subject: "cu-closed", org: { id: "org_acme" } });
+    const campaignId = await asMember.mutation(api.campaigns.create, createArgs());
+    const before = await t.run(async (ctx) => {
+      await ctx.db.patch("campaigns", campaignId, { status: "closed" });
+      return await ctx.db.get("campaigns", campaignId);
+    });
+
+    await expect(
+      asMember.mutation(api.campaigns.update, { campaignId, title: "Changed" }),
+    ).rejects.toMatchObject({ data: { code: "invalid_state", reason: "campaign_closed" } });
+
+    expect(await t.run(async (ctx) => ctx.db.get("campaigns", campaignId))).toEqual(before);
   });
 
   test("rejects a signed-out caller", async () => {

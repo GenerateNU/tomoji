@@ -1,8 +1,13 @@
 "use node";
 
-import { DeleteObjectCommand, GetObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import {
+  DeleteObjectCommand,
+  GetObjectCommand,
+  S3Client,
+  type GetObjectCommandOutput,
+} from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
-import { v } from "convex/values";
+import { ConvexError, v } from "convex/values";
 import { internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import { action, env } from "./_generated/server";
@@ -88,7 +93,15 @@ export const completeUpload = action({
     }
     // Each attempt gets a unique destination: concurrent completions cannot overwrite the winner.
     const permanentKey = `media/${upload.kind}/${crypto.randomUUID()}`;
-    await promoteMediaObject(client, config, verified, upload.kind, permanentKey);
+    try {
+      await promoteMediaObject(client, config, verified, upload.kind, permanentKey);
+    } catch (error) {
+      if (error instanceof ConvexError) throw error;
+      const status = (error as { $metadata?: { httpStatusCode?: number } } | null)?.$metadata
+        ?.httpStatusCode;
+      if (status === 412) throw apiError("invalid_state", { reason: "upload_mismatch" });
+      throw apiError("upstream_failure");
+    }
     try {
       const finished = await ctx.runMutation(internal.mediaInternal.finishUpload, {
         uploadId: upload._id,
@@ -114,9 +127,14 @@ export const getProfilePicture = action({
     await requireIdentity(ctx);
     const picture = await ctx.runQuery(internal.mediaInternal.getProfilePicture, args);
     const config = readMediaConfig(env);
-    const object = await createMediaS3Client(config).send(
-      new GetObjectCommand({ Bucket: config.bucket, Key: picture.key }),
-    );
+    let object: GetObjectCommandOutput;
+    try {
+      object = await createMediaS3Client(config).send(
+        new GetObjectCommand({ Bucket: config.bucket, Key: picture.key }),
+      );
+    } catch {
+      throw apiError("upstream_failure");
+    }
     if (
       object.ContentLength === undefined ||
       object.ContentLength < 1 ||
@@ -126,7 +144,12 @@ export const getProfilePicture = action({
     ) {
       throw apiError("invalid_state", { reason: "invalid_media_object" });
     }
-    const bytes = await object.Body.transformToByteArray();
+    let bytes: Uint8Array;
+    try {
+      bytes = await object.Body.transformToByteArray();
+    } catch {
+      throw apiError("upstream_failure");
+    }
     if (bytes.length < 1 || bytes.length > mediaLimits["profile-picture"]) {
       throw apiError("invalid_state", { reason: "invalid_media_object" });
     }

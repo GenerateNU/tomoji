@@ -6,19 +6,123 @@ import {
   S3Client,
 } from "@aws-sdk/client-s3";
 import { convexTest } from "convex-test";
-import { afterEach, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { api } from "../_generated/api";
+import { apiError } from "../lib/errors";
 import schema from "../schema";
 import {
   expectApiError,
   seedAssignment,
   seedCreatorId,
   seedOpportunity,
+  seedProfilePictureUpload,
   seedUser,
   workosIdentity,
 } from "./helpers";
 
 const modules = import.meta.glob("../**/*.ts");
+
+describe("S3 failure translation", () => {
+  beforeEach(() => {
+    vi.stubEnv("S3_MEDIA_BUCKET", "tomoji-dev-media-test");
+    vi.stubEnv("S3_MEDIA_REGION", "us-east-1");
+  });
+
+  test("a changed staging object fails completion with upload_mismatch", async () => {
+    const t = convexTest(schema, modules);
+    const { asCreator, uploadId } = await seedProfilePictureUpload(t, "media_copy_changed");
+    vi.spyOn(S3Client.prototype, "send")
+      .mockResolvedValueOnce({
+        ContentLength: 3,
+        ContentType: "image/webp",
+        ETag: '"abc"',
+      } as never)
+      .mockRejectedValueOnce(
+        Object.assign(new Error("precondition failed"), {
+          $metadata: { httpStatusCode: 412 },
+        }),
+      );
+
+    await expect(asCreator.action(api.media.completeUpload, { uploadId })).rejects.toThrow(
+      /"reason":"upload_mismatch"/,
+    );
+    const upload = await t.run((ctx) => ctx.db.get("mediaUploads", uploadId));
+    expect(upload?.status).toBe("pending");
+  });
+
+  test("an S3 copy failure is reported as upstream_failure", async () => {
+    const t = convexTest(schema, modules);
+    const { asCreator, uploadId } = await seedProfilePictureUpload(t, "media_copy_failed");
+    vi.spyOn(S3Client.prototype, "send")
+      .mockResolvedValueOnce({
+        ContentLength: 3,
+        ContentType: "image/webp",
+        ETag: '"abc"',
+      } as never)
+      .mockRejectedValueOnce(new Error("S3 unavailable"));
+
+    await expectApiError(
+      () => asCreator.action(api.media.completeUpload, { uploadId }),
+      "upstream_failure",
+    );
+    expect((await t.run((ctx) => ctx.db.get("mediaUploads", uploadId)))?.status).toBe("pending");
+  });
+
+  test("completion preserves a structured error from the copy helper", async () => {
+    const t = convexTest(schema, modules);
+    const { asCreator, uploadId } = await seedProfilePictureUpload(t, "media_copy_structured");
+    vi.spyOn(S3Client.prototype, "send")
+      .mockResolvedValueOnce({
+        ContentLength: 3,
+        ContentType: "image/webp",
+        ETag: '"abc"',
+      } as never)
+      .mockRejectedValueOnce(apiError("not_found", { resource: "media" }));
+
+    await expectApiError(
+      () => asCreator.action(api.media.completeUpload, { uploadId }),
+      "not_found",
+    );
+  });
+
+  test("a profile-picture S3 request failure is reported as upstream_failure", async () => {
+    const t = convexTest(schema, modules);
+    const { asCreator, uploadId } = await seedProfilePictureUpload(
+      t,
+      "media_get_failed",
+      "complete",
+    );
+    vi.spyOn(S3Client.prototype, "send").mockRejectedValueOnce(new Error("S3 unavailable"));
+
+    await expectApiError(
+      () => asCreator.action(api.media.getProfilePicture, { mediaId: uploadId }),
+      "upstream_failure",
+    );
+  });
+
+  test("a profile-picture body read failure is reported as upstream_failure", async () => {
+    const t = convexTest(schema, modules);
+    const { asCreator, uploadId } = await seedProfilePictureUpload(
+      t,
+      "media_body_failed",
+      "complete",
+    );
+    vi.spyOn(S3Client.prototype, "send").mockResolvedValueOnce({
+      ContentLength: 3,
+      ContentType: "image/webp",
+      Body: {
+        transformToByteArray: async () => {
+          throw new Error("connection closed");
+        },
+      },
+    } as never);
+
+    await expectApiError(
+      () => asCreator.action(api.media.getProfilePicture, { mediaId: uploadId }),
+      "upstream_failure",
+    );
+  });
+});
 
 afterEach(() => {
   vi.restoreAllMocks();

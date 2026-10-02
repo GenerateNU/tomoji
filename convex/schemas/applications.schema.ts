@@ -14,9 +14,10 @@ export const applicationStatus = v.union(
 export const applicationsTable = defineTable({
   opportunityId: v.id("opportunities"),
   creatorId: v.id("creators"),
-  note: v.string(),
+  companyId: v.id("companies"),
+  note: v.optional(v.string()), // Creators may apply with their profile alone.
   status: applicationStatus,
-  offerSentAt: v.optional(v.number()), // Unix milliseconds.
+  statusLastUpdatedAt: v.optional(v.number()), // Unix milliseconds; set on every status change.
   offerExpiresAt: v.optional(v.number()), // Unix milliseconds.
   offerAcceptedAt: v.optional(v.number()), // Unix milliseconds.
 })

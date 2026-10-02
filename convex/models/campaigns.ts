@@ -46,14 +46,17 @@ export async function listCampaigns(
   return await campaigns.order("desc").paginate(options.paginationOpts);
 }
 
-/** Updates campaign details while keeping child deadlines within its end and preserving agreed terms. */
+/** Updates and returns an editable campaign, preserving child deadlines and agreed terms. */
 export async function updateCampaign(
   ctx: MutationCtx,
   campaignId: Id<"campaigns">,
   companyId: Id<"companies">,
   fields: CampaignUpdate,
-): Promise<void> {
+): Promise<Doc<"campaigns">> {
   const campaign = await requireCampaign(ctx, campaignId, companyId);
+  if (campaign.status === "closed") {
+    throw apiError("invalid_state", { reason: "campaign_closed" });
+  }
   const patch: Partial<Pick<Doc<"campaigns">, keyof CampaignUpdate>> = {};
 
   for (const field of ["title", "objective", "product", "audience", "description"] as const) {
@@ -72,7 +75,9 @@ export async function updateCampaign(
     patch.endsAt = fields.endsAt ?? undefined;
   }
 
-  validateCampaignBudgetAndSchedule({ ...campaign, ...patch });
+  const updated = { ...campaign, ...patch };
+  if (fields.endsAt === null) delete updated.endsAt;
+  validateCampaignBudgetAndSchedule(updated);
   const endsAt = fields.endsAt;
   if (typeof endsAt === "number" && endsAt !== campaign.endsAt) {
     const opportunity = await ctx.db
@@ -86,6 +91,7 @@ export async function updateCampaign(
     }
   }
   await ctx.db.patch("campaigns", campaignId, patch);
+  return updated;
 }
 
 /** Removes only a draft with no opportunities, preserving campaigns that have been used. */

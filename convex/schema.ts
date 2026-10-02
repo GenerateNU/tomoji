@@ -6,6 +6,7 @@ import { companiesTable } from "./schemas/companies.schema";
 import { companyUsersTable } from "./schemas/companyUsers.schema";
 import { creatorsTable } from "./schemas/creators.schema";
 import { disputesTable } from "./schemas/disputes.schema";
+import { mediaUploadsTable } from "./schemas/mediaUploads.schema";
 import { opportunitiesTable } from "./schemas/opportunities.schema";
 import { postsTable } from "./schemas/posts.schema";
 import { submissionsTable } from "./schemas/submissions.schema";
@@ -23,4 +24,5 @@ export default defineSchema({
   submissions: submissionsTable,
   posts: postsTable,
   disputes: disputesTable,
+  mediaUploads: mediaUploadsTable,
 });

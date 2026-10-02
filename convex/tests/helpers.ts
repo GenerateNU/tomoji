@@ -8,11 +8,41 @@ import { companyContext } from "../lib/functions";
 import { getCreatorByUserId } from "../models/creators";
 import { createCampaign } from "../models/campaigns";
 import { createOpportunity, type OpportunityCreate } from "../models/opportunities";
-import { applyMembership, getUserByWorkosId, upsertUser } from "../models/users";
+import { finalizeMediaUpload, reserveMediaUpload } from "../models/media";
+import { applyMembership, getUserByWorkosId, requireUser, upsertUser } from "../models/users";
 import type { companyRole } from "../schemas/companyUsers.schema";
 import type schema from "../schema";
 
 export type TestConvex = ConvexTest<typeof schema>;
+
+/** Seeds an owned picture grant, optionally completing it without contacting S3. */
+export async function seedProfilePictureUpload(
+  t: TestConvex,
+  subject: string,
+  status: "pending" | "complete" = "pending",
+) {
+  const asCreator = await seedUser(t, { subject });
+  const uploadId = await asCreator.run(async (ctx) => {
+    const { user } = await requireUser(ctx);
+    const stagingKey = "staging/profile-picture/11111111-1111-4111-8111-111111111111";
+    const uploadId = await reserveMediaUpload(ctx, user, {
+      kind: "profile-picture",
+      stagingKey,
+      contentType: "image/webp",
+      grantExpiresAt: Date.now() + 15 * 60_000,
+    });
+    if (status === "complete") {
+      await finalizeMediaUpload(ctx, user, uploadId, {
+        stagingKey,
+        permanentKey: "media/profile-picture/22222222-2222-4222-8222-222222222222",
+        contentType: "image/webp",
+        sizeBytes: 3,
+      });
+    }
+    return uploadId;
+  });
+  return { asCreator, uploadId };
+}
 
 /** Reads bounded workflow fixtures so tests can assert that opportunity transitions preserve them. */
 export async function readOpportunityHistory(t: TestConvex, opportunityId: Id<"opportunities">) {

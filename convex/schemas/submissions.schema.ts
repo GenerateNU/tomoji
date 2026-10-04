@@ -1,37 +1,92 @@
 import { defineTable } from "convex/server";
-import { v } from "convex/values";
+import {
+  v,
+  type GenericId as Id,
+  type OptionalProperty,
+  type PropertyValidators,
+  type Validator,
+} from "convex/values";
 
-export const submissionStatus = v.union(
-  v.literal("pending"),
+/** The outcomes a review can record. A submission with no review is `pending`. */
+export const reviewedSubmissionStatus = v.union(
   v.literal("approved"),
   v.literal("changesRequested"),
 );
+
+export const submissionStatus = v.union(v.literal("pending"), ...reviewedSubmissionStatus.members);
 
 const submissionFields = {
   assignmentId: v.id("assignments"),
   draftUrl: v.string(),
   draftDescription: v.string(),
-  status: submissionStatus,
-  reviewNote: v.optional(v.string()),
+  // Source of truth for who completes first review
+  usesAiReview: v.boolean(),
 };
 
-// No review yet, an AI review, or an attributed human review. A human ID cannot
-// be attached to an AI review, and a recorded review always has a timestamp.
+/**
+ * One variant per outcome, since Convex can't nest a union inside an object. A
+ * change request must tell the creator what to fix, so its note is required.
+ */
+function reviewOutcomeVariants<Fields extends PropertyValidators>(fields: Fields) {
+  return [
+    v.object({ ...fields, status: v.literal("approved"), reviewNote: v.optional(v.string()) }),
+    v.object({ ...fields, status: v.literal("changesRequested"), reviewNote: v.string() }),
+  ] as const;
+}
+
+/** A validator for a reviewer ID: required in the table, optional in the read view. */
+type ReviewerIdValidator<TableName extends "companyUsers" | "users"> = Validator<
+  Id<TableName> | undefined,
+  OptionalProperty,
+  string
+>;
+
+/**
+ * Every shape a submission can take. The table and the read view
+ * (`submissionView`) are both built from this, so they can't drift apart.
+ *
+ * Each reviewer-ID validator is its own type parameter: read off a generic
+ * object instead, TypeScript falls back to the constraint and the IDs become `any`.
+ */
+export function submissionShapes<
+  ReviewedBy extends ReviewerIdValidator<"companyUsers">,
+  ReviewedByOperator extends ReviewerIdValidator<"users">,
+  Extra extends PropertyValidators,
+>(reviewedBy: ReviewedBy, reviewedByOperator: ReviewedByOperator, extraFields: Extra) {
+  const base = { ...submissionFields, ...extraFields };
+  const aiReview = {
+    reviewerType: v.literal("ai"),
+    reviewedAt: v.number(), // Unix milliseconds.
+  };
+  const companyUserReview = {
+    reviewerType: v.literal("companyUser"),
+    reviewedBy,
+    reviewedAt: v.number(), // Unix milliseconds.
+  };
+  // The review an operator replaced. Operator reviews can't be overridden themselves.
+  const overriddenReview = v.union(
+    ...reviewOutcomeVariants(aiReview),
+    ...reviewOutcomeVariants(companyUserReview),
+  );
+
+  return [
+    v.object({ ...base, status: v.literal("pending") }),
+    ...reviewOutcomeVariants({ ...base, ...aiReview }),
+    ...reviewOutcomeVariants({ ...base, ...companyUserReview }),
+    // TODO(disputes): written only by the dispute override
+    ...reviewOutcomeVariants({
+      ...base,
+      reviewerType: v.literal("operator"),
+      reviewedByOperator,
+      reviewedAt: v.number(), // Unix milliseconds.
+      overriddenReview,
+      disputeId: v.optional(v.id("disputes")),
+    }),
+  ] as const;
+}
+
 export const submissionsTable = defineTable(
-  v.union(
-    v.object({ ...submissionFields, status: v.literal("pending") }),
-    v.object({
-      ...submissionFields,
-      reviewerType: v.literal("ai"),
-      reviewedAt: v.number(), // Unix milliseconds.
-    }),
-    v.object({
-      ...submissionFields,
-      reviewerType: v.literal("companyUser"),
-      reviewedBy: v.id("companyUsers"),
-      reviewedAt: v.number(), // Unix milliseconds.
-    }),
-  ),
+  v.union(...submissionShapes(v.id("companyUsers"), v.id("users"), {})),
 )
   .index("by_assignmentId", ["assignmentId"])
   .index("by_reviewedBy", ["reviewedBy"]);

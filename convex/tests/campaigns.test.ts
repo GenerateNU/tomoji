@@ -1,8 +1,9 @@
 /// <reference types="vite/client" />
 import { convexTest } from "convex-test";
 import type { FunctionArgs } from "convex/server";
-import { describe, expect, test } from "vitest";
-import { api } from "../_generated/api";
+import { describe, expect, test, vi } from "vitest";
+import { api, internal } from "../_generated/api";
+import type { Id } from "../_generated/dataModel";
 import { getCompanyByWorkosId } from "../models/companies";
 import { getCompanyUser } from "../models/companyUsers";
 import { getUserByWorkosId, upsertUser } from "../models/users";
@@ -54,7 +55,7 @@ describe("campaigns.get", () => {
       });
       const campaignId = await asAuthor.mutation(
         api.campaigns.create,
-        createArgs({ endsAt: Date.now() + 2 * HOUR }),
+        createArgs({ endsAt: Math.floor(Date.now() / HOUR) * HOUR + 2 * HOUR }),
       );
 
       const campaign = await asTeammate.query(api.campaigns.get, { campaignId });
@@ -267,7 +268,7 @@ describe("campaigns.update", () => {
     const asMember = await seedUser(t, { subject: "cu-clear", org: { id: "org_acme" } });
     const campaignId = await asMember.mutation(
       api.campaigns.create,
-      createArgs({ endsAt: Date.now() + 2 * HOUR }),
+      createArgs({ endsAt: Math.floor(Date.now() / HOUR) * HOUR + 2 * HOUR }),
     );
 
     const result = await asMember.mutation(api.campaigns.update, { campaignId, endsAt: null });
@@ -275,6 +276,23 @@ describe("campaigns.update", () => {
     const stored = await t.run(async (ctx) => await ctx.db.get("campaigns", campaignId));
     expect(stored).not.toHaveProperty("endsAt");
     expect(result).toStrictEqual(stored);
+  });
+
+  test("rejects an off-grid end date without applying other updates", async () => {
+    const t = convexTest(schema, modules);
+    const asMember = await seedUser(t, { subject: "cu-end-time", org: { id: "org_acme" } });
+    const campaignId = await asMember.mutation(api.campaigns.create, createArgs());
+    const before = await t.run(async (ctx) => ctx.db.get("campaigns", campaignId));
+
+    await expect(
+      asMember.mutation(api.campaigns.update, {
+        campaignId,
+        title: "Changed",
+        endsAt: Math.floor(Date.now() / HOUR) * HOUR + 2 * HOUR + 1,
+      }),
+    ).rejects.toMatchObject({ data: { code: "invalid_state", reason: "invalid_end_time" } });
+
+    expect(await t.run(async (ctx) => ctx.db.get("campaigns", campaignId))).toEqual(before);
   });
 
   test("rejects updates to a closed campaign without changing it", async () => {
@@ -865,6 +883,73 @@ describe("campaigns.close", () => {
   });
 });
 
+describe("campaigns.closeExpired", () => {
+  test("does not schedule more work when there are no expired campaigns", async () => {
+    const t = convexTest(schema, modules);
+
+    expect(await t.mutation(internal.campaigns.closeExpired, {})).toBeNull();
+
+    expect(
+      await t.run(async (ctx) => ctx.db.system.query("_scheduled_functions").collect()),
+    ).toEqual([]);
+  });
+
+  test("drains a backlog and rechecks dates changed before the next batch", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_800_000_000_000);
+    const t = convexTest(schema, modules);
+    try {
+      const asOwner = await seedUser(t, { subject: "ce-owner", org: { id: "org_acme" } });
+      const campaignIds: Id<"campaigns">[] = [];
+      for (let i = 0; i < 105; i++) {
+        campaignIds.push(
+          await asOwner.mutation(
+            api.campaigns.create,
+            createArgs({ startsAt: 0, endsAt: Date.now() - HOUR / 2 }),
+          ),
+        );
+      }
+
+      expect(await t.mutation(internal.campaigns.closeExpired, {})).toBeNull();
+      const afterFirst = await t.run(async (ctx) =>
+        Promise.all(campaignIds.map((id) => ctx.db.get("campaigns", id))),
+      );
+      expect(afterFirst.filter((campaign) => campaign?.status === "closed")).toHaveLength(50);
+      expect(afterFirst.filter((campaign) => campaign?.status === "open")).toHaveLength(55);
+
+      const extendedId = campaignIds[103];
+      const clearedId = campaignIds[104];
+      await asOwner.mutation(api.campaigns.update, {
+        campaignId: extendedId,
+        endsAt: Date.now() + HOUR,
+      });
+      await asOwner.mutation(api.campaigns.update, { campaignId: clearedId, endsAt: null });
+      await t.finishAllScheduledFunctions(() => vi.runAllTimers());
+
+      const after = await t.run(async (ctx) =>
+        Promise.all(campaignIds.map((id) => ctx.db.get("campaigns", id))),
+      );
+      expect(after.filter((campaign) => campaign?.status === "closed")).toHaveLength(103);
+      expect(after[103]).toMatchObject({ status: "open", endsAt: Date.now() + HOUR });
+      expect(after[104]).toHaveProperty("status", "open");
+      expect(after[104]).not.toHaveProperty("endsAt");
+      const jobs = await t.run(async (ctx) =>
+        ctx.db.system.query("_scheduled_functions").collect(),
+      );
+      expect(jobs).toHaveLength(2);
+      expect(jobs.every((job) => job.state.kind === "success")).toBe(true);
+
+      await t.mutation(internal.campaigns.closeExpired, {});
+      expect(
+        await t.run(async (ctx) => ctx.db.system.query("_scheduled_functions").collect()),
+      ).toEqual(jobs);
+    } finally {
+      await t.finishAllScheduledFunctions(() => vi.runAllTimers());
+      vi.useRealTimers();
+    }
+  });
+});
+
 describe("campaigns.create", () => {
   test.each([
     { role: "admin", status: "draft" },
@@ -944,15 +1029,29 @@ describe("campaigns.create", () => {
     },
   );
 
-  test("persists the optional campaign end time", async () => {
+  test.each([0, 30])("persists an optional campaign end time at :%i UTC", async (minute) => {
     const t = convexTest(schema, modules);
     const asMember = await seedUser(t, { subject: "cc4", org: { id: "org_acme" } });
-    const args = createArgs({ endsAt: Date.now() + 2 * HOUR });
+    const args = createArgs({
+      endsAt: Math.floor(Date.now() / HOUR) * HOUR + 2 * HOUR + minute * 60_000,
+    });
 
     const id = await asMember.mutation(api.campaigns.create, args);
     const stored = await t.run(async (ctx) => await ctx.db.get("campaigns", id));
 
     expect(stored?.endsAt).toBe(args.endsAt);
+  });
+
+  test("rejects an off-grid end date without creating a campaign", async () => {
+    const t = convexTest(schema, modules);
+    const asMember = await seedUser(t, { subject: "cc-end-time", org: { id: "org_acme" } });
+    const args = createArgs({ endsAt: Math.floor(Date.now() / HOUR) * HOUR + 2 * HOUR + 1 });
+
+    await expect(asMember.mutation(api.campaigns.create, args)).rejects.toMatchObject({
+      data: { code: "invalid_state", reason: "invalid_end_time" },
+    });
+
+    expect(await t.run(async (ctx) => ctx.db.query("campaigns").first())).toBeNull();
   });
 
   test("rejects a fractional budget without creating a campaign", async () => {

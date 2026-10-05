@@ -3,6 +3,9 @@ import { internal } from "./_generated/api";
 
 const crons = cronJobs();
 
+// Campaign end dates and closure runs share exact :00/:30 UTC boundaries.
+crons.cron("close expired campaigns", "0,30 * * * *", internal.campaigns.closeExpired, {});
+
 // Deadlines and closure runs share exact :00/:30 UTC boundaries.
 crons.cron("close expired opportunities", "0,30 * * * *", internal.opportunities.closeExpired, {});
 

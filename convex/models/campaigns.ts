@@ -80,6 +80,10 @@ export async function updateCampaign(
   if (fields.endsAt === null) delete updated.endsAt;
   validateCampaignBudgetAndSchedule(updated);
   const endsAt = fields.endsAt;
+  // Unrelated edits preserve legacy end dates without rounding or rejecting them.
+  if (typeof endsAt === "number") {
+    validateCampaignEndTime(endsAt);
+  }
   if (typeof endsAt === "number" && endsAt !== campaign.endsAt) {
     const opportunity = await ctx.db
       .query("opportunities")
@@ -234,7 +238,7 @@ export async function closeExpiredCampaigns(ctx: MutationCtx): Promise<boolean> 
  * Creates a draft or open campaign with a trimmed, nonblank brief.
  *
  * @throws `invalid_state` for blank brief fields, an invalid initial status or budget,
- * nonfinite timestamps, or an end that is not after the start.
+ * nonfinite timestamps, an end that is not after the start, or an end off the half-hour grid.
  */
 export async function createCampaign(
   ctx: MutationCtx,
@@ -244,6 +248,7 @@ export async function createCampaign(
     throw apiError("invalid_state", { reason: "invalid_status" });
   }
   validateCampaignBudgetAndSchedule(campaign);
+  validateCampaignEndTime(campaign.endsAt);
 
   return await ctx.db.insert("campaigns", {
     ...campaign,
@@ -280,6 +285,14 @@ function validateCampaignForOpening(campaign: Doc<"campaigns">): void {
   }
   if (campaign.endsAt !== undefined && campaign.endsAt <= Date.now()) {
     throw apiError("invalid_state", { reason: "campaign_expired" });
+  }
+  validateCampaignEndTime(campaign.endsAt);
+}
+
+/** Requires supplied end dates to match the cron's exact :00/:30 UTC boundaries. */
+function validateCampaignEndTime(endsAt: number | undefined): void {
+  if (endsAt !== undefined && (!Number.isSafeInteger(endsAt) || endsAt % (30 * 60 * 1000) !== 0)) {
+    throw apiError("invalid_state", { reason: "invalid_end_time" });
   }
 }
 

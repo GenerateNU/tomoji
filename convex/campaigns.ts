@@ -49,6 +49,7 @@ export const list = companyQuery({
  * Updates the editable details of a campaign in the caller's company.
  * Open to any company member until the company-admin builder is available.
  * Omitted fields stay unchanged; `endsAt: null` removes the end date.
+ * Supplied end dates must fall on exact :00/:30 UTC boundaries.
  *
  * @throws `not_found` if the campaign is missing or belongs to another company.
  * @throws `invalid_state` if the campaign is closed, or for blank fields, an invalid budget or schedule,
@@ -82,6 +83,7 @@ export const remove = companyMutation({
 
 /**
  * Publishes a valid draft in the caller's company.
+ * Any end date must be a future :00/:30 UTC boundary.
  * Open to any company member until the company-admin builder is available.
  *
  * @throws `not_found` if the campaign is missing or belongs to another company.
@@ -121,6 +123,7 @@ export const pause = companyMutation({
 
 /**
  * Resumes a valid paused campaign without changing its opportunities or assignments.
+ * Any end date must be a future :00/:30 UTC boundary.
  * Open to any company member until the company-admin builder is available.
  *
  * @throws `not_found` if the campaign is missing or belongs to another company.
@@ -153,6 +156,7 @@ export const close = companyMutation({
 
 /**
  * Creates a draft or open campaign for the caller's company.
+ * Optional end dates must fall on exact :00/:30 UTC boundaries.
  * Open to any company member until the company-admin builder is available.
  *
  * @throws `invalid_state` for blank brief fields or an invalid budget or schedule.

@@ -787,7 +787,9 @@ describe("pauseCampaign", () => {
       otherOpportunity: await ctx.db.get("opportunities", otherOpportunityId),
     }));
 
-    expect(await t.run(async (ctx) => pauseCampaign(ctx, campaignId, owner.companyId))).toBe(false);
+    const paused = await t.run(async (ctx) => pauseCampaign(ctx, campaignId, owner.companyId));
+    expect(paused).toStrictEqual(await t.run(async (ctx) => ctx.db.get("campaigns", campaignId)));
+    expect(paused).not.toHaveProperty("isPausingOpportunities");
 
     expect(
       await t.run(async (ctx) => ({
@@ -831,9 +833,7 @@ describe("pauseCampaign", () => {
       });
       const before = await t.run(async (ctx) => ctx.db.get("campaigns", campaignId));
 
-      expect(await t.run(async (ctx) => pauseCampaign(ctx, campaignId, owner.companyId))).toBe(
-        count > 50,
-      );
+      const paused = await t.run(async (ctx) => pauseCampaign(ctx, campaignId, owner.companyId));
 
       const afterFirst = await t.run(async (ctx) => ({
         campaign: await ctx.db.get("campaigns", campaignId),
@@ -846,6 +846,7 @@ describe("pauseCampaign", () => {
         status: "paused",
         ...(count > 50 ? { isPausingOpportunities: true } : {}),
       });
+      expect(paused).toStrictEqual(afterFirst.campaign);
       expect(afterFirst.opportunities.map((opportunity) => opportunity?.status)).toEqual(
         opportunityIds.map((_, index) => (index < 50 ? "paused" : "open")),
       );
@@ -969,9 +970,9 @@ describe("continuePausingCampaignOpportunities", () => {
         return { campaignId, opportunityIds };
       });
 
-      expect(await t.run(async (ctx) => pauseCampaign(ctx, campaignId, owner.companyId))).toBe(
-        true,
-      );
+      expect(
+        await t.run(async (ctx) => pauseCampaign(ctx, campaignId, owner.companyId)),
+      ).toHaveProperty("isPausingOpportunities", true);
       const afterFirst = await t.run(async (ctx) =>
         Promise.all(opportunityIds.map((id) => ctx.db.get("opportunities", id))),
       );
@@ -1024,7 +1025,9 @@ describe("continuePausingCampaignOpportunities", () => {
       }
       return id;
     });
-    expect(await t.run(async (ctx) => pauseCampaign(ctx, campaignId, owner.companyId))).toBe(true);
+    expect(
+      await t.run(async (ctx) => pauseCampaign(ctx, campaignId, owner.companyId)),
+    ).toHaveProperty("isPausingOpportunities", true);
     await t.run(async (ctx) => closeCampaign(ctx, campaignId, owner.companyId));
 
     expect(await t.run(async (ctx) => continuePausingCampaignOpportunities(ctx, campaignId))).toBe(

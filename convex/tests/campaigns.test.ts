@@ -357,7 +357,7 @@ describe("campaigns.remove", () => {
 
       const result = await asTeammate.mutation(api.campaigns.remove, { campaignId });
 
-      expect(result).toBeNull();
+      expect(result).toBe(campaignId);
       expect(await t.run(async (ctx) => ctx.db.get("campaigns", campaignId))).toBeNull();
     },
   );
@@ -463,11 +463,12 @@ describe("campaigns.publish", () => {
 
       const result = await asTeammate.mutation(api.campaigns.publish, { campaignId });
 
-      expect(result).toBeNull();
-      expect(await t.run(async (ctx) => ctx.db.get("campaigns", campaignId))).toEqual({
+      const stored = await t.run(async (ctx) => ctx.db.get("campaigns", campaignId));
+      expect(stored).toEqual({
         ...before,
         status: "open",
       });
+      expect(result).toStrictEqual(stored);
     },
   );
 
@@ -610,8 +611,9 @@ describe("campaigns.pause", () => {
         ),
       ).toEqual(opportunityIds.map(() => "open"));
 
-      expect(await asOwner.mutation(api.campaigns.pause, { campaignId })).toBeNull();
-      expect(await t.run(async (ctx) => ctx.db.get("campaigns", campaignId))).toMatchObject({
+      const paused = await asOwner.mutation(api.campaigns.pause, { campaignId });
+      expect(paused).toStrictEqual(await t.run(async (ctx) => ctx.db.get("campaigns", campaignId)));
+      expect(paused).toMatchObject({
         status: "paused",
         isPausingOpportunities: true,
       });
@@ -652,11 +654,12 @@ describe("campaigns.pause", () => {
       expect(await t.run(async (ctx) => ctx.db.get("campaigns", campaignId))).not.toHaveProperty(
         "isPausingOpportunities",
       );
-      expect(await asOwner.mutation(api.campaigns.resume, { campaignId })).toBeNull();
-      expect(await t.run(async (ctx) => ctx.db.get("campaigns", campaignId))).toHaveProperty(
-        "status",
-        "open",
+      const resumed = await asOwner.mutation(api.campaigns.resume, { campaignId });
+      expect(resumed).toStrictEqual(
+        await t.run(async (ctx) => ctx.db.get("campaigns", campaignId)),
       );
+      expect(resumed.status).toBe("open");
+      expect(resumed).not.toHaveProperty("isPausingOpportunities");
       expect(
         await t.run(async (ctx) =>
           Promise.all(
@@ -704,9 +707,14 @@ describe("campaigns.pause", () => {
     );
   });
 
-  test.each(["admin", "member"] as const)(
-    "lets a company %s pause a teammate's open campaign",
-    async (role) => {
+  test.each([
+    { role: "admin", opportunityCount: 0 },
+    { role: "member", opportunityCount: 0 },
+    { role: "admin", opportunityCount: 50 },
+    { role: "member", opportunityCount: 50 },
+  ] as const)(
+    "lets a company $role pause a teammate's campaign with $opportunityCount opportunities without scheduling",
+    async ({ role, opportunityCount }) => {
       const t = convexTest(schema, modules);
       const asAuthor = await seedUser(t, { subject: "cpa-author", org: { id: "org_acme" } });
       const asTeammate = await seedUser(t, {
@@ -714,15 +722,33 @@ describe("campaigns.pause", () => {
         org: { id: "org_acme", role },
       });
       const campaignId = await asAuthor.mutation(api.campaigns.create, createArgs());
+      const opportunityIds: Id<"opportunities">[] = [];
+      for (let i = 0; i < opportunityCount; i++) {
+        opportunityIds.push(
+          await asAuthor.mutation(api.opportunities.create, opportunityArgs(campaignId)),
+        );
+      }
       const before = await t.run(async (ctx) => ctx.db.get("campaigns", campaignId));
 
       const result = await asTeammate.mutation(api.campaigns.pause, { campaignId });
 
-      expect(result).toBeNull();
-      expect(await t.run(async (ctx) => ctx.db.get("campaigns", campaignId))).toEqual({
+      const stored = await t.run(async (ctx) => ctx.db.get("campaigns", campaignId));
+      expect(stored).toEqual({
         ...before,
         status: "paused",
       });
+      expect(result).toStrictEqual(stored);
+      expect(result).not.toHaveProperty("isPausingOpportunities");
+      expect(
+        await t.run(async (ctx) =>
+          Promise.all(
+            opportunityIds.map(async (id) => (await ctx.db.get("opportunities", id))?.status),
+          ),
+        ),
+      ).toEqual(opportunityIds.map(() => "paused"));
+      expect(
+        await t.run(async (ctx) => ctx.db.system.query("_scheduled_functions").first()),
+      ).toBeNull();
     },
   );
 
@@ -818,11 +844,12 @@ describe("campaigns.resume", () => {
 
       const result = await asTeammate.mutation(api.campaigns.resume, { campaignId });
 
-      expect(result).toBeNull();
-      expect(await t.run(async (ctx) => ctx.db.get("campaigns", campaignId))).toEqual({
+      const stored = await t.run(async (ctx) => ctx.db.get("campaigns", campaignId));
+      expect(stored).toEqual({
         ...before,
         status: "open",
       });
+      expect(result).toStrictEqual(stored);
     },
   );
 
@@ -920,12 +947,15 @@ describe("campaigns.close", () => {
       const campaignId = await asAuthor.mutation(api.campaigns.create, createArgs());
       const before = await t.run(async (ctx) => ctx.db.get("campaigns", campaignId));
 
-      expect(await asTeammate.mutation(api.campaigns.close, { campaignId })).toBeNull();
-      expect(await asTeammate.mutation(api.campaigns.close, { campaignId })).toBeNull();
-      expect(await t.run(async (ctx) => ctx.db.get("campaigns", campaignId))).toEqual({
+      const result = await asTeammate.mutation(api.campaigns.close, { campaignId });
+      const repeated = await asTeammate.mutation(api.campaigns.close, { campaignId });
+      const stored = await t.run(async (ctx) => ctx.db.get("campaigns", campaignId));
+      expect(stored).toEqual({
         ...before,
         status: "closed",
       });
+      expect(result).toStrictEqual(stored);
+      expect(repeated).toStrictEqual(stored);
     },
   );
 

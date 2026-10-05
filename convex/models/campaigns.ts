@@ -100,7 +100,7 @@ export async function removeCampaign(
   ctx: MutationCtx,
   campaignId: Id<"campaigns">,
   companyId: Id<"companies">,
-): Promise<void> {
+): Promise<Id<"campaigns">> {
   const campaign = await requireCampaign(ctx, campaignId, companyId);
   if (campaign.status !== "draft") {
     throw apiError("invalid_state", { reason: "campaign_not_draft" });
@@ -115,6 +115,7 @@ export async function removeCampaign(
   }
 
   await ctx.db.delete("campaigns", campaignId);
+  return campaignId;
 }
 
 /** Validates a draft and opens it without changing its details or child opportunities. */
@@ -122,7 +123,7 @@ export async function publishCampaign(
   ctx: MutationCtx,
   campaignId: Id<"campaigns">,
   companyId: Id<"companies">,
-): Promise<void> {
+): Promise<Doc<"campaigns">> {
   const campaign = await requireCampaign(ctx, campaignId, companyId);
   if (campaign.status !== "draft") {
     throw apiError("invalid_state", { reason: "campaign_not_draft" });
@@ -130,14 +131,15 @@ export async function publishCampaign(
 
   validateCampaignForOpening(campaign);
   await ctx.db.patch("campaigns", campaignId, { status: "open" });
+  return { ...campaign, status: "open" };
 }
 
-/** Pauses an open campaign and the first batch of its open opportunities; true requests continuation. */
+/** Pauses an open campaign and its first batch of open opportunities, returning the updated campaign. */
 export async function pauseCampaign(
   ctx: MutationCtx,
   campaignId: Id<"campaigns">,
   companyId: Id<"companies">,
-): Promise<boolean> {
+): Promise<Doc<"campaigns">> {
   const campaign = await requireCampaign(ctx, campaignId, companyId);
   if (campaign.status !== "open") {
     throw apiError("invalid_state", { reason: "campaign_not_open" });
@@ -148,7 +150,13 @@ export async function pauseCampaign(
     status: "paused",
     isPausingOpportunities: shouldContinue ? true : undefined,
   });
-  return shouldContinue;
+  const updated: Doc<"campaigns"> = { ...campaign, status: "paused" };
+  if (shouldContinue) {
+    updated.isPausingOpportunities = true;
+  } else {
+    delete updated.isPausingOpportunities;
+  }
+  return updated;
 }
 
 /** Completes a started pause even if the campaign has since closed; stale calls are harmless. */
@@ -173,7 +181,7 @@ export async function resumeCampaign(
   ctx: MutationCtx,
   campaignId: Id<"campaigns">,
   companyId: Id<"companies">,
-): Promise<void> {
+): Promise<Doc<"campaigns">> {
   const campaign = await requireCampaign(ctx, campaignId, companyId);
   if (campaign.status !== "paused") {
     throw apiError("invalid_state", { reason: "campaign_not_paused" });
@@ -184,6 +192,7 @@ export async function resumeCampaign(
 
   validateCampaignForOpening(campaign);
   await ctx.db.patch("campaigns", campaignId, { status: "open" });
+  return { ...campaign, status: "open" };
 }
 
 /** Closes an owned campaign once, preserving its details, opportunities, and assignments. */
@@ -191,13 +200,14 @@ export async function closeCampaign(
   ctx: MutationCtx,
   campaignId: Id<"campaigns">,
   companyId: Id<"companies">,
-): Promise<void> {
+): Promise<Doc<"campaigns">> {
   const campaign = await requireCampaign(ctx, campaignId, companyId);
   if (campaign.status === "closed") {
-    return;
+    return campaign;
   }
 
   await ctx.db.patch("campaigns", campaignId, { status: "closed" });
+  return { ...campaign, status: "closed" };
 }
 
 /** Closes up to 50 expired campaigns per eligible status; true means another batch may remain. */

@@ -789,7 +789,7 @@ describe("pauseCampaign", () => {
 
     const paused = await t.run(async (ctx) => pauseCampaign(ctx, campaignId, owner.companyId));
     expect(paused).toStrictEqual(await t.run(async (ctx) => ctx.db.get("campaigns", campaignId)));
-    expect(paused).not.toHaveProperty("isPausingOpportunities");
+    expect(paused).toHaveProperty("isPausingOpportunities", false);
 
     expect(
       await t.run(async (ctx) => ({
@@ -803,7 +803,7 @@ describe("pauseCampaign", () => {
       })),
     ).toEqual({
       ...before,
-      campaign: { ...before.campaign, status: "paused" },
+      campaign: { ...before.campaign, status: "paused", isPausingOpportunities: false },
       opportunities: before.opportunities.map((opportunity) =>
         opportunity?.status === "open" ? { ...opportunity, status: "paused" } : opportunity,
       ),
@@ -844,7 +844,7 @@ describe("pauseCampaign", () => {
       expect(afterFirst.campaign).toEqual({
         ...before,
         status: "paused",
-        ...(count > 50 ? { isPausingOpportunities: true } : {}),
+        isPausingOpportunities: count > 50,
       });
       expect(paused).toStrictEqual(afterFirst.campaign);
       expect(afterFirst.opportunities.map((opportunity) => opportunity?.status)).toEqual(
@@ -867,11 +867,15 @@ describe("pauseCampaign", () => {
       expect(await t.run(async (ctx) => ctx.db.get("campaigns", campaignId))).toEqual({
         ...before,
         status: "paused",
+        isPausingOpportunities: false,
       });
 
       await t.run(async (ctx) => resumeCampaign(ctx, campaignId, owner.companyId));
 
-      expect(await t.run(async (ctx) => ctx.db.get("campaigns", campaignId))).toEqual(before);
+      expect(await t.run(async (ctx) => ctx.db.get("campaigns", campaignId))).toEqual({
+        ...before,
+        isPausingOpportunities: false,
+      });
       expect(
         await t.run(async (ctx) =>
           Promise.all(opportunityIds.map((id) => ctx.db.get("opportunities", id))),
@@ -898,6 +902,7 @@ describe("pauseCampaign", () => {
     expect(await t.run(async (ctx) => ctx.db.get("campaigns", campaignId))).toEqual({
       ...before,
       status: "paused",
+      isPausingOpportunities: false,
     });
   });
 
@@ -993,7 +998,7 @@ describe("continuePausingCampaignOpportunities", () => {
 
       const campaign = await t.run(async (ctx) => ctx.db.get("campaigns", campaignId));
       expect(campaign).toHaveProperty("status", "paused");
-      expect(campaign).not.toHaveProperty("isPausingOpportunities");
+      expect(campaign).toHaveProperty("isPausingOpportunities", false);
       expect(
         await t.run(async (ctx) =>
           Promise.all(opportunityIds.map((id) => ctx.db.get("opportunities", id))),
@@ -1036,7 +1041,7 @@ describe("continuePausingCampaignOpportunities", () => {
 
     const campaign = await t.run(async (ctx) => ctx.db.get("campaigns", campaignId));
     expect(campaign).toHaveProperty("status", "closed");
-    expect(campaign).not.toHaveProperty("isPausingOpportunities");
+    expect(campaign).toHaveProperty("isPausingOpportunities", false);
     const opportunities = await t.run(async (ctx) =>
       ctx.db
         .query("opportunities")
@@ -1047,7 +1052,7 @@ describe("continuePausingCampaignOpportunities", () => {
     expect(opportunities.every((opportunity) => opportunity.status === "paused")).toBe(true);
   });
 
-  test.each(["missing", "unflagged"] as const)(
+  test.each(["missing", "unflagged", "explicit false"] as const)(
     "does nothing for a %s campaign even when an open opportunity exists",
     async (kind) => {
       const t = convexTest(schema, modules);
@@ -1055,7 +1060,10 @@ describe("continuePausingCampaignOpportunities", () => {
       const { campaignId, opportunityId } = await t.run(async (ctx) => {
         const campaignId = await ctx.db.insert(
           "campaigns",
-          campaignDoc(owner, { status: "paused" }),
+          campaignDoc(owner, {
+            status: "paused",
+            ...(kind === "explicit false" ? { isPausingOpportunities: false } : {}),
+          }),
         );
         const opportunityId = await ctx.db.insert("opportunities", {
           ...opportunityFields,

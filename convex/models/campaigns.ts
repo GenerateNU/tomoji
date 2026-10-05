@@ -148,15 +148,9 @@ export async function pauseCampaign(
   const shouldContinue = await pauseOpenOpportunities(ctx, campaignId);
   await ctx.db.patch("campaigns", campaignId, {
     status: "paused",
-    isPausingOpportunities: shouldContinue ? true : undefined,
+    isPausingOpportunities: shouldContinue,
   });
-  const updated: Doc<"campaigns"> = { ...campaign, status: "paused" };
-  if (shouldContinue) {
-    updated.isPausingOpportunities = true;
-  } else {
-    delete updated.isPausingOpportunities;
-  }
-  return updated;
+  return { ...campaign, status: "paused", isPausingOpportunities: shouldContinue };
 }
 
 /** Completes a started pause even if the campaign has since closed; stale calls are harmless. */
@@ -171,7 +165,7 @@ export async function continuePausingCampaignOpportunities(
 
   const shouldContinue = await pauseOpenOpportunities(ctx, campaignId);
   if (!shouldContinue) {
-    await ctx.db.patch("campaigns", campaignId, { isPausingOpportunities: undefined });
+    await ctx.db.patch("campaigns", campaignId, { isPausingOpportunities: false });
   }
   return shouldContinue;
 }

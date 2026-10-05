@@ -651,15 +651,16 @@ describe("campaigns.pause", () => {
       ).rejects.toThrow("campaign_not_open");
 
       await t.finishAllScheduledFunctions(() => vi.runAllTimers());
-      expect(await t.run(async (ctx) => ctx.db.get("campaigns", campaignId))).not.toHaveProperty(
+      expect(await t.run(async (ctx) => ctx.db.get("campaigns", campaignId))).toHaveProperty(
         "isPausingOpportunities",
+        false,
       );
       const resumed = await asOwner.mutation(api.campaigns.resume, { campaignId });
       expect(resumed).toStrictEqual(
         await t.run(async (ctx) => ctx.db.get("campaigns", campaignId)),
       );
       expect(resumed.status).toBe("open");
-      expect(resumed).not.toHaveProperty("isPausingOpportunities");
+      expect(resumed).toHaveProperty("isPausingOpportunities", false);
       expect(
         await t.run(async (ctx) =>
           Promise.all(
@@ -736,9 +737,10 @@ describe("campaigns.pause", () => {
       expect(stored).toEqual({
         ...before,
         status: "paused",
+        isPausingOpportunities: false,
       });
       expect(result).toStrictEqual(stored);
-      expect(result).not.toHaveProperty("isPausingOpportunities");
+      expect(result).toHaveProperty("isPausingOpportunities", false);
       expect(
         await t.run(async (ctx) =>
           Promise.all(

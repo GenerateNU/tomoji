@@ -55,7 +55,7 @@ describe("campaigns.get", () => {
       });
       const campaignId = await asAuthor.mutation(
         api.campaigns.create,
-        createArgs({ endsAt: Date.now() + 2 * HOUR }),
+        createArgs({ endsAt: Math.floor(Date.now() / HOUR) * HOUR + 2 * HOUR }),
       );
 
       const campaign = await asTeammate.query(api.campaigns.get, { campaignId });
@@ -268,7 +268,7 @@ describe("campaigns.update", () => {
     const asMember = await seedUser(t, { subject: "cu-clear", org: { id: "org_acme" } });
     const campaignId = await asMember.mutation(
       api.campaigns.create,
-      createArgs({ endsAt: Date.now() + 2 * HOUR }),
+      createArgs({ endsAt: Math.floor(Date.now() / HOUR) * HOUR + 2 * HOUR }),
     );
 
     const result = await asMember.mutation(api.campaigns.update, { campaignId, endsAt: null });
@@ -276,6 +276,23 @@ describe("campaigns.update", () => {
     const stored = await t.run(async (ctx) => await ctx.db.get("campaigns", campaignId));
     expect(stored).not.toHaveProperty("endsAt");
     expect(result).toStrictEqual(stored);
+  });
+
+  test("rejects an off-grid end date without applying other updates", async () => {
+    const t = convexTest(schema, modules);
+    const asMember = await seedUser(t, { subject: "cu-end-time", org: { id: "org_acme" } });
+    const campaignId = await asMember.mutation(api.campaigns.create, createArgs());
+    const before = await t.run(async (ctx) => ctx.db.get("campaigns", campaignId));
+
+    await expect(
+      asMember.mutation(api.campaigns.update, {
+        campaignId,
+        title: "Changed",
+        endsAt: Math.floor(Date.now() / HOUR) * HOUR + 2 * HOUR + 1,
+      }),
+    ).rejects.toMatchObject({ data: { code: "invalid_state", reason: "invalid_end_time" } });
+
+    expect(await t.run(async (ctx) => ctx.db.get("campaigns", campaignId))).toEqual(before);
   });
 
   test("rejects updates to a closed campaign without changing it", async () => {
@@ -888,7 +905,7 @@ describe("campaigns.closeExpired", () => {
         campaignIds.push(
           await asOwner.mutation(
             api.campaigns.create,
-            createArgs({ startsAt: 0, endsAt: Date.now() - 1000 + i }),
+            createArgs({ startsAt: 0, endsAt: Date.now() - HOUR / 2 }),
           ),
         );
       }
@@ -1012,15 +1029,29 @@ describe("campaigns.create", () => {
     },
   );
 
-  test("persists the optional campaign end time", async () => {
+  test.each([0, 30])("persists an optional campaign end time at :%i UTC", async (minute) => {
     const t = convexTest(schema, modules);
     const asMember = await seedUser(t, { subject: "cc4", org: { id: "org_acme" } });
-    const args = createArgs({ endsAt: Date.now() + 2 * HOUR });
+    const args = createArgs({
+      endsAt: Math.floor(Date.now() / HOUR) * HOUR + 2 * HOUR + minute * 60_000,
+    });
 
     const id = await asMember.mutation(api.campaigns.create, args);
     const stored = await t.run(async (ctx) => await ctx.db.get("campaigns", id));
 
     expect(stored?.endsAt).toBe(args.endsAt);
+  });
+
+  test("rejects an off-grid end date without creating a campaign", async () => {
+    const t = convexTest(schema, modules);
+    const asMember = await seedUser(t, { subject: "cc-end-time", org: { id: "org_acme" } });
+    const args = createArgs({ endsAt: Math.floor(Date.now() / HOUR) * HOUR + 2 * HOUR + 1 });
+
+    await expect(asMember.mutation(api.campaigns.create, args)).rejects.toMatchObject({
+      data: { code: "invalid_state", reason: "invalid_end_time" },
+    });
+
+    expect(await t.run(async (ctx) => ctx.db.query("campaigns").first())).toBeNull();
   });
 
   test("rejects a fractional budget without creating a campaign", async () => {

@@ -28,6 +28,7 @@ import {
 const modules = import.meta.glob("../../**/*.ts");
 
 const HOUR = 60 * 60 * 1000;
+const HALF_HOUR = HOUR / 2;
 const opportunityFields = {
   title: "Product launch post",
   description: "Introduce the moisturizer to your audience.",
@@ -258,6 +259,52 @@ describe("listCampaigns", () => {
 });
 
 describe("updateCampaign", () => {
+  test.each([HOUR + 1, HOUR + 0.5])(
+    "rejects an explicitly supplied off-grid end %s, including an unchanged legacy end",
+    async (endsAt) => {
+      const t = convexTest(schema, modules);
+      const owner = await seedOwner(t, "cu-end-grid");
+      const campaignId = await t.run(async (ctx) =>
+        ctx.db.insert("campaigns", campaignDoc(owner, { startsAt: 1000, endsAt: HOUR + 1 })),
+      );
+      const before = await t.run(async (ctx) => ctx.db.get("campaigns", campaignId));
+
+      await expect(
+        t.run(async (ctx) =>
+          updateCampaign(ctx, campaignId, owner.companyId, { title: "Do not save", endsAt }),
+        ),
+      ).rejects.toMatchObject({ data: { code: "invalid_state", reason: "invalid_end_time" } });
+
+      expect(await t.run(async (ctx) => ctx.db.get("campaigns", campaignId))).toStrictEqual(before);
+    },
+  );
+
+  test("preserves a legacy end during unrelated edits, and allows correcting or clearing it", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOwner(t, "cu-legacy-end");
+    const campaignId = await t.run(async (ctx) =>
+      ctx.db.insert("campaigns", campaignDoc(owner, { startsAt: 1000.5, endsAt: HOUR + 1 })),
+    );
+
+    for (const fields of [{ title: "Updated legacy campaign" }, {}, { endsAt: undefined }]) {
+      const result = await t.run(async (ctx) =>
+        updateCampaign(ctx, campaignId, owner.companyId, fields),
+      );
+      expect(result).toMatchObject({ startsAt: 1000.5, endsAt: HOUR + 1 });
+      expect(result).toStrictEqual(await t.run(async (ctx) => ctx.db.get("campaigns", campaignId)));
+    }
+
+    const corrected = await t.run(async (ctx) =>
+      updateCampaign(ctx, campaignId, owner.companyId, { endsAt: HOUR + HALF_HOUR }),
+    );
+    expect(corrected.endsAt).toBe(HOUR + HALF_HOUR);
+    const cleared = await t.run(async (ctx) =>
+      updateCampaign(ctx, campaignId, owner.companyId, { endsAt: null }),
+    );
+    expect(cleared).not.toHaveProperty("endsAt");
+    expect(cleared).toStrictEqual(await t.run(async (ctx) => ctx.db.get("campaigns", campaignId)));
+  });
+
   test.each(["draft", "open", "paused", "closed"] as const)(
     "rejects an end before an existing %s opportunity deadline without changing either record",
     async (status) => {
@@ -448,16 +495,19 @@ describe("updateCampaign", () => {
     const t = convexTest(schema, modules);
     const owner = await seedOwner(t, "cu-dates");
     const campaignId = await t.run(async (ctx) =>
-      ctx.db.insert("campaigns", campaignDoc(owner, { startsAt: 1000, endsAt: 2000 })),
+      ctx.db.insert("campaigns", campaignDoc(owner, { startsAt: 1000, endsAt: HALF_HOUR })),
     );
 
     await t.run(async (ctx) =>
-      updateCampaign(ctx, campaignId, owner.companyId, { startsAt: 3000, endsAt: 4000 }),
+      updateCampaign(ctx, campaignId, owner.companyId, {
+        startsAt: HALF_HOUR + 1,
+        endsAt: HOUR,
+      }),
     );
 
     expect(await t.run(async (ctx) => ctx.db.get("campaigns", campaignId))).toMatchObject({
-      startsAt: 3000,
-      endsAt: 4000,
+      startsAt: HALF_HOUR + 1,
+      endsAt: HOUR,
     });
   });
 
@@ -468,17 +518,23 @@ describe("updateCampaign", () => {
       ctx.db.insert("campaigns", campaignDoc(owner, { startsAt: 1000 })),
     );
 
-    await t.run(async (ctx) => updateCampaign(ctx, campaignId, owner.companyId, { endsAt: 2000 }));
+    await t.run(async (ctx) =>
+      updateCampaign(ctx, campaignId, owner.companyId, { endsAt: HALF_HOUR }),
+    );
     expect(await t.run(async (ctx) => ctx.db.get("campaigns", campaignId))).toHaveProperty(
       "endsAt",
-      2000,
+      HALF_HOUR,
     );
 
-    for (const fields of [{ title: "Keep the end" }, { endsAt: undefined }]) {
+    for (const fields of [
+      { title: "Keep the end" },
+      { endsAt: undefined },
+      { endsAt: HALF_HOUR },
+    ]) {
       await t.run(async (ctx) => updateCampaign(ctx, campaignId, owner.companyId, fields));
       expect(await t.run(async (ctx) => ctx.db.get("campaigns", campaignId))).toHaveProperty(
         "endsAt",
-        2000,
+        HALF_HOUR,
       );
     }
 
@@ -555,6 +611,33 @@ describe("updateCampaign", () => {
 });
 
 describe("publishCampaign", () => {
+  test("rejects a future off-grid end without publishing or rounding it", async () => {
+    const now = Date.UTC(2026, 0, 1, 12);
+    const clock = vi.spyOn(Date, "now").mockReturnValue(now);
+    try {
+      const t = convexTest(schema, modules);
+      const owner = await seedOwner(t, "cp-end-grid");
+      const campaignId = await t.run(async (ctx) =>
+        ctx.db.insert(
+          "campaigns",
+          campaignDoc(owner, {
+            status: "draft",
+            startsAt: now - HOUR,
+            endsAt: now + HALF_HOUR + 1,
+          }),
+        ),
+      );
+      const before = await t.run(async (ctx) => ctx.db.get("campaigns", campaignId));
+
+      await expect(
+        t.run(async (ctx) => publishCampaign(ctx, campaignId, owner.companyId)),
+      ).rejects.toMatchObject({ data: { code: "invalid_state", reason: "invalid_end_time" } });
+      expect(await t.run(async (ctx) => ctx.db.get("campaigns", campaignId))).toStrictEqual(before);
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
   test.each(["past", "future"] as const)(
     "publishes an empty draft with a %s start and no end, changing only status",
     async (start) => {
@@ -663,7 +746,9 @@ describe("publishCampaign", () => {
   test.each([
     { fields: { budgetCents: 0.5 }, reason: "invalid_budget" },
     { fields: { startsAt: Number.NaN }, reason: "invalid_schedule" },
+    { fields: { endsAt: Number.NaN }, reason: "invalid_schedule" },
     { fields: { startsAt: 2000, endsAt: 2000 }, reason: "end_not_after_start" },
+    { fields: { startsAt: 0, endsAt: 1 }, reason: "campaign_expired" },
   ])("rejects an invalid stored draft with $reason", async ({ fields, reason }) => {
     const t = convexTest(schema, modules);
     const owner = await seedOwner(t, "cp-invalid");
@@ -680,7 +765,8 @@ describe("publishCampaign", () => {
   });
 
   test.each([-1, 0, 1])("checks expiry when endsAt is now plus %i milliseconds", async (offset) => {
-    const now = 1_800_000_000_000;
+    const endsAt = Date.UTC(2026, 0, 1, 12);
+    const now = endsAt - offset;
     const clock = vi.spyOn(Date, "now").mockReturnValue(now);
     try {
       const t = convexTest(schema, modules);
@@ -688,7 +774,7 @@ describe("publishCampaign", () => {
       const campaignId = await t.run(async (ctx) =>
         ctx.db.insert(
           "campaigns",
-          campaignDoc(owner, { status: "draft", startsAt: now - HOUR, endsAt: now + offset }),
+          campaignDoc(owner, { status: "draft", startsAt: endsAt - HOUR, endsAt }),
         ),
       );
       const before = await t.run(async (ctx) => ctx.db.get("campaigns", campaignId));
@@ -846,6 +932,33 @@ describe("pauseCampaign", () => {
 });
 
 describe("resumeCampaign", () => {
+  test("rejects a future off-grid end without resuming or rounding it", async () => {
+    const now = Date.UTC(2026, 0, 1, 12);
+    const clock = vi.spyOn(Date, "now").mockReturnValue(now);
+    try {
+      const t = convexTest(schema, modules);
+      const owner = await seedOwner(t, "cre-end-grid");
+      const campaignId = await t.run(async (ctx) =>
+        ctx.db.insert(
+          "campaigns",
+          campaignDoc(owner, {
+            status: "paused",
+            startsAt: now - HOUR,
+            endsAt: now + HALF_HOUR + 1,
+          }),
+        ),
+      );
+      const before = await t.run(async (ctx) => ctx.db.get("campaigns", campaignId));
+
+      await expect(
+        t.run(async (ctx) => resumeCampaign(ctx, campaignId, owner.companyId)),
+      ).rejects.toMatchObject({ data: { code: "invalid_state", reason: "invalid_end_time" } });
+      expect(await t.run(async (ctx) => ctx.db.get("campaigns", campaignId))).toStrictEqual(before);
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
   test.each(["past", "future"] as const)(
     "resumes a paused campaign with a %s start and no end, changing only status",
     async (start) => {
@@ -961,7 +1074,8 @@ describe("resumeCampaign", () => {
   });
 
   test.each([-1, 0, 1])("checks expiry when endsAt is now plus %i milliseconds", async (offset) => {
-    const now = 1_800_000_000_000;
+    const endsAt = Date.UTC(2026, 0, 1, 12);
+    const now = endsAt - offset;
     const clock = vi.spyOn(Date, "now").mockReturnValue(now);
     try {
       const t = convexTest(schema, modules);
@@ -969,7 +1083,7 @@ describe("resumeCampaign", () => {
       const campaignId = await t.run(async (ctx) =>
         ctx.db.insert(
           "campaigns",
-          campaignDoc(owner, { status: "paused", startsAt: now - HOUR, endsAt: now + offset }),
+          campaignDoc(owner, { status: "paused", startsAt: endsAt - HOUR, endsAt }),
         ),
       );
       const before = await t.run(async (ctx) => ctx.db.get("campaigns", campaignId));
@@ -1002,7 +1116,7 @@ describe("resumeCampaign", () => {
     await expect(
       t.run(async (ctx) => resumeCampaign(ctx, campaignId, owner.companyId)),
     ).rejects.toMatchObject({ data: { code: "invalid_state", reason: "campaign_expired" } });
-    const endsAt = Date.now() + HOUR;
+    const endsAt = Math.ceil((Date.now() + HOUR) / HALF_HOUR) * HALF_HOUR;
     await t.run(async (ctx) => updateCampaign(ctx, campaignId, owner.companyId, { endsAt }));
     await t.run(async (ctx) => resumeCampaign(ctx, campaignId, owner.companyId));
 
@@ -1458,6 +1572,24 @@ describe("removeCampaign", () => {
 });
 
 describe("createCampaign", () => {
+  test.each([
+    HOUR + 15 * 60 * 1000,
+    HOUR + 0.5,
+    Math.ceil((Number.MAX_SAFE_INTEGER + 1) / HALF_HOUR) * HALF_HOUR,
+  ])("rejects off-grid or unsafe end %s in both drafts and open campaigns", async (endsAt) => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOwner(t, "ca-end-grid");
+
+    for (const status of ["draft", "open"] as const) {
+      await expect(
+        t.run(async (ctx) =>
+          createCampaign(ctx, campaignDoc(owner, { status, startsAt: 1000, endsAt })),
+        ),
+      ).rejects.toMatchObject({ data: { code: "invalid_state", reason: "invalid_end_time" } });
+    }
+    expect(await t.run(async (ctx) => ctx.db.query("campaigns").first())).toBeNull();
+  });
+
   test.each(["title", "objective", "product", "audience", "description"] as const)(
     "rejects blank %s in drafts and open campaigns without writing",
     async (field) => {
@@ -1512,17 +1644,20 @@ describe("createCampaign", () => {
     expect(stored?.endsAt).toBeUndefined();
   });
 
-  test("persists an optional end time one millisecond after the start", async () => {
-    const t = convexTest(schema, modules);
-    const owner = await seedOwner(t, "ca2");
-    const startsAt = Date.now() + HOUR;
-    const doc = campaignDoc(owner, { startsAt, endsAt: startsAt + 1 });
+  test.each([HOUR, HOUR + HALF_HOUR])(
+    "accepts aligned end %s one millisecond after an unrestricted start",
+    async (endsAt) => {
+      const t = convexTest(schema, modules);
+      const owner = await seedOwner(t, "ca2");
+      const startsAt = endsAt - 1;
+      const doc = campaignDoc(owner, { startsAt, endsAt });
 
-    const id = await t.run(async (ctx) => await createCampaign(ctx, doc));
-    const stored = await t.run(async (ctx) => await ctx.db.get("campaigns", id));
+      const id = await t.run(async (ctx) => await createCampaign(ctx, doc));
+      const stored = await t.run(async (ctx) => await ctx.db.get("campaigns", id));
 
-    expect(stored?.endsAt).toBe(doc.endsAt);
-  });
+      expect(stored).toMatchObject({ startsAt, endsAt });
+    },
+  );
 
   test("allows a campaign to start in the past with a zero budget", async () => {
     const t = convexTest(schema, modules);
@@ -1568,24 +1703,26 @@ describe("createCampaign", () => {
   );
 
   test.each([
-    { startsAt: Number.NaN },
-    { startsAt: Number.POSITIVE_INFINITY },
-    { endsAt: Number.NaN },
-    { endsAt: Number.NEGATIVE_INFINITY },
-    { startsAt: 2, endsAt: 1 },
-  ])("rejects invalid schedule %j without writing a campaign", async (schedule) => {
-    const t = convexTest(schema, modules);
-    const owner = await seedOwner(t, "ca6");
-    const doc = campaignDoc(owner, schedule);
+    { schedule: { startsAt: Number.NaN }, reason: "invalid_schedule" },
+    { schedule: { startsAt: Number.POSITIVE_INFINITY }, reason: "invalid_schedule" },
+    { schedule: { endsAt: Number.NaN }, reason: "invalid_schedule" },
+    { schedule: { endsAt: Number.NEGATIVE_INFINITY }, reason: "invalid_schedule" },
+    { schedule: { startsAt: 2, endsAt: 1 }, reason: "end_not_after_start" },
+  ])(
+    "rejects invalid schedule $schedule with $reason without writing",
+    async ({ schedule, reason }) => {
+      const t = convexTest(schema, modules);
+      const owner = await seedOwner(t, "ca6");
+      const doc = campaignDoc(owner, schedule);
 
-    await expectApiError(
-      () => t.run(async (ctx) => await createCampaign(ctx, doc)),
-      "invalid_state",
-    );
+      await expect(t.run(async (ctx) => createCampaign(ctx, doc))).rejects.toMatchObject({
+        data: { code: "invalid_state", reason },
+      });
 
-    const campaigns = await t.run(async (ctx) => await ctx.db.query("campaigns").collect());
-    expect(campaigns).toHaveLength(0);
-  });
+      const campaigns = await t.run(async (ctx) => await ctx.db.query("campaigns").collect());
+      expect(campaigns).toHaveLength(0);
+    },
+  );
 
   test.each(["draft", "open"] as const)("creates a campaign with status %s", async (status) => {
     const t = convexTest(schema, modules);

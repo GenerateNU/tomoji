@@ -614,19 +614,23 @@ describe("acceptApplication", () => {
     });
   });
 
-  test("still accepts while the opportunity is paused", async () => {
-    const t = convexTest(schema, modules);
-    const { opportunityId, creatorId, applicationId } = await seedOffered(t);
-    await t.run(
-      async (ctx) => await ctx.db.patch("opportunities", opportunityId, { status: "paused" }),
-    );
+  test.each(["open", "paused"] as const)(
+    "still accepts while the opportunity is paused and its campaign is %s",
+    async (status) => {
+      const t = convexTest(schema, modules);
+      const { campaignId, opportunityId, creatorId, applicationId } = await seedOffered(t);
+      await t.run(async (ctx) => {
+        await ctx.db.patch("campaigns", campaignId, { status });
+        await ctx.db.patch("opportunities", opportunityId, { status: "paused" });
+      });
 
-    const accepted = await t.run(
-      async (ctx) => await acceptApplication(ctx, creatorId, applicationId),
-    );
+      const accepted = await t.run(
+        async (ctx) => await acceptApplication(ctx, creatorId, applicationId),
+      );
 
-    expect(accepted.status).toBe("accepted");
-  });
+      expect(accepted.status).toBe("accepted");
+    },
+  );
 
   test("refuses once the opportunity is closed", async () => {
     const t = convexTest(schema, modules);
@@ -750,11 +754,14 @@ describe("declineApplication", () => {
   });
 
   test.each(["paused", "closed"] as const)(
-    "still declines while the opportunity is %s",
+    "still declines while the opportunity and campaign are %s",
     async (status) => {
       const t = convexTest(schema, modules);
-      const { opportunityId, creatorId, applicationId } = await seedOffered(t);
-      await t.run(async (ctx) => await ctx.db.patch("opportunities", opportunityId, { status }));
+      const { campaignId, opportunityId, creatorId, applicationId } = await seedOffered(t);
+      await t.run(async (ctx) => {
+        await ctx.db.patch("campaigns", campaignId, { status });
+        await ctx.db.patch("opportunities", opportunityId, { status });
+      });
 
       const declined = await t.run(
         async (ctx) => await declineApplication(ctx, creatorId, applicationId),

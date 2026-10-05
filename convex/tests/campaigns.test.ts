@@ -350,7 +350,7 @@ describe("campaigns.remove", () => {
 
       const result = await asTeammate.mutation(api.campaigns.remove, { campaignId });
 
-      expect(result).toBeNull();
+      expect(result).toBe(campaignId);
       expect(await t.run(async (ctx) => ctx.db.get("campaigns", campaignId))).toBeNull();
     },
   );
@@ -456,11 +456,12 @@ describe("campaigns.publish", () => {
 
       const result = await asTeammate.mutation(api.campaigns.publish, { campaignId });
 
-      expect(result).toBeNull();
-      expect(await t.run(async (ctx) => ctx.db.get("campaigns", campaignId))).toEqual({
+      const stored = await t.run(async (ctx) => ctx.db.get("campaigns", campaignId));
+      expect(stored).toEqual({
         ...before,
         status: "open",
       });
+      expect(result).toStrictEqual(stored);
     },
   );
 
@@ -573,11 +574,12 @@ describe("campaigns.pause", () => {
 
       const result = await asTeammate.mutation(api.campaigns.pause, { campaignId });
 
-      expect(result).toBeNull();
-      expect(await t.run(async (ctx) => ctx.db.get("campaigns", campaignId))).toEqual({
+      const stored = await t.run(async (ctx) => ctx.db.get("campaigns", campaignId));
+      expect(stored).toEqual({
         ...before,
         status: "paused",
       });
+      expect(result).toStrictEqual(stored);
     },
   );
 
@@ -673,11 +675,12 @@ describe("campaigns.resume", () => {
 
       const result = await asTeammate.mutation(api.campaigns.resume, { campaignId });
 
-      expect(result).toBeNull();
-      expect(await t.run(async (ctx) => ctx.db.get("campaigns", campaignId))).toEqual({
+      const stored = await t.run(async (ctx) => ctx.db.get("campaigns", campaignId));
+      expect(stored).toEqual({
         ...before,
         status: "open",
       });
+      expect(result).toStrictEqual(stored);
     },
   );
 
@@ -775,12 +778,15 @@ describe("campaigns.close", () => {
       const campaignId = await asAuthor.mutation(api.campaigns.create, createArgs());
       const before = await t.run(async (ctx) => ctx.db.get("campaigns", campaignId));
 
-      expect(await asTeammate.mutation(api.campaigns.close, { campaignId })).toBeNull();
-      expect(await asTeammate.mutation(api.campaigns.close, { campaignId })).toBeNull();
-      expect(await t.run(async (ctx) => ctx.db.get("campaigns", campaignId))).toEqual({
+      const result = await asTeammate.mutation(api.campaigns.close, { campaignId });
+      const repeated = await asTeammate.mutation(api.campaigns.close, { campaignId });
+      const stored = await t.run(async (ctx) => ctx.db.get("campaigns", campaignId));
+      expect(stored).toEqual({
         ...before,
         status: "closed",
       });
+      expect(result).toStrictEqual(stored);
+      expect(repeated).toStrictEqual(stored);
     },
   );
 

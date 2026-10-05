@@ -1,16 +1,89 @@
+import { paginationOptsValidator, paginationResultValidator } from "convex/server";
 import { v } from "convex/values";
-import { createCampaign } from "./models/campaigns";
-import { companyMutation } from "./lib/functions";
+import {
+  campaignUpdate,
+  createCampaign,
+  listCampaigns,
+  removeCampaign,
+  requireCampaign,
+  updateCampaign,
+} from "./models/campaigns";
+import { companyMutation, companyQuery } from "./lib/functions";
 import schema from "./schema";
+import { campaignStatus } from "./schemas/campaigns.schema";
 
 /**
- * Adds a campaign for a given company.
+ * Gets a campaign in any status from the caller's company.
  *
- * @throws `invalid_state` for an invalid budget or schedule.
+ * @throws `not_found` if the campaign is missing or belongs to another company.
+ */
+export const get = companyQuery({
+  args: { campaignId: v.id("campaigns") },
+  returns: schema.doc("campaigns"),
+  handler: async (ctx, args) => {
+    return await requireCampaign(ctx, args.campaignId, ctx.membership.companyId);
+  },
+});
+
+/** Lists the caller's company campaigns newest first, optionally filtered by status. */
+export const list = companyQuery({
+  args: {
+    status: v.optional(campaignStatus),
+    paginationOpts: paginationOptsValidator,
+  },
+  returns: paginationResultValidator(schema.doc("campaigns")),
+  handler: async (ctx, args) => {
+    return await listCampaigns(ctx, ctx.membership.companyId, args);
+  },
+});
+
+/**
+ * Updates the editable details of a campaign in the caller's company.
+ * Open to any company member until the company-admin builder is available.
+ * Omitted fields stay unchanged; `endsAt: null` removes the end date.
+ *
+ * @throws `not_found` if the campaign is missing or belongs to another company.
+ * @throws `invalid_state` if the campaign is closed, or for blank fields, an invalid budget or schedule,
+ * or an end date before an existing opportunity deadline.
+ * @returns the updated campaign document.
+ */
+export const update = companyMutation({
+  args: { campaignId: v.id("campaigns"), ...campaignUpdate.fields },
+  returns: schema.doc("campaigns"),
+  handler: async (ctx, args) => {
+    const { campaignId, ...fields } = args;
+    return await updateCampaign(ctx, campaignId, ctx.membership.companyId, fields);
+  },
+});
+
+/**
+ * Removes an empty draft in the caller's company.
+ * Open to any company member until the company-admin builder is available.
+ *
+ * @throws `not_found` if the campaign is missing or belongs to another company.
+ * @throws `invalid_state` if the campaign is not a draft or has any opportunities.
+ */
+export const remove = companyMutation({
+  args: { campaignId: v.id("campaigns") },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    await removeCampaign(ctx, args.campaignId, ctx.membership.companyId);
+    return null;
+  },
+});
+
+/**
+ * Creates a draft or open campaign for the caller's company.
+ * Open to any company member until the company-admin builder is available.
+ *
+ * @throws `invalid_state` for blank brief fields or an invalid budget or schedule.
  * @returns the new campaign's id.
  */
 export const create = companyMutation({
-  args: schema.doc("campaigns").omit("_id", "_creationTime", "companyId", "createdBy").fields,
+  args: schema
+    .doc("campaigns")
+    .omit("_id", "_creationTime", "companyId", "createdBy")
+    .extend({ status: v.union(v.literal("draft"), v.literal("open")) }).fields,
   returns: v.id("campaigns"),
   handler: async (ctx, args) => {
     return await createCampaign(ctx, {

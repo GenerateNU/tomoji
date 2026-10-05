@@ -66,13 +66,13 @@ export const update = companyMutation({
  *
  * @throws `not_found` if the campaign is missing or belongs to another company.
  * @throws `invalid_state` if the campaign is not a draft or has any opportunities.
+ * @returns the removed campaign's id.
  */
 export const remove = companyMutation({
   args: { campaignId: v.id("campaigns") },
-  returns: v.null(),
+  returns: v.id("campaigns"),
   handler: async (ctx, args) => {
-    await removeCampaign(ctx, args.campaignId, ctx.membership.companyId);
-    return null;
+    return await removeCampaign(ctx, args.campaignId, ctx.membership.companyId);
   },
 });
 
@@ -82,13 +82,13 @@ export const remove = companyMutation({
  *
  * @throws `not_found` if the campaign is missing or belongs to another company.
  * @throws `invalid_state` if it is not a draft, has invalid details, or has expired.
+ * @returns the updated campaign document.
  */
 export const publish = companyMutation({
   args: { campaignId: v.id("campaigns") },
-  returns: v.null(),
+  returns: schema.doc("campaigns"),
   handler: async (ctx, args) => {
-    await publishCampaign(ctx, args.campaignId, ctx.membership.companyId);
-    return null;
+    return await publishCampaign(ctx, args.campaignId, ctx.membership.companyId);
   },
 });
 
@@ -98,13 +98,13 @@ export const publish = companyMutation({
  *
  * @throws `not_found` if the campaign is missing or belongs to another company.
  * @throws `invalid_state` if the campaign is not open.
+ * @returns the updated campaign document.
  */
 export const pause = companyMutation({
   args: { campaignId: v.id("campaigns") },
-  returns: v.null(),
+  returns: schema.doc("campaigns"),
   handler: async (ctx, args) => {
-    await pauseCampaign(ctx, args.campaignId, ctx.membership.companyId);
-    return null;
+    return await pauseCampaign(ctx, args.campaignId, ctx.membership.companyId);
   },
 });
 
@@ -114,13 +114,13 @@ export const pause = companyMutation({
  *
  * @throws `not_found` if the campaign is missing or belongs to another company.
  * @throws `invalid_state` if it is not paused, has invalid details, or has expired.
+ * @returns the updated campaign document.
  */
 export const resume = companyMutation({
   args: { campaignId: v.id("campaigns") },
-  returns: v.null(),
+  returns: schema.doc("campaigns"),
   handler: async (ctx, args) => {
-    await resumeCampaign(ctx, args.campaignId, ctx.membership.companyId);
-    return null;
+    return await resumeCampaign(ctx, args.campaignId, ctx.membership.companyId);
   },
 });
 
@@ -130,13 +130,13 @@ export const resume = companyMutation({
  * Open to any company member until the company-admin builder is available.
  *
  * @throws `not_found` if the campaign is missing or belongs to another company.
+ * @returns the closed campaign document, including for an already-closed campaign.
  */
 export const close = companyMutation({
   args: { campaignId: v.id("campaigns") },
-  returns: v.null(),
+  returns: schema.doc("campaigns"),
   handler: async (ctx, args) => {
-    await closeCampaign(ctx, args.campaignId, ctx.membership.companyId);
-    return null;
+    return await closeCampaign(ctx, args.campaignId, ctx.membership.companyId);
   },
 });
 

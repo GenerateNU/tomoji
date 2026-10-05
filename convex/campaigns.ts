@@ -2,10 +2,14 @@ import { paginationOptsValidator, paginationResultValidator } from "convex/serve
 import { v } from "convex/values";
 import {
   campaignUpdate,
+  closeCampaign,
   createCampaign,
   listCampaigns,
+  pauseCampaign,
+  publishCampaign,
   removeCampaign,
   requireCampaign,
+  resumeCampaign,
   updateCampaign,
 } from "./models/campaigns";
 import { companyMutation, companyQuery } from "./lib/functions";
@@ -62,13 +66,77 @@ export const update = companyMutation({
  *
  * @throws `not_found` if the campaign is missing or belongs to another company.
  * @throws `invalid_state` if the campaign is not a draft or has any opportunities.
+ * @returns the removed campaign's id.
  */
 export const remove = companyMutation({
   args: { campaignId: v.id("campaigns") },
-  returns: v.null(),
+  returns: v.id("campaigns"),
   handler: async (ctx, args) => {
-    await removeCampaign(ctx, args.campaignId, ctx.membership.companyId);
-    return null;
+    return await removeCampaign(ctx, args.campaignId, ctx.membership.companyId);
+  },
+});
+
+/**
+ * Publishes a valid draft in the caller's company.
+ * Open to any company member until the company-admin builder is available.
+ *
+ * @throws `not_found` if the campaign is missing or belongs to another company.
+ * @throws `invalid_state` if it is not a draft, has invalid details, or has expired.
+ * @returns the updated campaign document.
+ */
+export const publish = companyMutation({
+  args: { campaignId: v.id("campaigns") },
+  returns: schema.doc("campaigns"),
+  handler: async (ctx, args) => {
+    return await publishCampaign(ctx, args.campaignId, ctx.membership.companyId);
+  },
+});
+
+/**
+ * Pauses an open campaign in the caller's company without changing its opportunities.
+ * Open to any company member until the company-admin builder is available.
+ *
+ * @throws `not_found` if the campaign is missing or belongs to another company.
+ * @throws `invalid_state` if the campaign is not open.
+ * @returns the updated campaign document.
+ */
+export const pause = companyMutation({
+  args: { campaignId: v.id("campaigns") },
+  returns: schema.doc("campaigns"),
+  handler: async (ctx, args) => {
+    return await pauseCampaign(ctx, args.campaignId, ctx.membership.companyId);
+  },
+});
+
+/**
+ * Resumes a valid paused campaign without changing its opportunities or assignments.
+ * Open to any company member until the company-admin builder is available.
+ *
+ * @throws `not_found` if the campaign is missing or belongs to another company.
+ * @throws `invalid_state` if it is not paused, has invalid details, or has expired.
+ * @returns the updated campaign document.
+ */
+export const resume = companyMutation({
+  args: { campaignId: v.id("campaigns") },
+  returns: schema.doc("campaigns"),
+  handler: async (ctx, args) => {
+    return await resumeCampaign(ctx, args.campaignId, ctx.membership.companyId);
+  },
+});
+
+/**
+ * Closes a draft, open, or paused campaign, preserving its opportunities and assignments.
+ * An already-closed campaign is a successful no-op.
+ * Open to any company member until the company-admin builder is available.
+ *
+ * @throws `not_found` if the campaign is missing or belongs to another company.
+ * @returns the closed campaign document, including for an already-closed campaign.
+ */
+export const close = companyMutation({
+  args: { campaignId: v.id("campaigns") },
+  returns: schema.doc("campaigns"),
+  handler: async (ctx, args) => {
+    return await closeCampaign(ctx, args.campaignId, ctx.membership.companyId);
   },
 });
 

@@ -99,7 +99,7 @@ export async function removeCampaign(
   ctx: MutationCtx,
   campaignId: Id<"campaigns">,
   companyId: Id<"companies">,
-): Promise<void> {
+): Promise<Id<"campaigns">> {
   const campaign = await requireCampaign(ctx, campaignId, companyId);
   if (campaign.status !== "draft") {
     throw apiError("invalid_state", { reason: "campaign_not_draft" });
@@ -114,6 +114,69 @@ export async function removeCampaign(
   }
 
   await ctx.db.delete("campaigns", campaignId);
+  return campaignId;
+}
+
+/** Validates a draft and opens it without changing its details or child opportunities. */
+export async function publishCampaign(
+  ctx: MutationCtx,
+  campaignId: Id<"campaigns">,
+  companyId: Id<"companies">,
+): Promise<Doc<"campaigns">> {
+  const campaign = await requireCampaign(ctx, campaignId, companyId);
+  if (campaign.status !== "draft") {
+    throw apiError("invalid_state", { reason: "campaign_not_draft" });
+  }
+
+  validateCampaignForOpening(campaign);
+  await ctx.db.patch("campaigns", campaignId, { status: "open" });
+  return { ...campaign, status: "open" };
+}
+
+/** Pauses an open campaign without changing its details, opportunities, or assignments. */
+export async function pauseCampaign(
+  ctx: MutationCtx,
+  campaignId: Id<"campaigns">,
+  companyId: Id<"companies">,
+): Promise<Doc<"campaigns">> {
+  const campaign = await requireCampaign(ctx, campaignId, companyId);
+  if (campaign.status !== "open") {
+    throw apiError("invalid_state", { reason: "campaign_not_open" });
+  }
+
+  await ctx.db.patch("campaigns", campaignId, { status: "paused" });
+  return { ...campaign, status: "paused" };
+}
+
+/** Reopens a valid paused campaign, preserving individual opportunity and assignment states. */
+export async function resumeCampaign(
+  ctx: MutationCtx,
+  campaignId: Id<"campaigns">,
+  companyId: Id<"companies">,
+): Promise<Doc<"campaigns">> {
+  const campaign = await requireCampaign(ctx, campaignId, companyId);
+  if (campaign.status !== "paused") {
+    throw apiError("invalid_state", { reason: "campaign_not_paused" });
+  }
+
+  validateCampaignForOpening(campaign);
+  await ctx.db.patch("campaigns", campaignId, { status: "open" });
+  return { ...campaign, status: "open" };
+}
+
+/** Closes an owned campaign once, preserving its details, opportunities, and assignments. */
+export async function closeCampaign(
+  ctx: MutationCtx,
+  campaignId: Id<"campaigns">,
+  companyId: Id<"companies">,
+): Promise<Doc<"campaigns">> {
+  const campaign = await requireCampaign(ctx, campaignId, companyId);
+  if (campaign.status === "closed") {
+    return campaign;
+  }
+
+  await ctx.db.patch("campaigns", campaignId, { status: "closed" });
+  return { ...campaign, status: "closed" };
 }
 
 /**
@@ -139,6 +202,16 @@ export async function createCampaign(
     audience: requireNonBlank(campaign.audience, "campaign_audience"),
     description: requireNonBlank(campaign.description, "campaign_description"),
   });
+}
+
+function validateCampaignForOpening(campaign: Doc<"campaigns">): void {
+  validateCampaignBudgetAndSchedule(campaign);
+  for (const field of ["title", "objective", "product", "audience", "description"] as const) {
+    requireNonBlank(campaign[field], `campaign_${field}`);
+  }
+  if (campaign.endsAt !== undefined && campaign.endsAt <= Date.now()) {
+    throw apiError("invalid_state", { reason: "campaign_expired" });
+  }
 }
 
 function validateCampaignBudgetAndSchedule(

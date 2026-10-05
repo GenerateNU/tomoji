@@ -4,6 +4,7 @@ import { v, type Infer } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { apiError } from "../lib/errors";
+import type { Viewer } from "../lib/functions";
 import schema from "../schema";
 
 /**
@@ -125,12 +126,6 @@ async function createAssignment(
   return assignmentId;
 }
 
-/** Who is reading an assignment, resolved from the caller by the route. */
-export type AssignmentViewer =
-  | { role: "operator" }
-  | { role: "creator"; creatorId: Id<"creators"> }
-  | { role: "company"; companyId: Id<"companies"> };
-
 /**
  * Returns an assignment the viewer may see: creators see their own, company
  * users see their company's, and operators see all.
@@ -140,7 +135,7 @@ export type AssignmentViewer =
  */
 export async function requireAssignment(
   ctx: QueryCtx | MutationCtx,
-  viewer: AssignmentViewer,
+  viewer: Viewer,
   assignmentId: Id<"assignments">,
 ): Promise<Doc<"assignments">> {
   const assignment = await ctx.db.get("assignments", assignmentId);
@@ -150,7 +145,7 @@ export async function requireAssignment(
   return assignment;
 }
 
-function canViewAssignment(viewer: AssignmentViewer, assignment: Doc<"assignments">): boolean {
+function canViewAssignment(viewer: Viewer, assignment: Doc<"assignments">): boolean {
   switch (viewer.role) {
     case "operator":
       return true;
@@ -326,7 +321,7 @@ export async function cancelPendingAssignment(
 
 async function requirePendingAssignment(
   ctx: MutationCtx,
-  viewer: AssignmentViewer,
+  viewer: Viewer,
   assignmentId: Id<"assignments">,
 ): Promise<Doc<"assignments">> {
   const assignment = await requireAssignment(ctx, viewer, assignmentId);

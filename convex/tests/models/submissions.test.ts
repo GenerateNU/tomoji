@@ -3,6 +3,7 @@ import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
 import type { Doc, Id } from "../../_generated/dataModel";
 import type { ApiErrorCode } from "../../lib/errors";
+import type { Viewer } from "../../lib/functions";
 import {
   createSubmission,
   listSubmissions,
@@ -11,7 +12,6 @@ import {
   toSubmissionView,
   type SubmissionDraft,
   type SubmissionReview,
-  type SubmissionViewer,
 } from "../../models/submissions";
 import schema from "../../schema";
 import {
@@ -66,23 +66,23 @@ async function reviewAs(
   return await t.run(async (ctx) => await reviewSubmission(ctx, membership, submissionId, review));
 }
 
-const creatorViewer = (fixture: AssignmentFixture): SubmissionViewer => ({
+const creatorViewer = (fixture: AssignmentFixture): Viewer => ({
   role: "creator",
   creatorId: fixture.creatorId,
 });
-const companyViewer = (fixture: AssignmentFixture): SubmissionViewer => ({
+const companyViewer = (fixture: AssignmentFixture): Viewer => ({
   role: "company",
   companyId: fixture.membership.companyId,
 });
-const operatorViewer: SubmissionViewer = { role: "operator" };
+const operatorViewer: Viewer = { role: "operator" };
 
-async function getAs(t: TestConvex, viewer: SubmissionViewer, submissionId: Id<"submissions">) {
+async function getAs(t: TestConvex, viewer: Viewer, submissionId: Id<"submissions">) {
   return await t.run(async (ctx) => await requireSubmission(ctx, viewer, submissionId));
 }
 
 async function listAs(
   t: TestConvex,
-  viewer: SubmissionViewer,
+  viewer: Viewer,
   assignmentId: Id<"assignments">,
   paginationOpts = firstPage,
 ) {
@@ -516,8 +516,8 @@ describe("toSubmissionView", () => {
     ...draft,
     usesAiReview: false,
   };
-  const creator: SubmissionViewer = { role: "creator", creatorId: "creators|1" as Id<"creators"> };
-  const company: SubmissionViewer = {
+  const creator: Viewer = { role: "creator", creatorId: "creators|1" as Id<"creators"> };
+  const company: Viewer = {
     role: "company",
     companyId: "companies|1" as Id<"companies">,
   };

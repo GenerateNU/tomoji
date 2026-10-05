@@ -3,9 +3,10 @@ import { v, type Infer } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { apiError } from "../lib/errors";
+import type { Viewer } from "../lib/functions";
 import { requireNonBlank } from "../lib/validation";
 import { submissionShapes } from "../schemas/submissions.schema";
-import { requireAssignment, type AssignmentViewer } from "./assignments";
+import { requireAssignment } from "./assignments";
 
 /** The creator-supplied fields of a new submission. */
 export const submissionDraft = v.object({
@@ -40,9 +41,6 @@ export const submissionView = v.union(
   }),
 );
 export type SubmissionView = Infer<typeof submissionView>;
-
-/** Who is reading or acting on submissions. Access follows the assignment's. */
-export type SubmissionViewer = AssignmentViewer;
 
 // Limits on free text after trimming. `.length` counts UTF-16 units, so an emoji counts as two.
 const MAX_LENGTH = {
@@ -97,7 +95,7 @@ function requireDraftUrl(value: string): string {
  */
 async function requireSubmissionAccess(
   ctx: QueryCtx | MutationCtx,
-  viewer: SubmissionViewer,
+  viewer: Viewer,
   submissionId: Id<"submissions">,
 ): Promise<{ submission: Doc<"submissions">; assignment: Doc<"assignments"> }> {
   const submission = await ctx.db.get("submissions", submissionId);
@@ -116,7 +114,7 @@ function isClosedWithoutReview(
 
 /** Company users and operators get the stored row; creators get it without reviewer IDs. */
 export function toSubmissionView(
-  viewer: SubmissionViewer,
+  viewer: Viewer,
   submission: Doc<"submissions">,
   closedWithoutReview: boolean,
 ): SubmissionView {
@@ -264,20 +262,23 @@ export async function reviewSubmission(
   return { ...submission, ...patch };
 }
 
-/** One submission, as the viewer may see it. */
+/** One submission, as the viewer may see it. Access follows the assignment's. */
 export async function requireSubmission(
   ctx: QueryCtx,
-  viewer: SubmissionViewer,
+  viewer: Viewer,
   submissionId: Id<"submissions">,
 ): Promise<SubmissionView> {
   const { submission, assignment } = await requireSubmissionAccess(ctx, viewer, submissionId);
   return toSubmissionView(viewer, submission, isClosedWithoutReview(submission, assignment));
 }
 
-/** One page of an assignment's submissions, newest first, as the viewer may see them. */
+/**
+ * One page of an assignment's submissions, newest first, as the viewer may see
+ * them. Access follows the assignment's.
+ */
 export async function listSubmissions(
   ctx: QueryCtx,
-  viewer: SubmissionViewer,
+  viewer: Viewer,
   assignmentId: Id<"assignments">,
   paginationOpts: PaginationOptions,
 ): Promise<PaginationResult<SubmissionView>> {

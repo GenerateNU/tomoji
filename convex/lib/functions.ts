@@ -1,7 +1,8 @@
 import { customCtx, customMutation, customQuery } from "convex-helpers/server/customFunctions";
 import { mutation, query } from "../_generated/server";
+import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
-import { requireRole, requireUser } from "../models/users";
+import { requireCallerCreatorId, requireRole, requireUser } from "../models/users";
 import { apiError } from "./errors";
 import { requireMembership } from "../models/companyUsers";
 
@@ -38,6 +39,34 @@ export async function creatorContext(ctx: Ctx) {
 export async function operatorContext(ctx: Ctx) {
   const { identity, user } = await requireRole(ctx, "operator");
   return { identity, user };
+}
+
+/** Who is reading a resource, resolved from the caller's account type. */
+export type Viewer =
+  | { role: "operator" }
+  | { role: "creator"; creatorId: Id<"creators"> }
+  | { role: "company"; companyId: Id<"companies"> };
+
+/**
+ * Resolves who the caller is for access checks on a resource.
+ *
+ * @throws `not_found` {resource: "creator"} if a creator has no creator row.
+ * @throws `forbidden` or `misconfigured` if a company user's token has no valid
+ * organization.
+ * @throws `not_found` if a company user isn't a member of the token's org.
+ */
+export async function resolveViewer(ctx: Ctx, user: Doc<"users">): Promise<Viewer> {
+  switch (user.role) {
+    case "operator":
+      return { role: "operator" };
+    case "creator":
+      return { role: "creator", creatorId: await requireCallerCreatorId(ctx, user) };
+    case "company": {
+      // Proves membership in the token's org, not just the account type.
+      const { membership } = await companyContext(ctx);
+      return { role: "company", companyId: membership.companyId };
+    }
+  }
 }
 
 export const authedQuery = customQuery(query, customCtx(authedContext));

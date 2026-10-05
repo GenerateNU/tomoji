@@ -1,11 +1,23 @@
 /// <reference types="vite/client" />
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
-import { companyContext, creatorContext, operatorContext } from "../../lib/functions";
+import {
+  authedContext,
+  companyContext,
+  creatorContext,
+  operatorContext,
+  resolveViewer,
+} from "../../lib/functions";
 import { getCompanyByWorkosId } from "../../models/companies";
 import { getUserByWorkosId, upsertUser } from "../../models/users";
 import schema from "../../schema";
-import { expectApiError, seedUser, workosIdentity } from "../helpers";
+import {
+  expectApiError,
+  seedCreatorId,
+  seedUser,
+  seedWrongOrgCaller,
+  workosIdentity,
+} from "../helpers";
 
 const modules = import.meta.glob("../../**/*.ts");
 
@@ -78,7 +90,11 @@ describe("companyContext", () => {
   test("rejects an org whose company row has not synced", async () => {
     const t = convexTest(schema, modules);
     await t.run(async (ctx) => {
-      await upsertUser(ctx, { workosId: "u10", email: "u10@example.com", firstName: "Test" });
+      await upsertUser(ctx, {
+        workosId: "u10",
+        email: "u10@example.com",
+        firstName: "Test",
+      });
       const user = await getUserByWorkosId(ctx, "u10");
       await ctx.db.patch("users", user!._id, { role: "company" });
     });
@@ -137,11 +153,69 @@ describe("operatorContext", () => {
 
   test("rejects a deactivated operator", async () => {
     const t = convexTest(schema, modules);
-    const as = await signedIn(t, "u8", { promoteTo: "operator", deactivate: true });
+    const as = await signedIn(t, "u8", {
+      promoteTo: "operator",
+      deactivate: true,
+    });
 
     await expectApiError(
       () => as.run(async (ctx) => await operatorContext(ctx)),
       "account_deactivated",
+    );
+  });
+});
+
+describe("resolveViewer", () => {
+  test("resolves an operator to the operator role", async () => {
+    const t = convexTest(schema, modules);
+    const as = await signedIn(t, "v1", { promoteTo: "operator" });
+
+    const viewer = await as.run(async (ctx) => resolveViewer(ctx, (await authedContext(ctx)).user));
+
+    expect(viewer).toEqual({ role: "operator" });
+  });
+
+  test("resolves a creator to their creator ID", async () => {
+    const t = convexTest(schema, modules);
+    const creatorId = await seedCreatorId(t, "v2");
+    const as = t.withIdentity(workosIdentity({ subject: "v2" }));
+
+    const viewer = await as.run(async (ctx) => resolveViewer(ctx, (await authedContext(ctx)).user));
+
+    expect(viewer).toEqual({ role: "creator", creatorId });
+  });
+
+  test("resolves a company user to the company of their membership", async () => {
+    const t = convexTest(schema, modules);
+    const as = await signedIn(t, "v3", { orgId: "org_acme" });
+    const company = await t.run(async (ctx) => await getCompanyByWorkosId(ctx, "org_acme"));
+
+    const viewer = await as.run(async (ctx) => resolveViewer(ctx, (await authedContext(ctx)).user));
+
+    expect(viewer).toEqual({ role: "company", companyId: company!._id });
+  });
+
+  test("rejects a creator whose creator row is missing", async () => {
+    const t = convexTest(schema, modules);
+    const creatorId = await seedCreatorId(t, "v4");
+    await t.run(async (ctx) => {
+      await ctx.db.delete("creators", creatorId);
+    });
+    const as = t.withIdentity(workosIdentity({ subject: "v4" }));
+
+    await expectApiError(
+      () => as.run(async (ctx) => resolveViewer(ctx, (await authedContext(ctx)).user)),
+      "not_found",
+    );
+  });
+
+  test("rejects a company user whose token org is not one they belong to", async () => {
+    const t = convexTest(schema, modules);
+    const asWrongOrg = await seedWrongOrgCaller(t);
+
+    await expectApiError(
+      () => asWrongOrg.run(async (ctx) => resolveViewer(ctx, (await authedContext(ctx)).user)),
+      "forbidden",
     );
   });
 });

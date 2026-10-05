@@ -3,6 +3,7 @@ import type { Infer } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { apiError } from "../lib/errors";
+import type { Viewer } from "../lib/functions";
 import type { applicationStatus } from "../schemas/applications.schema";
 import { createAssignmentFromOffer } from "./assignments";
 
@@ -82,12 +83,6 @@ function requireOpportunityOpen(opportunity: Doc<"opportunities">): void {
   }
 }
 
-/** Who is reading an application, resolved from the caller by the route. */
-export type ApplicationViewer =
-  | { role: "operator" }
-  | { role: "creator"; creatorId: Id<"creators"> }
-  | { role: "company"; companyId: Id<"companies"> };
-
 /**
  * Returns an application the viewer may see: creators see their own, company
  * users see applications to their company's opportunities, and operators see
@@ -98,7 +93,7 @@ export type ApplicationViewer =
  */
 export async function requireApplication(
   ctx: QueryCtx | MutationCtx,
-  viewer: ApplicationViewer,
+  viewer: Viewer,
   applicationId: Id<"applications">,
 ): Promise<Doc<"applications">> {
   const application = await ctx.db.get("applications", applicationId);
@@ -108,7 +103,7 @@ export async function requireApplication(
   return application;
 }
 
-function canViewApplication(viewer: ApplicationViewer, application: Doc<"applications">): boolean {
+function canViewApplication(viewer: Viewer, application: Doc<"applications">): boolean {
   switch (viewer.role) {
     case "operator":
       return true;

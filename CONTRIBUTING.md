@@ -87,28 +87,29 @@ before step 4, you can't finish setup without it.
 > `just bd` is a file watcher that pushes changes up and streams logs back. Use
 > `just dashboard` to browse data and read logs.
 
-## Step 4 — Give Convex the WorkOS values
+## Step 4 — Give Convex the WorkOS and S3 settings
 
-Paste the secret from step 3 into `.env.local` as `WORKOS_WEBHOOK_SECRET`, then:
+Paste the secret from step 3 into `.env.local` as `WORKOS_WEBHOOK_SECRET`.
+Ask a TL for the QA/dev bucket name and region, then fill in `S3_MEDIA_BUCKET`
+and `S3_MEDIA_REGION` in `.env.local`. Existing contributors must add these two
+entries too. Then run:
 
 ```bash
 just convex-env
 ```
 
 Convex reads `WORKOS_CLIENT_ID`, `WORKOS_API_KEY`, and `WORKOS_WEBHOOK_SECRET` from the
-deployment rather than `.env.local`, and this copies all three across.
+deployment rather than `.env.local`, and this copies all three across along with
+`S3_MEDIA_BUCKET` and `S3_MEDIA_REGION`.
 
 The S3 media foundation also requires a bucket and region on **your personal Convex dev
 deployment**. This is a one-time setup for new and existing contributors; pulling the PR
-does not copy deployment variables to your account. Run these after `just convex-env`:
+does not copy deployment variables to your account. `just convex-env` handles all
+five settings in one command.
 
-```bash
-bunx convex env set S3_MEDIA_BUCKET tomoji-dev-media-478867930449
-bunx convex env set S3_MEDIA_REGION us-east-1
-```
-
-These are server-side Convex settings, so do not add them to `.env.local` or prefix them
-with `NEXT_PUBLIC_`. See [S3 media foundation](docs/S3.md) for production/preview setup
+These are server-side Convex settings. `.env.local` supplies the setup command,
+but the backend reads the copied deployment values. Do not prefix them with
+`NEXT_PUBLIC_`. See [S3 media foundation](docs/S3.md) for production/preview setup
 and the separate credentials and browser-upload prerequisites.
 
 Restart `just bd` and it should print `Convex functions ready!`.

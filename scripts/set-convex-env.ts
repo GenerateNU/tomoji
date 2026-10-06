@@ -1,16 +1,19 @@
 /**
- * Copies the WorkOS values Convex needs from .env.local onto the Convex
+ * Copies the WorkOS and S3 settings Convex needs from .env.local onto the Convex
  * deployment.
  *
  * Convex reads these server-side, not from .env.local:
  *   WORKOS_CLIENT_ID
  *   WORKOS_API_KEY
+ *   WORKOS_WEBHOOK_SECRET
+ *   S3_MEDIA_BUCKET
+ *   S3_MEDIA_REGION
  */
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 
 const ENV_FILE = ".env.local";
-const KEYS = ["WORKOS_CLIENT_ID", "WORKOS_API_KEY"] as const;
+const KEYS = ["WORKOS_CLIENT_ID", "WORKOS_API_KEY", "S3_MEDIA_BUCKET", "S3_MEDIA_REGION"] as const;
 
 if (!existsSync(ENV_FILE)) {
   console.error(`${ENV_FILE} not found. Run \`just setup\` first.`);

@@ -2,6 +2,7 @@
 import { convexTest } from "convex-test";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { api, internal } from "../_generated/api";
+import { companyContext } from "../lib/functions";
 import { deactivateUser } from "../models/users";
 import schema from "../schema";
 import {
@@ -304,6 +305,164 @@ describe("assignments.cancel", () => {
       () => asWrongOrg.mutation(api.assignments.cancel, { assignmentId }),
       "forbidden",
     );
+  });
+});
+
+describe("assignments.markProductAccessDelivered", () => {
+  test.each(["admin", "member"] as const)(
+    "lets a company %s mark a teammate's assignment with the caller's audit identity",
+    async (role) => {
+      const t = convexTest(schema, modules);
+      const { assignmentId } = await seedDeal(t);
+      const asTeammate = await seedUser(t, {
+        subject: "delivery-teammate",
+        org: { id: "org_acme", role },
+      });
+      const { membership } = await asTeammate.run(async (ctx) => await companyContext(ctx));
+      const before = await t.run(async (ctx) => await ctx.db.get("assignments", assignmentId));
+
+      const result = await asTeammate.mutation(api.assignments.markProductAccessDelivered, {
+        assignmentIds: [assignmentId],
+      });
+
+      const stored = await t.run(async (ctx) => await ctx.db.get("assignments", assignmentId));
+      expect(stored).toStrictEqual({
+        ...before,
+        productAccessDeliveredAt: Date.now(),
+        productAccessDeliveredBy: membership._id,
+      });
+      expect(result).toStrictEqual([stored]);
+    },
+  );
+
+  test.each([
+    { caller: "signed-out", code: "not_authenticated" },
+    { caller: "creator", code: "forbidden" },
+    { caller: "operator", code: "forbidden" },
+    { caller: "wrong-org", code: "forbidden" },
+    { caller: "deactivated", code: "account_deactivated" },
+    { caller: "deleted-membership", code: "forbidden" },
+  ] as const)(
+    "rejects a $caller caller without changing the assignment",
+    async ({ caller, code }) => {
+      const t = convexTest(schema, modules);
+      const { owner, asCreator, assignmentId } = await seedDeal(t);
+      const before = await t.run(async (ctx) => await ctx.db.get("assignments", assignmentId));
+      let asCaller = owner.asCompany;
+      switch (caller) {
+        case "signed-out":
+          asCaller = t;
+          break;
+        case "creator":
+          asCaller = asCreator;
+          break;
+        case "operator":
+          asCaller = await seedOperator(t, "operator");
+          break;
+        case "wrong-org":
+          asCaller = await seedWrongOrgCaller(t);
+          break;
+        case "deactivated":
+          await t.run(async (ctx) => await deactivateUser(ctx, "owner"));
+          break;
+        case "deleted-membership":
+          await t.run(async (ctx) => await ctx.db.delete("companyUsers", owner.membership._id));
+          break;
+      }
+
+      await expectApiError(
+        () =>
+          asCaller.mutation(api.assignments.markProductAccessDelivered, {
+            assignmentIds: [assignmentId],
+          }),
+        code,
+      );
+
+      expect(
+        await t.run(async (ctx) => await ctx.db.get("assignments", assignmentId)),
+      ).toStrictEqual(before);
+    },
+  );
+
+  test.each(["companyId", "productAccessDeliveredBy", "productAccessDeliveredAt"] as const)(
+    "rejects a client-supplied %s without marking delivery",
+    async (field) => {
+      const t = convexTest(schema, modules);
+      const { owner, assignmentId } = await seedDeal(t);
+      const before = await t.run(async (ctx) => await ctx.db.get("assignments", assignmentId));
+      const forbiddenFields = {
+        companyId: owner.membership.companyId,
+        productAccessDeliveredBy: owner.membership._id,
+        productAccessDeliveredAt: Date.now() - 60_000,
+      };
+      const args = { assignmentIds: [assignmentId], [field]: forbiddenFields[field] };
+
+      await expect(
+        owner.asCompany.mutation(api.assignments.markProductAccessDelivered, args),
+      ).rejects.toThrow(`Unexpected field \`${field}\``);
+
+      expect(
+        await t.run(async (ctx) => await ctx.db.get("assignments", assignmentId)),
+      ).toStrictEqual(before);
+    },
+  );
+
+  test("conceals a foreign assignment and leaves the entire batch unchanged", async () => {
+    const t = convexTest(schema, modules);
+    const { owner, creatorId, assignmentId } = await seedDeal(t);
+    const other = await seedOpportunity(t, { subject: "other", orgId: "org_other" });
+    const foreignId = await seedAssignment(t, { opportunityId: other.opportunityId, creatorId });
+    const assignmentIds = [assignmentId, foreignId];
+    const before = await t.run(async (ctx) =>
+      Promise.all(assignmentIds.map((id) => ctx.db.get("assignments", id))),
+    );
+
+    await expectApiError(
+      () => owner.asCompany.mutation(api.assignments.markProductAccessDelivered, { assignmentIds }),
+      "not_found",
+    );
+
+    expect(
+      await t.run(async (ctx) =>
+        Promise.all(assignmentIds.map((id) => ctx.db.get("assignments", id))),
+      ),
+    ).toStrictEqual(before);
+  });
+
+  test("returns bulk results in deduplicated order and preserves the original delivery on retry", async () => {
+    const t = convexTest(schema, modules);
+    const { owner, assignmentId } = await seedDeal(t);
+    const secondCreatorId = await seedCreatorId(t, "second-creator");
+    const secondId = await seedAssignment(t, {
+      opportunityId: owner.opportunityId,
+      creatorId: secondCreatorId,
+    });
+    const assignmentIds = [secondId, assignmentId, secondId];
+
+    const result = await owner.asCompany.mutation(api.assignments.markProductAccessDelivered, {
+      assignmentIds,
+    });
+
+    expect(result.map((assignment) => assignment._id)).toEqual([secondId, assignmentId]);
+    for (const assignment of result) {
+      expect(assignment).toMatchObject({
+        productAccessDeliveredAt: Date.now(),
+        productAccessDeliveredBy: owner.membership._id,
+      });
+    }
+    const asTeammate = await seedUser(t, { subject: "retry-teammate", org: { id: "org_acme" } });
+    vi.setSystemTime(Date.now() + 60_000);
+
+    const retried = await asTeammate.mutation(api.assignments.markProductAccessDelivered, {
+      assignmentIds,
+    });
+
+    expect(retried).toStrictEqual(result);
+    expect(
+      await t.run(async (ctx) =>
+        Promise.all([secondId, assignmentId].map((id) => ctx.db.get("assignments", id))),
+      ),
+    ).toStrictEqual(result);
   });
 });
 

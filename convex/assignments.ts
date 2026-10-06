@@ -20,6 +20,7 @@ import {
   declineAssignmentTerms,
   listAssignments,
   listCreatorAssignments,
+  markAssignmentProductAccessDelivered,
   requireAssignment,
   type AssignmentViewer,
 } from "./models/assignments";
@@ -134,6 +135,24 @@ export const cancel = companyMutation({
   returns: assignment,
   handler: async (ctx, args) => {
     return await cancelPendingAssignment(ctx, ctx.membership.companyId, args.assignmentId);
+  },
+});
+
+/**
+ * Marks product access delivered for 1–100 assignment IDs in the caller's company.
+ * Open to any company member. The server records the delivery time and actor;
+ * repeated confirmations preserve the original delivery details.
+ *
+ * @throws `not_found` if any assignment is missing or belongs to another company.
+ * @throws `invalid_state` for an invalid batch size or a new confirmation on a
+ * cancelled assignment. A rejected batch leaves every assignment unchanged.
+ * @returns the updated assignments once each, in first-occurrence input order.
+ */
+export const markProductAccessDelivered = companyMutation({
+  args: { assignmentIds: v.array(v.id("assignments")) },
+  returns: v.array(assignment),
+  handler: async (ctx, args) => {
+    return await markAssignmentProductAccessDelivered(ctx, ctx.membership, args.assignmentIds);
   },
 });
 

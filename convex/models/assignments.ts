@@ -161,6 +161,48 @@ function canViewAssignment(viewer: AssignmentViewer, assignment: Doc<"assignment
   }
 }
 
+/**
+ * Records product access delivery for the authenticated member's assignments.
+ * Validates the entire batch before writing. Repeated IDs appear once in the
+ * result, in first-occurrence order; existing delivery details stay unchanged.
+ *
+ * @throws `invalid_state` for fewer than 1 or more than 100 input IDs, or a new
+ * delivery confirmation on a cancelled assignment.
+ * @throws `not_found` if any assignment is missing or belongs to another company.
+ */
+export async function markAssignmentProductAccessDelivered(
+  ctx: MutationCtx,
+  membership: Doc<"companyUsers">,
+  assignmentIds: Id<"assignments">[],
+): Promise<Doc<"assignments">[]> {
+  if (assignmentIds.length === 0 || assignmentIds.length > 100) {
+    throw apiError("invalid_state", { reason: "invalid_batch_size" });
+  }
+
+  const assignments = await Promise.all(
+    [...new Set(assignmentIds)].map((assignmentId) =>
+      requireAssignment(ctx, { role: "company", companyId: membership.companyId }, assignmentId),
+    ),
+  );
+  for (const assignment of assignments) {
+    if (assignment.productAccessDeliveredAt === undefined && assignment.status === "cancelled") {
+      throw apiError("invalid_state", { reason: "assignment_cancelled" });
+    }
+  }
+
+  const delivery = {
+    productAccessDeliveredAt: Date.now(),
+    productAccessDeliveredBy: membership._id,
+  };
+  return await Promise.all(
+    assignments.map(async (assignment) => {
+      if (assignment.productAccessDeliveredAt !== undefined) return assignment;
+      await ctx.db.patch("assignments", assignment._id, delivery);
+      return { ...assignment, ...delivery };
+    }),
+  );
+}
+
 export const assignmentListFilters = schema
   .doc("assignments")
   .pick("opportunityId", "status")

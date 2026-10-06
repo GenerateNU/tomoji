@@ -14,6 +14,7 @@ import {
   listCreatorAssignments,
   markAssignmentProductAccessDelivered,
   requireAssignment,
+  toCreatorAssignment,
 } from "../../models/assignments";
 import { createOpportunity } from "../../models/opportunities";
 import schema from "../../schema";
@@ -734,6 +735,41 @@ async function seedClaimed(
 }
 
 const notPending = ["active", "completed", "cancelled"] as const;
+
+describe("toCreatorAssignment", () => {
+  test.each([undefined, 0, 1234])(
+    "preserves assignment details and delivery timestamp %s without exposing internal fields",
+    async (productAccessDeliveredAt) => {
+      const t = convexTest(schema, modules);
+      const { owner, assignmentId } = await seedClaimed(t);
+      const assignment = await t.run(async (ctx) =>
+        requireAssignment(
+          ctx,
+          { role: "company", companyId: owner.membership.companyId },
+          assignmentId,
+        ),
+      );
+      const delivery =
+        productAccessDeliveredAt === undefined
+          ? {}
+          : { productAccessDeliveredAt, productAccessDeliveredBy: owner.membership._id };
+      const source = {
+        ...assignment,
+        ...delivery,
+        futureInternalNote: "Company-only information",
+      };
+      const before = { ...source };
+
+      const result = toCreatorAssignment(Object.freeze(source));
+
+      expect(result).toStrictEqual({
+        ...assignment,
+        ...(productAccessDeliveredAt === undefined ? {} : { productAccessDeliveredAt }),
+      });
+      expect(source).toStrictEqual(before);
+    },
+  );
+});
 
 describe("markAssignmentProductAccessDelivered", () => {
   test.each(["termsPending", "active", "completed"] as const)(

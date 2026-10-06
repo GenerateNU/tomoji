@@ -7,6 +7,7 @@ import { deactivateUser } from "../models/users";
 import schema from "../schema";
 import {
   expectApiError,
+  opportunityArgs,
   seedAssignment,
   seedCreatorId,
   seedOperator,
@@ -114,12 +115,16 @@ describe("assignments.list", () => {
   test("lists the caller's company assignments", async () => {
     const t = convexTest(schema, modules);
     const { owner, assignmentId } = await seedDeal(t);
+    await owner.asCompany.mutation(api.assignments.markProductAccessDelivered, {
+      assignmentIds: [assignmentId],
+    });
+    const stored = await t.run(async (ctx) => await ctx.db.get("assignments", assignmentId));
 
     const result = await owner.asCompany.query(api.assignments.list, {
       paginationOpts: firstPage,
     });
 
-    expect(result.page.map((assignment) => assignment._id)).toEqual([assignmentId]);
+    expect(result.page).toStrictEqual([stored]);
   });
 
   test("rejects a creator", async () => {
@@ -152,6 +157,87 @@ describe("assignments.list", () => {
 });
 
 describe("assignments.listMine", () => {
+  test.each([
+    {
+      phase: "current",
+      pendingStatus: "termsPending",
+      deliveredStatus: "active",
+      excludedStatus: "completed",
+    },
+    {
+      phase: "past",
+      pendingStatus: "cancelled",
+      deliveredStatus: "completed",
+      excludedStatus: "active",
+    },
+  ] as const)(
+    "paginates $phase deliveries without exposing actors or changing assignment fields",
+    async ({ phase, pendingStatus, deliveredStatus, excludedStatus }) => {
+      const t = convexTest(schema, modules);
+      const { owner, asCreator, creatorId, assignmentId: pendingId } = await seedDeal(t);
+      await t.run(
+        async (ctx) => await ctx.db.patch("assignments", pendingId, { status: pendingStatus }),
+      );
+      const deliveredOpportunityId = await owner.asCompany.mutation(
+        api.opportunities.create,
+        opportunityArgs(owner.campaignId),
+      );
+      const deliveredId = await seedAssignment(t, {
+        opportunityId: deliveredOpportunityId,
+        creatorId,
+        status: deliveredStatus,
+      });
+      const excludedOpportunityId = await owner.asCompany.mutation(
+        api.opportunities.create,
+        opportunityArgs(owner.campaignId),
+      );
+      await seedAssignment(t, {
+        opportunityId: excludedOpportunityId,
+        creatorId,
+        status: excludedStatus,
+      });
+      vi.setSystemTime(0);
+      await owner.asCompany.mutation(api.assignments.markProductAccessDelivered, {
+        assignmentIds: [deliveredId],
+      });
+      const expected = await t.run(async (ctx) =>
+        Promise.all(
+          [deliveredId, pendingId].map(async (id) => {
+            const assignment = await ctx.db.get("assignments", id);
+            const creatorFields = { ...assignment };
+            delete creatorFields.productAccessDeliveredBy;
+            return creatorFields;
+          }),
+        ),
+      );
+
+      const first = await asCreator.query(api.assignments.listMine, {
+        phase,
+        paginationOpts: { numItems: 1, cursor: null },
+      });
+      expect(first.isDone).toBe(false);
+      expect(first.continueCursor).toEqual(expect.any(String));
+
+      const assignments = [...first.page];
+      let result = first;
+      for (let pageNumber = 0; !result.isDone && pageNumber < 5; pageNumber++) {
+        result = await asCreator.query(api.assignments.listMine, {
+          phase,
+          paginationOpts: { numItems: 1, cursor: result.continueCursor },
+        });
+        assignments.push(...result.page);
+      }
+
+      expect(result.isDone).toBe(true);
+      expect(assignments).toStrictEqual(expected);
+      expect(assignments[0].productAccessDeliveredAt).toBe(0);
+      expect(assignments[1]).not.toHaveProperty("productAccessDeliveredAt");
+      for (const assignment of assignments) {
+        expect(assignment).not.toHaveProperty("productAccessDeliveredBy");
+      }
+    },
+  );
+
   test("lists the calling creator's current assignments", async () => {
     const t = convexTest(schema, modules);
     const { asCreator, assignmentId } = await seedDeal(t);
@@ -179,14 +265,39 @@ describe("assignments.listMine", () => {
 });
 
 describe("assignments.get", () => {
+  test("hides the delivery actor from the creator while preserving delivery at timestamp zero", async () => {
+    const t = convexTest(schema, modules);
+    const { owner, asCreator, assignmentId } = await seedDeal(t);
+    const asOperator = await seedOperator(t, "operator");
+    vi.setSystemTime(0);
+    await owner.asCompany.mutation(api.assignments.markProductAccessDelivered, {
+      assignmentIds: [assignmentId],
+    });
+    const stored = await t.run(async (ctx) => await ctx.db.get("assignments", assignmentId));
+    const creatorFields = { ...stored };
+    delete creatorFields.productAccessDeliveredBy;
+
+    const forCreator = await asCreator.query(api.assignments.get, { assignmentId });
+
+    expect(forCreator).toStrictEqual(creatorFields);
+    expect(forCreator.productAccessDeliveredAt).toBe(0);
+    expect(forCreator).not.toHaveProperty("productAccessDeliveredBy");
+    for (const caller of [owner.asCompany, asOperator]) {
+      expect(await caller.query(api.assignments.get, { assignmentId })).toStrictEqual(stored);
+    }
+  });
+
   test("returns the assignment to its creator, its company, and an operator", async () => {
     const t = convexTest(schema, modules);
     const { owner, asCreator, assignmentId } = await seedDeal(t);
     const asOperator = await seedOperator(t, "operator");
+    const stored = await t.run(async (ctx) => await ctx.db.get("assignments", assignmentId));
 
     for (const caller of [asCreator, owner.asCompany, asOperator]) {
       const assignment = await caller.query(api.assignments.get, { assignmentId });
-      expect(assignment._id).toBe(assignmentId);
+      expect(assignment).toStrictEqual(stored);
+      expect(assignment).not.toHaveProperty("productAccessDeliveredAt");
+      expect(assignment).not.toHaveProperty("productAccessDeliveredBy");
     }
   });
 
@@ -219,14 +330,29 @@ describe("assignments.get", () => {
 });
 
 describe("assignments.acceptTerms", () => {
-  test("activates the calling creator's assignment", async () => {
-    const t = convexTest(schema, modules);
-    const { asCreator, assignmentId } = await seedDeal(t);
+  test.each([false, true])(
+    "activates the calling creator's assignment with delivered=%s while hiding the audit actor",
+    async (delivered) => {
+      const t = convexTest(schema, modules);
+      const { owner, asCreator, assignmentId } = await seedDeal(t);
+      if (delivered) {
+        await owner.asCompany.mutation(api.assignments.markProductAccessDelivered, {
+          assignmentIds: [assignmentId],
+        });
+      }
+      const before = await t.run(async (ctx) => await ctx.db.get("assignments", assignmentId));
 
-    const result = await asCreator.mutation(api.assignments.acceptTerms, { assignmentId });
+      const result = await asCreator.mutation(api.assignments.acceptTerms, { assignmentId });
 
-    expect(result.status).toBe("active");
-  });
+      const stored = await t.run(async (ctx) => await ctx.db.get("assignments", assignmentId));
+      expect(stored).toStrictEqual({ ...before, status: "active" });
+      const creatorFields = { ...stored };
+      delete creatorFields.productAccessDeliveredBy;
+      expect(result).toStrictEqual(creatorFields);
+      expect(result).not.toHaveProperty("productAccessDeliveredBy");
+      if (!delivered) expect(result).not.toHaveProperty("productAccessDeliveredAt");
+    },
+  );
 
   test("rejects a company user", async () => {
     const t = convexTest(schema, modules);
@@ -249,14 +375,29 @@ describe("assignments.acceptTerms", () => {
 });
 
 describe("assignments.declineTerms", () => {
-  test("cancels the calling creator's assignment", async () => {
-    const t = convexTest(schema, modules);
-    const { asCreator, assignmentId } = await seedDeal(t);
+  test.each([false, true])(
+    "cancels the calling creator's assignment with delivered=%s while hiding the audit actor",
+    async (delivered) => {
+      const t = convexTest(schema, modules);
+      const { owner, asCreator, assignmentId } = await seedDeal(t);
+      if (delivered) {
+        await owner.asCompany.mutation(api.assignments.markProductAccessDelivered, {
+          assignmentIds: [assignmentId],
+        });
+      }
+      const before = await t.run(async (ctx) => await ctx.db.get("assignments", assignmentId));
 
-    const result = await asCreator.mutation(api.assignments.declineTerms, { assignmentId });
+      const result = await asCreator.mutation(api.assignments.declineTerms, { assignmentId });
 
-    expect(result.status).toBe("cancelled");
-  });
+      const stored = await t.run(async (ctx) => await ctx.db.get("assignments", assignmentId));
+      expect(stored).toStrictEqual({ ...before, status: "cancelled" });
+      const creatorFields = { ...stored };
+      delete creatorFields.productAccessDeliveredBy;
+      expect(result).toStrictEqual(creatorFields);
+      expect(result).not.toHaveProperty("productAccessDeliveredBy");
+      if (!delivered) expect(result).not.toHaveProperty("productAccessDeliveredAt");
+    },
+  );
 
   test("rejects a company user", async () => {
     const t = convexTest(schema, modules);
@@ -272,10 +413,17 @@ describe("assignments.cancel", () => {
   test("lets a company member cancel a termsPending assignment", async () => {
     const t = convexTest(schema, modules);
     const { owner, assignmentId } = await seedDeal(t);
+    await owner.asCompany.mutation(api.assignments.markProductAccessDelivered, {
+      assignmentIds: [assignmentId],
+    });
+    const before = await t.run(async (ctx) => await ctx.db.get("assignments", assignmentId));
 
     const result = await owner.asCompany.mutation(api.assignments.cancel, { assignmentId });
 
-    expect(result.status).toBe("cancelled");
+    expect(result).toStrictEqual({ ...before, status: "cancelled" });
+    expect(result).toStrictEqual(
+      await t.run(async (ctx) => await ctx.db.get("assignments", assignmentId)),
+    );
   });
 
   test("rejects a creator", async () => {

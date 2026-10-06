@@ -125,6 +125,46 @@ async function createAssignment(
   return assignmentId;
 }
 
+/** Creator responses include delivery time but not the company user's audit ID. */
+export const creatorAssignment = schema
+  .doc("assignments")
+  .pick(
+    "_id",
+    "_creationTime",
+    "opportunityId",
+    "creatorId",
+    "companyId",
+    "campaignId",
+    "fixedFeeCents",
+    "cpmRateCents",
+    "paymentCapCents",
+    "usesAiReview",
+    "status",
+    "productAccessDeliveredAt",
+  );
+export type CreatorAssignment = Infer<typeof creatorAssignment>;
+
+/** Explicitly selects fields so future stored fields do not become public by default. */
+export function toCreatorAssignment(assignment: Doc<"assignments">): CreatorAssignment {
+  const result: CreatorAssignment = {
+    _id: assignment._id,
+    _creationTime: assignment._creationTime,
+    opportunityId: assignment.opportunityId,
+    creatorId: assignment.creatorId,
+    companyId: assignment.companyId,
+    campaignId: assignment.campaignId,
+    fixedFeeCents: assignment.fixedFeeCents,
+    cpmRateCents: assignment.cpmRateCents,
+    paymentCapCents: assignment.paymentCapCents,
+    usesAiReview: assignment.usesAiReview,
+    status: assignment.status,
+  };
+  if (assignment.productAccessDeliveredAt !== undefined) {
+    result.productAccessDeliveredAt = assignment.productAccessDeliveredAt;
+  }
+  return result;
+}
+
 /** Who is reading an assignment, resolved from the caller by the route. */
 export type AssignmentViewer =
   | { role: "operator" }

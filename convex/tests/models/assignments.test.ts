@@ -10,6 +10,7 @@ import {
   completeAssignment,
   createAssignmentFromOffer,
   declineAssignmentTerms,
+  exportAssignmentCreatorsCsv,
   listAssignments,
   listCreatorAssignments,
   requireAssignment,
@@ -602,6 +603,329 @@ describe("listAssignments", () => {
             }),
         ),
       "not_found",
+    );
+  });
+});
+
+describe("exportAssignmentCreatorsCsv", () => {
+  const header = "assignmentId,campaignId,opportunityId,status,name,email\r\n";
+
+  async function setProfile(
+    t: TestConvex,
+    creatorId: Id<"creators">,
+    fields: Partial<Pick<Doc<"users">, "firstName" | "lastName" | "name" | "email">>,
+  ) {
+    await t.run(async (ctx) => {
+      const creator = await ctx.db.get("creators", creatorId);
+      if (creator === null) throw new Error("expected seeded creator");
+      await ctx.db.patch("users", creator.userId, fields);
+    });
+  }
+
+  function expectedRow(
+    owner: Owner,
+    assignmentId: Id<"assignments">,
+    profile: string,
+    status: Doc<"assignments">["status"] = "termsPending",
+    opportunityId: Id<"opportunities"> = owner.opportunityId,
+  ) {
+    return `"${assignmentId}","${owner.campaignId}","${opportunityId}","${status}",${profile}\r\n`;
+  }
+
+  test("returns only the CSV header for an empty campaign", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(t, { subject: "owner" });
+
+    const result = await t.run(
+      async (ctx) =>
+        await exportAssignmentCreatorsCsv(ctx, owner.membership.companyId, {
+          campaignId: owner.campaignId,
+          paginationOpts: firstPage,
+        }),
+    );
+
+    expect(result.csv).toBe(header);
+    expect(result.isDone).toBe(true);
+    expect(result.fileName).toContain(owner.campaignId);
+    expect(result.fileName).toMatch(/\.csv$/);
+  });
+
+  test("exports every assignment in a campaign without deduplicating creators or including applicants", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(t, { subject: "owner" });
+    const creatorId = await seedCreatorId(t, "creator");
+    await setProfile(t, creatorId, { firstName: " Ada ", lastName: " Lovelace " });
+    let expected = header;
+    const statuses = ["termsPending", "active", "completed", "cancelled"] as const;
+    const firstAssignment = await assign(t, owner, creatorId, statuses[0]);
+    expected += expectedRow(owner, firstAssignment, '"Ada Lovelace","creator@example.com"');
+    for (const status of statuses.slice(1)) {
+      const opportunityId = await addOpportunity(t, owner);
+      const assignmentId = await assign(t, owner, creatorId, status, opportunityId);
+      expected += expectedRow(
+        owner,
+        assignmentId,
+        '"Ada Lovelace","creator@example.com"',
+        status,
+        opportunityId,
+      );
+    }
+    const applicantId = await seedCreatorId(t, "applicant_only");
+    await t.run(async (ctx) => {
+      await ctx.db.insert("applications", {
+        opportunityId: owner.opportunityId,
+        creatorId: applicantId,
+        companyId: owner.membership.companyId,
+        note: "Interested",
+        status: "pending",
+      });
+    });
+    const other = await seedOpportunity(t, { subject: "other", orgId: "org_other" });
+    await assign(t, other, creatorId);
+
+    const campaign = await t.run(
+      async (ctx) =>
+        await exportAssignmentCreatorsCsv(ctx, owner.membership.companyId, {
+          campaignId: owner.campaignId,
+          paginationOpts: firstPage,
+        }),
+    );
+    expect(campaign.csv).toBe(expected);
+    const opportunity = await t.run(
+      async (ctx) =>
+        await exportAssignmentCreatorsCsv(ctx, owner.membership.companyId, {
+          opportunityId: owner.opportunityId,
+          paginationOpts: firstPage,
+        }),
+    );
+    expect(opportunity.csv).toBe(
+      header + expectedRow(owner, firstAssignment, '"Ada Lovelace","creator@example.com"'),
+    );
+  });
+
+  test("uses available name parts, legacy names, and finally email without inventing missing names", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(t, { subject: "owner" });
+    const profiles = [
+      { firstName: " Grace ", lastName: " ", name: "Old Name", expected: "Grace" },
+      { firstName: undefined, lastName: " Hopper ", name: "Old Name", expected: "Hopper" },
+      { firstName: undefined, lastName: " ", name: " Legacy Name ", expected: "Legacy Name" },
+      { firstName: " ", lastName: undefined, name: " ", expected: "fallback_3@example.com" },
+    ];
+    const expected: string[] = [];
+    for (const [i, profile] of profiles.entries()) {
+      const creatorId = await seedCreatorId(t, `fallback_${i}`);
+      const { expected: name, ...fields } = profile;
+      await setProfile(t, creatorId, fields);
+      const assignmentId = await assign(t, owner, creatorId);
+      expected.push(expectedRow(owner, assignmentId, `"${name}","fallback_${i}@example.com"`));
+    }
+
+    const result = await t.run(
+      async (ctx) =>
+        await exportAssignmentCreatorsCsv(ctx, owner.membership.companyId, {
+          campaignId: owner.campaignId,
+          paginationOpts: firstPage,
+        }),
+    );
+    expect(result.csv).toBe(header + expected.join(""));
+  });
+
+  test.each(["missing creator", "missing user", "inactive user", "noncreator user"])(
+    "keeps the assignment row with blank personal fields for a %s",
+    async (state) => {
+      const t = convexTest(schema, modules);
+      const owner = await seedOpportunity(t, { subject: "owner" });
+      const creatorId = await seedCreatorId(t, "creator");
+      const assignmentId = await assign(t, owner, creatorId);
+      await t.run(async (ctx) => {
+        const creator = await ctx.db.get("creators", creatorId);
+        if (creator === null) throw new Error("expected seeded creator");
+        if (state === "missing creator") await ctx.db.delete("creators", creatorId);
+        if (state === "missing user") await ctx.db.delete("users", creator.userId);
+        if (state === "inactive user") {
+          await ctx.db.patch("users", creator.userId, { isActive: false });
+        }
+        if (state === "noncreator user") {
+          await ctx.db.patch("users", creator.userId, { role: "operator" });
+        }
+      });
+
+      const result = await t.run(
+        async (ctx) =>
+          await exportAssignmentCreatorsCsv(ctx, owner.membership.companyId, {
+            opportunityId: owner.opportunityId,
+            paginationOpts: firstPage,
+          }),
+      );
+      expect(result.csv).toBe(header + expectedRow(owner, assignmentId, '"",""'));
+    },
+  );
+
+  test.each(["campaign", "opportunity"] as const)(
+    "exports each %s assignment exactly once even when statuses change between pages",
+    async (scope) => {
+      const t = convexTest(schema, modules);
+      const owner = await seedOpportunity(t, { subject: "owner" });
+      const assignmentIds: Id<"assignments">[] = [];
+      for (let i = 0; i < 3; i++) {
+        const creatorId = await seedCreatorId(t, `creator_${i}`);
+        assignmentIds.push(await assign(t, owner, creatorId, "active"));
+      }
+      const scopeArgs =
+        scope === "campaign"
+          ? { campaignId: owner.campaignId }
+          : { opportunityId: owner.opportunityId };
+      let cursor: string | null = null;
+      let csv = "";
+      let isDone = false;
+      for (let page = 0; page < 5 && !isDone; page++) {
+        const result = await t.run(
+          async (ctx) =>
+            await exportAssignmentCreatorsCsv(ctx, owner.membership.companyId, {
+              ...scopeArgs,
+              paginationOpts: { numItems: 1, cursor },
+            }),
+        );
+        csv += result.csv;
+        cursor = result.continueCursor;
+        isDone = result.isDone;
+        if (page === 0) {
+          await t.run(async (ctx) => {
+            for (const assignmentId of assignmentIds) {
+              await ctx.db.patch("assignments", assignmentId, { status: "termsPending" });
+            }
+          });
+        }
+      }
+
+      expect(isDone).toBe(true);
+      expect(csv.split(header)).toHaveLength(2);
+      const rows = csv.trimEnd().split("\r\n").slice(1);
+      const exportedIds = rows.map((row) => row.split(",")[0].slice(1, -1));
+      expect(exportedIds.sort()).toEqual([...assignmentIds].sort());
+      expect(new Set(exportedIds).size).toBe(assignmentIds.length);
+    },
+  );
+
+  test("preserves native pagination metadata and optional read limits", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(t, { subject: "owner" });
+    for (let i = 0; i < 3; i++) {
+      await assign(t, owner, await seedCreatorId(t, `creator_${i}`));
+    }
+    const paginationOpts = {
+      numItems: 2,
+      cursor: null,
+      endCursor: null,
+      maximumRowsRead: 1,
+      maximumBytesRead: 1024,
+      id: 7,
+    };
+    const expected = await t.run(
+      async (ctx) =>
+        await ctx.db
+          .query("assignments")
+          .withIndex("by_campaignId", (q) => q.eq("campaignId", owner.campaignId))
+          .order("asc")
+          .paginate(paginationOpts),
+    );
+    const result = await t.run(
+      async (ctx) =>
+        await exportAssignmentCreatorsCsv(ctx, owner.membership.companyId, {
+          campaignId: owner.campaignId,
+          paginationOpts,
+        }),
+    );
+    const { page, ...metadata } = expected;
+    const { csv, fileName, ...actualMetadata } = result;
+
+    expect(actualMetadata).toEqual(metadata);
+    expect(fileName).toContain(owner.campaignId);
+    expect(csv.trimEnd().split("\r\n")).toHaveLength(page.length + 1);
+  });
+
+  test.each(["campaign", "opportunity"] as const)(
+    "refuses an assignment with corrupt company ownership in a %s export",
+    async (scope) => {
+      const t = convexTest(schema, modules);
+      const owner = await seedOpportunity(t, { subject: "owner" });
+      const other = await seedOpportunity(t, { subject: "other", orgId: "org_other" });
+      const creatorId = await seedCreatorId(t, "creator");
+      const assignmentId = await assign(t, owner, creatorId);
+      await t.run(async (ctx) => {
+        await ctx.db.patch("assignments", assignmentId, { companyId: other.membership.companyId });
+      });
+
+      await expectApiError(
+        () =>
+          t.run(
+            async (ctx) =>
+              await exportAssignmentCreatorsCsv(ctx, owner.membership.companyId, {
+                ...(scope === "campaign"
+                  ? { campaignId: owner.campaignId }
+                  : { opportunityId: owner.opportunityId }),
+                paginationOpts: firstPage,
+              }),
+          ),
+        "not_found",
+      );
+    },
+  );
+
+  test("escapes quotes, commas, line breaks, and Unicode in creator names and emails", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(t, { subject: "owner" });
+    const creatorId = await seedCreatorId(t, "creator");
+    const assignmentId = await assign(t, owner, creatorId);
+    await setProfile(t, creatorId, {
+      firstName: 'Ana, "Mimi"\r\n雪',
+      lastName: "Ng",
+      email: 'mimi,"x"\r\n@example.com',
+    });
+
+    const result = await t.run(
+      async (ctx) =>
+        await exportAssignmentCreatorsCsv(ctx, owner.membership.companyId, {
+          opportunityId: owner.opportunityId,
+          paginationOpts: firstPage,
+        }),
+    );
+    expect(result.csv).toBe(
+      header +
+        expectedRow(owner, assignmentId, '"Ana, ""Mimi""\r\n雪 Ng","mimi,""x""\r\n@example.com"'),
+    );
+  });
+
+  test.each([
+    "=1+1",
+    "+1+1",
+    "-1+1",
+    "@SUM(1)",
+    "\t=1+1",
+    "\r=1+1",
+    "\n=1+1",
+    "  =1+1",
+    "＝1+1",
+    "＋1+1",
+    "－1+1",
+    "＠SUM(1)",
+  ])("neutralizes spreadsheet formulas starting with %j", async (value) => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(t, { subject: "owner" });
+    const creatorId = await seedCreatorId(t, "creator");
+    const assignmentId = await assign(t, owner, creatorId);
+    await setProfile(t, creatorId, { firstName: value, lastName: "", email: value });
+
+    const result = await t.run(
+      async (ctx) =>
+        await exportAssignmentCreatorsCsv(ctx, owner.membership.companyId, {
+          opportunityId: owner.opportunityId,
+          paginationOpts: firstPage,
+        }),
+    );
+    expect(result.csv).toBe(
+      header + expectedRow(owner, assignmentId, `"'${value.trim()}","'${value}"`),
     );
   });
 });

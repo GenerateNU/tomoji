@@ -40,7 +40,6 @@ export const { authKitEvent } = authKit.events({
       email: event.data.email,
       firstName: event.data.firstName,
       lastName: event.data.lastName,
-      profilePicture: event.data.profilePictureUrl ?? undefined,
     });
   },
   "user.updated": async (ctx, event) => {
@@ -49,7 +48,6 @@ export const { authKitEvent } = authKit.events({
       email: event.data.email,
       firstName: event.data.firstName,
       lastName: event.data.lastName,
-      profilePicture: event.data.profilePictureUrl ?? undefined,
     });
   },
   "user.deleted": async (ctx, event) => {

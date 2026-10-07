@@ -28,6 +28,7 @@ import type * as media from "../media.js";
 import type * as mediaInternal from "../mediaInternal.js";
 import type * as migrations_2026_09_26_backfill_creator_usernames from "../migrations/2026_09_26_backfill_creator_usernames.js";
 import type * as migrations_2026_09_26_backfill_user_names from "../migrations/2026_09_26_backfill_user_names.js";
+import type * as migrations_2026_10_07_remove_user_profile_pictures from "../migrations/2026_10_07_remove_user_profile_pictures.js";
 import type * as migrations_runner from "../migrations/runner.js";
 import type * as models_applications from "../models/applications.js";
 import type * as models_assignments from "../models/assignments.js";
@@ -71,6 +72,7 @@ declare const fullApi: ApiFromModules<{
   mediaInternal: typeof mediaInternal;
   "migrations/2026_09_26_backfill_creator_usernames": typeof migrations_2026_09_26_backfill_creator_usernames;
   "migrations/2026_09_26_backfill_user_names": typeof migrations_2026_09_26_backfill_user_names;
+  "migrations/2026_10_07_remove_user_profile_pictures": typeof migrations_2026_10_07_remove_user_profile_pictures;
   "migrations/runner": typeof migrations_runner;
   "models/applications": typeof models_applications;
   "models/assignments": typeof models_assignments;

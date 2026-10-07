@@ -40,7 +40,6 @@ export const companyMember = v.object({
   firstName: v.optional(v.string()),
   lastName: v.optional(v.string()),
   email: v.string(),
-  profilePicture: v.optional(v.string()),
   profilePictureMediaId: v.optional(v.id("mediaUploads")),
 });
 
@@ -81,7 +80,6 @@ export async function listCompanyUsers(
         firstName: user.firstName,
         lastName: user.lastName,
         email: user.email,
-        profilePicture: user.profilePicture,
         profilePictureMediaId: user.profilePictureMediaId,
       };
     }),

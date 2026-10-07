@@ -17,7 +17,15 @@ import {
   requireApplication,
 } from "../../models/applications";
 import schema from "../../schema";
-import { expectApiError, seedCreatorId, seedGatedOpportunity, type TestConvex } from "../helpers";
+import {
+  creatorNotifications,
+  expectApiError,
+  memberNotifications,
+  seedCreatorId,
+  seedGatedOpportunity,
+  seedMembership,
+  type TestConvex,
+} from "../helpers";
 
 const modules = import.meta.glob("../../**/*.ts");
 
@@ -836,5 +844,161 @@ describe("expireApplicationOffers", () => {
     const stored = await t.run(async (ctx) => await ctx.db.get("applications", applicationId));
 
     expect(stored?.status).toBe("accepted");
+  });
+});
+
+describe("notifications", () => {
+  const title = "Moisturizer launch video";
+
+  test("a new application notifies only the member who created the opportunity", async () => {
+    const t = convexTest(schema, modules);
+    const { membership, opportunityId } = await seedGatedOpportunity(t);
+    const { membership: teammate } = await seedMembership(t, "teammate", "org_acme");
+
+    const applicationId = await applyAs(t, await seedCreatorId(t, "creator_a"), opportunityId);
+
+    expect(await memberNotifications(t, membership)).toEqual([
+      {
+        type: "applicationReceived",
+        title: `New application for ${title}`,
+        target: { kind: "application", applicationId, opportunityId },
+      },
+    ]);
+    expect(await memberNotifications(t, teammate)).toEqual([]);
+  });
+
+  test("an offer notifies the creator", async () => {
+    const t = convexTest(schema, modules);
+    const { creatorId, applicationId, opportunityId } = await seedOffered(t);
+
+    expect(await creatorNotifications(t, creatorId)).toEqual([
+      {
+        type: "applicationOffered",
+        title: `You received an offer for ${title}`,
+        target: { kind: "application", applicationId, opportunityId },
+      },
+    ]);
+  });
+
+  test("a rejection notifies the creator", async () => {
+    const t = convexTest(schema, modules);
+    const { companyId, opportunityId } = await seedGatedOpportunity(t);
+    const creatorId = await seedCreatorId(t, "creator_a");
+    const applicationId = await applyAs(t, creatorId, opportunityId);
+
+    await t.run(async (ctx) => await rejectApplication(ctx, companyId, applicationId));
+
+    expect(await creatorNotifications(t, creatorId)).toEqual([
+      {
+        type: "applicationRejected",
+        title: `Your application for ${title} wasn't accepted`,
+        target: { kind: "application", applicationId, opportunityId },
+      },
+    ]);
+  });
+
+  test("a refused action sends no notification", async () => {
+    const t = convexTest(schema, modules);
+    const { companyId, creatorId, applicationId } = await seedOffered(t);
+
+    await expectApiError(
+      () => t.run(async (ctx) => await rejectApplication(ctx, companyId, applicationId)),
+      "invalid_state",
+    );
+
+    expect((await creatorNotifications(t, creatorId)).map((n) => n.type)).toEqual([
+      "applicationOffered",
+    ]);
+  });
+
+  test("accepting an offer notifies the opportunity creator with the new assignment", async () => {
+    const t = convexTest(schema, modules);
+    const { membership, creatorId, applicationId, opportunityId } = await seedOffered(t);
+
+    await t.run(async (ctx) => await acceptApplication(ctx, creatorId, applicationId));
+
+    const assignment = await t.run(async (ctx) =>
+      ctx.db
+        .query("assignments")
+        .withIndex("by_opportunityId_and_creatorId", (q) =>
+          q.eq("opportunityId", opportunityId).eq("creatorId", creatorId),
+        )
+        .unique(),
+    );
+    expect((await memberNotifications(t, membership)).at(-1)).toEqual({
+      type: "applicationAccepted",
+      title: `Your offer for ${title} was accepted`,
+      target: { kind: "assignment", assignmentId: assignment?._id },
+    });
+  });
+
+  test("taking the last slot notifies each creator whose application became full", async () => {
+    const t = convexTest(schema, modules);
+    const { companyId, opportunityId, creatorId, applicationId } = await seedOffered(t, {
+      opportunity: { maxSlots: 1 },
+    });
+    const otherCreatorId = await seedCreatorId(t, "creator_b");
+    const otherId = await applyAs(t, otherCreatorId, opportunityId);
+    await t.run(async (ctx) => await offerApplication(ctx, companyId, otherId));
+
+    await t.run(async (ctx) => await acceptApplication(ctx, creatorId, applicationId));
+
+    expect((await creatorNotifications(t, otherCreatorId)).at(-1)).toEqual({
+      type: "applicationOpportunityFull",
+      title: `${title} has filled all its slots`,
+      target: { kind: "application", applicationId: otherId, opportunityId },
+    });
+    expect((await creatorNotifications(t, creatorId)).map((n) => n.type)).toEqual([
+      "applicationOffered",
+    ]);
+  });
+
+  test("declining an offer notifies the opportunity creator", async () => {
+    const t = convexTest(schema, modules);
+    const { membership, creatorId, applicationId, opportunityId } = await seedOffered(t);
+
+    await t.run(async (ctx) => await declineApplication(ctx, creatorId, applicationId));
+
+    expect((await memberNotifications(t, membership)).at(-1)).toEqual({
+      type: "applicationDeclined",
+      title: `Your offer for ${title} was declined`,
+      target: { kind: "application", applicationId, opportunityId },
+    });
+  });
+
+  test("an expired offer notifies the creator and the opportunity creator", async () => {
+    const t = convexTest(schema, modules);
+    const { membership, creatorId, applicationId, opportunityId } = await seedOffered(t);
+    await t.run(
+      async (ctx) =>
+        await ctx.db.patch("applications", applicationId, { offerExpiresAt: Date.now() - 1 }),
+    );
+
+    await t.run(async (ctx) => await expireApplicationOffers(ctx));
+
+    const target = { kind: "application", applicationId, opportunityId };
+    expect((await creatorNotifications(t, creatorId)).at(-1)).toEqual({
+      type: "applicationOfferExpired",
+      title: `Your offer for ${title} expired`,
+      target,
+    });
+    expect((await memberNotifications(t, membership)).at(-1)).toEqual({
+      type: "applicationOfferExpired",
+      title: `An offer for ${title} expired unanswered`,
+      target,
+    });
+  });
+
+  test("a missing opportunity creator does not block the application", async () => {
+    const t = convexTest(schema, modules);
+    const { membership, opportunityId } = await seedGatedOpportunity(t);
+    await t.run(async (ctx) => await ctx.db.delete("companyUsers", membership._id));
+
+    const applicationId = await applyAs(t, await seedCreatorId(t, "creator_a"), opportunityId);
+
+    expect(await t.run(async (ctx) => await ctx.db.get("applications", applicationId))).not.toBe(
+      null,
+    );
+    expect(await memberNotifications(t, membership)).toEqual([]);
   });
 });

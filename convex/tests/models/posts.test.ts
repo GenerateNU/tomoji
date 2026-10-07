@@ -2,7 +2,15 @@
 import { convexTest } from "convex-test";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import type { Id } from "../../_generated/dataModel";
-import { createPost, listPosts, requirePost } from "../../models/posts";
+import {
+  createPost,
+  listPosts,
+  requirePost,
+  unverifyPost,
+  updatePost,
+  updatePostMetrics,
+  verifyPost,
+} from "../../models/posts";
 import schema from "../../schema";
 import {
   expectApiError,
@@ -502,5 +510,240 @@ describe("listPosts filters", () => {
           await listPosts(ctx, { role: "operator" }, { ...filters, paginationOpts: firstPage }),
       ),
     ).rejects.toMatchObject({ data: { code: "invalid_state", reason: "invalid_filter" } });
+  });
+});
+
+const NEW_URL = "https://x.com/driftwood_dev/status/1843000000000000009";
+const METRICS = { likes: 120, comments: 14, reposts: 9, views: 48_000 };
+/** When the post went live on X, as an operator reads it off the post. */
+const POSTED_AT = new Date("2026-10-07T09:30:00Z").getTime();
+
+describe("updatePost", () => {
+  test("replaces the link and clears postedAt and metrics from the old link", async () => {
+    const t = convexTest(schema, modules);
+    const { fixture, postId } = await seedFixturePost(t);
+    await t.run(async (ctx) => await updatePostMetrics(ctx, postId, METRICS));
+    vi.setSystemTime(Date.now() + 60_000);
+
+    const result = await t.run(
+      async (ctx) => await updatePost(ctx, fixture.creatorId, postId, { url: NEW_URL }),
+    );
+
+    const stored = await t.run(async (ctx) => await ctx.db.get("posts", postId));
+    expect(result).toEqual(stored);
+    expect(stored).toMatchObject({
+      url: NEW_URL,
+      xPostId: "1843000000000000009",
+      isVerified: false,
+    });
+    for (const field of ["postedAt", "likes", "comments", "reposts", "views", "metricsUpdatedAt"]) {
+      expect(stored).not.toHaveProperty(field);
+    }
+  });
+
+  test("refuses a verified post without changing it", async () => {
+    const t = convexTest(schema, modules);
+    const { fixture, postId } = await seedFixturePost(t);
+    await t.run(async (ctx) => await verifyPost(ctx, postId, { postedAt: POSTED_AT }));
+    const before = await storedPosts(t);
+
+    await expect(
+      t.run(async (ctx) => await updatePost(ctx, fixture.creatorId, postId, { url: NEW_URL })),
+    ).rejects.toMatchObject({ data: { code: "invalid_state", reason: "post_verified" } });
+    expect(await storedPosts(t)).toEqual(before);
+  });
+
+  test.each(["completed", "cancelled"] as const)(
+    "refuses when the assignment is %s",
+    async (status) => {
+      const t = convexTest(schema, modules);
+      const { fixture, postId } = await seedFixturePost(t);
+      await t.run(
+        async (ctx) => await ctx.db.patch("assignments", fixture.assignmentId, { status }),
+      );
+
+      await expect(
+        t.run(async (ctx) => await updatePost(ctx, fixture.creatorId, postId, { url: NEW_URL })),
+      ).rejects.toMatchObject({
+        data: { code: "invalid_state", reason: "assignment_not_active" },
+      });
+    },
+  );
+
+  test("refuses a post another submission already uses", async () => {
+    const t = convexTest(schema, modules);
+    const { fixture, postId } = await seedFixturePost(t);
+    const otherPostId = await addPost(t, fixture, "other_creator");
+    const otherUrl = (await t.run(async (ctx) => await ctx.db.get("posts", otherPostId)))!.url;
+    const before = await storedPosts(t);
+
+    await expect(
+      t.run(async (ctx) => await updatePost(ctx, fixture.creatorId, postId, { url: otherUrl })),
+    ).rejects.toMatchObject({ data: { code: "conflict", reason: "post_already_used" } });
+    expect(await storedPosts(t)).toEqual(before);
+  });
+
+  test("accepts another link format for the same post", async () => {
+    const t = convexTest(schema, modules);
+    const { fixture, postId } = await seedFixturePost(t);
+
+    const result = await t.run(
+      async (ctx) =>
+        await updatePost(ctx, fixture.creatorId, postId, {
+          url: `https://x.com/i/web/status/${POST_ID}`,
+        }),
+    );
+
+    expect(result).toMatchObject({ url: `https://x.com/i/status/${POST_ID}`, xPostId: POST_ID });
+  });
+
+  test("refuses a link that isn't an X post", async () => {
+    const t = convexTest(schema, modules);
+    const { fixture, postId } = await seedFixturePost(t);
+    const before = await storedPosts(t);
+
+    await expect(
+      t.run(
+        async (ctx) =>
+          await updatePost(ctx, fixture.creatorId, postId, { url: "https://x.com/driftwood_dev" }),
+      ),
+    ).rejects.toMatchObject({ data: { code: "invalid_state", reason: "url_invalid" } });
+    expect(await storedPosts(t)).toEqual(before);
+  });
+
+  test("conceals another creator's post", async () => {
+    const t = convexTest(schema, modules);
+    const { postId } = await seedFixturePost(t);
+    const otherCreatorId = await seedCreatorId(t, "other_creator");
+
+    await expectApiError(
+      () => t.run(async (ctx) => await updatePost(ctx, otherCreatorId, postId, { url: NEW_URL })),
+      "not_found",
+    );
+  });
+});
+
+describe("verifyPost", () => {
+  test("marks an unverified post verified with when it went live on X", async () => {
+    const t = convexTest(schema, modules);
+    const { postId } = await seedFixturePost(t);
+
+    const result = await t.run(
+      async (ctx) => await verifyPost(ctx, postId, { postedAt: POSTED_AT }),
+    );
+
+    const stored = await t.run(async (ctx) => await ctx.db.get("posts", postId));
+    expect(result).toEqual(stored);
+    expect(stored).toMatchObject({ isVerified: true, postedAt: POSTED_AT });
+  });
+
+  test.each([
+    ["a future time", () => Date.now() + 60_000],
+    ["a fractional time", () => POSTED_AT + 0.5],
+    ["a negative time", () => -1],
+  ])("refuses %s without writing", async (_label, postedAt) => {
+    const t = convexTest(schema, modules);
+    const { postId } = await seedFixturePost(t);
+    const before = await storedPosts(t);
+
+    await expect(
+      t.run(async (ctx) => await verifyPost(ctx, postId, { postedAt: postedAt() })),
+    ).rejects.toMatchObject({ data: { code: "invalid_state", reason: "invalid_posted_at" } });
+    expect(await storedPosts(t)).toEqual(before);
+  });
+
+  test("refuses a post that is already verified", async () => {
+    const t = convexTest(schema, modules);
+    const { postId } = await seedFixturePost(t);
+    await t.run(async (ctx) => await verifyPost(ctx, postId, { postedAt: POSTED_AT }));
+
+    await expect(
+      t.run(async (ctx) => await verifyPost(ctx, postId, { postedAt: POSTED_AT })),
+    ).rejects.toMatchObject({
+      data: { code: "invalid_state", reason: "post_already_verified" },
+    });
+  });
+
+  test("reports a missing post as not found", async () => {
+    const t = convexTest(schema, modules);
+    const { postId } = await seedFixturePost(t);
+    await t.run(async (ctx) => await ctx.db.delete("posts", postId));
+
+    await expectApiError(
+      () => t.run(async (ctx) => await verifyPost(ctx, postId, { postedAt: POSTED_AT })),
+      "not_found",
+    );
+  });
+});
+
+describe("updatePostMetrics", () => {
+  test("stores the counts and when they were fetched", async () => {
+    const t = convexTest(schema, modules);
+    const { postId } = await seedFixturePost(t);
+
+    const result = await t.run(async (ctx) => await updatePostMetrics(ctx, postId, METRICS));
+
+    const stored = await t.run(async (ctx) => await ctx.db.get("posts", postId));
+    expect(result).toEqual(stored);
+    expect(stored).toMatchObject({ ...METRICS, metricsUpdatedAt: Date.now() });
+  });
+
+  test.each([
+    ["a negative count", { ...METRICS, views: -1 }],
+    ["a fractional count", { ...METRICS, likes: 1.5 }],
+    ["a non-finite count", { ...METRICS, reposts: Number.POSITIVE_INFINITY }],
+  ])("refuses %s without writing", async (_label, metrics) => {
+    const t = convexTest(schema, modules);
+    const { postId } = await seedFixturePost(t);
+    const before = await storedPosts(t);
+
+    await expect(
+      t.run(async (ctx) => await updatePostMetrics(ctx, postId, metrics)),
+    ).rejects.toMatchObject({ data: { code: "invalid_state", reason: "invalid_metrics" } });
+    expect(await storedPosts(t)).toEqual(before);
+  });
+
+  test("reports a missing post as not found", async () => {
+    const t = convexTest(schema, modules);
+    const { postId } = await seedFixturePost(t);
+    await t.run(async (ctx) => await ctx.db.delete("posts", postId));
+
+    await expectApiError(
+      () => t.run(async (ctx) => await updatePostMetrics(ctx, postId, METRICS)),
+      "not_found",
+    );
+  });
+});
+
+describe("unverifyPost", () => {
+  test("marks a verified post unverified so the creator can fix it", async () => {
+    const t = convexTest(schema, modules);
+    const { fixture, postId } = await seedFixturePost(t);
+    await t.run(async (ctx) => await verifyPost(ctx, postId, { postedAt: POSTED_AT }));
+
+    const result = await t.run(async (ctx) => await unverifyPost(ctx, postId));
+
+    const stored = await t.run(async (ctx) => await ctx.db.get("posts", postId));
+    expect(result).toEqual(stored);
+    expect(stored?.isVerified).toBe(false);
+    expect(stored).not.toHaveProperty("postedAt");
+    await t.run(async (ctx) => await updatePost(ctx, fixture.creatorId, postId, { url: NEW_URL }));
+  });
+
+  test("refuses a post that isn't verified", async () => {
+    const t = convexTest(schema, modules);
+    const { postId } = await seedFixturePost(t);
+
+    await expect(t.run(async (ctx) => await unverifyPost(ctx, postId))).rejects.toMatchObject({
+      data: { code: "invalid_state", reason: "post_not_verified" },
+    });
+  });
+
+  test("reports a missing post as not found", async () => {
+    const t = convexTest(schema, modules);
+    const { postId } = await seedFixturePost(t);
+    await t.run(async (ctx) => await ctx.db.delete("posts", postId));
+
+    await expectApiError(() => t.run(async (ctx) => await unverifyPost(ctx, postId)), "not_found");
   });
 });

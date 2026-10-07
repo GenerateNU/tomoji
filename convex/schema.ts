@@ -7,6 +7,7 @@ import { companyUsersTable } from "./schemas/companyUsers.schema";
 import { creatorsTable } from "./schemas/creators.schema";
 import { disputesTable } from "./schemas/disputes.schema";
 import { mediaUploadsTable } from "./schemas/mediaUploads.schema";
+import { notificationsTable } from "./schemas/notifications.schema";
 import { opportunitiesTable } from "./schemas/opportunities.schema";
 import { postsTable } from "./schemas/posts.schema";
 import { submissionsTable } from "./schemas/submissions.schema";
@@ -31,4 +32,5 @@ export default defineSchema({
   xAccounts: xAccountsTable,
   xAccountCredentials: xAccountCredentialsTable,
   xLinkAttempts: xLinkAttemptsTable,
+  notifications: notificationsTable,
 });

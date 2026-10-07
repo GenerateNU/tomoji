@@ -17,6 +17,8 @@
     "ci": "bun run typecheck && bun run lint && bun run format:check && bun run test"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1145.0",
+    "@aws-sdk/s3-presigned-post": "^3.1145.0",
     "@base-ui/react": "^1.8.0",
     "@convex-dev/migrations": "^0.3.6",
     "@convex-dev/workos-authkit": "^0.2.9",

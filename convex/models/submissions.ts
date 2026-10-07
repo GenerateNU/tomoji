@@ -189,7 +189,7 @@ function requireSubmissionWindowOpen(assignment: Doc<"assignments">): void {
 }
 
 /** Indexes end in `_creationTime`, so descending order reads the newest row first. */
-async function getLatestSubmission(
+export async function getLatestSubmission(
   ctx: QueryCtx | MutationCtx,
   assignmentId: Id<"assignments">,
 ): Promise<Doc<"submissions"> | null> {

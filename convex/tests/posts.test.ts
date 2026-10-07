@@ -1,7 +1,7 @@
 /// <reference types="vite/client" />
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
-import { api } from "../_generated/api";
+import { api, internal } from "../_generated/api";
 import { deactivateUser } from "../models/users";
 import schema from "../schema";
 import {
@@ -194,5 +194,107 @@ describe("posts.list", () => {
         }),
       "forbidden",
     );
+  });
+});
+
+const NEW_URL = "https://x.com/driftwood_dev/status/1843000000000000009";
+
+describe("posts.update", () => {
+  test("lets the creator replace the link", async () => {
+    const t = convexTest(schema, modules);
+    const { fixture, postId } = await seedPost(t);
+
+    const post = await fixture.asCreator.mutation(api.posts.update, { postId, url: NEW_URL });
+
+    expect(post.url).toBe(NEW_URL);
+  });
+
+  test("rejects the owning company", async () => {
+    const t = convexTest(schema, modules);
+    const { fixture, postId } = await seedPost(t);
+    await expectApiError(
+      () => fixture.asCompany.mutation(api.posts.update, { postId, url: NEW_URL }),
+      "forbidden",
+    );
+  });
+
+  test("conceals the post from another creator", async () => {
+    const t = convexTest(schema, modules);
+    const { postId } = await seedPost(t);
+    const asOtherCreator = await seedUser(t, { subject: "other_creator" });
+    await expectApiError(
+      () => asOtherCreator.mutation(api.posts.update, { postId, url: NEW_URL }),
+      "not_found",
+    );
+  });
+
+  test("does not let a creator verify through update", async () => {
+    const t = convexTest(schema, modules);
+    const { fixture, postId } = await seedPost(t);
+    const args = { postId, url: NEW_URL, isVerified: true };
+    await expect(fixture.asCreator.mutation(api.posts.update, args)).rejects.toThrow(
+      "Unexpected field `isVerified`",
+    );
+  });
+});
+
+describe("posts.verify", () => {
+  test("lets an operator verify a post", async () => {
+    const t = convexTest(schema, modules);
+    const { postId } = await seedPost(t);
+    const asOperator = await seedOperator(t, "operator");
+
+    const post = await asOperator.mutation(api.posts.verify, { postId });
+
+    expect(post.isVerified).toBe(true);
+  });
+
+  test("rejects the creator and the owning company", async () => {
+    const t = convexTest(schema, modules);
+    const { fixture, postId } = await seedPost(t);
+
+    for (const caller of [fixture.asCreator, fixture.asCompany]) {
+      await expectApiError(() => caller.mutation(api.posts.verify, { postId }), "forbidden");
+    }
+  });
+
+  test("rejects a signed-out caller", async () => {
+    const t = convexTest(schema, modules);
+    const { postId } = await seedPost(t);
+    await expectApiError(() => t.mutation(api.posts.verify, { postId }), "not_authenticated");
+  });
+});
+
+describe("posts.unverify", () => {
+  test("lets an operator unverify a verified post", async () => {
+    const t = convexTest(schema, modules);
+    const { postId } = await seedPost(t);
+    const asOperator = await seedOperator(t, "operator");
+    await asOperator.mutation(api.posts.verify, { postId });
+
+    const post = await asOperator.mutation(api.posts.unverify, { postId });
+
+    expect(post.isVerified).toBe(false);
+  });
+
+  test("rejects the creator and the owning company", async () => {
+    const t = convexTest(schema, modules);
+    const { fixture, postId } = await seedPost(t);
+
+    for (const caller of [fixture.asCreator, fixture.asCompany]) {
+      await expectApiError(() => caller.mutation(api.posts.unverify, { postId }), "forbidden");
+    }
+  });
+});
+
+describe("posts.updateMetrics", () => {
+  test("stores metrics for server-side callers", async () => {
+    const t = convexTest(schema, modules);
+    const { postId } = await seedPost(t);
+    const metrics = { likes: 120, comments: 14, reposts: 9, views: 48_000 };
+
+    const post = await t.mutation(internal.posts.updateMetrics, { postId, ...metrics });
+
+    expect(post).toMatchObject(metrics);
   });
 });

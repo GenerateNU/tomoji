@@ -113,12 +113,130 @@ export async function requirePost(
   viewer: PostViewer,
   postId: Id<"posts">,
 ): Promise<Doc<"posts">> {
+  return (await requirePostAccess(ctx, viewer, postId)).post;
+}
+
+/** The post and its assignment, if the viewer may see the assignment. */
+async function requirePostAccess(
+  ctx: QueryCtx | MutationCtx,
+  viewer: PostViewer,
+  postId: Id<"posts">,
+): Promise<{ post: Doc<"posts">; assignment: Doc<"assignments"> }> {
   const post = await ctx.db.get("posts", postId);
   const submission = post && (await ctx.db.get("submissions", post.submissionId));
   if (!post || !submission) throw apiError("not_found", { resource: "post" });
   // Throws `not_found` when the viewer can't see the post's assignment.
-  await requireAssignment(ctx, viewer, submission.assignmentId);
-  return post;
+  const assignment = await requireAssignment(ctx, viewer, submission.assignmentId);
+  return { post, assignment };
+}
+
+/** The creator-editable fields of a post. */
+export const postUpdate = v.object({ url: v.string() });
+export type PostUpdate = Infer<typeof postUpdate>;
+
+/**
+ * Replaces the link on the creator's unverified post. A new link is a new
+ * post on X, so `postedAt` resets and metrics fetched for the old link are
+ * cleared.
+ *
+ * @throws `not_found` if the post doesn't exist or isn't the creator's.
+ * @throws `invalid_state` if the post is verified, the assignment isn't
+ * active, or the URL isn't an X post link.
+ */
+export async function updatePost(
+  ctx: MutationCtx,
+  creatorId: Id<"creators">,
+  postId: Id<"posts">,
+  fields: PostUpdate,
+): Promise<Doc<"posts">> {
+  const { post, assignment } = await requirePostAccess(ctx, { role: "creator", creatorId }, postId);
+  if (post.isVerified) {
+    throw apiError("invalid_state", { reason: "post_verified" });
+  }
+  if (assignment.status !== "active") {
+    throw apiError("invalid_state", { reason: "assignment_not_active" });
+  }
+  const patch = {
+    url: requirePostUrl(fields.url),
+    postedAt: Date.now(),
+    // Patching a field to undefined removes it.
+    likes: undefined,
+    comments: undefined,
+    reposts: undefined,
+    views: undefined,
+    metricsUpdatedAt: undefined,
+  };
+  await ctx.db.patch("posts", postId, patch);
+  // Read it back so the cleared fields are absent rather than `undefined`.
+  return (await ctx.db.get("posts", postId))!;
+}
+
+/**
+ * Marks an unverified post verified. Operators do this by hand for now;
+ * automatic verification through the X API is a separate ticket.
+ *
+ * @throws `not_found` if the post doesn't exist.
+ * @throws `invalid_state` if the post is already verified.
+ */
+export async function verifyPost(ctx: MutationCtx, postId: Id<"posts">): Promise<Doc<"posts">> {
+  const post = await ctx.db.get("posts", postId);
+  if (post === null) throw apiError("not_found", { resource: "post" });
+  if (post.isVerified) {
+    throw apiError("invalid_state", { reason: "post_already_verified" });
+  }
+  await ctx.db.patch("posts", postId, { isVerified: true });
+  return { ...post, isVerified: true };
+}
+
+/**
+ * Marks a verified post unverified, for example when an operator finds it
+ * doesn't match the approved submission. The creator can then fix the link.
+ *
+ * @throws `not_found` if the post doesn't exist.
+ * @throws `invalid_state` if the post isn't verified.
+ */
+export async function unverifyPost(ctx: MutationCtx, postId: Id<"posts">): Promise<Doc<"posts">> {
+  const post = await ctx.db.get("posts", postId);
+  if (post === null) throw apiError("not_found", { resource: "post" });
+  if (!post.isVerified) {
+    throw apiError("invalid_state", { reason: "post_not_verified" });
+  }
+  await ctx.db.patch("posts", postId, { isVerified: false });
+  return { ...post, isVerified: false };
+}
+
+/** A snapshot of a post's counts, as fetched from X. */
+export const postMetrics = v.object({
+  likes: v.number(),
+  comments: v.number(),
+  reposts: v.number(),
+  views: v.number(),
+});
+export type PostMetrics = Infer<typeof postMetrics>;
+
+/**
+ * Stores a fresh snapshot of the post's counts. Only server code calls this,
+ * so creators can't inflate the numbers their payout is based on.
+ *
+ * @throws `not_found` if the post doesn't exist.
+ * @throws `invalid_state` with `invalid_metrics` if a count isn't a
+ * nonnegative whole number.
+ */
+export async function updatePostMetrics(
+  ctx: MutationCtx,
+  postId: Id<"posts">,
+  metrics: PostMetrics,
+): Promise<Doc<"posts">> {
+  const post = await ctx.db.get("posts", postId);
+  if (post === null) throw apiError("not_found", { resource: "post" });
+  for (const field of ["likes", "comments", "reposts", "views"] as const) {
+    if (!Number.isSafeInteger(metrics[field]) || metrics[field] < 0) {
+      throw apiError("invalid_state", { reason: "invalid_metrics", field });
+    }
+  }
+  const patch = { ...metrics, metricsUpdatedAt: Date.now() };
+  await ctx.db.patch("posts", postId, patch);
+  return { ...post, ...patch };
 }
 
 /** `list` takes exactly one of `assignmentId` or `campaignId`. */

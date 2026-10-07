@@ -1,14 +1,20 @@
 import { paginationResultValidator } from "convex/server";
 import { v } from "convex/values";
 import type { Doc } from "./_generated/dataModel";
-import type { QueryCtx } from "./_generated/server";
-import { authedQuery, companyContext, creatorMutation } from "./lib/functions";
+import { internalMutation, type QueryCtx } from "./_generated/server";
+import { authedQuery, companyContext, creatorMutation, operatorMutation } from "./lib/functions";
 import {
   createPost,
   listPosts,
   postCreate,
   postListFilters,
+  postMetrics,
+  postUpdate,
   requirePost,
+  unverifyPost,
+  updatePost,
+  updatePostMetrics,
+  verifyPost,
   type PostViewer,
 } from "./models/posts";
 import { requireCallerCreatorId } from "./models/users";
@@ -62,6 +68,62 @@ export const list = authedQuery({
   returns: paginationResultValidator(schema.doc("posts")),
   handler: async (ctx, args) => {
     return await listPosts(ctx, await postViewer(ctx, ctx.user), args);
+  },
+});
+
+/**
+ * Replaces the link on the caller's unverified post. `postedAt` resets and any
+ * fetched metrics are cleared, since they belonged to the old link.
+ *
+ * @throws `not_found` if the post doesn't exist or isn't the caller's.
+ * @throws `invalid_state` if the post is verified, the assignment isn't
+ * active, or the URL isn't an X post link.
+ */
+export const update = creatorMutation({
+  args: { postId: v.id("posts"), ...postUpdate.fields },
+  returns: schema.doc("posts"),
+  handler: async (ctx, { postId, ...fields }) => {
+    const creatorId = await requireCallerCreatorId(ctx, ctx.user);
+    return await updatePost(ctx, creatorId, postId, fields);
+  },
+});
+
+/**
+ * Marks a post verified after an operator checks it against the approved
+ * submission.
+ *
+ * @throws `not_found` if the post doesn't exist.
+ * @throws `invalid_state` if the post is already verified.
+ */
+export const verify = operatorMutation({
+  args: { postId: v.id("posts") },
+  returns: schema.doc("posts"),
+  handler: async (ctx, args) => {
+    return await verifyPost(ctx, args.postId);
+  },
+});
+
+/**
+ * Marks a verified post unverified, for example when it doesn't match the
+ * approved submission. The creator can then fix the link.
+ *
+ * @throws `not_found` if the post doesn't exist.
+ * @throws `invalid_state` if the post isn't verified.
+ */
+export const unverify = operatorMutation({
+  args: { postId: v.id("posts") },
+  returns: schema.doc("posts"),
+  handler: async (ctx, args) => {
+    return await unverifyPost(ctx, args.postId);
+  },
+});
+
+/** Stores a fresh snapshot of a post's counts. For the future X API metrics job. */
+export const updateMetrics = internalMutation({
+  args: { postId: v.id("posts"), ...postMetrics.fields },
+  returns: schema.doc("posts"),
+  handler: async (ctx, { postId, ...metrics }) => {
+    return await updatePostMetrics(ctx, postId, metrics);
   },
 });
 

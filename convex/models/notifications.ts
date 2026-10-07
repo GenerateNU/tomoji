@@ -75,14 +75,22 @@ export async function markNotificationRead(
   }
 }
 
-/** Marks one bounded batch of the user's unread notifications read and reports whether more may remain. */
+/**
+ * Marks one bounded batch of the user's unread notifications read and reports
+ * whether more may remain. Only notifications created at or before
+ * `createdUpTo` are marked, so ones that arrive while a large backlog is still
+ * being worked through stay unread.
+ */
 export async function markAllNotificationsRead(
   ctx: MutationCtx,
   userId: Id<"users">,
+  createdUpTo: number,
 ): Promise<boolean> {
   const unread = await ctx.db
     .query("notifications")
-    .withIndex("by_userId_and_isRead", (q) => q.eq("userId", userId).eq("isRead", false))
+    .withIndex("by_userId_and_isRead", (q) =>
+      q.eq("userId", userId).eq("isRead", false).lte("_creationTime", createdUpTo),
+    )
     .take(MARK_ALL_READ_BATCH_SIZE + 1);
   for (const notification of unread.slice(0, MARK_ALL_READ_BATCH_SIZE)) {
     await ctx.db.patch("notifications", notification._id, { isRead: true });

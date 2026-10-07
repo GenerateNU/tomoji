@@ -46,6 +46,16 @@ async function notify(t: TestConvex, userId: Id<"users">, content: NotificationC
   return ids;
 }
 
+/**
+ * Cutoffs come from stored creation times, not `Date.now()`: convex-test stamps
+ * inserts made within the same millisecond just after it.
+ */
+async function creationTime(t: TestConvex, id: Id<"notifications">): Promise<number> {
+  const stored = await t.run(async (ctx) => await ctx.db.get("notifications", id));
+  if (stored === null) throw new Error("expected seeded notification");
+  return stored._creationTime;
+}
+
 describe("createNotification", () => {
   test("stores an unread notification for the recipient", async () => {
     const t = convexTest(schema, modules);
@@ -149,10 +159,12 @@ describe("markAllNotificationsRead", () => {
     const userId = await seedUserId(t, "creator_a");
     const otherId = await seedUserId(t, "creator_b");
     const content = await closedContent(t);
-    await notify(t, userId, content, MARK_ALL_READ_BATCH_SIZE + 1);
+    const ids = await notify(t, userId, content, MARK_ALL_READ_BATCH_SIZE + 1);
     const [othersId] = await notify(t, otherId, content);
 
-    const markBatch = () => t.run(async (ctx) => await markAllNotificationsRead(ctx, userId));
+    const createdUpTo = await creationTime(t, ids[ids.length - 1]);
+    const markBatch = () =>
+      t.run(async (ctx) => await markAllNotificationsRead(ctx, userId, createdUpTo));
 
     expect(await markBatch()).toBe(true);
     expect(await t.run(async (ctx) => await countUnreadNotifications(ctx, userId))).toBe(1);
@@ -160,5 +172,21 @@ describe("markAllNotificationsRead", () => {
     expect(await t.run(async (ctx) => await countUnreadNotifications(ctx, userId))).toBe(0);
     const others = await t.run(async (ctx) => await ctx.db.get("notifications", othersId));
     expect(others?.isRead).toBe(false);
+  });
+
+  test("leaves notifications created after the cutoff unread", async () => {
+    const t = convexTest(schema, modules);
+    const userId = await seedUserId(t, "creator_a");
+    const content = await closedContent(t);
+    const [before] = await notify(t, userId, content);
+    const cutoff = await creationTime(t, before);
+    const [after] = await notify(t, userId, content);
+
+    await t.run(async (ctx) => await markAllNotificationsRead(ctx, userId, cutoff));
+
+    const isRead = async (id: Id<"notifications">) =>
+      (await t.run(async (ctx) => await ctx.db.get("notifications", id)))?.isRead;
+    expect(await isRead(before)).toBe(true);
+    expect(await isRead(after)).toBe(false);
   });
 });

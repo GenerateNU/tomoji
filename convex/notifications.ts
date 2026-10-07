@@ -47,29 +47,39 @@ export const markRead = authedMutation({
   },
 });
 
-/** Marks all of the caller's notifications read, finishing large backlogs in scheduled batches. */
+/**
+ * Marks all of the caller's notifications read, finishing large backlogs in
+ * scheduled batches. Notifications that arrive after the call stay unread.
+ */
 export const markAllRead = authedMutation({
   args: {},
   returns: v.null(),
   handler: async (ctx) => {
-    await markBatchAndContinue(ctx, ctx.user._id);
+    await markBatchAndContinue(ctx, ctx.user._id, Date.now());
     return null;
   },
 });
 
 /** Continues `markAllRead` for a user whose backlog did not fit in one batch. */
 export const continueMarkingAllRead = internalMutation({
-  args: { userId: v.id("users") },
+  args: { userId: v.id("users"), createdUpTo: v.number() },
   returns: v.null(),
   handler: async (ctx, args) => {
-    await markBatchAndContinue(ctx, args.userId);
+    await markBatchAndContinue(ctx, args.userId, args.createdUpTo);
     return null;
   },
 });
 
-async function markBatchAndContinue(ctx: MutationCtx, userId: Id<"users">): Promise<void> {
-  const hasMore = await markAllNotificationsRead(ctx, userId);
+async function markBatchAndContinue(
+  ctx: MutationCtx,
+  userId: Id<"users">,
+  createdUpTo: number,
+): Promise<void> {
+  const hasMore = await markAllNotificationsRead(ctx, userId, createdUpTo);
   if (hasMore) {
-    await ctx.scheduler.runAfter(0, internal.notifications.continueMarkingAllRead, { userId });
+    await ctx.scheduler.runAfter(0, internal.notifications.continueMarkingAllRead, {
+      userId,
+      createdUpTo,
+    });
   }
 }

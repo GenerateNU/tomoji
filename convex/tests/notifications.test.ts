@@ -90,6 +90,15 @@ describe("notifications.markRead", () => {
   });
 });
 
+/**
+ * Moves the fake clock forward without firing scheduled functions. With the
+ * clock frozen, convex-test stamps each insert just after `Date.now()`, so
+ * without this, rows seeded earlier would look newer than a later cutoff.
+ */
+function advanceClock() {
+  vi.setSystemTime(Date.now() + 1000);
+}
+
 describe("notifications.markAllRead", () => {
   test("marks every unread notification, continuing past one batch", async () => {
     vi.useFakeTimers();
@@ -97,6 +106,7 @@ describe("notifications.markAllRead", () => {
     try {
       const { asUser } = await seedNotified(t, "creator_a", MARK_ALL_READ_BATCH_SIZE + 5);
       const { asUser: asOther } = await seedNotified(t, "creator_b");
+      advanceClock();
 
       await asUser.mutation(api.notifications.markAllRead, {});
       expect(await asUser.query(api.notifications.unreadCount, {})).toBe(5);
@@ -104,6 +114,40 @@ describe("notifications.markAllRead", () => {
       await t.finishAllScheduledFunctions(() => vi.runAllTimers());
       expect(await asUser.query(api.notifications.unreadCount, {})).toBe(0);
       expect(await asOther.query(api.notifications.unreadCount, {})).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("leaves notifications that arrive between batches unread", async () => {
+    vi.useFakeTimers();
+    const t = convexTest(schema, modules);
+    try {
+      const { asUser, notificationIds } = await seedNotified(
+        t,
+        "creator_a",
+        MARK_ALL_READ_BATCH_SIZE + 5,
+      );
+      advanceClock();
+
+      await asUser.mutation(api.notifications.markAllRead, {});
+      advanceClock();
+      const arrivedLaterId = await t.run(async (ctx) => {
+        const existing = await ctx.db.get("notifications", notificationIds[0]);
+        if (existing === null) throw new Error("expected seeded notification");
+        return await createNotification(ctx, existing.userId, {
+          type: existing.type,
+          title: existing.title,
+          target: existing.target,
+        });
+      });
+      await t.finishAllScheduledFunctions(() => vi.runAllTimers());
+
+      const unread = await asUser.query(api.notifications.list, {
+        isRead: false,
+        paginationOpts: firstPage,
+      });
+      expect(unread.page.map((n) => n._id)).toEqual([arrivedLaterId]);
     } finally {
       vi.useRealTimers();
     }

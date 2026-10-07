@@ -38,6 +38,29 @@ export async function createNotification(
   return await ctx.db.insert("notifications", { ...content, userId, isRead: false });
 }
 
+// The recipient helpers below skip a missing recipient instead of throwing: a
+// notification must never block the change it reports.
+
+/** Notifies the creator's user. */
+export async function notifyCreator(
+  ctx: MutationCtx,
+  creatorId: Id<"creators">,
+  content: NotificationContent,
+): Promise<void> {
+  const creator = await ctx.db.get("creators", creatorId);
+  if (creator !== null) await createNotification(ctx, creator.userId, content);
+}
+
+/** Notifies the company member who created the opportunity. Other members are not notified. */
+export async function notifyOpportunityCreator(
+  ctx: MutationCtx,
+  opportunity: Doc<"opportunities">,
+  content: NotificationContent,
+): Promise<void> {
+  const member = await ctx.db.get("companyUsers", opportunity.createdBy);
+  if (member !== null) await createNotification(ctx, member.userId, content);
+}
+
 /** Lists the user's notifications newest first, optionally only read or unread ones. */
 export async function listNotifications(
   ctx: QueryCtx,

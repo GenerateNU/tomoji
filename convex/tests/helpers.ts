@@ -469,6 +469,31 @@ export function withoutReviewerIdentity(view: object): object {
   return copy;
 }
 
+/** A notification as the recipient sees it, without IDs or timestamps. */
+export type ReceivedNotification = Pick<Doc<"notifications">, "type" | "title" | "target">;
+
+async function notificationsForUser(t: TestConvex, userId: Id<"users">) {
+  return await t.run(async (ctx) => {
+    const rows = await ctx.db
+      .query("notifications")
+      .withIndex("by_userId", (q) => q.eq("userId", userId))
+      .take(20);
+    return rows.map(({ type, title, target }): ReceivedNotification => ({ type, title, target }));
+  });
+}
+
+/** Reads the notifications sent to a creator, oldest first. */
+export async function creatorNotifications(t: TestConvex, creatorId: Id<"creators">) {
+  const creator = await t.run(async (ctx) => await ctx.db.get("creators", creatorId));
+  if (creator === null) throw new Error("expected seeded creator");
+  return await notificationsForUser(t, creator.userId);
+}
+
+/** Reads the notifications sent to a company member, oldest first. */
+export async function memberNotifications(t: TestConvex, membership: Doc<"companyUsers">) {
+  return await notificationsForUser(t, membership.userId);
+}
+
 /** Reads one submission as stored, or `null` if it doesn't exist. */
 export async function storedSubmission(t: TestConvex, submissionId: Id<"submissions">) {
   return await t.run(async (ctx) => await ctx.db.get("submissions", submissionId));

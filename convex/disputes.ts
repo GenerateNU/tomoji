@@ -1,4 +1,4 @@
-import { paginationOptsValidator, paginationResultValidator } from "convex/server";
+import { paginationResultValidator } from "convex/server";
 import { v } from "convex/values";
 import type { Doc } from "./_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
@@ -7,6 +7,7 @@ import type { AssignmentViewer } from "./models/assignments";
 import {
   createDispute,
   disputeDraft,
+  disputeListFilters,
   disputeView,
   listDisputes,
   requireDispute,
@@ -33,12 +34,14 @@ async function requireViewer(
 /**
  * Opens a dispute on an assignment the caller can see, whatever its status.
  * Creators, company users, and operators can all open one, and an assignment
- * can have several. The reason and description are stored trimmed.
+ * can have several. Creators and companies each have their own reasons;
+ * operators can give either. The assignment's approved submission and its
+ * posts are recorded as evidence, and the description is stored trimmed.
  *
- * @throws `not_found` if the assignment doesn't exist or isn't the caller's, or
- * `submissionId` isn't a submission on that assignment.
+ * @throws `not_found` if the assignment doesn't exist or isn't the caller's.
  * @throws `forbidden` if a company user's token names an org they don't belong to.
- * @throws `invalid_state` if the reason or description is blank or too long.
+ * @throws `invalid_state` if the reason isn't one the caller's side can give,
+ * or the description is blank or too long.
  * @returns the new dispute's id.
  */
 export const create = authedMutation({
@@ -66,19 +69,18 @@ export const get = authedQuery({
 });
 
 /**
- * Lists an assignment's disputes, newest first, with cursor pagination. Each
- * row is what `get` returns to the same caller.
+ * Lists the caller's company's or creator's disputes in one status, newest
+ * first, with cursor pagination. `openedByRole` keeps only those one side
+ * opened. Each row is what `get` returns to the same caller.
  *
- * @throws `not_found` if the assignment doesn't exist or isn't the caller's.
+ * @throws `forbidden` for operators, and for a company user whose token names
+ * an org they don't belong to.
  */
 export const list = authedQuery({
-  args: {
-    assignmentId: v.id("assignments"),
-    paginationOpts: paginationOptsValidator,
-  },
+  args: disputeListFilters.fields,
   returns: paginationResultValidator(disputeView),
   handler: async (ctx, args) => {
     const viewer = await requireViewer(ctx, ctx.user);
-    return await listDisputes(ctx, viewer, args.assignmentId, args.paginationOpts);
+    return await listDisputes(ctx, viewer, args);
   },
 });

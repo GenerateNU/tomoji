@@ -398,18 +398,24 @@ export async function seedDispute(
   fixture: AssignmentFixture,
   fields: Partial<WithoutSystemFields<Doc<"disputes">>> = {},
 ): Promise<Id<"disputes">> {
-  return await t.run(
-    async (ctx) =>
-      await ctx.db.insert("disputes", {
-        assignmentId: fixture.assignmentId,
-        openedBy: fixture.creatorUserId,
-        openedByRole: "creator",
-        reason: "Review contradicts the brief",
-        description: "The brief allows showing the deploy log, which the review asked me to cut.",
-        isResolved: false,
-        ...fields,
-      }),
-  );
+  return await t.run(async (ctx) => {
+    const assignment = await ctx.db.get("assignments", fixture.assignmentId);
+    if (assignment === null) throw new Error("expected seeded assignment");
+    return await ctx.db.insert("disputes", {
+      assignmentId: assignment._id,
+      companyId: assignment.companyId,
+      creatorId: assignment.creatorId,
+      campaignId: assignment.campaignId,
+      openedBy: fixture.creatorUserId,
+      openedByRole: "creator",
+      reason: "unfairReview",
+      description: "The brief allows showing the deploy log, which the review asked me to cut.",
+      evidenceSubmissionIds: [],
+      evidencePostIds: [],
+      status: "open",
+      ...fields,
+    });
+  });
 }
 
 /** Seeds a submission an operator overrode after a dispute, with every reviewer-identity field set. */
@@ -422,7 +428,7 @@ export async function seedOverriddenSubmission(t: TestConvex) {
     return operator._id;
   });
   const disputeId = await seedDispute(t, fixture, {
-    isResolved: true,
+    status: "resolved",
     resolvedBy: operatorId,
     resolution: "The brief allows the deploy log; approved as submitted.",
   });

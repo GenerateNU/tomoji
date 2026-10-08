@@ -18,34 +18,34 @@ import {
 
 const modules = import.meta.glob("../**/*.ts");
 
-function createArgs(fixture: AssignmentFixture): FunctionArgs<typeof api.disputes.create> {
+type CreateArgs = FunctionArgs<typeof api.disputes.create>;
+
+function createArgs(fixture: AssignmentFixture, reason: CreateArgs["reason"]): CreateArgs {
   return {
     assignmentId: fixture.assignmentId,
-    reason: "Payment not received",
+    reason,
     description: "The video went live on Oct 1 and the fixed fee hasn't arrived.",
   };
 }
 
-function pageArgs(fixture: AssignmentFixture) {
-  return { assignmentId: fixture.assignmentId, paginationOpts: { numItems: 10, cursor: null } };
-}
+const openList = { status: "open", paginationOpts: { numItems: 10, cursor: null } } as const;
 
 type Client = Pick<TestConvex, "mutation" | "query">;
 type Caller = (t: TestConvex, fixture: AssignmentFixture) => Promise<Client>;
 
-const openers: [string, Caller, "creator" | "company" | "operator"][] = [
-  ["the creator", async (_t, fixture) => fixture.asCreator, "creator"],
-  ["the company user", async (_t, fixture) => fixture.asCompany, "company"],
-  ["an operator", async (t) => await seedOperator(t, "dc-operator"), "operator"],
+const openers: [string, Caller, "creator" | "company" | "operator", CreateArgs["reason"]][] = [
+  ["the creator", async (_t, fixture) => fixture.asCreator, "creator", "paymentNotReceived"],
+  ["the company user", async (_t, fixture) => fixture.asCompany, "company", "missingDisclosure"],
+  ["an operator", async (t) => await seedOperator(t, "dc-operator"), "operator", "payoutAmount"],
 ];
 
 describe("disputes.create", () => {
-  test.each(openers)("lets %s open a dispute", async (_who, caller, role) => {
+  test.each(openers)("lets %s open a dispute", async (_who, caller, role, reason) => {
     const t = convexTest(schema, modules);
     const fixture = await seedAssignmentFixture(t);
     const client = await caller(t, fixture);
 
-    const disputeId = await client.mutation(api.disputes.create, createArgs(fixture));
+    const disputeId = await client.mutation(api.disputes.create, createArgs(fixture, reason));
 
     expect(await storedDisputes(t)).toMatchObject([{ _id: disputeId, openedByRole: role }]);
   });
@@ -55,7 +55,7 @@ describe("disputes.create", () => {
     const fixture = await seedAssignmentFixture(t);
 
     await expectApiError(
-      () => t.mutation(api.disputes.create, createArgs(fixture)),
+      () => t.mutation(api.disputes.create, createArgs(fixture, "other")),
       "not_authenticated",
     );
   });
@@ -66,7 +66,7 @@ describe("disputes.create", () => {
     const { asMember } = await seedMembership(t, "outsider");
 
     await expectApiError(
-      () => asMember.mutation(api.disputes.create, createArgs(fixture)),
+      () => asMember.mutation(api.disputes.create, createArgs(fixture, "missingDisclosure")),
       "not_found",
     );
     expect(await storedDisputes(t)).toEqual([]);
@@ -78,7 +78,7 @@ describe("disputes.create", () => {
     const asWrongOrg = await seedWrongOrgCaller(t);
 
     await expectApiError(
-      () => asWrongOrg.mutation(api.disputes.create, createArgs(fixture)),
+      () => asWrongOrg.mutation(api.disputes.create, createArgs(fixture, "missingDisclosure")),
       "forbidden",
     );
   });
@@ -91,6 +91,7 @@ describe("disputes.get", () => {
     const disputeId = await seedDispute(t, fixture, {
       openedBy: fixture.membership.userId,
       openedByRole: "company",
+      reason: "missingDisclosure",
     });
 
     const creatorView = await fixture.asCreator.query(api.disputes.get, { disputeId });
@@ -112,22 +113,35 @@ describe("disputes.get", () => {
 });
 
 describe("disputes.list", () => {
-  test("returns what get returns to the same caller", async () => {
+  test("lists the caller's side and returns what get returns", async () => {
     const t = convexTest(schema, modules);
     const fixture = await seedAssignmentFixture(t);
     const disputeId = await seedDispute(t, fixture);
 
     for (const client of [fixture.asCreator, fixture.asCompany]) {
-      const { page } = await client.query(api.disputes.list, pageArgs(fixture));
+      const { page } = await client.query(api.disputes.list, openList);
       expect(page).toEqual([await client.query(api.disputes.get, { disputeId })]);
     }
   });
 
-  test("conceals another company's assignment", async () => {
+  test("shows another company nothing", async () => {
     const t = convexTest(schema, modules);
     const fixture = await seedAssignmentFixture(t);
+    await seedDispute(t, fixture);
     const { asMember } = await seedMembership(t, "outsider");
 
-    await expectApiError(() => asMember.query(api.disputes.list, pageArgs(fixture)), "not_found");
+    const { page } = await asMember.query(api.disputes.list, openList);
+
+    expect(page).toEqual([]);
+  });
+
+  test.each([
+    ["an operator", async (t: TestConvex) => await seedOperator(t, "dl-operator")],
+    ["a company user with the wrong org", seedWrongOrgCaller],
+  ])("refuses %s", async (_who, caller) => {
+    const t = convexTest(schema, modules);
+    const client = await caller(t);
+
+    await expectApiError(() => client.query(api.disputes.list, openList), "forbidden");
   });
 });

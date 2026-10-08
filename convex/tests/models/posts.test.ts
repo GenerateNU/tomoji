@@ -2,13 +2,17 @@
 import { convexTest } from "convex-test";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import type { Id } from "../../_generated/dataModel";
-import { createPost, requirePost } from "../../models/posts";
+import { createPost, listPosts, requirePost } from "../../models/posts";
 import schema from "../../schema";
 import {
   expectApiError,
+  seedAssignment,
+  seedCampaign,
   seedCreatorId,
   seedMembership,
   seedOneSubmission,
+  seedOpportunity,
+  type AssignmentFixture,
   type TestConvex,
 } from "../helpers";
 
@@ -219,5 +223,235 @@ describe("requirePost", () => {
       () => t.run(async (ctx) => await requirePost(ctx, { role: "operator" }, postId)),
       "not_found",
     );
+  });
+});
+
+const firstPage = { numItems: 10, cursor: null };
+
+/**
+ * Adds another creator's post to the fixture's campaign: a new assignment on
+ * the same opportunity, an approved submission, and the post.
+ */
+async function addPost(t: TestConvex, fixture: AssignmentFixture, subject: string) {
+  vi.setSystemTime(Date.now() + 1000);
+  const creatorId = await seedCreatorId(t, subject);
+  const opportunityId = await t.run(
+    async (ctx) => (await ctx.db.get("assignments", fixture.assignmentId))!.opportunityId,
+  );
+  const assignmentId = await seedAssignment(t, { opportunityId, creatorId, status: "active" });
+  return await t.run(async (ctx) => {
+    const submissionId = await ctx.db.insert("submissions", {
+      assignmentId,
+      draftUrl: "https://drive.example.com/drafts/another",
+      draftDescription: "Another draft",
+      usesAiReview: false,
+      status: "approved",
+      reviewerType: "companyUser",
+      reviewedBy: fixture.membership._id,
+      reviewedAt: Date.now(),
+    });
+    return await createPost(ctx, creatorId, {
+      submissionId,
+      url: `https://x.com/${subject}/status/${Date.now()}`,
+    });
+  });
+}
+
+/** Seeds the fixture's approved submission and its post. */
+async function seedFixturePost(t: TestConvex) {
+  const { fixture, submissionId } = await seedOneSubmission(t, "approved");
+  const postId = await t.run(
+    async (ctx) => await createPost(ctx, fixture.creatorId, { submissionId, url: POST_URL }),
+  );
+  const campaignId = await t.run(
+    async (ctx) => (await ctx.db.get("assignments", fixture.assignmentId))!.campaignId,
+  );
+  return { fixture, postId, campaignId };
+}
+
+const ids = (page: { _id: Id<"posts"> }[]) => page.map((post) => post._id);
+
+describe("listPosts by assignment", () => {
+  test("returns the assignment's post to its creator, its company, and operators", async () => {
+    const t = convexTest(schema, modules);
+    const { fixture, postId } = await seedFixturePost(t);
+    await addPost(t, fixture, "other_creator");
+
+    for (const viewer of [
+      { role: "creator" as const, creatorId: fixture.creatorId },
+      { role: "company" as const, companyId: fixture.membership.companyId },
+      { role: "operator" as const },
+    ]) {
+      const result = await t.run(
+        async (ctx) =>
+          await listPosts(ctx, viewer, {
+            assignmentId: fixture.assignmentId,
+            paginationOpts: firstPage,
+          }),
+      );
+      expect(ids(result.page)).toEqual([postId]);
+      expect(result.isDone).toBe(true);
+    }
+  });
+
+  test.each(["pending", "changesRequested", "approved"] as const)(
+    "returns an empty page when the latest submission is %s with no post",
+    async (status) => {
+      const t = convexTest(schema, modules);
+      const { fixture } = await seedOneSubmission(t, status);
+
+      const result = await t.run(
+        async (ctx) =>
+          await listPosts(
+            ctx,
+            { role: "operator" },
+            { assignmentId: fixture.assignmentId, paginationOpts: firstPage },
+          ),
+      );
+
+      expect(result.page).toEqual([]);
+      expect(result.isDone).toBe(true);
+    },
+  );
+
+  test("conceals another creator's assignment", async () => {
+    const t = convexTest(schema, modules);
+    const { fixture } = await seedFixturePost(t);
+    const otherCreatorId = await seedCreatorId(t, "other_creator");
+
+    await expectApiError(
+      () =>
+        t.run(
+          async (ctx) =>
+            await listPosts(
+              ctx,
+              { role: "creator", creatorId: otherCreatorId },
+              { assignmentId: fixture.assignmentId, paginationOpts: firstPage },
+            ),
+        ),
+      "not_found",
+    );
+  });
+});
+
+describe("listPosts by campaign", () => {
+  test("lists the campaign's posts newest first and excludes other campaigns", async () => {
+    const t = convexTest(schema, modules);
+    const { fixture, postId, campaignId } = await seedFixturePost(t);
+    const second = await addPost(t, fixture, "second_creator");
+    const third = await addPost(t, fixture, "third_creator");
+    const other = await seedOpportunity(t, { subject: "other_owner", orgId: "org_other" });
+    const otherCreatorId = await seedCreatorId(t, "other_campaign_creator");
+    const otherAssignmentId = await seedAssignment(t, {
+      opportunityId: other.opportunityId,
+      creatorId: otherCreatorId,
+      status: "active",
+    });
+    await t.run(async (ctx) => {
+      const submissionId = await ctx.db.insert("submissions", {
+        assignmentId: otherAssignmentId,
+        draftUrl: "https://drive.example.com/drafts/other",
+        draftDescription: "Other campaign draft",
+        usesAiReview: false,
+        status: "approved",
+        reviewerType: "companyUser",
+        reviewedBy: other.membership._id,
+        reviewedAt: Date.now(),
+      });
+      await createPost(ctx, otherCreatorId, {
+        submissionId,
+        url: "https://x.com/other_creator/status/1",
+      });
+    });
+
+    for (const viewer of [
+      { role: "company" as const, companyId: fixture.membership.companyId },
+      { role: "operator" as const },
+    ]) {
+      const result = await t.run(
+        async (ctx) => await listPosts(ctx, viewer, { campaignId, paginationOpts: firstPage }),
+      );
+      expect(ids(result.page)).toEqual([third, second, postId]);
+    }
+  });
+
+  test("pages through a campaign's posts", async () => {
+    const t = convexTest(schema, modules);
+    const { fixture, postId, campaignId } = await seedFixturePost(t);
+    const second = await addPost(t, fixture, "second_creator");
+    const third = await addPost(t, fixture, "third_creator");
+    const operator = { role: "operator" as const };
+
+    const first = await t.run(
+      async (ctx) =>
+        await listPosts(ctx, operator, {
+          campaignId,
+          paginationOpts: { numItems: 2, cursor: null },
+        }),
+    );
+    const next = await t.run(
+      async (ctx) =>
+        await listPosts(ctx, operator, {
+          campaignId,
+          paginationOpts: { numItems: 2, cursor: first.continueCursor },
+        }),
+    );
+
+    expect([...ids(first.page), ...ids(next.page)]).toEqual([third, second, postId]);
+  });
+
+  test("conceals another company's campaign", async () => {
+    const t = convexTest(schema, modules);
+    const { campaignId } = await seedFixturePost(t);
+    const other = await seedCampaign(t, { subject: "other_owner", orgId: "org_other" });
+
+    await expectApiError(
+      () =>
+        t.run(
+          async (ctx) =>
+            await listPosts(
+              ctx,
+              { role: "company", companyId: other.membership.companyId },
+              { campaignId, paginationOpts: firstPage },
+            ),
+        ),
+      "not_found",
+    );
+  });
+
+  test("refuses creators, who only see their own posts", async () => {
+    const t = convexTest(schema, modules);
+    const { fixture, campaignId } = await seedFixturePost(t);
+
+    await expectApiError(
+      () =>
+        t.run(
+          async (ctx) =>
+            await listPosts(
+              ctx,
+              { role: "creator", creatorId: fixture.creatorId },
+              { campaignId, paginationOpts: firstPage },
+            ),
+        ),
+      "forbidden",
+    );
+  });
+});
+
+describe("listPosts filters", () => {
+  test.each([
+    ["neither filter", {}],
+    ["both filters", { both: true }],
+  ])("refuses %s", async (_label, mode) => {
+    const t = convexTest(schema, modules);
+    const { fixture, campaignId } = await seedFixturePost(t);
+    const filters = "both" in mode ? { assignmentId: fixture.assignmentId, campaignId } : {};
+
+    await expect(
+      t.run(
+        async (ctx) =>
+          await listPosts(ctx, { role: "operator" }, { ...filters, paginationOpts: firstPage }),
+      ),
+    ).rejects.toMatchObject({ data: { code: "invalid_state", reason: "invalid_filter" } });
   });
 });

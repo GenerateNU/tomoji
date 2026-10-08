@@ -1,8 +1,10 @@
+import { paginationOptsValidator, type PaginationResult } from "convex/server";
 import { v, type Infer } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { apiError } from "../lib/errors";
 import { requireAssignment, type AssignmentViewer } from "./assignments";
+import { getLatestSubmission } from "./submissions";
 
 /** The creator-supplied fields of a new post. */
 export const postCreate = v.object({
@@ -117,4 +119,58 @@ export async function requirePost(
   // Throws `not_found` when the viewer can't see the post's assignment.
   await requireAssignment(ctx, viewer, submission.assignmentId);
   return post;
+}
+
+/** `list` takes exactly one of `assignmentId` or `campaignId`. */
+export const postListFilters = v.object({
+  assignmentId: v.optional(v.id("assignments")),
+  campaignId: v.optional(v.id("campaigns")),
+  paginationOpts: paginationOptsValidator,
+});
+
+/**
+ * Returns one page of posts, newest first, for either an assignment or a
+ * campaign. An assignment has at most one post. Campaign listing is for the
+ * owning company and operators; creators only see their own posts.
+ *
+ * @throws `invalid_state` with `invalid_filter` unless exactly one filter is given.
+ * @throws `not_found` if the assignment or campaign isn't visible to the viewer.
+ * @throws `forbidden` if a creator lists by campaign.
+ */
+export async function listPosts(
+  ctx: QueryCtx,
+  viewer: PostViewer,
+  options: Infer<typeof postListFilters>,
+): Promise<PaginationResult<Doc<"posts">>> {
+  const { assignmentId, campaignId, paginationOpts } = options;
+  if ((assignmentId === undefined) === (campaignId === undefined)) {
+    throw apiError("invalid_state", { reason: "invalid_filter" });
+  }
+
+  if (assignmentId !== undefined) {
+    const assignment = await requireAssignment(ctx, viewer, assignmentId);
+    // Approval is final, so if the assignment has an approved submission it's the latest.
+    const submission = await getLatestSubmission(ctx, assignment._id);
+    if (submission === null || submission.status !== "approved") {
+      return { page: [], isDone: true, continueCursor: "" };
+    }
+    return await ctx.db
+      .query("posts")
+      .withIndex("by_submissionId", (q) => q.eq("submissionId", submission._id))
+      .order("desc")
+      .paginate(paginationOpts);
+  }
+
+  if (viewer.role === "creator") {
+    throw apiError("forbidden", { reason: "creators_list_by_assignment" });
+  }
+  const campaign = await ctx.db.get("campaigns", campaignId!);
+  if (campaign === null || (viewer.role === "company" && campaign.companyId !== viewer.companyId)) {
+    throw apiError("not_found", { resource: "campaign" });
+  }
+  return await ctx.db
+    .query("posts")
+    .withIndex("by_campaignId", (q) => q.eq("campaignId", campaign._id))
+    .order("desc")
+    .paginate(paginationOpts);
 }

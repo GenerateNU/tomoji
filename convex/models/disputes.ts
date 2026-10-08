@@ -12,6 +12,7 @@ import {
 } from "../schemas/disputes.schema";
 import { userRole } from "../schemas/users.schema";
 import { requireAssignment, type AssignmentViewer } from "./assignments";
+import { getLatestSubmission } from "./submissions";
 
 const disputeDoc = schema.doc("disputes");
 
@@ -82,11 +83,7 @@ async function evidenceOnFile(
   ctx: MutationCtx,
   assignmentId: Id<"assignments">,
 ): Promise<Pick<Doc<"disputes">, "evidenceSubmissionIds" | "evidencePostIds">> {
-  const latest = await ctx.db
-    .query("submissions")
-    .withIndex("by_assignmentId", (q) => q.eq("assignmentId", assignmentId))
-    .order("desc")
-    .first();
+  const latest = await getLatestSubmission(ctx, assignmentId);
   if (latest?.status !== "approved") {
     return { evidenceSubmissionIds: [], evidencePostIds: [] };
   }

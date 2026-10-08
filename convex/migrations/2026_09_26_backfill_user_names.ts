@@ -6,8 +6,8 @@ import { migrations } from "./runner";
 
 export type UserFields = Pick<
   Doc<"users">,
-  "workosId" | "email" | "role" | "isActive" | "profilePicture"
-> & { firstName: string; lastName: string };
+  "workosId" | "email" | "role" | "isActive" | "profilePictureMediaId"
+> & { firstName: string; lastName: string; profilePicture?: string };
 
 export type LegacyUserFields = Omit<UserFields, "firstName" | "lastName"> & {
   name?: string;
@@ -41,6 +41,9 @@ export function normalizeLegacyUser(
     role: user.role,
     isActive: user.isActive,
     ...(user.profilePicture === undefined ? {} : { profilePicture: user.profilePicture }),
+    ...(user.profilePictureMediaId === undefined
+      ? {}
+      : { profilePictureMediaId: user.profilePictureMediaId }),
   };
 }
 

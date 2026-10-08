@@ -4,7 +4,9 @@ import { v, type Infer } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { apiError } from "../lib/errors";
+import { companyContext } from "../lib/functions";
 import schema from "../schema";
+import { requireCallerCreatorId } from "./users";
 
 /**
  * Creates a creator's assignment on an open, ungated opportunity.
@@ -85,7 +87,7 @@ async function requireOpportunityWithCampaign(
  *
  * The slot check and increment read and write the opportunity in this
  * transaction, so when two creators race for the last slot Convex retries the
- * later one against the updated count and it fails as full.
+ * later one against the updated count, and it fails as full.
  */
 async function createAssignment(
   ctx: MutationCtx,
@@ -130,6 +132,31 @@ export type AssignmentViewer =
   | { role: "operator" }
   | { role: "creator"; creatorId: Id<"creators"> }
   | { role: "company"; companyId: Id<"companies"> };
+
+/**
+ * Resolves the signed-in caller to the viewer that assignment access checks
+ * use. For routes open to more than one account type.
+ *
+ * @throws `not_found` if a creator has no creator profile.
+ * @throws `forbidden` if a company user's token names an org they don't
+ * belong to, or their company is inactive.
+ */
+export async function requireAssignmentViewer(
+  ctx: QueryCtx | MutationCtx,
+  user: Doc<"users">,
+): Promise<AssignmentViewer> {
+  switch (user.role) {
+    case "operator":
+      return { role: "operator" };
+    case "creator":
+      return { role: "creator", creatorId: await requireCallerCreatorId(ctx, user) };
+    case "company": {
+      // Proves membership in the token's org, not just the account type.
+      const { membership } = await companyContext(ctx);
+      return { role: "company", companyId: membership.companyId };
+    }
+  }
+}
 
 /**
  * Returns an assignment the viewer may see: creators see their own, company

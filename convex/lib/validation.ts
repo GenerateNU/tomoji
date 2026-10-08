@@ -12,3 +12,12 @@ export function requireNonBlank(value: string, field: string): string {
   }
   return trimmed;
 }
+
+/** Like `requireNonBlank`, but also rejects text longer than `maxLength` with `<field>_too_long`. */
+export function requireBoundedText(value: string, field: string, maxLength: number): string {
+  const trimmed = requireNonBlank(value, field);
+  if (trimmed.length > maxLength) {
+    throw apiError("invalid_state", { reason: `${field}_too_long` });
+  }
+  return trimmed;
+}

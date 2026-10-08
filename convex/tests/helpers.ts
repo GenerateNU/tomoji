@@ -295,6 +295,7 @@ export async function seedMembership(t: TestConvex, subject: string, orgId = `or
 export type AssignmentFixture = {
   assignmentId: Id<"assignments">;
   creatorId: Id<"creators">;
+  creatorUserId: Id<"users">;
   membership: Doc<"companyUsers">;
   asCreator: ReturnType<TestConvex["withIdentity"]>;
   asCompany: ReturnType<TestConvex["withIdentity"]>;
@@ -325,11 +326,17 @@ export async function seedAssignmentFixture(
     status: assignment.status ?? "active",
   });
   const usesAiReview = assignment.usesAiReview ?? false;
-  await t.run(async (ctx) => await ctx.db.patch("assignments", assignmentId, { usesAiReview }));
+  const creatorUserId = await t.run(async (ctx) => {
+    await ctx.db.patch("assignments", assignmentId, { usesAiReview });
+    const user = await getUserByWorkosId(ctx, FIXTURE_CREATOR);
+    if (user === null) throw new Error("expected seeded creator");
+    return user._id;
+  });
 
   return {
     assignmentId,
     creatorId,
+    creatorUserId,
     membership,
     asCreator: t.withIdentity(workosIdentity({ subject: FIXTURE_CREATOR })),
     asCompany,
@@ -382,25 +389,46 @@ export async function seedOneSubmission(
   return { fixture, submissionId };
 }
 
+/**
+ * Inserts a dispute on the fixture's assignment, bypassing the open rules.
+ * Defaults to an open dispute raised by the fixture's creator.
+ */
+export async function seedDispute(
+  t: TestConvex,
+  fixture: AssignmentFixture,
+  fields: Partial<WithoutSystemFields<Doc<"disputes">>> = {},
+): Promise<Id<"disputes">> {
+  return await t.run(
+    async (ctx) =>
+      await ctx.db.insert("disputes", {
+        assignmentId: fixture.assignmentId,
+        openedBy: fixture.creatorUserId,
+        openedByRole: "creator",
+        reason: "Review contradicts the brief",
+        description: "The brief allows showing the deploy log, which the review asked me to cut.",
+        isResolved: false,
+        ...fields,
+      }),
+  );
+}
+
 /** Seeds a submission an operator overrode after a dispute, with every reviewer-identity field set. */
 export async function seedOverriddenSubmission(t: TestConvex) {
   const fixture = await seedAssignmentFixture(t);
   await seedOperator(t, FIXTURE_OPERATOR);
+  const operatorId = await t.run(async (ctx) => {
+    const operator = await getUserByWorkosId(ctx, FIXTURE_OPERATOR);
+    if (operator === null) throw new Error("expected seeded operator");
+    return operator._id;
+  });
+  const disputeId = await seedDispute(t, fixture, {
+    isResolved: true,
+    resolvedBy: operatorId,
+    resolution: "The brief allows the deploy log; approved as submitted.",
+  });
 
   const submissionId = await t.run(async (ctx) => {
-    const operator = await getUserByWorkosId(ctx, FIXTURE_OPERATOR);
-    const creator = await ctx.db.get("creators", fixture.creatorId);
-    if (operator === null || creator === null) throw new Error("expected seeded users");
     const reviewedAt = Date.now();
-    const disputeId = await ctx.db.insert("disputes", {
-      assignmentId: fixture.assignmentId,
-      openedBy: creator.userId,
-      reason: "Review contradicts the brief",
-      description: "The brief allows showing the deploy log, which the review asked me to cut.",
-      isResolved: true,
-      resolvedBy: operator._id,
-      resolution: "The brief allows the deploy log; approved as submitted.",
-    });
     return await ctx.db.insert("submissions", {
       assignmentId: fixture.assignmentId,
       draftUrl: "https://drive.example.com/drafts/driftwood-cli-screencast",
@@ -408,7 +436,7 @@ export async function seedOverriddenSubmission(t: TestConvex) {
       usesAiReview: false,
       status: "approved",
       reviewerType: "operator",
-      reviewedByOperator: operator._id,
+      reviewedByOperator: operatorId,
       reviewedAt,
       overriddenReview: {
         status: "changesRequested",
@@ -447,4 +475,9 @@ export async function storedSubmission(t: TestConvex, submissionId: Id<"submissi
 /** Reads every submission in the test's database, oldest first. */
 export async function storedSubmissions(t: TestConvex) {
   return await t.run(async (ctx) => await ctx.db.query("submissions").collect());
+}
+
+/** Reads every dispute in the test's database, oldest first. */
+export async function storedDisputes(t: TestConvex) {
+  return await t.run(async (ctx) => await ctx.db.query("disputes").collect());
 }

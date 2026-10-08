@@ -3,7 +3,7 @@ import { v, type Infer } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { apiError } from "../lib/errors";
-import { requireNonBlank } from "../lib/validation";
+import { requireBoundedText } from "../lib/validation";
 import { submissionShapes } from "../schemas/submissions.schema";
 import { requireAssignment, type AssignmentViewer } from "./assignments";
 
@@ -52,11 +52,7 @@ const MAX_LENGTH = {
 } as const;
 
 function requireText(value: string, field: keyof typeof MAX_LENGTH): string {
-  const trimmed = requireNonBlank(value, field);
-  if (trimmed.length > MAX_LENGTH[field]) {
-    throw apiError("invalid_state", { reason: `${field}_too_long` });
-  }
-  return trimmed;
+  return requireBoundedText(value, field, MAX_LENGTH[field]);
 }
 
 /** Like `requireText`, but a missing or blank value becomes `undefined`. */

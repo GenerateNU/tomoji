@@ -1,7 +1,9 @@
 import { paginationOptsValidator, paginationResultValidator } from "convex/server";
 import { v } from "convex/values";
-import { authedMutation, authedQuery } from "./lib/functions";
-import { requireAssignmentViewer } from "./models/assignments";
+import type { Doc } from "./_generated/dataModel";
+import type { MutationCtx, QueryCtx } from "./_generated/server";
+import { authedMutation, authedQuery, companyContext } from "./lib/functions";
+import type { AssignmentViewer } from "./models/assignments";
 import {
   createDispute,
   disputeDraft,
@@ -9,6 +11,24 @@ import {
   listDisputes,
   requireDispute,
 } from "./models/disputes";
+import { requireCallerCreatorId } from "./models/users";
+
+/** Company users go through `companyContext`, so their token's org must be one they belong to. */
+async function requireViewer(
+  ctx: QueryCtx | MutationCtx,
+  user: Doc<"users">,
+): Promise<AssignmentViewer> {
+  switch (user.role) {
+    case "creator":
+      return { role: "creator", creatorId: await requireCallerCreatorId(ctx, user) };
+    case "company": {
+      const { membership } = await companyContext(ctx);
+      return { role: "company", companyId: membership.companyId };
+    }
+    case "operator":
+      return { role: "operator" };
+  }
+}
 
 /**
  * Opens a dispute on an assignment the caller can see, whatever its status.
@@ -25,7 +45,7 @@ export const create = authedMutation({
   args: disputeDraft.fields,
   returns: v.id("disputes"),
   handler: async (ctx, args) => {
-    const viewer = await requireAssignmentViewer(ctx, ctx.user);
+    const viewer = await requireViewer(ctx, ctx.user);
     return await createDispute(ctx, viewer, ctx.user._id, args);
   },
 });
@@ -40,7 +60,7 @@ export const get = authedQuery({
   args: { disputeId: v.id("disputes") },
   returns: disputeView,
   handler: async (ctx, args) => {
-    const viewer = await requireAssignmentViewer(ctx, ctx.user);
+    const viewer = await requireViewer(ctx, ctx.user);
     return await requireDispute(ctx, viewer, args.disputeId);
   },
 });
@@ -58,7 +78,7 @@ export const list = authedQuery({
   },
   returns: paginationResultValidator(disputeView),
   handler: async (ctx, args) => {
-    const viewer = await requireAssignmentViewer(ctx, ctx.user);
+    const viewer = await requireViewer(ctx, ctx.user);
     return await listDisputes(ctx, viewer, args.assignmentId, args.paginationOpts);
   },
 });

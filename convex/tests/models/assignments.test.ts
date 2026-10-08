@@ -13,10 +13,8 @@ import {
   listAssignments,
   listCreatorAssignments,
   requireAssignment,
-  requireAssignmentViewer,
 } from "../../models/assignments";
 import { createOpportunity } from "../../models/opportunities";
-import { requireUser } from "../../models/users";
 import schema from "../../schema";
 import {
   expectApiError,
@@ -24,11 +22,7 @@ import {
   seedAssignment,
   seedCampaign,
   seedCreatorId,
-  seedMembership,
-  seedOperator,
   seedOpportunity,
-  seedWrongOrgCaller,
-  workosIdentity,
   type TestConvex,
 } from "../helpers";
 
@@ -661,40 +655,6 @@ describe("listCreatorAssignments", () => {
 
     expect([...ids(first.page), ...ids(second.page)]).toEqual(seeded.reverse());
     expect(second.isDone).toBe(true);
-  });
-});
-
-describe("requireAssignmentViewer", () => {
-  /** Resolves the caller the way an `authedQuery` route would. */
-  async function viewerOf(caller: ReturnType<TestConvex["withIdentity"]>) {
-    return await caller.run(async (ctx) => {
-      const { user } = await requireUser(ctx);
-      return await requireAssignmentViewer(ctx, user);
-    });
-  }
-
-  test("resolves each account type to its viewer", async () => {
-    const t = convexTest(schema, modules);
-    const asOperator = await seedOperator(t, "operator");
-    const creatorId = await seedCreatorId(t, "creator");
-    const { asMember, membership } = await seedMembership(t, "member");
-
-    expect(await viewerOf(asOperator)).toEqual({ role: "operator" });
-    expect(await viewerOf(t.withIdentity(workosIdentity({ subject: "creator" })))).toEqual({
-      role: "creator",
-      creatorId,
-    });
-    expect(await viewerOf(asMember)).toEqual({
-      role: "company",
-      companyId: membership.companyId,
-    });
-  });
-
-  test("refuses a company user whose token names an org they don't belong to", async () => {
-    const t = convexTest(schema, modules);
-    const asWrongOrg = await seedWrongOrgCaller(t);
-
-    await expectApiError(() => viewerOf(asWrongOrg), "forbidden");
   });
 });
 

@@ -1,7 +1,8 @@
 import { paginationOptsValidator, paginationResultValidator } from "convex/server";
 import { v } from "convex/values";
-import { authedQuery, companyMutation, creatorMutation } from "./lib/functions";
-import { requireAssignmentViewer } from "./models/assignments";
+import type { Doc } from "./_generated/dataModel";
+import type { QueryCtx } from "./_generated/server";
+import { authedQuery, companyContext, companyMutation, creatorMutation } from "./lib/functions";
 import { requireCreatorProfile } from "./models/creators";
 import {
   createSubmission,
@@ -11,8 +12,25 @@ import {
   submissionDraft,
   submissionReview,
   submissionView,
+  type SubmissionViewer,
 } from "./models/submissions";
 import schema from "./schema";
+
+/** Company users go through `companyContext`, so their token's org must be one they belong to. */
+async function requireViewer(ctx: QueryCtx, user: Doc<"users">): Promise<SubmissionViewer> {
+  switch (user.role) {
+    case "creator": {
+      const { creatorId } = await requireCreatorProfile(ctx, user);
+      return { role: "creator", creatorId };
+    }
+    case "company": {
+      const { membership } = await companyContext(ctx);
+      return { role: "company", companyId: membership.companyId };
+    }
+    case "operator":
+      return { role: "operator" };
+  }
+}
 
 /**
  * Submits a draft for review on the caller's own active assignment. The URL is
@@ -67,7 +85,7 @@ export const get = authedQuery({
   args: { submissionId: v.id("submissions") },
   returns: submissionView,
   handler: async (ctx, args) => {
-    const viewer = await requireAssignmentViewer(ctx, ctx.user);
+    const viewer = await requireViewer(ctx, ctx.user);
     return await requireSubmission(ctx, viewer, args.submissionId);
   },
 });
@@ -85,7 +103,7 @@ export const list = authedQuery({
   },
   returns: paginationResultValidator(submissionView),
   handler: async (ctx, args) => {
-    const viewer = await requireAssignmentViewer(ctx, ctx.user);
+    const viewer = await requireViewer(ctx, ctx.user);
     return await listSubmissions(ctx, viewer, args.assignmentId, args.paginationOpts);
   },
 });

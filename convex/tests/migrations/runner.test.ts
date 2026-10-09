@@ -14,6 +14,7 @@ const transitionSchema = defineSchema({
   users: defineTable(
     schema.tables.users.validator.omit("firstName", "lastName").extend({
       name: v.optional(v.string()),
+      profilePicture: v.optional(v.string()),
       firstName: v.optional(v.string()),
       lastName: v.optional(v.string()),
     }),

@@ -5,7 +5,13 @@ import { api } from "../_generated/api";
 import { getCreatorByUserId, updateCreatorProfile } from "../models/creators";
 import { getUserByWorkosId } from "../models/users";
 import schema from "../schema";
-import { expectApiError, seedCreatorId, seedOperator, seedUser } from "./helpers";
+import {
+  expectApiError,
+  seedCreatorId,
+  seedOperator,
+  seedProfilePictureUpload,
+  seedUser,
+} from "./helpers";
 
 const modules = import.meta.glob("../**/*.ts");
 
@@ -41,6 +47,7 @@ describe("creators.me", () => {
 
   test("returns all user-facing creator profile fields", async () => {
     const t = convexTest(schema, modules);
+    const { uploadId } = await seedProfilePictureUpload(t, "creator_me", "complete");
     const asCreator = await seedUser(t, {
       subject: "creator_me",
       email: "creator@example.com",
@@ -53,9 +60,6 @@ describe("creators.me", () => {
       const creator = await getCreatorByUserId(ctx, user._id);
       if (creator === null) throw new Error("expected seeded creator");
 
-      await ctx.db.patch("users", user._id, {
-        profilePicture: "https://example.com/profile.png",
-      });
       await updateCreatorProfile(ctx, user, {
         username: "creator_name",
         xId: "creator_x",
@@ -71,7 +75,7 @@ describe("creators.me", () => {
       firstName: "Creator",
       lastName: "Name",
       email: "creator@example.com",
-      profilePicture: "https://example.com/profile.png",
+      profilePictureMediaId: uploadId,
       xId: "creator_x",
       githubLink: "https://github.com/creator",
       phoneNumber: "+15555550123",
@@ -86,6 +90,7 @@ describe("creators.me", () => {
 
     expect(profile).not.toHaveProperty("username");
     expect(profile).not.toHaveProperty("profilePicture");
+    expect(profile).not.toHaveProperty("profilePictureMediaId");
     expect(profile).not.toHaveProperty("xId");
     expect(profile).not.toHaveProperty("githubLink");
     expect(profile).not.toHaveProperty("phoneNumber");

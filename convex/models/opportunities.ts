@@ -5,6 +5,7 @@ import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { apiError } from "../lib/errors";
 import { requireNonBlank } from "../lib/validation";
 import { requireMembership } from "./companyUsers";
+import { notifyCreator, notifyOpportunityCreator } from "./notifications";
 import schema from "../schema";
 
 export const opportunityCreate = schema
@@ -110,7 +111,38 @@ async function applyOpportunityClose(
 ): Promise<Doc<"opportunities">> {
   if (opportunity.status === "closed") return opportunity;
   await ctx.db.patch("opportunities", opportunity._id, { status: "closed" });
+  await notifyWaitingApplicants(ctx, opportunity);
   return { ...opportunity, status: "closed" };
+}
+
+/**
+ * Tells each creator with a pending or offered application that the
+ * opportunity closed, since neither can go further. An opportunity never has
+ * more than `maxApplications` applications, so this is bounded.
+ */
+async function notifyWaitingApplicants(
+  ctx: MutationCtx,
+  opportunity: Doc<"opportunities">,
+): Promise<void> {
+  for (const status of ["pending", "offered"] as const) {
+    const waiting = await ctx.db
+      .query("applications")
+      .withIndex("by_opportunityId_and_status", (q) =>
+        q.eq("opportunityId", opportunity._id).eq("status", status),
+      )
+      .take(opportunity.maxApplications);
+    for (const application of waiting) {
+      await notifyCreator(ctx, application.creatorId, {
+        type: "applicationOpportunityClosed",
+        title: `${opportunity.title} has closed`,
+        target: {
+          kind: "application",
+          applicationId: application._id,
+          opportunityId: opportunity._id,
+        },
+      });
+    }
+  }
 }
 
 /** Permanently closes an owned published opportunity, preserving existing commitments. */
@@ -136,7 +168,15 @@ export async function closeExpiredOpportunities(ctx: MutationCtx): Promise<boole
       .query("opportunities")
       .withIndex("by_status_and_deadline", (q) => q.eq("status", status).lte("deadline", now))
       .take(batchSize);
-    for (const opportunity of opportunities) await applyOpportunityClose(ctx, opportunity);
+    for (const opportunity of opportunities) {
+      await applyOpportunityClose(ctx, opportunity);
+      // A manual close is the company's own action; only the deadline close is news to them.
+      await notifyOpportunityCreator(ctx, opportunity, {
+        type: "opportunityClosed",
+        title: `${opportunity.title} closed at its deadline`,
+        target: { kind: "opportunity", opportunityId: opportunity._id },
+      });
+    }
     hasMore ||= opportunities.length === batchSize;
   }
   return hasMore;

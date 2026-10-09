@@ -21,6 +21,7 @@ import { closeExpiredOpportunities } from "../../models/opportunities";
 import schema from "../../schema";
 import {
   expectApiError,
+  memberNotifications,
   seedCreatorId,
   seedOpportunity,
   seedUser,
@@ -1999,4 +2000,46 @@ describe("createCampaign", () => {
       expect(campaigns).toHaveLength(0);
     },
   );
+});
+
+describe("notifications", () => {
+  async function seedEndedCampaign(t: TestConvex) {
+    const owner = await seedOwner(t, "notify-owner");
+    const campaignId = await t.run(
+      async (ctx) =>
+        await ctx.db.insert(
+          "campaigns",
+          campaignDoc(owner, { startsAt: Date.now() - 2 * HOUR, endsAt: Date.now() - 1 }),
+        ),
+    );
+    const membership = await t.run(
+      async (ctx) => await ctx.db.get("companyUsers", owner.createdBy),
+    );
+    if (membership === null) throw new Error("expected seeded membership");
+    return { owner, campaignId, membership };
+  }
+
+  test("closing at the end date notifies the member who created the campaign", async () => {
+    const t = convexTest(schema, modules);
+    const { campaignId, membership } = await seedEndedCampaign(t);
+
+    await t.run(async (ctx) => await closeExpiredCampaigns(ctx));
+
+    expect(await memberNotifications(t, membership)).toEqual([
+      {
+        type: "campaignClosed",
+        title: "Spring launch ended",
+        target: { kind: "campaign", campaignId },
+      },
+    ]);
+  });
+
+  test("closing it manually sends nothing", async () => {
+    const t = convexTest(schema, modules);
+    const { owner, campaignId, membership } = await seedEndedCampaign(t);
+
+    await t.run(async (ctx) => await closeCampaign(ctx, campaignId, owner.companyId));
+
+    expect(await memberNotifications(t, membership)).toEqual([]);
+  });
 });

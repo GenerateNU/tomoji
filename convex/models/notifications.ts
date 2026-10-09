@@ -61,6 +61,16 @@ export async function notifyOpportunityCreator(
   if (member !== null) await createNotification(ctx, member.userId, content);
 }
 
+/** Notifies the company member who created the campaign. Other members are not notified. */
+export async function notifyCampaignCreator(
+  ctx: MutationCtx,
+  campaign: Doc<"campaigns">,
+  content: NotificationContent,
+): Promise<void> {
+  const member = await ctx.db.get("companyUsers", campaign.createdBy);
+  if (member !== null) await createNotification(ctx, member.userId, content);
+}
+
 /** Lists the user's notifications newest first, optionally only read or unread ones. */
 export async function listNotifications(
   ctx: QueryCtx,

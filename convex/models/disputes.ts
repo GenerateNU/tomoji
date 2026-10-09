@@ -4,32 +4,49 @@ import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { apiError } from "../lib/errors";
 import { requireBoundedText } from "../lib/validation";
-import schema from "../schema";
 import {
   companyDisputeReasons,
   creatorDisputeReasons,
-  type disputeReason,
+  disputeOutcome,
+  disputeReason,
+  disputeShapes,
+  disputeStatus,
 } from "../schemas/disputes.schema";
 import { userRole } from "../schemas/users.schema";
 import { requireAssignment, type AssignmentViewer } from "./assignments";
 import { getLatestSubmission } from "./submissions";
 
-const disputeDoc = schema.doc("disputes");
-
-export const disputeDraft = disputeDoc.pick("assignmentId", "reason", "description");
+export const disputeDraft = v.object({
+  assignmentId: v.id("assignments"),
+  reason: disputeReason,
+  description: v.string(),
+});
 export type DisputeDraft = Infer<typeof disputeDraft>;
 
-/** `openedBy` is optional because creators never get user IDs (see `toCreatorView`). */
-export const disputeView = disputeDoc
-  .omit("openedBy")
-  .extend({ openedBy: v.optional(v.id("users")) });
+/** An operator's ruling on an open dispute. */
+export const disputeResolution = v.object({
+  outcome: disputeOutcome,
+  decision: v.string(),
+});
+export type DisputeResolution = Infer<typeof disputeResolution>;
+
+/** User IDs are optional because creators never get them (see `toCreatorView`). */
+export const disputeView = v.union(
+  ...disputeShapes(v.optional(v.id("users")), v.optional(v.id("users")), {
+    _id: v.id("disputes"),
+    _creationTime: v.number(),
+  }),
+);
 export type DisputeView = Infer<typeof disputeView>;
 
-export const disputeListFilters = disputeDoc.pick("status").extend({
+export const disputeListFilters = v.object({
+  status: disputeStatus,
   openedByRole: v.optional(userRole),
   paginationOpts: paginationOptsValidator,
 });
 export type DisputeListFilters = Infer<typeof disputeListFilters>;
+
+export type ResolvedDispute = Extract<Doc<"disputes">, { status: "resolved" }>;
 
 type DisputeReason = Infer<typeof disputeReason>;
 
@@ -39,7 +56,10 @@ const REASONS_BY_ROLE: Record<AssignmentViewer["role"], readonly DisputeReason[]
   operator: [...companyDisputeReasons, ...creatorDisputeReasons],
 };
 
-const MAX_DESCRIPTION_LENGTH = 5000;
+const MAX_LENGTH = {
+  description: 5000,
+  decision: 2000,
+} as const;
 
 // An assignment has at most one approved submission, but a post can be shared
 // to several platforms; this caps the read without expecting to reach it.
@@ -59,7 +79,7 @@ export async function createDispute(
   if (!REASONS_BY_ROLE[viewer.role].includes(draft.reason)) {
     throw apiError("invalid_state", { reason: "dispute_reason_not_allowed" });
   }
-  const description = requireBoundedText(draft.description, "description", MAX_DESCRIPTION_LENGTH);
+  const description = requireBoundedText(draft.description, "description", MAX_LENGTH.description);
 
   return await ctx.db.insert("disputes", {
     assignmentId: assignment._id,
@@ -94,6 +114,31 @@ async function evidenceOnFile(
   return { evidenceSubmissionIds: [latest._id], evidencePostIds: posts.map((post) => post._id) };
 }
 
+/** Closes an open dispute. Errors are listed on the `disputes.resolve` route. */
+export async function resolveDispute(
+  ctx: MutationCtx,
+  resolvedBy: Id<"users">,
+  disputeId: Id<"disputes">,
+  resolution: DisputeResolution,
+): Promise<ResolvedDispute> {
+  const dispute = await ctx.db.get("disputes", disputeId);
+  if (dispute === null) throw apiError("not_found", { resource: "dispute" });
+  if (dispute.status !== "open") {
+    throw apiError("invalid_state", { reason: "already_resolved" });
+  }
+
+  const resolved: ResolvedDispute = {
+    ...dispute,
+    status: "resolved",
+    resolvedBy,
+    resolvedAt: Date.now(),
+    outcome: resolution.outcome,
+    decision: requireBoundedText(resolution.decision, "decision", MAX_LENGTH.decision),
+  };
+  await ctx.db.replace("disputes", disputeId, resolved);
+  return resolved;
+}
+
 /** One dispute, as the viewer may see it. */
 export async function requireDispute(
   ctx: QueryCtx,
@@ -119,18 +164,19 @@ function canViewDispute(viewer: AssignmentViewer, dispute: Doc<"disputes">): boo
 }
 
 /**
- * One page of the caller's company's or creator's disputes in one status,
- * newest first, optionally only those opened by one side.
- *
- * @throws `forbidden` for operators, who will use the operator queue instead.
+ * One page of disputes in one status, optionally only those one side opened:
+ * the caller's company's or creator's, or every company's for operators.
+ * Resolved disputes come most recently closed first. Open ones come newest
+ * first, except for operators, who work the queue oldest first.
  */
 export async function listDisputes(
   ctx: QueryCtx,
   viewer: AssignmentViewer,
   { status, openedByRole, paginationOpts }: DisputeListFilters,
 ): Promise<PaginationResult<DisputeView>> {
+  const order = viewer.role === "operator" && status === "open" ? "asc" : "desc";
   const result = await disputesOf(ctx, viewer, status, openedByRole)
-    .order("desc")
+    .order(order)
     .paginate(paginationOpts);
   return { ...result, page: result.page.map((dispute) => toDisputeView(viewer, dispute)) };
 }
@@ -145,10 +191,10 @@ function disputesOf(
   switch (viewer.role) {
     case "company":
       return openedByRole === undefined
-        ? disputes.withIndex("by_companyId_and_status", (q) =>
+        ? disputes.withIndex("by_companyId_and_status_and_resolvedAt", (q) =>
             q.eq("companyId", viewer.companyId).eq("status", status),
           )
-        : disputes.withIndex("by_companyId_and_status_and_openedByRole", (q) =>
+        : disputes.withIndex("by_companyId_and_status_and_openedByRole_and_resolvedAt", (q) =>
             q
               .eq("companyId", viewer.companyId)
               .eq("status", status)
@@ -156,18 +202,21 @@ function disputesOf(
           );
     case "creator":
       return openedByRole === undefined
-        ? disputes.withIndex("by_creatorId_and_status", (q) =>
+        ? disputes.withIndex("by_creatorId_and_status_and_resolvedAt", (q) =>
             q.eq("creatorId", viewer.creatorId).eq("status", status),
           )
-        : disputes.withIndex("by_creatorId_and_status_and_openedByRole", (q) =>
+        : disputes.withIndex("by_creatorId_and_status_and_openedByRole_and_resolvedAt", (q) =>
             q
               .eq("creatorId", viewer.creatorId)
               .eq("status", status)
               .eq("openedByRole", openedByRole),
           );
     case "operator":
-      // TODO(disputes): the operator queue across all companies.
-      throw apiError("forbidden");
+      return openedByRole === undefined
+        ? disputes.withIndex("by_status_and_resolvedAt", (q) => q.eq("status", status))
+        : disputes.withIndex("by_status_and_openedByRole_and_resolvedAt", (q) =>
+            q.eq("status", status).eq("openedByRole", openedByRole),
+          );
   }
 }
 
@@ -186,7 +235,7 @@ function toDisputeView(viewer: AssignmentViewer, dispute: Doc<"disputes">): Disp
  * added to the schema later stays hidden from creators until it's added here.
  */
 function toCreatorView(dispute: Doc<"disputes">): DisputeView {
-  return {
+  const opened = {
     _id: dispute._id,
     _creationTime: dispute._creationTime,
     assignmentId: dispute.assignmentId,
@@ -198,7 +247,13 @@ function toCreatorView(dispute: Doc<"disputes">): DisputeView {
     description: dispute.description,
     evidenceSubmissionIds: dispute.evidenceSubmissionIds,
     evidencePostIds: dispute.evidencePostIds,
-    status: dispute.status,
-    resolution: dispute.resolution,
+  };
+  if (dispute.status === "open") return { ...opened, status: "open" };
+  return {
+    ...opened,
+    status: "resolved",
+    resolvedAt: dispute.resolvedAt,
+    outcome: dispute.outcome,
+    decision: dispute.decision,
   };
 }

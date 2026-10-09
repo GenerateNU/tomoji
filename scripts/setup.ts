@@ -16,7 +16,7 @@ if (existsSync(TARGET)) {
 
 console.log(`
 Next:
-  1. Fill in the WORKOS_* values in ${TARGET} (ask a TL)
+  1. Fill in the WORKOS_* and S3_MEDIA_* values in ${TARGET} (ask a TL)
   2. just bd           # creates your Convex dev deployment
-  3. just convex-env   # give that deployment the WorkOS client id
+  3. just convex-env   # copy WorkOS and S3 settings to that deployment
 `);

@@ -60,9 +60,9 @@ export type WorkosProfile = {
   email: string;
   firstName?: string | null;
   lastName?: string | null;
-  profilePicture?: string;
 };
 
+/** Syncs WorkOS identity fields without replacing a user's S3 profile-picture reference. */
 export async function upsertUser(ctx: MutationCtx, profile: WorkosProfile): Promise<Id<"users">> {
   const existing = await getUserByWorkosId(ctx, profile.workosId);
   const firstName = requireNonBlank(
@@ -72,7 +72,6 @@ export async function upsertUser(ctx: MutationCtx, profile: WorkosProfile): Prom
   );
   const lastName =
     profile.lastName === undefined ? (existing?.lastName ?? "") : (profile.lastName ?? "");
-  const profilePicture = profile.profilePicture ?? existing?.profilePicture;
 
   if (existing === null) {
     const userId = await ctx.db.insert("users", {
@@ -82,7 +81,6 @@ export async function upsertUser(ctx: MutationCtx, profile: WorkosProfile): Prom
       email: profile.email,
       role: "creator",
       isActive: true,
-      profilePicture,
     });
     await ctx.db.insert("creators", { userId });
     return userId;
@@ -92,7 +90,6 @@ export async function upsertUser(ctx: MutationCtx, profile: WorkosProfile): Prom
     firstName,
     lastName,
     email: profile.email,
-    profilePicture,
   });
   return existing._id;
 }

@@ -150,6 +150,263 @@ describe("assignments.list", () => {
   });
 });
 
+describe("assignments.exportCreatorsCsv", () => {
+  test.each(["member", "admin"] as const)(
+    "lets a company %s export assigned creators",
+    async (role) => {
+      const t = convexTest(schema, modules);
+      const owner = await seedOpportunity(t, { subject: "owner", role });
+      const creatorId = await seedCreatorId(t, "creator");
+      await seedUser(t, {
+        subject: "creator",
+        firstName: "Grace",
+        lastName: "Hopper",
+        email: "grace@example.com",
+      });
+      const assignmentId = await seedAssignment(t, {
+        opportunityId: owner.opportunityId,
+        creatorId,
+      });
+
+      const result = await owner.asCompany.query(api.assignments.exportCreatorsCsv, {
+        opportunityId: owner.opportunityId,
+        paginationOpts: firstPage,
+      });
+
+      expect(result.csv).toBe(
+        "assignmentId,campaignId,opportunityId,status,name,email\r\n" +
+          `"${assignmentId}","${owner.campaignId}","${owner.opportunityId}","termsPending","Grace Hopper","grace@example.com"\r\n`,
+      );
+      expect(result.fileName).toBe(`opportunity-${owner.opportunityId}-creators.csv`);
+      expect(result.isDone).toBe(true);
+      expect(typeof result.continueCursor).toBe("string");
+      expect(result).not.toHaveProperty("page");
+    },
+  );
+
+  test.each(["opportunityId", "campaignId"] as const)(
+    "returns a header-only export for an owned empty %s",
+    async (scope) => {
+      const t = convexTest(schema, modules);
+      const owner = await seedOpportunity(t, { subject: "owner" });
+
+      const result = await owner.asCompany.query(api.assignments.exportCreatorsCsv, {
+        [scope]: owner[scope],
+        paginationOpts: { numItems: 100, cursor: null },
+      });
+
+      expect(result.csv).toBe("assignmentId,campaignId,opportunityId,status,name,email\r\n");
+      expect(result.fileName).toBe(
+        `${scope === "campaignId" ? "campaign" : "opportunity"}-${owner[scope]}-creators.csv`,
+      );
+      expect(result.isDone).toBe(true);
+      expect(result).not.toHaveProperty("page");
+    },
+  );
+
+  test("rejects a signed-out caller", async () => {
+    const t = convexTest(schema, modules);
+    const { owner } = await seedDeal(t);
+
+    await expectApiError(
+      () =>
+        t.query(api.assignments.exportCreatorsCsv, {
+          opportunityId: owner.opportunityId,
+          paginationOpts: firstPage,
+        }),
+      "not_authenticated",
+    );
+  });
+
+  test("rejects a creator, including the creator assigned to the opportunity", async () => {
+    const t = convexTest(schema, modules);
+    const { owner, asCreator } = await seedDeal(t);
+
+    await expectApiError(
+      () =>
+        asCreator.query(api.assignments.exportCreatorsCsv, {
+          opportunityId: owner.opportunityId,
+          paginationOpts: firstPage,
+        }),
+      "forbidden",
+    );
+  });
+
+  test("rejects an operator", async () => {
+    const t = convexTest(schema, modules);
+    const { owner } = await seedDeal(t);
+    const asOperator = await seedOperator(t, "operator");
+
+    await expectApiError(
+      () =>
+        asOperator.query(api.assignments.exportCreatorsCsv, {
+          campaignId: owner.campaignId,
+          paginationOpts: firstPage,
+        }),
+      "forbidden",
+    );
+  });
+
+  test("rejects a forged organization claim", async () => {
+    const t = convexTest(schema, modules);
+    const { owner } = await seedDeal(t);
+    const asWrongOrg = await seedWrongOrgCaller(t);
+
+    await expectApiError(
+      () =>
+        asWrongOrg.query(api.assignments.exportCreatorsCsv, {
+          opportunityId: owner.opportunityId,
+          paginationOpts: firstPage,
+        }),
+      "forbidden",
+    );
+  });
+
+  test("rejects a deactivated company user", async () => {
+    const t = convexTest(schema, modules);
+    const { owner } = await seedDeal(t);
+    await t.run(async (ctx) => await deactivateUser(ctx, "owner"));
+
+    await expectApiError(
+      () =>
+        owner.asCompany.query(api.assignments.exportCreatorsCsv, {
+          opportunityId: owner.opportunityId,
+          paginationOpts: firstPage,
+        }),
+      "account_deactivated",
+    );
+  });
+
+  test("rejects a member of an inactive company", async () => {
+    const t = convexTest(schema, modules);
+    const { owner } = await seedDeal(t);
+    await t.run(
+      async (ctx) =>
+        await ctx.db.patch("companies", owner.membership.companyId, { isActive: false }),
+    );
+
+    await expectApiError(
+      () =>
+        owner.asCompany.query(api.assignments.exportCreatorsCsv, {
+          campaignId: owner.campaignId,
+          paginationOpts: firstPage,
+        }),
+      "forbidden",
+    );
+  });
+
+  test.each(["opportunityId", "campaignId"] as const)(
+    "conceals another company's %s with or without assignments",
+    async (scope) => {
+      const t = convexTest(schema, modules);
+      const owner = await seedOpportunity(t, { subject: "owner" });
+      const other = await seedOpportunity(t, { subject: "other", orgId: "org_other" });
+      const args = { [scope]: owner[scope], paginationOpts: firstPage };
+
+      await expectApiError(
+        () => other.asCompany.query(api.assignments.exportCreatorsCsv, args),
+        "not_found",
+      );
+
+      const creatorId = await seedCreatorId(t, "creator");
+      await seedAssignment(t, { opportunityId: owner.opportunityId, creatorId });
+
+      await expectApiError(
+        () => other.asCompany.query(api.assignments.exportCreatorsCsv, args),
+        "not_found",
+      );
+    },
+  );
+
+  test.each(["opportunityId", "campaignId"] as const)(
+    "returns not_found for a missing %s",
+    async (scope) => {
+      const t = convexTest(schema, modules);
+      const owner = await seedOpportunity(t, { subject: "owner" });
+      await t.run(async (ctx) => {
+        if (scope === "opportunityId") {
+          await ctx.db.delete("opportunities", owner.opportunityId);
+        } else {
+          await ctx.db.delete("campaigns", owner.campaignId);
+        }
+      });
+
+      await expectApiError(
+        () =>
+          owner.asCompany.query(api.assignments.exportCreatorsCsv, {
+            [scope]: owner[scope],
+            paginationOpts: firstPage,
+          }),
+        "not_found",
+      );
+    },
+  );
+
+  test("requires exactly one opportunity or campaign", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(t, { subject: "owner" });
+
+    for (const scope of [
+      {},
+      { opportunityId: owner.opportunityId, campaignId: owner.campaignId },
+    ]) {
+      await expectApiError(
+        () =>
+          owner.asCompany.query(api.assignments.exportCreatorsCsv, {
+            ...scope,
+            paginationOpts: firstPage,
+          }),
+        "invalid_state",
+      );
+    }
+  });
+
+  test.each([0, -1, 1.5, 101, Number.NaN, Number.POSITIVE_INFINITY])(
+    "rejects an invalid export page size of %s",
+    async (numItems) => {
+      const t = convexTest(schema, modules);
+      const owner = await seedOpportunity(t, { subject: "owner" });
+
+      await expectApiError(
+        () =>
+          owner.asCompany.query(api.assignments.exportCreatorsCsv, {
+            campaignId: owner.campaignId,
+            paginationOpts: { numItems, cursor: null },
+          }),
+        "invalid_state",
+      );
+    },
+  );
+
+  test("rejects an endCursor so export pages cannot bypass the page-size bound", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(t, { subject: "owner" });
+
+    await expectApiError(
+      () =>
+        owner.asCompany.query(api.assignments.exportCreatorsCsv, {
+          opportunityId: owner.opportunityId,
+          paginationOpts: { ...firstPage, endCursor: "client-supplied-end" },
+        }),
+      "invalid_state",
+    );
+  });
+
+  test("does not accept a company identity from the caller", async () => {
+    const t = convexTest(schema, modules);
+    const { owner } = await seedDeal(t);
+    const args = {
+      opportunityId: owner.opportunityId,
+      companyId: owner.membership.companyId,
+      paginationOpts: firstPage,
+    };
+
+    await expect(owner.asCompany.query(api.assignments.exportCreatorsCsv, args)).rejects.toThrow(
+      "Unexpected field `companyId`",
+    );
+  });
+});
+
 describe("assignments.listMine", () => {
   test("lists the calling creator's current assignments", async () => {
     const t = convexTest(schema, modules);

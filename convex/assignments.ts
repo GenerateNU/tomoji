@@ -12,12 +12,15 @@ import {
 } from "./lib/functions";
 import {
   acceptAssignmentTerms,
+  assignmentCreatorExportOptions,
+  assignmentCreatorsCsv,
   assignmentListFilters,
   cancelPendingAssignment,
   claimAssignment,
   completeAssignment,
   creatorAssignmentListFilters,
   declineAssignmentTerms,
+  exportAssignmentCreatorsCsv,
   listAssignments,
   listCreatorAssignments,
   requireAssignment,
@@ -59,6 +62,31 @@ export const list = companyQuery({
   returns: paginationResultValidator(assignment),
   handler: async (ctx, args) => {
     return await listAssignments(ctx, ctx.membership.companyId, args);
+  },
+});
+
+/**
+ * Exports creator contact details for exactly one company-owned campaign or
+ * opportunity. Includes every assignment status and one row per assignment.
+ * CSV columns: assignmentId, campaignId, opportunityId, status, name, email.
+ * Missing/deactivated profiles have blank contact fields. Names use first/last
+ * name, falling back to the legacy name or email. Formula-like cells are escaped.
+ *
+ * Start with paginationOpts { numItems: 100, cursor: null }. Concatenate each
+ * result.csv, then request continueCursor with the same scope until isDone.
+ * Only the first page includes a header. Save as fileName with text/csv MIME type.
+ * Use sequential queries, not reactive usePaginatedQuery: endCursor is unsupported.
+ * Pages reflect current data, not a single snapshot of the entire export.
+ *
+ * @throws `not_found` for a missing or foreign parent, including empty scopes.
+ * @throws `invalid_state` unless exactly one parent is supplied and numItems is
+ * an integer from 1–100, or when a non-null endCursor is supplied.
+ */
+export const exportCreatorsCsv = companyQuery({
+  args: assignmentCreatorExportOptions.fields,
+  returns: assignmentCreatorsCsv,
+  handler: async (ctx, args) => {
+    return await exportAssignmentCreatorsCsv(ctx, ctx.membership.companyId, args);
   },
 });
 

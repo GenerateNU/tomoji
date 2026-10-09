@@ -1,4 +1,8 @@
-import { paginationOptsValidator, type PaginationResult } from "convex/server";
+import {
+  paginationOptsValidator,
+  paginationResultValidator,
+  type PaginationResult,
+} from "convex/server";
 import { mergedStream, stream } from "convex-helpers/server/stream";
 import { v, type Infer } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
@@ -170,6 +174,32 @@ export const assignmentListFilters = schema
     paginationOpts: paginationOptsValidator,
   });
 
+/** Proves access to the requested parents, even when they have no assignments. */
+async function requireAssignmentParents(
+  ctx: QueryCtx,
+  companyId: Id<"companies">,
+  options: { opportunityId?: Id<"opportunities">; campaignId?: Id<"campaigns"> },
+): Promise<void> {
+  const { opportunityId, campaignId } = options;
+  if (opportunityId !== undefined) {
+    const opportunity = await ctx.db.get("opportunities", opportunityId);
+    const campaign = opportunity && (await ctx.db.get("campaigns", opportunity.campaignId));
+    if (
+      !opportunity ||
+      !campaign ||
+      campaign.companyId !== companyId ||
+      (campaignId !== undefined && opportunity.campaignId !== campaignId)
+    ) {
+      throw apiError("not_found", { resource: "opportunity" });
+    }
+  } else if (campaignId !== undefined) {
+    const campaign = await ctx.db.get("campaigns", campaignId);
+    if (campaign === null || campaign.companyId !== companyId) {
+      throw apiError("not_found", { resource: "campaign" });
+    }
+  }
+}
+
 /**
  * Returns one page of the company's assignments, optionally filtered by
  * opportunity, campaign, and status. Results are ordered by status, then
@@ -184,18 +214,9 @@ export async function listAssignments(
   options: Infer<typeof assignmentListFilters>,
 ): Promise<PaginationResult<Doc<"assignments">>> {
   const { opportunityId, campaignId, status, paginationOpts } = options;
+  await requireAssignmentParents(ctx, companyId, options);
 
   if (opportunityId !== undefined) {
-    const opportunity = await ctx.db.get("opportunities", opportunityId);
-    const campaign = opportunity && (await ctx.db.get("campaigns", opportunity.campaignId));
-    if (
-      !opportunity ||
-      !campaign ||
-      campaign.companyId !== companyId ||
-      (campaignId !== undefined && opportunity.campaignId !== campaignId)
-    ) {
-      throw apiError("not_found", { resource: "opportunity" });
-    }
     return await ctx.db
       .query("assignments")
       .withIndex("by_opportunityId_and_status", (q) => {
@@ -207,10 +228,6 @@ export async function listAssignments(
   }
 
   if (campaignId !== undefined) {
-    const campaign = await ctx.db.get("campaigns", campaignId);
-    if (campaign === null || campaign.companyId !== companyId) {
-      throw apiError("not_found", { resource: "campaign" });
-    }
     return await ctx.db
       .query("assignments")
       .withIndex("by_campaignId_and_status", (q) => {
@@ -229,6 +246,102 @@ export async function listAssignments(
     })
     .order("desc")
     .paginate(paginationOpts);
+}
+
+export const assignmentCreatorExportOptions = assignmentListFilters.omit("status");
+export const assignmentCreatorsCsv = paginationResultValidator(v.string())
+  .omit("page")
+  .extend({ csv: v.string(), fileName: v.string() });
+
+/**
+ * Exports one sequential CSV page for exactly one company-owned parent.
+ * Stable index keys prevent status transitions from moving rows across cursors.
+ * Each page reads current profiles; the full export is not a historical snapshot.
+ */
+export async function exportAssignmentCreatorsCsv(
+  ctx: QueryCtx,
+  companyId: Id<"companies">,
+  options: Infer<typeof assignmentCreatorExportOptions>,
+): Promise<Infer<typeof assignmentCreatorsCsv>> {
+  const { opportunityId, campaignId, paginationOpts } = options;
+  if ((opportunityId === undefined) === (campaignId === undefined)) {
+    throw apiError("invalid_state", { reason: "exactly_one_export_scope_required" });
+  }
+  if (
+    !Number.isInteger(paginationOpts.numItems) ||
+    paginationOpts.numItems < 1 ||
+    paginationOpts.numItems > 100
+  ) {
+    throw apiError("invalid_state", { reason: "invalid_page_size" });
+  }
+  // Export clients follow continueCursor; reactive endCursor ranges could
+  // expand beyond the bounded page before creator profiles are hydrated.
+  if (paginationOpts.endCursor != null) {
+    throw apiError("invalid_state", { reason: "unsupported_end_cursor" });
+  }
+  await requireAssignmentParents(ctx, companyId, options);
+
+  const query =
+    opportunityId !== undefined
+      ? ctx.db
+          .query("assignments")
+          .withIndex("by_opportunityId_and_creatorId", (q) => q.eq("opportunityId", opportunityId))
+      : ctx.db
+          .query("assignments")
+          .withIndex("by_campaignId", (q) => q.eq("campaignId", campaignId!));
+  const { page, ...pagination } = await query.order("asc").paginate(paginationOpts);
+  // Fail closed if a legacy row's denormalized owner disagrees with its parent.
+  if (page.some((assignment) => assignment.companyId !== companyId)) {
+    throw apiError("not_found", { resource: "assignment" });
+  }
+
+  const rows = await Promise.all(
+    page.map(async (assignment) => {
+      const creator = await ctx.db.get("creators", assignment.creatorId);
+      const user = creator && (await ctx.db.get("users", creator.userId));
+      let name = "";
+      let email = "";
+      // Keep the assignment in the roster without exporting deleted/unavailable PII.
+      if (user !== null && user.isActive && user.role === "creator") {
+        name =
+          [user.firstName?.trim(), user.lastName?.trim()].filter(Boolean).join(" ") ||
+          user.name?.trim() ||
+          user.email;
+        email = user.email;
+      }
+      return (
+        [
+          assignment._id,
+          assignment.campaignId,
+          assignment.opportunityId,
+          assignment.status,
+          name,
+          email,
+        ]
+          .map(toCsvCell)
+          .join(",") + "\r\n"
+      );
+    }),
+  );
+  const header =
+    paginationOpts.cursor === null
+      ? "assignmentId,campaignId,opportunityId,status,name,email\r\n"
+      : "";
+  return {
+    ...pagination,
+    csv: header + rows.join(""),
+    fileName:
+      opportunityId !== undefined
+        ? `opportunity-${opportunityId}-creators.csv`
+        : `campaign-${campaignId}-creators.csv`,
+  };
+}
+
+/** Quote every cell and treat formula-like values as text when opened in spreadsheets. */
+function toCsvCell(value: string): string {
+  // https://owasp.org/www-community/attacks/CSV_Injection
+  const text = /^\s*[=+\-@＝＋－＠]|^[\t\r\n]/u.test(value) ? `'${value}` : value;
+  return `"${text.replaceAll('"', '""')}"`;
 }
 
 /** Current assignments still need work; past ones are finished either way. */

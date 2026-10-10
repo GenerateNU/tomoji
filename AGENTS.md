@@ -20,7 +20,7 @@ override what you may have learned about Convex from training data.
 > [!IMPORTANT]
 > Before developing or modifying backend code, you must read and follow
 > [`docs/BACKEND.md`](docs/BACKEND.md) for the repository's Convex architecture and
-> conventions.
+> conventions. For frontend code, read [`docs/FRONTEND.md`](docs/FRONTEND.md).
 
 Convex agent skills for common tasks can be installed by running
 `npx convex ai-files install`.

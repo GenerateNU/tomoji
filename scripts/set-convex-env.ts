@@ -1,5 +1,5 @@
 /**
- * Copies the WorkOS and S3 settings Convex needs from .env.local onto the Convex
+ * Copies WorkOS, S3, and an optional complete X configuration from .env.local onto the Convex
  * deployment.
  *
  * Convex reads these server-side, not from .env.local:
@@ -8,6 +8,7 @@
  *   WORKOS_WEBHOOK_SECRET
  *   S3_MEDIA_BUCKET
  *   S3_MEDIA_REGION
+ *   X_CLIENT_ID / X_CLIENT_SECRET / X_REDIRECT_URI (when supplied together)
  */
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
@@ -22,9 +23,19 @@ if (!existsSync(ENV_FILE)) {
 
 const contents = readFileSync(ENV_FILE, "utf8");
 
+/** Reads a setup value without printing its contents. */
 function readValue(key: string): string {
   const match = contents.match(new RegExp(`^${key}=(.*)$`, "m"));
   return (match?.[1] ?? "").trim().replace(/^["']|["']$/g, "");
+}
+
+const X_KEYS = ["X_CLIENT_ID", "X_CLIENT_SECRET", "X_REDIRECT_URI"] as const;
+const configureX = readValue("X_CLIENT_ID") !== "" || readValue("X_CLIENT_SECRET") !== "";
+if (configureX && X_KEYS.some((key) => readValue(key) === "")) {
+  console.error(
+    "Set X_CLIENT_ID, X_CLIENT_SECRET, and X_REDIRECT_URI together, or leave both X credentials empty.",
+  );
+  process.exit(1);
 }
 
 const missing = KEYS.filter((key) => readValue(key) === "");
@@ -35,7 +46,7 @@ if (missing.length > 0) {
   process.exit(1);
 }
 
-for (const key of KEYS) {
+for (const key of [...KEYS, ...(configureX ? X_KEYS : [])]) {
   const result = spawnSync("bunx", ["convex", "env", "set", key, readValue(key)], {
     stdio: "inherit",
     shell: process.platform === "win32",

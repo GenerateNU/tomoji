@@ -17,6 +17,15 @@ import type { submissionStatus } from "../schemas/submissions.schema";
 
 export type TestConvex = ConvexTest<typeof schema>;
 
+/** Reads a seeded user for direct model tests. */
+export async function requireSeededUser(t: TestConvex, subject: string) {
+  return await t.run(async (ctx) => {
+    const user = await getUserByWorkosId(ctx, subject);
+    if (user === null) throw new Error("expected seeded user");
+    return user;
+  });
+}
+
 /** Builds a synthetic X response; credentials are test-only, never live tokens. */
 export function xAccountLinkArgs(overrides: Partial<XAccountLink> = {}): XAccountLink {
   return {
@@ -37,11 +46,37 @@ export async function seedXAccount(
   subject: string,
   overrides: Partial<XAccountLink> = {},
 ) {
-  const creatorId = await seedCreatorId(t, subject);
+  const existingUser = await t.run((ctx) => getUserByWorkosId(ctx, subject));
+  const creatorId =
+    existingUser === null
+      ? await seedCreatorId(t, subject)
+      : await t.run(async (ctx) => {
+          const creator = await getCreatorByUserId(ctx, existingUser._id);
+          if (creator === null) throw new Error("expected seeded creator");
+          return creator._id;
+        });
   const account = await t.run(
     async (ctx) => await saveXAccount(ctx, creatorId, xAccountLinkArgs(overrides)),
   );
   return { creatorId, account, asCreator: t.withIdentity(workosIdentity({ subject })) };
+}
+
+/** Produces a synthetic X token exchange response, never live credentials. */
+export function xTokenResponse() {
+  return Response.json({
+    access_token: "new-access",
+    refresh_token: "new-refresh",
+    token_type: "bearer",
+    expires_in: 7200,
+    scope: "tweet.read users.read offline.access",
+  });
+}
+
+/** Produces an X identity whose ID must retain string precision. */
+export function xIdentityResponse() {
+  return Response.json({
+    data: { id: "12345678901234567890", username: "ada", name: "Ada Lovelace" },
+  });
 }
 
 /** Seeds an owned picture grant, optionally completing it without contacting S3. */

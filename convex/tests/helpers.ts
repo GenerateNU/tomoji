@@ -6,6 +6,7 @@ import type { Doc, Id } from "../_generated/dataModel";
 import type { ApiErrorCode } from "../lib/errors";
 import { companyContext } from "../lib/functions";
 import { getCreatorByUserId } from "../models/creators";
+import { saveXAccount, type XAccountLink } from "../models/xAccounts";
 import { createCampaign } from "../models/campaigns";
 import { createOpportunity, type OpportunityCreate } from "../models/opportunities";
 import { finalizeMediaUpload, reserveMediaUpload } from "../models/media";
@@ -15,6 +16,33 @@ import type schema from "../schema";
 import type { submissionStatus } from "../schemas/submissions.schema";
 
 export type TestConvex = ConvexTest<typeof schema>;
+
+/** Builds a synthetic X response; credentials are test-only, never live tokens. */
+export function xAccountLinkArgs(overrides: Partial<XAccountLink> = {}): XAccountLink {
+  return {
+    xUserId: "123456789",
+    username: "ada",
+    displayName: "Ada Lovelace",
+    accessToken: "test-access-token",
+    refreshToken: "test-refresh-token",
+    accessTokenExpiresAt: Date.now() + 7_200_000,
+    scopes: ["tweet.read", "users.read", "offline.access"],
+    ...overrides,
+  };
+}
+
+/** Seeds a creator and a verified connection through the model, without calling X. */
+export async function seedXAccount(
+  t: TestConvex,
+  subject: string,
+  overrides: Partial<XAccountLink> = {},
+) {
+  const creatorId = await seedCreatorId(t, subject);
+  const account = await t.run(
+    async (ctx) => await saveXAccount(ctx, creatorId, xAccountLinkArgs(overrides)),
+  );
+  return { creatorId, account, asCreator: t.withIdentity(workosIdentity({ subject })) };
+}
 
 /** Seeds an owned picture grant, optionally completing it without contacting S3. */
 export async function seedProfilePictureUpload(

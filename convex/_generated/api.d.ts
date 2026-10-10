@@ -24,6 +24,7 @@ import type * as lib_identity from "../lib/identity.js";
 import type * as lib_mediaUploadPolicy from "../lib/mediaUploadPolicy.js";
 import type * as lib_s3 from "../lib/s3.js";
 import type * as lib_validation from "../lib/validation.js";
+import type * as lib_xOAuth from "../lib/xOAuth.js";
 import type * as media from "../media.js";
 import type * as mediaInternal from "../mediaInternal.js";
 import type * as migrations_2026_09_26_backfill_creator_usernames from "../migrations/2026_09_26_backfill_creator_usernames.js";
@@ -41,11 +42,13 @@ import type * as models_opportunities from "../models/opportunities.js";
 import type * as models_submissions from "../models/submissions.js";
 import type * as models_users from "../models/users.js";
 import type * as models_xAccounts from "../models/xAccounts.js";
+import type * as models_xLinkAttempts from "../models/xLinkAttempts.js";
 import type * as opportunities from "../opportunities.js";
 import type * as submissions from "../submissions.js";
 import type * as tests_helpers from "../tests/helpers.js";
 import type * as users from "../users.js";
 import type * as xAccounts from "../xAccounts.js";
+import type * as xAccountsInternal from "../xAccountsInternal.js";
 
 import type {
   ApiFromModules,
@@ -70,6 +73,7 @@ declare const fullApi: ApiFromModules<{
   "lib/mediaUploadPolicy": typeof lib_mediaUploadPolicy;
   "lib/s3": typeof lib_s3;
   "lib/validation": typeof lib_validation;
+  "lib/xOAuth": typeof lib_xOAuth;
   media: typeof media;
   mediaInternal: typeof mediaInternal;
   "migrations/2026_09_26_backfill_creator_usernames": typeof migrations_2026_09_26_backfill_creator_usernames;
@@ -87,11 +91,13 @@ declare const fullApi: ApiFromModules<{
   "models/submissions": typeof models_submissions;
   "models/users": typeof models_users;
   "models/xAccounts": typeof models_xAccounts;
+  "models/xLinkAttempts": typeof models_xLinkAttempts;
   opportunities: typeof opportunities;
   submissions: typeof submissions;
   "tests/helpers": typeof tests_helpers;
   users: typeof users;
   xAccounts: typeof xAccounts;
+  xAccountsInternal: typeof xAccountsInternal;
 }>;
 
 /**

@@ -1,7 +1,9 @@
 import { authkit, handleAuthkitProxy } from "@workos-inc/authkit-nextjs";
 import type { NextRequest } from "next/server";
 
-const PUBLIC_PATHS = ["/"];
+// The X callback enforces its own session check instead of redirecting to sign-in
+// with a short-lived provider code still in the URL.
+const PUBLIC_PATHS = ["/", "/api/x/callback"];
 const PUBLIC_PREFIXES = ["/auth"];
 
 function isPublic(pathname: string): boolean {

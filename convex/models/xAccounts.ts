@@ -4,7 +4,6 @@ import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { apiError } from "../lib/errors";
 import { requireNonBlank } from "../lib/validation";
 import { xAccountStatus } from "../schemas/xAccounts.schema";
-import { getCreatorByUserId } from "./creators";
 
 // X's user-lookup scope mapping requires both read scopes; offline.access
 // requests the refresh token needed to keep the connection usable later.
@@ -63,7 +62,10 @@ export async function getOwnXAccount(
   ctx: QueryCtx | MutationCtx,
   user: Doc<"users">,
 ): Promise<XAccount | null> {
-  const creator = await getCreatorByUserId(ctx, user._id);
+  const creator = await ctx.db
+    .query("creators")
+    .withIndex("by_userId", (q) => q.eq("userId", user._id))
+    .unique();
   if (creator === null) throw apiError("not_found", { resource: "creator" });
   return await getXAccount(ctx, creator._id);
 }

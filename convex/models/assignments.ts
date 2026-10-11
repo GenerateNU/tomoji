@@ -125,6 +125,46 @@ async function createAssignment(
   return assignmentId;
 }
 
+/** Creator responses include delivery time but not the company user's audit ID. */
+export const creatorAssignment = schema
+  .doc("assignments")
+  .pick(
+    "_id",
+    "_creationTime",
+    "opportunityId",
+    "creatorId",
+    "companyId",
+    "campaignId",
+    "fixedFeeCents",
+    "cpmRateCents",
+    "paymentCapCents",
+    "usesAiReview",
+    "status",
+    "productAccessDeliveredAt",
+  );
+export type CreatorAssignment = Infer<typeof creatorAssignment>;
+
+/** Explicitly selects fields so future stored fields do not become public by default. */
+export function toCreatorAssignment(assignment: Doc<"assignments">): CreatorAssignment {
+  const result: CreatorAssignment = {
+    _id: assignment._id,
+    _creationTime: assignment._creationTime,
+    opportunityId: assignment.opportunityId,
+    creatorId: assignment.creatorId,
+    companyId: assignment.companyId,
+    campaignId: assignment.campaignId,
+    fixedFeeCents: assignment.fixedFeeCents,
+    cpmRateCents: assignment.cpmRateCents,
+    paymentCapCents: assignment.paymentCapCents,
+    usesAiReview: assignment.usesAiReview,
+    status: assignment.status,
+  };
+  if (assignment.productAccessDeliveredAt !== undefined) {
+    result.productAccessDeliveredAt = assignment.productAccessDeliveredAt;
+  }
+  return result;
+}
+
 /** Who is reading an assignment, resolved from the caller by the route. */
 export type AssignmentViewer =
   | { role: "operator" }
@@ -159,6 +199,48 @@ function canViewAssignment(viewer: AssignmentViewer, assignment: Doc<"assignment
     case "company":
       return assignment.companyId === viewer.companyId;
   }
+}
+
+/**
+ * Records product access delivery for the authenticated member's assignments.
+ * Validates the entire batch before writing. Repeated IDs appear once in the
+ * result, in first-occurrence order; existing delivery details stay unchanged.
+ *
+ * @throws `invalid_state` for fewer than 1 or more than 100 input IDs, or a new
+ * delivery confirmation on a cancelled assignment.
+ * @throws `not_found` if any assignment is missing or belongs to another company.
+ */
+export async function markAssignmentProductAccessDelivered(
+  ctx: MutationCtx,
+  membership: Doc<"companyUsers">,
+  assignmentIds: Id<"assignments">[],
+): Promise<Doc<"assignments">[]> {
+  if (assignmentIds.length === 0 || assignmentIds.length > 100) {
+    throw apiError("invalid_state", { reason: "invalid_batch_size" });
+  }
+
+  const assignments = await Promise.all(
+    [...new Set(assignmentIds)].map((assignmentId) =>
+      requireAssignment(ctx, { role: "company", companyId: membership.companyId }, assignmentId),
+    ),
+  );
+  for (const assignment of assignments) {
+    if (assignment.productAccessDeliveredAt === undefined && assignment.status === "cancelled") {
+      throw apiError("invalid_state", { reason: "assignment_cancelled" });
+    }
+  }
+
+  const delivery = {
+    productAccessDeliveredAt: Date.now(),
+    productAccessDeliveredBy: membership._id,
+  };
+  return await Promise.all(
+    assignments.map(async (assignment) => {
+      if (assignment.productAccessDeliveredAt !== undefined) return assignment;
+      await ctx.db.patch("assignments", assignment._id, delivery);
+      return { ...assignment, ...delivery };
+    }),
+  );
 }
 
 export const assignmentListFilters = schema

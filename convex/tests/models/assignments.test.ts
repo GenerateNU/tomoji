@@ -12,7 +12,9 @@ import {
   declineAssignmentTerms,
   listAssignments,
   listCreatorAssignments,
+  markAssignmentProductAccessDelivered,
   requireAssignment,
+  toCreatorAssignment,
 } from "../../models/assignments";
 import { createOpportunity } from "../../models/opportunities";
 import schema from "../../schema";
@@ -733,6 +735,235 @@ async function seedClaimed(
 }
 
 const notPending = ["active", "completed", "cancelled"] as const;
+
+describe("toCreatorAssignment", () => {
+  test.each([undefined, 0, 1234])(
+    "preserves assignment details and delivery timestamp %s without exposing internal fields",
+    async (productAccessDeliveredAt) => {
+      const t = convexTest(schema, modules);
+      const { owner, assignmentId } = await seedClaimed(t);
+      const assignment = await t.run(async (ctx) =>
+        requireAssignment(
+          ctx,
+          { role: "company", companyId: owner.membership.companyId },
+          assignmentId,
+        ),
+      );
+      const delivery =
+        productAccessDeliveredAt === undefined
+          ? {}
+          : { productAccessDeliveredAt, productAccessDeliveredBy: owner.membership._id };
+      const source = {
+        ...assignment,
+        ...delivery,
+        futureInternalNote: "Company-only information",
+      };
+      const before = { ...source };
+
+      const result = toCreatorAssignment(Object.freeze(source));
+
+      expect(result).toStrictEqual({
+        ...assignment,
+        ...(productAccessDeliveredAt === undefined ? {} : { productAccessDeliveredAt }),
+      });
+      expect(source).toStrictEqual(before);
+    },
+  );
+});
+
+describe("markAssignmentProductAccessDelivered", () => {
+  test.each(["termsPending", "active", "completed"] as const)(
+    "records delivery on a %s assignment without changing its terms, status, or slot",
+    async (status) => {
+      const t = convexTest(schema, modules);
+      const { owner, assignmentId, read } = await seedClaimed(t, status);
+      const before = await read();
+
+      const result = await t.run(async (ctx) =>
+        markAssignmentProductAccessDelivered(ctx, owner.membership, [assignmentId]),
+      );
+
+      const after = await read();
+      expect(after).toStrictEqual({
+        ...before,
+        assignment: {
+          ...before.assignment,
+          productAccessDeliveredAt: Date.now(),
+          productAccessDeliveredBy: owner.membership._id,
+        },
+      });
+      expect(result).toStrictEqual([after.assignment]);
+    },
+  );
+
+  test("deduplicates a mixed batch in input order and preserves all other fields", async () => {
+    const t = convexTest(schema, modules);
+    const { owner, creatorId, assignmentId } = await seedClaimed(t);
+    const otherOpportunityId = await addOpportunity(t, owner);
+    const otherAssignmentId = await t.run(async (ctx) =>
+      claimAssignment(ctx, creatorId, otherOpportunityId),
+    );
+    await t.run(async (ctx) =>
+      ctx.db.patch("assignments", otherAssignmentId, { status: "completed", fixedFeeCents: 1234 }),
+    );
+    const assignmentIds = [otherAssignmentId, assignmentId];
+    const read = async () =>
+      t.run(async (ctx) => ({
+        assignments: await Promise.all(assignmentIds.map((id) => ctx.db.get("assignments", id))),
+        opportunities: await Promise.all(
+          [owner.opportunityId, otherOpportunityId].map((id) => ctx.db.get("opportunities", id)),
+        ),
+      }));
+    const before = await read();
+
+    const result = await t.run(async (ctx) =>
+      markAssignmentProductAccessDelivered(ctx, owner.membership, [
+        otherAssignmentId,
+        assignmentId,
+        otherAssignmentId,
+      ]),
+    );
+
+    const after = await read();
+    expect(after).toStrictEqual({
+      ...before,
+      assignments: before.assignments.map((assignment) => ({
+        ...assignment,
+        productAccessDeliveredAt: Date.now(),
+        productAccessDeliveredBy: owner.membership._id,
+      })),
+    });
+    expect(result).toStrictEqual(after.assignments);
+  });
+
+  test.each(["active", "cancelled"] as const)(
+    "preserves a delivery at timestamp zero when another member retries the now-%s assignment",
+    async (status) => {
+      const t = convexTest(schema, modules);
+      const { owner, assignmentId, read } = await seedClaimed(t, "active");
+      const teammate = await seedCampaign(t, { subject: "teammate" });
+      vi.setSystemTime(0);
+      const [delivered] = await t.run(async (ctx) =>
+        markAssignmentProductAccessDelivered(ctx, owner.membership, [assignmentId]),
+      );
+      expect(delivered.productAccessDeliveredAt).toBe(0);
+      if (status === "cancelled") {
+        await t.run(async (ctx) => cancelAssignment(ctx, delivered));
+      }
+      const before = await read();
+      vi.setSystemTime(new Date("2026-09-28T12:00:00Z"));
+
+      const result = await t.run(async (ctx) =>
+        markAssignmentProductAccessDelivered(ctx, teammate.membership, [assignmentId]),
+      );
+
+      expect(await read()).toStrictEqual(before);
+      expect(result).toStrictEqual([before.assignment]);
+      expect(result[0]).toMatchObject({
+        status,
+        productAccessDeliveredAt: 0,
+        productAccessDeliveredBy: owner.membership._id,
+      });
+    },
+  );
+
+  test("accepts the maximum batch of 100 distinct assignments", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(
+      t,
+      { subject: "owner" },
+      { maxSlots: 100, maxApplications: 100 },
+    );
+    const assignmentIds: Id<"assignments">[] = [];
+    for (let i = 0; i < 100; i++) {
+      const creatorId = await seedCreatorId(t, `creator_${i}`);
+      assignmentIds.push(
+        await t.run(async (ctx) => claimAssignment(ctx, creatorId, owner.opportunityId)),
+      );
+    }
+    const opportunity = await t.run(async (ctx) =>
+      ctx.db.get("opportunities", owner.opportunityId),
+    );
+
+    const result = await t.run(async (ctx) =>
+      markAssignmentProductAccessDelivered(ctx, owner.membership, assignmentIds),
+    );
+
+    expect(result.map((assignment) => assignment._id)).toEqual(assignmentIds);
+    expect(result.every((assignment) => assignment.productAccessDeliveredAt === Date.now())).toBe(
+      true,
+    );
+    expect(result).toStrictEqual(
+      await t.run(async (ctx) =>
+        Promise.all(assignmentIds.map((id) => ctx.db.get("assignments", id))),
+      ),
+    );
+    expect(await t.run(async (ctx) => ctx.db.get("opportunities", owner.opportunityId))).toEqual(
+      opportunity,
+    );
+  });
+
+  test.each([0, 101])(
+    "rejects %i raw IDs before deduplication without changing records",
+    async (count) => {
+      const t = convexTest(schema, modules);
+      const { owner, assignmentId, read } = await seedClaimed(t);
+      const before = await read();
+
+      await expect(
+        t.run(async (ctx) =>
+          markAssignmentProductAccessDelivered(
+            ctx,
+            owner.membership,
+            Array(count).fill(assignmentId),
+          ),
+        ),
+      ).rejects.toMatchObject({ data: { code: "invalid_state", reason: "invalid_batch_size" } });
+
+      expect(await read()).toStrictEqual(before);
+    },
+  );
+
+  test.each(["missing", "foreign", "cancelled"] as const)(
+    "rejects a batch containing a %s assignment without partially confirming delivery",
+    async (kind) => {
+      const t = convexTest(schema, modules);
+      const { owner, creatorId, assignmentId, read } = await seedClaimed(t);
+      const other = await seedOpportunity(t, {
+        subject: "other",
+        orgId: kind === "foreign" ? "org_other" : "org_acme",
+      });
+      const invalidId = await assign(t, other, creatorId, "cancelled");
+      await t.run(async (ctx) => {
+        if (kind === "missing") await ctx.db.delete("assignments", invalidId);
+        if (kind === "foreign") {
+          await ctx.db.patch("assignments", invalidId, {
+            productAccessDeliveredAt: 0,
+            productAccessDeliveredBy: other.membership._id,
+          });
+        }
+      });
+      const before = await read();
+      const invalidBefore = await t.run(async (ctx) => ctx.db.get("assignments", invalidId));
+
+      await expect(
+        t.run(async (ctx) =>
+          markAssignmentProductAccessDelivered(ctx, owner.membership, [assignmentId, invalidId]),
+        ),
+      ).rejects.toMatchObject({
+        data:
+          kind === "cancelled"
+            ? { code: "invalid_state", reason: "assignment_cancelled" }
+            : { code: "not_found" },
+      });
+
+      expect(await read()).toStrictEqual(before);
+      expect(await t.run(async (ctx) => ctx.db.get("assignments", invalidId))).toStrictEqual(
+        invalidBefore,
+      );
+    },
+  );
+});
 
 describe("acceptAssignmentTerms", () => {
   test("moves the creator's termsPending assignment to active and keeps the slot", async () => {

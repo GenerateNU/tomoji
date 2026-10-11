@@ -1,13 +1,24 @@
-import type { PaginationOptions, PaginationResult, WithoutSystemFields } from "convex/server";
+import type { PaginationOptions, PaginationResult } from "convex/server";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { apiError } from "../lib/errors";
+import type { notificationTargetKind } from "../schemas/notifications.schema";
 
-/** What a notification says and opens; the recipient and read state are set here. */
-export type NotificationContent = Omit<
-  WithoutSystemFields<Doc<"notifications">>,
-  "userId" | "isRead"
->;
+type NotificationType = Doc<"notifications">["type"];
+type NotificationTarget = Doc<"notifications">["target"];
+
+/**
+ * What a notification says and opens; the recipient and read state are set
+ * here. Each type only accepts the target kind `notificationTargetKind` maps it to.
+ */
+export type NotificationContent = {
+  [Type in NotificationType]: {
+    type: Type;
+    title: string;
+    body?: string;
+    target: Extract<NotificationTarget, { kind: (typeof notificationTargetKind)[Type] }>;
+  };
+}[NotificationType];
 
 /** The unread count stops here; the client shows anything at the limit as "99+". */
 export const UNREAD_COUNT_LIMIT = 100;
@@ -78,8 +89,7 @@ export async function markNotificationRead(
 /**
  * Marks one bounded batch of the user's unread notifications read and reports
  * whether more may remain. Only notifications created at or before
- * `createdUpTo` are marked, so ones that arrive while a large backlog is still
- * being worked through stay unread.
+ * `createdUpTo` are marked.
  */
 export async function markAllNotificationsRead(
   ctx: MutationCtx,

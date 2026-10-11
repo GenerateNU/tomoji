@@ -6,7 +6,7 @@ import { requireNonBlank } from "../lib/validation";
 import { xAccountStatus } from "../schemas/xAccounts.schema";
 import { encryptedXTokens } from "../schemas/xAccountCredentials.schema";
 import { validateEncryptedXTokens } from "../lib/xTokenEncryption";
-import { getCreatorByUserId } from "./creators";
+import { requireCreatorProfileById } from "./creators";
 
 // X's user-lookup scope mapping requires both read scopes; offline.access
 // requests the refresh token needed to keep the connection usable later.
@@ -59,16 +59,6 @@ export async function getXAccount(
   return account === null ? null : toXAccount(account);
 }
 
-/** Resolves a caller's creator row before returning their safe linked-account view. */
-export async function getOwnXAccount(
-  ctx: QueryCtx | MutationCtx,
-  user: Doc<"users">,
-): Promise<XAccount | null> {
-  const creator = await getCreatorByUserId(ctx, user._id);
-  if (creator === null) throw apiError("not_found", { resource: "creator" });
-  return await getXAccount(ctx, creator._id);
-}
-
 /**
  * Persists server-verified X data atomically. Only the OAuth completion path may
  * call this helper after action-side encryption; never accept plaintext tokens
@@ -79,12 +69,7 @@ export async function saveXAccount(
   creatorId: Id<"creators">,
   link: XAccountLink,
 ): Promise<XAccount> {
-  const creator = await ctx.db.get("creators", creatorId);
-  if (creator === null) throw apiError("not_found", { resource: "creator" });
-  const user = await ctx.db.get("users", creator.userId);
-  if (user === null || !user.isActive || user.role !== "creator") {
-    throw apiError("not_found", { resource: "creator" });
-  }
+  await requireCreatorProfileById(ctx, creatorId);
   if (!/^\d+$/.test(link.xUserId)) {
     throw apiError("invalid_state", { reason: "x_user_id_invalid" });
   }

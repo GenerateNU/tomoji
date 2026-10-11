@@ -15,6 +15,45 @@ import {
 const modules = import.meta.glob("../../**/*.ts");
 
 describe("saveXAccount", () => {
+  test("rejects a missing creator without storing account or credentials", async () => {
+    const t = convexTest(schema, modules);
+    const creatorId = await seedCreatorId(t, "x_deleted_creator");
+    const link = await xAccountLinkArgs(creatorId);
+    await t.run(async (ctx) => await ctx.db.delete("creators", creatorId));
+
+    await expectApiError(() => t.run((ctx) => saveXAccount(ctx, creatorId, link)), "not_found");
+    await t.run(async (ctx) => {
+      expect(await ctx.db.query("xAccounts").first()).toBeNull();
+      expect(await ctx.db.query("xAccountCredentials").first()).toBeNull();
+    });
+  });
+
+  test("rejects a creator whose user was deleted before completion", async () => {
+    const t = convexTest(schema, modules);
+    const creatorId = await seedCreatorId(t, "x_deleted_user");
+    const link = await xAccountLinkArgs(creatorId);
+    await t.run(async (ctx) => {
+      const creator = await ctx.db.get("creators", creatorId);
+      if (creator === null) throw new Error("expected seeded creator");
+      await ctx.db.delete("users", creator.userId);
+    });
+
+    await expectApiError(() => t.run((ctx) => saveXAccount(ctx, creatorId, link)), "not_found");
+  });
+
+  test("rejects a caller whose role changed before completion", async () => {
+    const t = convexTest(schema, modules);
+    const creatorId = await seedCreatorId(t, "x_changed_role");
+    const link = await xAccountLinkArgs(creatorId);
+    await t.run(async (ctx) => {
+      const creator = await ctx.db.get("creators", creatorId);
+      if (creator === null) throw new Error("expected seeded creator");
+      await ctx.db.patch("users", creator.userId, { role: "operator" });
+    });
+
+    await expectApiError(() => t.run((ctx) => saveXAccount(ctx, creatorId, link)), "not_found");
+  });
+
   test("rejects an invalid envelope before persisting account or credentials", async () => {
     const t = convexTest(schema, modules);
     const creatorId = await seedCreatorId(t, "x_bad_envelope");

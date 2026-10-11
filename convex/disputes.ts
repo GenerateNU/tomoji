@@ -2,17 +2,20 @@ import { paginationResultValidator } from "convex/server";
 import { v } from "convex/values";
 import type { Doc } from "./_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
-import { authedMutation, authedQuery, companyContext } from "./lib/functions";
+import { authedMutation, authedQuery, companyContext, operatorMutation } from "./lib/functions";
 import type { AssignmentViewer } from "./models/assignments";
 import {
   createDispute,
   disputeDraft,
   disputeListFilters,
+  disputeResolution,
   disputeView,
   listDisputes,
   requireDispute,
+  resolveDispute,
 } from "./models/disputes";
 import { requireCallerCreatorId } from "./models/users";
+import schema from "./schema";
 
 /** Company users go through `companyContext`, so their token's org must be one they belong to. */
 async function requireViewer(
@@ -69,12 +72,13 @@ export const get = authedQuery({
 });
 
 /**
- * Lists the caller's company's or creator's disputes in one status, newest
- * first, with cursor pagination. `openedByRole` keeps only those one side
- * opened. Each row is what `get` returns to the same caller.
+ * Lists disputes in one status with cursor pagination: the caller's company's
+ * or creator's, or every company's for operators. `openedByRole` keeps only
+ * those one side opened. Resolved disputes come most recently closed first;
+ * open ones newest first, or oldest first for operators. Each row is what
+ * `get` returns to the same caller.
  *
- * @throws `forbidden` for operators, and for a company user whose token names
- * an org they don't belong to.
+ * @throws `forbidden` if a company user's token names an org they don't belong to.
  */
 export const list = authedQuery({
   args: disputeListFilters.fields,
@@ -82,5 +86,22 @@ export const list = authedQuery({
   handler: async (ctx, args) => {
     const viewer = await requireViewer(ctx, ctx.user);
     return await listDisputes(ctx, viewer, args);
+  },
+});
+
+/**
+ * Closes an open dispute with an outcome and Tomoji's decision, which both
+ * sides can read. Resolving is final. The decision is stored trimmed.
+ *
+ * @throws `not_found` if the dispute doesn't exist.
+ * @throws `invalid_state` if it's already resolved, or the decision is blank or
+ * too long.
+ * @returns the resolved dispute.
+ */
+export const resolve = operatorMutation({
+  args: { disputeId: v.id("disputes"), ...disputeResolution.fields },
+  returns: schema.doc("disputes"),
+  handler: async (ctx, { disputeId, ...resolution }) => {
+    return await resolveDispute(ctx, ctx.user._id, disputeId, resolution);
   },
 });

@@ -113,12 +113,13 @@ describe("disputes.get", () => {
 });
 
 describe("disputes.list", () => {
-  test("lists the caller's side and returns what get returns", async () => {
+  test("lists the caller's disputes and returns what get returns", async () => {
     const t = convexTest(schema, modules);
     const fixture = await seedAssignmentFixture(t);
     const disputeId = await seedDispute(t, fixture);
+    const asOperator = await seedOperator(t, "dl-operator");
 
-    for (const client of [fixture.asCreator, fixture.asCompany]) {
+    for (const client of [fixture.asCreator, fixture.asCompany, asOperator]) {
       const { page } = await client.query(api.disputes.list, openList);
       expect(page).toEqual([await client.query(api.disputes.get, { disputeId })]);
     }
@@ -135,13 +136,48 @@ describe("disputes.list", () => {
     expect(page).toEqual([]);
   });
 
-  test.each([
-    ["an operator", async (t: TestConvex) => await seedOperator(t, "dl-operator")],
-    ["a company user with the wrong org", seedWrongOrgCaller],
-  ])("refuses %s", async (_who, caller) => {
+  test("refuses a company user whose token names an org they don't belong to", async () => {
     const t = convexTest(schema, modules);
-    const client = await caller(t);
+    const asWrongOrg = await seedWrongOrgCaller(t);
 
-    await expectApiError(() => client.query(api.disputes.list, openList), "forbidden");
+    await expectApiError(() => asWrongOrg.query(api.disputes.list, openList), "forbidden");
+  });
+});
+
+describe("disputes.resolve", () => {
+  const ruling = { outcome: "termsKept", decision: "Original terms kept." } as const;
+
+  test("lets an operator close a dispute, which both sides then see", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await seedAssignmentFixture(t);
+    const disputeId = await seedDispute(t, fixture);
+    const asOperator = await seedOperator(t, "dr-operator");
+
+    const resolved = await asOperator.mutation(api.disputes.resolve, { disputeId, ...ruling });
+
+    expect(await storedDisputes(t)).toEqual([resolved]);
+    for (const client of [fixture.asCreator, fixture.asCompany]) {
+      expect(await client.query(api.disputes.get, { disputeId })).toMatchObject({
+        status: "resolved",
+        ...ruling,
+      });
+    }
+  });
+
+  test.each([
+    ["a signed-out caller", async (t: TestConvex) => t, "not_authenticated"],
+    ["the creator", async (_t: TestConvex, f: AssignmentFixture) => f.asCreator, "forbidden"],
+    ["the company user", async (_t: TestConvex, f: AssignmentFixture) => f.asCompany, "forbidden"],
+  ] as const)("refuses %s without changing it", async (_who, caller, code) => {
+    const t = convexTest(schema, modules);
+    const fixture = await seedAssignmentFixture(t);
+    const disputeId = await seedDispute(t, fixture);
+    const client = await caller(t, fixture);
+
+    await expectApiError(
+      () => client.mutation(api.disputes.resolve, { disputeId, ...ruling }),
+      code,
+    );
+    expect((await storedDisputes(t))[0].status).toBe("open");
   });
 });

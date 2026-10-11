@@ -176,6 +176,16 @@ export async function seedOperator(t: TestConvex, subject: string) {
   return asOperator;
 }
 
+/** Seeds an operator and returns their user document ID. */
+export async function seedOperatorId(t: TestConvex, subject: string): Promise<Id<"users">> {
+  await seedOperator(t, subject);
+  return await t.run(async (ctx) => {
+    const user = await getUserByWorkosId(ctx, subject);
+    if (user === null) throw new Error("expected seeded operator");
+    return user._id;
+  });
+}
+
 /**
  * Seeds a member of `org_acme` and returns a client whose token claims
  * `org_other`, an org they do not belong to.
@@ -419,49 +429,63 @@ export async function seedOneSubmission(
   return { fixture, submissionId };
 }
 
+type OpenDispute = Extract<Doc<"disputes">, { status: "open" }>;
+type DisputeResolutionFields = Omit<
+  Extract<Doc<"disputes">, { status: "resolved" }>,
+  keyof OpenDispute
+>;
+
 /**
- * Inserts a dispute on the fixture's assignment, bypassing the open rules.
- * Defaults to an open dispute raised by the fixture's creator.
+ * Inserts a dispute on the fixture's assignment, bypassing the create rules.
+ * Defaults to an open dispute raised by the fixture's creator; pass
+ * `resolution` to seed it already resolved.
  */
 export async function seedDispute(
   t: TestConvex,
   fixture: AssignmentFixture,
-  fields: Partial<WithoutSystemFields<Doc<"disputes">>> = {},
+  fields: Partial<Omit<WithoutSystemFields<OpenDispute>, "status">> = {},
+  resolution?: DisputeResolutionFields,
 ): Promise<Id<"disputes">> {
   return await t.run(async (ctx) => {
     const assignment = await ctx.db.get("assignments", fixture.assignmentId);
     if (assignment === null) throw new Error("expected seeded assignment");
-    return await ctx.db.insert("disputes", {
+    const open = {
       assignmentId: assignment._id,
       companyId: assignment.companyId,
       creatorId: assignment.creatorId,
       campaignId: assignment.campaignId,
       openedBy: fixture.creatorUserId,
-      openedByRole: "creator",
-      reason: "unfairReview",
+      openedByRole: "creator" as const,
+      reason: "unfairReview" as const,
       description: "The brief allows showing the deploy log, which the review asked me to cut.",
       evidenceSubmissionIds: [],
       evidencePostIds: [],
-      status: "open",
       ...fields,
-    });
+    };
+    return await ctx.db.insert(
+      "disputes",
+      resolution === undefined
+        ? { ...open, status: "open" }
+        : { ...open, ...resolution, status: "resolved" },
+    );
   });
 }
 
 /** Seeds a submission an operator overrode after a dispute, with every reviewer-identity field set. */
 export async function seedOverriddenSubmission(t: TestConvex) {
   const fixture = await seedAssignmentFixture(t);
-  await seedOperator(t, FIXTURE_OPERATOR);
-  const operatorId = await t.run(async (ctx) => {
-    const operator = await getUserByWorkosId(ctx, FIXTURE_OPERATOR);
-    if (operator === null) throw new Error("expected seeded operator");
-    return operator._id;
-  });
-  const disputeId = await seedDispute(t, fixture, {
-    status: "resolved",
-    resolvedBy: operatorId,
-    resolution: "The brief allows the deploy log; approved as submitted.",
-  });
+  const operatorId = await seedOperatorId(t, FIXTURE_OPERATOR);
+  const disputeId = await seedDispute(
+    t,
+    fixture,
+    {},
+    {
+      resolvedBy: operatorId,
+      resolvedAt: Date.now(),
+      outcome: "inCreatorFavor",
+      decision: "The brief allows the deploy log; approved as submitted.",
+    },
+  );
 
   const submissionId = await t.run(async (ctx) => {
     const reviewedAt = Date.now();

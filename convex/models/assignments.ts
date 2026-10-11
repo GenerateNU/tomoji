@@ -5,6 +5,7 @@ import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { apiError } from "../lib/errors";
 import schema from "../schema";
+import { notifyCreator, notifyOpportunityCreator } from "./notifications";
 
 /**
  * Creates a creator's assignment on an open, ungated opportunity.
@@ -39,7 +40,14 @@ export async function claimAssignment(
   if (opportunity.isGated) {
     throw apiError("invalid_state", { reason: "opportunity_gated" });
   }
-  return await createAssignment(ctx, opportunity, campaign, creatorId);
+  const assignmentId = await createAssignment(ctx, opportunity, campaign, creatorId);
+  // Only claims notify here; an accepted offer is reported by `acceptApplication`.
+  await notifyOpportunityCreator(ctx, opportunity, {
+    type: "assignmentClaimed",
+    title: `A creator joined ${opportunity.title}`,
+    target: { kind: "assignment", assignmentId },
+  });
+  return assignmentId;
 }
 
 /**
@@ -279,6 +287,14 @@ export async function acceptAssignmentTerms(
     assignmentId,
   );
   await ctx.db.patch("assignments", assignment._id, { status: "active" });
+  const opportunity = await ctx.db.get("opportunities", assignment.opportunityId);
+  if (opportunity !== null) {
+    await notifyOpportunityCreator(ctx, opportunity, {
+      type: "assignmentTermsAccepted",
+      title: `Terms accepted for ${opportunity.title}`,
+      target: { kind: "assignment", assignmentId: assignment._id },
+    });
+  }
   return { ...assignment, status: "active" };
 }
 
@@ -300,7 +316,16 @@ export async function declineAssignmentTerms(
     { role: "creator", creatorId },
     assignmentId,
   );
-  return await cancelAssignment(ctx, assignment);
+  const cancelled = await cancelAssignment(ctx, assignment);
+  const opportunity = await ctx.db.get("opportunities", assignment.opportunityId);
+  if (opportunity !== null) {
+    await notifyOpportunityCreator(ctx, opportunity, {
+      type: "assignmentTermsDeclined",
+      title: `Terms declined for ${opportunity.title}`,
+      target: { kind: "assignment", assignmentId: assignment._id },
+    });
+  }
+  return cancelled;
 }
 
 /**
@@ -321,7 +346,16 @@ export async function cancelPendingAssignment(
     { role: "company", companyId },
     assignmentId,
   );
-  return await cancelAssignment(ctx, assignment);
+  const cancelled = await cancelAssignment(ctx, assignment);
+  const opportunity = await ctx.db.get("opportunities", assignment.opportunityId);
+  if (opportunity !== null) {
+    await notifyCreator(ctx, assignment.creatorId, {
+      type: "assignmentCancelled",
+      title: `Your assignment for ${opportunity.title} was cancelled`,
+      target: { kind: "assignment", assignmentId: assignment._id },
+    });
+  }
+  return cancelled;
 }
 
 async function requirePendingAssignment(

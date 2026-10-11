@@ -5,6 +5,7 @@ import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { apiError } from "../lib/errors";
 import type { applicationStatus } from "../schemas/applications.schema";
 import { createAssignmentFromOffer } from "./assignments";
+import { notifyCreator, notifyOpportunityCreator } from "./notifications";
 
 /**
  * Creates a pending application from a creator to an open, gated opportunity.
@@ -54,13 +55,28 @@ export async function createApplication(
     throw apiError("invalid_state", { reason: "applications_full" });
   }
 
-  return await ctx.db.insert("applications", {
+  const applicationId = await ctx.db.insert("applications", {
     opportunityId: opportunity._id,
     creatorId,
     companyId: campaign.companyId,
     note,
     status: "pending",
   });
+  await notifyOpportunityCreator(ctx, opportunity, {
+    type: "applicationReceived",
+    title: `New application for ${opportunity.title}`,
+    target: applicationTarget({ _id: applicationId, opportunityId: opportunity._id }),
+  });
+  return applicationId;
+}
+
+/** Links a notification to the application, alongside its opportunity. */
+function applicationTarget(application: Pick<Doc<"applications">, "_id" | "opportunityId">) {
+  return {
+    kind: "application" as const,
+    applicationId: application._id,
+    opportunityId: application.opportunityId,
+  };
 }
 
 /**
@@ -224,6 +240,14 @@ export async function offerApplication(
 
   const patch = { status: "offered" as const, statusLastUpdatedAt: now, offerExpiresAt };
   await ctx.db.patch("applications", application._id, patch);
+  const opportunity = await ctx.db.get("opportunities", application.opportunityId);
+  if (opportunity !== null) {
+    await notifyCreator(ctx, application.creatorId, {
+      type: "applicationOffered",
+      title: `You received an offer for ${opportunity.title}`,
+      target: applicationTarget(application),
+    });
+  }
   return { ...application, ...patch };
 }
 
@@ -243,6 +267,14 @@ export async function rejectApplication(
   const application = await requirePendingForReview(ctx, companyId, applicationId);
   const patch = { status: "rejected" as const, statusLastUpdatedAt: Date.now() };
   await ctx.db.patch("applications", application._id, patch);
+  const opportunity = await ctx.db.get("opportunities", application.opportunityId);
+  if (opportunity !== null) {
+    await notifyCreator(ctx, application.creatorId, {
+      type: "applicationRejected",
+      title: `Your application for ${opportunity.title} wasn't accepted`,
+      target: applicationTarget(application),
+    });
+  }
   return { ...application, ...patch };
 }
 
@@ -297,9 +329,17 @@ export async function acceptApplication(
 
   // Refuses a closed opportunity or a full one, then takes the slot and creates
   // the termsPending assignment with the opportunity's current terms.
-  await createAssignmentFromOffer(ctx, { opportunityId: opportunity._id, creatorId });
+  const assignmentId = await createAssignmentFromOffer(ctx, {
+    opportunityId: opportunity._id,
+    creatorId,
+  });
   const patch = { status: "accepted" as const, offerAcceptedAt: now, statusLastUpdatedAt: now };
   await ctx.db.patch("applications", application._id, patch);
+  await notifyOpportunityCreator(ctx, opportunity, {
+    type: "applicationAccepted",
+    title: `Your offer for ${opportunity.title} was accepted`,
+    target: { kind: "assignment", assignmentId },
+  });
   if (opportunity.numFilledSlots + 1 >= opportunity.maxSlots) {
     await markRemainingApplicationsFull(ctx, opportunity, now);
   }
@@ -322,6 +362,14 @@ export async function declineApplication(
   const application = await requireOfferedApplication(ctx, creatorId, applicationId);
   const patch = { status: "declined" as const, statusLastUpdatedAt: Date.now() };
   await ctx.db.patch("applications", application._id, patch);
+  const opportunity = await ctx.db.get("opportunities", application.opportunityId);
+  if (opportunity !== null) {
+    await notifyOpportunityCreator(ctx, opportunity, {
+      type: "applicationDeclined",
+      title: `Your offer for ${opportunity.title} was declined`,
+      target: applicationTarget(application),
+    });
+  }
   return { ...application, ...patch };
 }
 
@@ -340,8 +388,9 @@ async function requireOfferedApplication(
 
 /**
  * Marks every pending or offered application to the opportunity as
- * `opportunityFull` once its last slot is taken. An opportunity never has more
- * than `maxApplications` applications, so this batch is bounded.
+ * `opportunityFull` once its last slot is taken, and tells each creator. An
+ * opportunity never has more than `maxApplications` applications, so this
+ * batch is bounded.
  */
 async function markRemainingApplicationsFull(
   ctx: MutationCtx,
@@ -360,13 +409,19 @@ async function markRemainingApplicationsFull(
         status: "opportunityFull",
         statusLastUpdatedAt: now,
       });
+      await notifyCreator(ctx, application.creatorId, {
+        type: "applicationOpportunityFull",
+        title: `${opportunity.title} has filled all its slots`,
+        target: applicationTarget(application),
+      });
     }
   }
 }
 
 /**
- * Marks one bounded batch of offers past their expiry as `offerExpired` and
- * reports whether more may remain. `acceptApplication` already refuses expired
+ * Marks one bounded batch of offers past their expiry as `offerExpired`,
+ * notifies the creator and the opportunity's creator, and reports whether more
+ * may remain. `acceptApplication` already refuses expired
  * offers, so this only makes the status visible.
  */
 export async function expireApplicationOffers(ctx: MutationCtx): Promise<boolean> {
@@ -382,6 +437,19 @@ export async function expireApplicationOffers(ctx: MutationCtx): Promise<boolean
     await ctx.db.patch("applications", application._id, {
       status: "offerExpired",
       statusLastUpdatedAt: now,
+    });
+    const opportunity = await ctx.db.get("opportunities", application.opportunityId);
+    if (opportunity === null) continue;
+    const target = applicationTarget(application);
+    await notifyCreator(ctx, application.creatorId, {
+      type: "applicationOfferExpired",
+      title: `Your offer for ${opportunity.title} expired`,
+      target,
+    });
+    await notifyOpportunityCreator(ctx, opportunity, {
+      type: "applicationOfferExpired",
+      title: `An offer for ${opportunity.title} expired unanswered`,
+      target,
     });
   }
   return expired.length === batchSize;

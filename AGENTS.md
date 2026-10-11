@@ -99,8 +99,9 @@ commands that exist today:
 | `just test-e2e`   | Playwright                                              |
 | `just build`      | Production build                                        |
 
-Recipes are thin wrappers over `package.json` scripts; CI runs `bun run ci`. There is no
-release command yet — nothing is deployed.
+Recipes are thin wrappers over `package.json` scripts; CI runs `bun run ci`. Production ships
+when a GitHub Release is published (`gh release create vX.Y.Z --generate-notes`); every PR
+gets a Vercel + Convex preview. See [`DEPLOYMENT.md`](DEPLOYMENT.md).
 
 ## Version control
 

@@ -3,7 +3,11 @@ import { convexTest } from "convex-test";
 import { describe, expect, test, vi } from "vitest";
 import { api } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
-import { createNotification, MARK_ALL_READ_BATCH_SIZE } from "../models/notifications";
+import {
+  createNotification,
+  MARK_ALL_READ_BATCH_SIZE,
+  type NotificationContent,
+} from "../models/notifications";
 import { getUserByWorkosId } from "../models/users";
 import schema from "../schema";
 import { expectApiError, seedGatedOpportunity, seedUser, type TestConvex } from "./helpers";
@@ -19,22 +23,21 @@ async function seedNotified(t: TestConvex, subject: string, count = 1) {
     subject: `${subject}_company`,
     orgId: `org_${subject}`,
   });
+  const content: NotificationContent = {
+    type: "opportunityClosed",
+    title: "Moisturizer launch video closed at its deadline",
+    target: { kind: "opportunity", opportunityId },
+  };
   const notificationIds = await t.run(async (ctx) => {
     const user = await getUserByWorkosId(ctx, subject);
     if (user === null) throw new Error("expected seeded user");
     const ids: Id<"notifications">[] = [];
     for (let i = 0; i < count; i++) {
-      ids.push(
-        await createNotification(ctx, user._id, {
-          type: "opportunityClosed",
-          title: "Moisturizer launch video closed at its deadline",
-          target: { kind: "opportunity", opportunityId },
-        }),
-      );
+      ids.push(await createNotification(ctx, user._id, content));
     }
     return ids;
   });
-  return { asUser, notificationIds };
+  return { asUser, notificationIds, content };
 }
 
 describe("notifications.list", () => {
@@ -119,11 +122,11 @@ describe("notifications.markAllRead", () => {
     }
   });
 
-  test("leaves notifications that arrive between batches unread", async () => {
+  test("leaves notifications created after the call unread", async () => {
     vi.useFakeTimers();
     const t = convexTest(schema, modules);
     try {
-      const { asUser, notificationIds } = await seedNotified(
+      const { asUser, notificationIds, content } = await seedNotified(
         t,
         "creator_a",
         MARK_ALL_READ_BATCH_SIZE + 5,
@@ -132,14 +135,10 @@ describe("notifications.markAllRead", () => {
 
       await asUser.mutation(api.notifications.markAllRead, {});
       advanceClock();
-      const arrivedLaterId = await t.run(async (ctx) => {
+      const createdLaterId = await t.run(async (ctx) => {
         const existing = await ctx.db.get("notifications", notificationIds[0]);
         if (existing === null) throw new Error("expected seeded notification");
-        return await createNotification(ctx, existing.userId, {
-          type: existing.type,
-          title: existing.title,
-          target: existing.target,
-        });
+        return await createNotification(ctx, existing.userId, content);
       });
       await t.finishAllScheduledFunctions(() => vi.runAllTimers());
 
@@ -147,7 +146,7 @@ describe("notifications.markAllRead", () => {
         isRead: false,
         paginationOpts: firstPage,
       });
-      expect(unread.page.map((n) => n._id)).toEqual([arrivedLaterId]);
+      expect(unread.page.map((n) => n._id)).toEqual([createdLaterId]);
     } finally {
       vi.useRealTimers();
     }

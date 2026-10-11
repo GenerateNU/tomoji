@@ -1,5 +1,5 @@
 import { defineTable } from "convex/server";
-import { v } from "convex/values";
+import { v, type Infer } from "convex/values";
 
 export const notificationType = v.union(
   // To creators
@@ -41,6 +41,35 @@ export const notificationTarget = v.union(
   v.object({ kind: v.literal("opportunity"), opportunityId: v.id("opportunities") }),
   v.object({ kind: v.literal("campaign"), campaignId: v.id("campaigns") }),
 );
+
+/**
+ * The target kind each notification type opens. `satisfies` makes adding a
+ * type without a kind a type error, and `NotificationContent` uses this map so
+ * every caller must pass the matching target.
+ */
+export const notificationTargetKind = {
+  applicationOffered: "application",
+  applicationRejected: "application",
+  applicationOpportunityFull: "application",
+  applicationOpportunityClosed: "application",
+  assignmentCancelled: "assignment",
+  submissionApproved: "submission",
+  submissionChangesRequested: "submission",
+  applicationReceived: "application",
+  applicationAccepted: "assignment", // Opens the assignment the acceptance created.
+  applicationDeclined: "application",
+  assignmentClaimed: "assignment",
+  assignmentTermsAccepted: "assignment",
+  assignmentTermsDeclined: "assignment",
+  submissionCreated: "submission",
+  submissionResubmitted: "submission",
+  opportunityClosed: "opportunity",
+  campaignClosed: "campaign",
+  applicationOfferExpired: "application",
+} as const satisfies Record<
+  Infer<typeof notificationType>,
+  Infer<typeof notificationTarget>["kind"]
+>;
 
 export const notificationsTable = defineTable({
   userId: v.id("users"), // Recipient.

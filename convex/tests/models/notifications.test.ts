@@ -2,6 +2,7 @@
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
 import type { Id } from "../../_generated/dataModel";
+import type { MutationCtx } from "../../_generated/server";
 import {
   countUnreadNotifications,
   createNotification,
@@ -66,6 +67,22 @@ describe("createNotification", () => {
 
     const stored = await t.run(async (ctx) => await ctx.db.get("notifications", id));
     expect(stored).toMatchObject({ ...content, userId, isRead: false });
+  });
+
+  test("only accepts the target kind that matches the type", () => {
+    // Never called: the check is that `tsc` rejects the mismatched target.
+    const mismatched = (
+      ctx: MutationCtx,
+      userId: Id<"users">,
+      opportunityId: Id<"opportunities">,
+    ) =>
+      createNotification(ctx, userId, {
+        type: "submissionApproved",
+        title: "Your draft for Moisturizer launch video was approved",
+        // @ts-expect-error submissionApproved must open a submission.
+        target: { kind: "opportunity", opportunityId },
+      });
+    expect(mismatched).toBeTypeOf("function");
   });
 });
 

@@ -17,7 +17,9 @@ import {
 import { createOpportunity } from "../../models/opportunities";
 import schema from "../../schema";
 import {
+  creatorNotifications,
   expectApiError,
+  memberNotifications,
   opportunityArgs,
   seedAssignment,
   seedCampaign,
@@ -935,5 +937,79 @@ describe("completeAssignment", () => {
       () => t.run(async (ctx) => await completeAssignment(ctx, assignmentId)),
       "not_found",
     );
+  });
+});
+
+describe("notifications", () => {
+  const title = "Moisturizer launch video";
+
+  test("claiming a slot notifies the member who created the opportunity", async () => {
+    const t = convexTest(schema, modules);
+    const { owner, assignmentId } = await seedClaimed(t);
+
+    expect(await memberNotifications(t, owner.membership)).toEqual([
+      {
+        type: "assignmentClaimed",
+        title: `A creator joined ${title}`,
+        target: { kind: "assignment", assignmentId },
+      },
+    ]);
+  });
+
+  test("accepting terms notifies the opportunity creator", async () => {
+    const t = convexTest(schema, modules);
+    const { owner, creatorId, assignmentId } = await seedClaimed(t);
+
+    await t.run(async (ctx) => await acceptAssignmentTerms(ctx, creatorId, assignmentId));
+
+    expect((await memberNotifications(t, owner.membership)).at(-1)).toEqual({
+      type: "assignmentTermsAccepted",
+      title: `Terms accepted for ${title}`,
+      target: { kind: "assignment", assignmentId },
+    });
+  });
+
+  test("declining terms notifies the opportunity creator", async () => {
+    const t = convexTest(schema, modules);
+    const { owner, creatorId, assignmentId } = await seedClaimed(t);
+
+    await t.run(async (ctx) => await declineAssignmentTerms(ctx, creatorId, assignmentId));
+
+    expect((await memberNotifications(t, owner.membership)).at(-1)).toEqual({
+      type: "assignmentTermsDeclined",
+      title: `Terms declined for ${title}`,
+      target: { kind: "assignment", assignmentId },
+    });
+  });
+
+  test("a company cancelling a pending assignment notifies the creator", async () => {
+    const t = convexTest(schema, modules);
+    const { owner, creatorId, assignmentId } = await seedClaimed(t);
+
+    await t.run(
+      async (ctx) => await cancelPendingAssignment(ctx, owner.membership.companyId, assignmentId),
+    );
+
+    expect(await creatorNotifications(t, creatorId)).toEqual([
+      {
+        type: "assignmentCancelled",
+        title: `Your assignment for ${title} was cancelled`,
+        target: { kind: "assignment", assignmentId },
+      },
+    ]);
+  });
+
+  test("an offer turning into an assignment is reported by the application, not as a claim", async () => {
+    const t = convexTest(schema, modules);
+    const { membership, opportunityId } = await seedOpportunity(
+      t,
+      { subject: "owner" },
+      { isGated: true },
+    );
+    const creatorId = await seedCreatorId(t, "creator");
+
+    await t.run(async (ctx) => await createAssignmentFromOffer(ctx, { opportunityId, creatorId }));
+
+    expect(await memberNotifications(t, membership)).toEqual([]);
   });
 });

@@ -15,7 +15,9 @@ import {
 } from "../../models/submissions";
 import schema from "../../schema";
 import {
+  creatorNotifications,
   expectApiError,
+  memberNotifications,
   seedAssignmentFixture,
   seedCreatorId,
   seedMembership,
@@ -735,5 +737,74 @@ describe("listSubmissions", () => {
     await t.run(async (ctx) => await ctx.db.delete("assignments", fixture.assignmentId));
 
     await expectApiError(() => listAs(t, operatorViewer, fixture.assignmentId), "not_found");
+  });
+});
+
+describe("notifications", () => {
+  const title = "Moisturizer launch video";
+
+  test("a first draft notifies the member who created the opportunity", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await seedAssignmentFixture(t);
+
+    const submissionId = await submit(t, fixture);
+
+    expect(await memberNotifications(t, fixture.membership)).toEqual([
+      {
+        type: "submissionCreated",
+        title: `New draft submitted for ${title}`,
+        target: { kind: "submission", submissionId, assignmentId: fixture.assignmentId },
+      },
+    ]);
+  });
+
+  test("a draft sent after a change request is reported as a resubmission", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await seedAssignmentFixture(t);
+    await seedSubmission(t, fixture, "changesRequested");
+
+    const submissionId = await submit(t, fixture);
+
+    expect(await memberNotifications(t, fixture.membership)).toEqual([
+      {
+        type: "submissionResubmitted",
+        title: `Updated draft submitted for ${title}`,
+        target: { kind: "submission", submissionId, assignmentId: fixture.assignmentId },
+      },
+    ]);
+  });
+
+  test("an approval notifies the creator", async () => {
+    const t = convexTest(schema, modules);
+    const { fixture, submissionId } = await seedOneSubmission(t);
+
+    await reviewAs(t, fixture.membership, submissionId, { status: "approved" });
+
+    expect(await creatorNotifications(t, fixture.creatorId)).toEqual([
+      {
+        type: "submissionApproved",
+        title: `Your draft for ${title} was approved`,
+        target: { kind: "submission", submissionId, assignmentId: fixture.assignmentId },
+      },
+    ]);
+  });
+
+  test("a change request notifies the creator with the review note", async () => {
+    const t = convexTest(schema, modules);
+    const { fixture, submissionId } = await seedOneSubmission(t);
+
+    await reviewAs(t, fixture.membership, submissionId, {
+      status: "changesRequested",
+      reviewNote: "  Add #ad to the caption.  ",
+    });
+
+    expect(await creatorNotifications(t, fixture.creatorId)).toEqual([
+      {
+        type: "submissionChangesRequested",
+        title: `Changes requested on your draft for ${title}`,
+        body: "Add #ad to the caption.",
+        target: { kind: "submission", submissionId, assignmentId: fixture.assignmentId },
+      },
+    ]);
   });
 });

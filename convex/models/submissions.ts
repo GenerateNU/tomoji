@@ -6,6 +6,7 @@ import { apiError } from "../lib/errors";
 import { requireNonBlank } from "../lib/validation";
 import { submissionShapes } from "../schemas/submissions.schema";
 import { requireAssignment, type AssignmentViewer } from "./assignments";
+import { notifyCreator, notifyOpportunityCreator } from "./notifications";
 
 /** The creator-supplied fields of a new submission. */
 export const submissionDraft = v.object({
@@ -221,13 +222,24 @@ export async function createSubmission(
     throw apiError("invalid_state", { reason: "already_approved" });
   }
 
-  return await ctx.db.insert("submissions", {
+  const submissionId = await ctx.db.insert("submissions", {
     assignmentId: assignment._id,
     draftUrl: requireDraftUrl(draft.draftUrl),
     draftDescription: requireText(draft.draftDescription, "draftDescription"),
     status: "pending",
     usesAiReview: assignment.usesAiReview,
   });
+  const opportunity = await ctx.db.get("opportunities", assignment.opportunityId);
+  if (opportunity !== null) {
+    // A draft after a change request is the creator's response to that review.
+    const isResubmission = latest?.status === "changesRequested";
+    await notifyOpportunityCreator(ctx, opportunity, {
+      type: isResubmission ? "submissionResubmitted" : "submissionCreated",
+      title: `${isResubmission ? "Updated" : "New"} draft submitted for ${opportunity.title}`,
+      target: { kind: "submission", submissionId, assignmentId: assignment._id },
+    });
+  }
+  return submissionId;
 }
 
 /** Records a company user's review. Errors are listed on the `submissions.review` route. */
@@ -261,6 +273,26 @@ export async function reviewSubmission(
     reviewedAt: Date.now(),
   };
   await ctx.db.patch("submissions", submissionId, patch);
+  const opportunity = await ctx.db.get("opportunities", assignment.opportunityId);
+  if (opportunity !== null) {
+    const target = { kind: "submission" as const, submissionId, assignmentId: assignment._id };
+    await notifyCreator(
+      ctx,
+      assignment.creatorId,
+      outcome.status === "approved"
+        ? {
+            type: "submissionApproved",
+            title: `Your draft for ${opportunity.title} was approved`,
+            target,
+          }
+        : {
+            type: "submissionChangesRequested",
+            title: `Changes requested on your draft for ${opportunity.title}`,
+            body: outcome.reviewNote,
+            target,
+          },
+    );
+  }
   return { ...submission, ...patch };
 }
 

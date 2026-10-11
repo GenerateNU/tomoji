@@ -5,6 +5,7 @@ import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { apiError } from "../lib/errors";
 import { requireNonBlank } from "../lib/validation";
 import schema from "../schema";
+import { notifyCampaignCreator } from "./notifications";
 import { applyOpportunityPause } from "./opportunities";
 
 export const campaignUpdate = schema
@@ -225,6 +226,12 @@ export async function closeExpiredCampaigns(ctx: MutationCtx): Promise<boolean> 
 
     for (const campaign of campaigns) {
       await ctx.db.patch("campaigns", campaign._id, { status: "closed" });
+      // A manual close is the company's own action; only the end-date close is news to them.
+      await notifyCampaignCreator(ctx, campaign, {
+        type: "campaignClosed",
+        title: `${campaign.title} ended`,
+        target: { kind: "campaign", campaignId: campaign._id },
+      });
     }
     if (campaigns.length === batchSize) {
       shouldContinue = true;

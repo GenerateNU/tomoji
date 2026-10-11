@@ -67,21 +67,36 @@ const disputeFields = {
 type UserIdValidator = Validator<Id<"users"> | undefined, OptionalProperty, string>;
 
 /**
- * Both shapes a dispute can take, shared by the table and the read view. User
- * IDs are separate type parameters so TypeScript keeps their exact types.
+ * Both shapes a dispute can take, shared by the table and the read view.
+ * `userId` validates every user ID: required in the table, optional in the
+ * view because creators never get them. It's a type parameter so TypeScript
+ * keeps the exact ID type.
  */
-export function disputeShapes<
-  OpenedBy extends UserIdValidator,
-  ResolvedBy extends UserIdValidator,
-  Extra extends PropertyValidators,
->(openedBy: OpenedBy, resolvedBy: ResolvedBy, extraFields: Extra) {
-  const base = { ...disputeFields, openedBy, ...extraFields };
+export function disputeShapes<UserId extends UserIdValidator, Extra extends PropertyValidators>(
+  userId: UserId,
+  extraFields: Extra,
+) {
+  // Each side's single response. Editable until the dispute is resolved.
+  const response = v.optional(
+    v.object({
+      body: v.string(),
+      respondedBy: userId,
+      respondedAt: v.number(), // Unix milliseconds; updated on each edit.
+    }),
+  );
+  const base = {
+    ...disputeFields,
+    openedBy: userId,
+    creatorResponse: response,
+    companyResponse: response,
+    ...extraFields,
+  };
   return [
     v.object({ ...base, status: v.literal("open") }),
     v.object({
       ...base,
       status: v.literal("resolved"),
-      resolvedBy,
+      resolvedBy: userId,
       resolvedAt: v.number(), // Unix milliseconds.
       outcome: disputeOutcome,
       decision: v.string(),
@@ -91,9 +106,7 @@ export function disputeShapes<
 
 // List indexes end in `resolvedAt` so resolved disputes sort by closing time;
 // open ones have none and fall back to `_creationTime`.
-export const disputesTable = defineTable(
-  v.union(...disputeShapes(v.id("users"), v.id("users"), {})),
-)
+export const disputesTable = defineTable(v.union(...disputeShapes(v.id("users"), {})))
   .index("by_companyId_and_status_and_resolvedAt", ["companyId", "status", "resolvedAt"])
   .index("by_companyId_and_status_and_openedByRole_and_resolvedAt", [
     "companyId",

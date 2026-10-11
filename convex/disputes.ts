@@ -13,6 +13,7 @@ import {
   listDisputes,
   requireDispute,
   resolveDispute,
+  respondToDispute,
 } from "./models/disputes";
 import { requireCallerCreatorId } from "./models/users";
 import schema from "./schema";
@@ -103,5 +104,25 @@ export const resolve = operatorMutation({
   returns: schema.doc("disputes"),
   handler: async (ctx, { disputeId, ...resolution }) => {
     return await resolveDispute(ctx, ctx.user._id, disputeId, resolution);
+  },
+});
+
+/**
+ * Sets the caller's side's response on an open dispute they can see: the
+ * creator's response for creators, the company's for company users. Responding
+ * again replaces it until the dispute is resolved. Stored trimmed.
+ *
+ * @throws `not_found` if the dispute doesn't exist or isn't the caller's.
+ * @throws `forbidden` for operators, who resolve instead, and for a company user
+ * whose token names an org they don't belong to.
+ * @throws `invalid_state` if it's resolved, or the response is blank or too long.
+ * @returns the dispute as the caller sees it.
+ */
+export const respond = authedMutation({
+  args: { disputeId: v.id("disputes"), body: v.string() },
+  returns: disputeView,
+  handler: async (ctx, args) => {
+    const viewer = await requireViewer(ctx, ctx.user);
+    return await respondToDispute(ctx, viewer, ctx.user._id, args.disputeId, args.body);
   },
 });

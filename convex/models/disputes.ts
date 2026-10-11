@@ -32,7 +32,7 @@ export type DisputeResolution = Infer<typeof disputeResolution>;
 
 /** User IDs are optional because creators never get them (see `toCreatorView`). */
 export const disputeView = v.union(
-  ...disputeShapes(v.optional(v.id("users")), v.optional(v.id("users")), {
+  ...disputeShapes(v.optional(v.id("users")), {
     _id: v.id("disputes"),
     _creationTime: v.number(),
   }),
@@ -58,6 +58,7 @@ const REASONS_BY_ROLE: Record<AssignmentViewer["role"], readonly DisputeReason[]
 
 const MAX_LENGTH = {
   description: 5000,
+  response: 5000,
   decision: 2000,
 } as const;
 
@@ -139,17 +140,58 @@ export async function resolveDispute(
   return resolved;
 }
 
+/**
+ * Sets or replaces the caller's side's response on an open dispute. Errors are
+ * listed on the `disputes.respond` route.
+ */
+export async function respondToDispute(
+  ctx: MutationCtx,
+  viewer: AssignmentViewer,
+  respondedBy: Id<"users">,
+  disputeId: Id<"disputes">,
+  body: string,
+): Promise<DisputeView> {
+  if (viewer.role === "operator") {
+    // Operators rule on disputes through `resolve` instead.
+    throw apiError("forbidden");
+  }
+  const dispute = await requireVisibleDispute(ctx, viewer, disputeId);
+  if (dispute.status !== "open") {
+    throw apiError("invalid_state", { reason: "already_resolved" });
+  }
+
+  // TODO(disputes): product to decide whether responses stay editable until resolved.
+  const response = {
+    body: requireBoundedText(body, "response", MAX_LENGTH.response),
+    respondedBy,
+    respondedAt: Date.now(),
+  };
+  const patch =
+    viewer.role === "creator" ? { creatorResponse: response } : { companyResponse: response };
+  await ctx.db.patch("disputes", dispute._id, patch);
+  return toDisputeView(viewer, { ...dispute, ...patch });
+}
+
 /** One dispute, as the viewer may see it. */
 export async function requireDispute(
   ctx: QueryCtx,
   viewer: AssignmentViewer,
   disputeId: Id<"disputes">,
 ): Promise<DisputeView> {
+  return toDisputeView(viewer, await requireVisibleDispute(ctx, viewer, disputeId));
+}
+
+/** Reports a missing dispute and someone else's the same way. */
+async function requireVisibleDispute(
+  ctx: QueryCtx,
+  viewer: AssignmentViewer,
+  disputeId: Id<"disputes">,
+): Promise<Doc<"disputes">> {
   const dispute = await ctx.db.get("disputes", disputeId);
   if (dispute === null || !canViewDispute(viewer, dispute)) {
     throw apiError("not_found", { resource: "dispute" });
   }
-  return toDisputeView(viewer, dispute);
+  return dispute;
 }
 
 function canViewDispute(viewer: AssignmentViewer, dispute: Doc<"disputes">): boolean {
@@ -247,6 +289,8 @@ function toCreatorView(dispute: Doc<"disputes">): DisputeView {
     description: dispute.description,
     evidenceSubmissionIds: dispute.evidenceSubmissionIds,
     evidencePostIds: dispute.evidencePostIds,
+    creatorResponse: withoutResponder(dispute.creatorResponse),
+    companyResponse: withoutResponder(dispute.companyResponse),
   };
   if (dispute.status === "open") return { ...opened, status: "open" };
   return {
@@ -256,4 +300,8 @@ function toCreatorView(dispute: Doc<"disputes">): DisputeView {
     outcome: dispute.outcome,
     decision: dispute.decision,
   };
+}
+
+function withoutResponder(response: Doc<"disputes">["creatorResponse"]) {
+  return response && { body: response.body, respondedAt: response.respondedAt };
 }

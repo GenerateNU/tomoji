@@ -181,3 +181,50 @@ describe("disputes.resolve", () => {
     expect((await storedDisputes(t))[0].status).toBe("open");
   });
 });
+
+describe("disputes.respond", () => {
+  const body = "We added #ad to the caption on Oct 3.";
+
+  test("lets each side respond, and shows the creator no user IDs", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await seedAssignmentFixture(t);
+    const disputeId = await seedDispute(t, fixture);
+
+    await fixture.asCompany.mutation(api.disputes.respond, { disputeId, body });
+    const creatorView = await fixture.asCreator.mutation(api.disputes.respond, {
+      disputeId,
+      body: "Thanks, that resolves it for me.",
+    });
+
+    expect(creatorView.companyResponse).toEqual({ body, respondedAt: expect.any(Number) });
+    expect(creatorView.creatorResponse).not.toHaveProperty("respondedBy");
+    const companyView = await fixture.asCompany.query(api.disputes.get, { disputeId });
+    expect(companyView.companyResponse?.respondedBy).toBe(fixture.membership.userId);
+  });
+
+  test.each([
+    ["a signed-out caller", async (t: TestConvex) => t, "not_authenticated"],
+    ["an operator", async (t: TestConvex) => await seedOperator(t, "dr-operator"), "forbidden"],
+    ["a company user with the wrong org", seedWrongOrgCaller, "forbidden"],
+  ] as const)("refuses %s without writing", async (_who, caller, code) => {
+    const t = convexTest(schema, modules);
+    const fixture = await seedAssignmentFixture(t);
+    const disputeId = await seedDispute(t, fixture);
+    const client = await caller(t);
+
+    await expectApiError(() => client.mutation(api.disputes.respond, { disputeId, body }), code);
+    expect((await storedDisputes(t))[0]).not.toHaveProperty("companyResponse");
+  });
+
+  test("conceals another company's dispute", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await seedAssignmentFixture(t);
+    const disputeId = await seedDispute(t, fixture);
+    const { asMember } = await seedMembership(t, "outsider");
+
+    await expectApiError(
+      () => asMember.mutation(api.disputes.respond, { disputeId, body }),
+      "not_found",
+    );
+  });
+});

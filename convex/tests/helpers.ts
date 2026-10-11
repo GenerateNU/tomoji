@@ -6,7 +6,7 @@ import type { Doc, Id } from "../_generated/dataModel";
 import type { ApiErrorCode } from "../lib/errors";
 import { companyContext } from "../lib/functions";
 import { getCreatorByUserId } from "../models/creators";
-import { saveXAccount, type XAccountLink } from "../models/xAccounts";
+import { upsertXAccount, type XAccountLink } from "../models/xAccounts";
 import { encryptXTokens } from "../lib/xTokenEncryption";
 import { createCampaign } from "../models/campaigns";
 import { createOpportunity, type OpportunityCreate } from "../models/opportunities";
@@ -62,7 +62,7 @@ export async function seedXAccount(
 ) {
   const creatorId = await seedCreatorId(t, subject);
   const link = await xAccountLinkArgs(creatorId, overrides);
-  const account = await t.run(async (ctx) => await saveXAccount(ctx, creatorId, link));
+  const account = await t.run(async (ctx) => await upsertXAccount(ctx, creatorId, link));
   return { creatorId, account, asCreator: t.withIdentity(workosIdentity({ subject })) };
 }
 

@@ -10,7 +10,7 @@ X links to a creator profile. WorkOS still handles Tomoji sign-in.
 - `xAccountCredentials`: encrypted access/refresh token pair, IV, key version,
   granted scopes, access-token expiry, and credential version. Kept separate from profiles.
 - `api.xAccounts.me({})`: allowlisted metadata for the active creator, or `null` if unlinked.
-- `saveXAccount`: internal model helper accepting a verified account and encrypted
+- `upsertXAccount`: internal model helper accepting a verified account and encrypted
   credentials. Writes both atomically and increments the credential version on reconnect.
 
 Store X IDs as strings. Derive access-token expiry from the provider's `expires_in`;
@@ -26,7 +26,7 @@ Someone with access to both can still decrypt credentials. Never expose tokens o
 keys in logs, URLs, or public responses.
 
 Call `encryptXTokens` in an action before persistence: mutations cannot use
-cryptographic randomness. `saveXAccount` accepts only an `encryptedTokens` envelope.
+cryptographic randomness. `upsertXAccount` accepts only an `encryptedTokens` envelope.
 Use `decryptXTokens` only for authorized server-side provider calls. Invalid keys,
 configuration, or ciphertext fail closed with redacted errors.
 

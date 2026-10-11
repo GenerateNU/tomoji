@@ -60,11 +60,11 @@ export async function getXAccount(
 }
 
 /**
- * Persists server-verified X data atomically. Only the OAuth completion path may
+ * Creates or updates server-verified X data atomically. Only the OAuth completion path may
  * call this helper after action-side encryption; never accept plaintext tokens
  * here or expose this payload through a public mutation.
  */
-export async function saveXAccount(
+export async function upsertXAccount(
   ctx: MutationCtx,
   creatorId: Id<"creators">,
   link: XAccountLink,

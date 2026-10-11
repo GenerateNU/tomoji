@@ -24,6 +24,7 @@ import type * as lib_identity from "../lib/identity.js";
 import type * as lib_mediaUploadPolicy from "../lib/mediaUploadPolicy.js";
 import type * as lib_s3 from "../lib/s3.js";
 import type * as lib_validation from "../lib/validation.js";
+import type * as lib_xTokenEncryption from "../lib/xTokenEncryption.js";
 import type * as media from "../media.js";
 import type * as mediaInternal from "../mediaInternal.js";
 import type * as migrations_2026_09_26_backfill_creator_usernames from "../migrations/2026_09_26_backfill_creator_usernames.js";
@@ -70,6 +71,7 @@ declare const fullApi: ApiFromModules<{
   "lib/mediaUploadPolicy": typeof lib_mediaUploadPolicy;
   "lib/s3": typeof lib_s3;
   "lib/validation": typeof lib_validation;
+  "lib/xTokenEncryption": typeof lib_xTokenEncryption;
   media: typeof media;
   mediaInternal: typeof mediaInternal;
   "migrations/2026_09_26_backfill_creator_usernames": typeof migrations_2026_09_26_backfill_creator_usernames;

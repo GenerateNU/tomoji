@@ -7,6 +7,7 @@ import type { ApiErrorCode } from "../lib/errors";
 import { companyContext } from "../lib/functions";
 import { getCreatorByUserId } from "../models/creators";
 import { saveXAccount, type XAccountLink } from "../models/xAccounts";
+import { encryptXTokens } from "../lib/xTokenEncryption";
 import { createCampaign } from "../models/campaigns";
 import { createOpportunity, type OpportunityCreate } from "../models/opportunities";
 import { finalizeMediaUpload, reserveMediaUpload } from "../models/media";
@@ -17,9 +18,23 @@ import type { submissionStatus } from "../schemas/submissions.schema";
 
 export type TestConvex = ConvexTest<typeof schema>;
 
-/** Builds a synthetic X response; credentials are test-only, never live tokens. */
-export function xAccountLinkArgs(overrides: Partial<XAccountLink> = {}): XAccountLink {
-  return {
+// Synthetic key material only. Never use this fixture on a deployment.
+export const X_TOKEN_TEST_CONFIG = {
+  X_TOKEN_ENCRYPTION_KEY_VERSION: "v1",
+  X_TOKEN_ENCRYPTION_KEYS: JSON.stringify({ v1: btoa("a".repeat(32)) }),
+};
+
+type TestXAccountLink = Omit<XAccountLink, "encryptedTokens"> & {
+  accessToken: string;
+  refreshToken: string;
+};
+
+/** Encrypts synthetic provider tokens for direct model tests, never live credentials. */
+export async function xAccountLinkArgs(
+  creatorId: Id<"creators">,
+  overrides: Partial<TestXAccountLink> = {},
+): Promise<XAccountLink> {
+  const { accessToken, refreshToken, ...metadata } = {
     xUserId: "123456789",
     username: "ada",
     displayName: "Ada Lovelace",
@@ -29,18 +44,25 @@ export function xAccountLinkArgs(overrides: Partial<XAccountLink> = {}): XAccoun
     scopes: ["tweet.read", "users.read", "offline.access"],
     ...overrides,
   };
+  return {
+    ...metadata,
+    encryptedTokens: await encryptXTokens(
+      creatorId,
+      { accessToken, refreshToken },
+      X_TOKEN_TEST_CONFIG,
+    ),
+  };
 }
 
 /** Seeds a creator and a verified connection through the model, without calling X. */
 export async function seedXAccount(
   t: TestConvex,
   subject: string,
-  overrides: Partial<XAccountLink> = {},
+  overrides: Partial<TestXAccountLink> = {},
 ) {
   const creatorId = await seedCreatorId(t, subject);
-  const account = await t.run(
-    async (ctx) => await saveXAccount(ctx, creatorId, xAccountLinkArgs(overrides)),
-  );
+  const link = await xAccountLinkArgs(creatorId, overrides);
+  const account = await t.run(async (ctx) => await saveXAccount(ctx, creatorId, link));
   return { creatorId, account, asCreator: t.withIdentity(workosIdentity({ subject })) };
 }
 

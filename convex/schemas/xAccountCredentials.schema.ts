@@ -1,12 +1,17 @@
 import { defineTable } from "convex/server";
 import { v } from "convex/values";
 
-// No application-level encryption. Restrict dashboard/export access and never expose
-// this table through a public function, profile response, or log.
+export const encryptedXTokens = v.object({
+  ciphertext: v.bytes(),
+  iv: v.bytes(),
+  keyVersion: v.string(),
+});
+
+// AES-256-GCM ciphertext only. Keys live in deployment secrets, not this table.
+// Never expose decrypted credentials through public functions, profiles, or logs.
 export const xAccountCredentialsTable = defineTable({
   xAccountId: v.id("xAccounts"),
-  accessToken: v.string(),
-  refreshToken: v.string(),
+  encryptedTokens: encryptedXTokens,
   accessTokenExpiresAt: v.number(),
   scopes: v.array(v.string()),
   credentialVersion: v.number(),

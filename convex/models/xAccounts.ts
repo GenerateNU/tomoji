@@ -4,6 +4,8 @@ import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { apiError } from "../lib/errors";
 import { requireNonBlank } from "../lib/validation";
 import { xAccountStatus } from "../schemas/xAccounts.schema";
+import { encryptedXTokens } from "../schemas/xAccountCredentials.schema";
+import { validateEncryptedXTokens } from "../lib/xTokenEncryption";
 import { getCreatorByUserId } from "./creators";
 
 // X's user-lookup scope mapping requires both read scopes; offline.access
@@ -24,8 +26,7 @@ export const xAccountLink = v.object({
   xUserId: v.string(),
   username: v.string(),
   displayName: v.string(),
-  accessToken: v.string(),
-  refreshToken: v.string(),
+  encryptedTokens: encryptedXTokens,
   accessTokenExpiresAt: v.number(),
   scopes: v.array(v.string()),
 });
@@ -70,7 +71,8 @@ export async function getOwnXAccount(
 
 /**
  * Persists server-verified X data atomically. Only the OAuth completion path may
- * call this helper; never accept this payload through a public mutation.
+ * call this helper after action-side encryption; never accept plaintext tokens
+ * here or expose this payload through a public mutation.
  */
 export async function saveXAccount(
   ctx: MutationCtx,
@@ -89,8 +91,7 @@ export async function saveXAccount(
   if (!Number.isFinite(link.accessTokenExpiresAt) || link.accessTokenExpiresAt <= Date.now()) {
     throw apiError("invalid_state", { reason: "x_token_expired" });
   }
-  requireNonBlank(link.accessToken, "accessToken");
-  requireNonBlank(link.refreshToken, "refreshToken");
+  validateEncryptedXTokens(link.encryptedTokens);
   if (!X_ACCOUNT_SCOPES.every((scope) => link.scopes.includes(scope))) {
     throw apiError("invalid_state", { reason: "x_scopes_missing" });
   }
@@ -125,8 +126,7 @@ export async function saveXAccount(
     .unique();
   const credentialFields = {
     xAccountId: accountId,
-    accessToken: link.accessToken,
-    refreshToken: link.refreshToken,
+    encryptedTokens: link.encryptedTokens,
     accessTokenExpiresAt: link.accessTokenExpiresAt,
     scopes: [...new Set(link.scopes)],
     credentialVersion: (credentials?.credentialVersion ?? 0) + 1,

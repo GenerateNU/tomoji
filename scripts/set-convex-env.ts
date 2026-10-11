@@ -1,5 +1,5 @@
 /**
- * Copies WorkOS, S3, and an optional complete X configuration from .env.local onto the Convex
+ * Copies WorkOS, S3, and optional X OAuth/encryption settings from .env.local onto the Convex
  * deployment.
  *
  * Convex reads these server-side, not from .env.local:
@@ -38,7 +38,14 @@ if (configureX && X_KEYS.some((key) => readValue(key) === "")) {
   process.exit(1);
 }
 
-const missing = KEYS.filter((key) => readValue(key) === "");
+const ENCRYPTION_KEYS = ["X_TOKEN_ENCRYPTION_KEYS", "X_TOKEN_ENCRYPTION_KEY_VERSION"] as const;
+const configureEncryption = ENCRYPTION_KEYS.some((key) => readValue(key) !== "");
+const keys = [
+  ...KEYS,
+  ...(configureX ? X_KEYS : []),
+  ...(configureEncryption ? ENCRYPTION_KEYS : []),
+];
+const missing = keys.filter((key) => readValue(key) === "");
 if (missing.length > 0) {
   console.error(
     `Empty in ${ENV_FILE}: ${missing.join(", ")}. Ask a TL for the values, then re-run.`,
@@ -46,7 +53,7 @@ if (missing.length > 0) {
   process.exit(1);
 }
 
-for (const key of [...KEYS, ...(configureX ? X_KEYS : [])]) {
+for (const key of keys) {
   const result = spawnSync("bunx", ["convex", "env", "set", key, readValue(key)], {
     stdio: "inherit",
     shell: process.platform === "win32",
@@ -54,6 +61,7 @@ for (const key of [...KEYS, ...(configureX ? X_KEYS : [])]) {
   if (result.status !== 0) process.exit(result.status ?? 1);
 }
 
+/** Reads deployment metadata for setup guidance without exposing secret values. */
 function convexEnv(key: string): string {
   const result = spawnSync("bunx", ["convex", "env", "get", key], {
     encoding: "utf8",

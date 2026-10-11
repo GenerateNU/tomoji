@@ -1,18 +1,84 @@
 /// <reference types="vite/client" />
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
-import { getXAccount, saveXAccount } from "../../models/xAccounts";
+import { getXAccount, upsertXAccount } from "../../models/xAccounts";
+import { decryptXTokens } from "../../lib/xTokenEncryption";
 import schema from "../../schema";
-import { expectApiError, seedCreatorId, seedXAccount, xAccountLinkArgs } from "../helpers";
+import {
+  expectApiError,
+  seedCreatorId,
+  seedXAccount,
+  xAccountLinkArgs,
+  X_TOKEN_TEST_CONFIG,
+} from "../helpers";
 
 const modules = import.meta.glob("../../**/*.ts");
 
-describe("saveXAccount", () => {
+describe("upsertXAccount", () => {
+  test("rejects a missing creator without storing account or credentials", async () => {
+    const t = convexTest(schema, modules);
+    const creatorId = await seedCreatorId(t, "x_deleted_creator");
+    const link = await xAccountLinkArgs(creatorId);
+    await t.run(async (ctx) => await ctx.db.delete("creators", creatorId));
+
+    await expectApiError(() => t.run((ctx) => upsertXAccount(ctx, creatorId, link)), "not_found");
+    await t.run(async (ctx) => {
+      expect(await ctx.db.query("xAccounts").first()).toBeNull();
+      expect(await ctx.db.query("xAccountCredentials").first()).toBeNull();
+    });
+  });
+
+  test("rejects a creator whose user was deleted before completion", async () => {
+    const t = convexTest(schema, modules);
+    const creatorId = await seedCreatorId(t, "x_deleted_user");
+    const link = await xAccountLinkArgs(creatorId);
+    await t.run(async (ctx) => {
+      const creator = await ctx.db.get("creators", creatorId);
+      if (creator === null) throw new Error("expected seeded creator");
+      await ctx.db.delete("users", creator.userId);
+    });
+
+    await expectApiError(() => t.run((ctx) => upsertXAccount(ctx, creatorId, link)), "not_found");
+  });
+
+  test("rejects a caller whose role changed before completion", async () => {
+    const t = convexTest(schema, modules);
+    const creatorId = await seedCreatorId(t, "x_changed_role");
+    const link = await xAccountLinkArgs(creatorId);
+    await t.run(async (ctx) => {
+      const creator = await ctx.db.get("creators", creatorId);
+      if (creator === null) throw new Error("expected seeded creator");
+      await ctx.db.patch("users", creator.userId, { role: "operator" });
+    });
+
+    await expectApiError(() => t.run((ctx) => upsertXAccount(ctx, creatorId, link)), "not_found");
+  });
+
+  test("rejects an invalid envelope before persisting account or credentials", async () => {
+    const t = convexTest(schema, modules);
+    const creatorId = await seedCreatorId(t, "x_bad_envelope");
+    const link = await xAccountLinkArgs(creatorId);
+    await expectApiError(
+      () =>
+        t.run((ctx) =>
+          upsertXAccount(ctx, creatorId, {
+            ...link,
+            encryptedTokens: { ...link.encryptedTokens, iv: new ArrayBuffer(1) },
+          }),
+        ),
+      "invalid_state",
+    );
+    await t.run(async (ctx) => {
+      expect(await ctx.db.query("xAccounts").first()).toBeNull();
+      expect(await ctx.db.query("xAccountCredentials").first()).toBeNull();
+    });
+  });
+
   test("stores verified account metadata separately from retained credentials", async () => {
     const t = convexTest(schema, modules);
     const creatorId = await seedCreatorId(t, "x_owner");
     const account = await t.run(
-      async (ctx) => await saveXAccount(ctx, creatorId, xAccountLinkArgs()),
+      async (ctx) => await upsertXAccount(ctx, creatorId, await xAccountLinkArgs(creatorId)),
     );
 
     expect(account).toEqual({
@@ -33,10 +99,16 @@ describe("saveXAccount", () => {
           .unique(),
     );
     expect(credentials).toMatchObject({
-      accessToken: "test-access-token",
-      refreshToken: "test-refresh-token",
       scopes: ["tweet.read", "users.read", "offline.access"],
       credentialVersion: 1,
+    });
+    expect(credentials).not.toHaveProperty("accessToken");
+    expect(credentials).not.toHaveProperty("refreshToken");
+    expect(
+      await decryptXTokens(creatorId, credentials!.encryptedTokens, X_TOKEN_TEST_CONFIG),
+    ).toEqual({
+      accessToken: "test-access-token",
+      refreshToken: "test-refresh-token",
     });
   });
 
@@ -49,10 +121,10 @@ describe("saveXAccount", () => {
     const expiresAt = Date.now() + 3_600_000;
     const result = await t.run(
       async (ctx) =>
-        await saveXAccount(
+        await upsertXAccount(
           ctx,
           creatorId,
-          xAccountLinkArgs({
+          await xAccountLinkArgs(creatorId, {
             username: "ada_updated",
             accessToken: "new-access-token",
             refreshToken: "new-refresh-token",
@@ -74,10 +146,14 @@ describe("saveXAccount", () => {
           .unique(),
     );
     expect(credentials).toMatchObject({
-      accessToken: "new-access-token",
-      refreshToken: "new-refresh-token",
       accessTokenExpiresAt: expiresAt,
       credentialVersion: 2,
+    });
+    expect(
+      await decryptXTokens(creatorId, credentials!.encryptedTokens, X_TOKEN_TEST_CONFIG),
+    ).toEqual({
+      accessToken: "new-access-token",
+      refreshToken: "new-refresh-token",
     });
   });
 
@@ -86,7 +162,10 @@ describe("saveXAccount", () => {
     await seedXAccount(t, "x_owner");
     const { creatorId, account } = await seedXAccount(t, "x_claimant", { xUserId: "987654321" });
     await expectApiError(
-      () => t.run(async (ctx) => await saveXAccount(ctx, creatorId, xAccountLinkArgs())),
+      () =>
+        t.run(
+          async (ctx) => await upsertXAccount(ctx, creatorId, await xAccountLinkArgs(creatorId)),
+        ),
       "conflict",
     );
     expect(await t.run(async (ctx) => await getXAccount(ctx, creatorId))).toEqual(account);
@@ -104,7 +183,12 @@ describe("saveXAccount", () => {
     const t = convexTest(schema, modules);
     const { creatorId, account } = await seedXAccount(t, "x_switch");
     const result = await t.run(
-      async (ctx) => await saveXAccount(ctx, creatorId, xAccountLinkArgs({ xUserId: "987654321" })),
+      async (ctx) =>
+        await upsertXAccount(
+          ctx,
+          creatorId,
+          await xAccountLinkArgs(creatorId, { xUserId: "987654321" }),
+        ),
     );
     expect(result).toMatchObject({ xAccountId: account.xAccountId, xUserId: "987654321" });
     const rows = await t.run(async (ctx) => ({
@@ -123,10 +207,10 @@ describe("saveXAccount", () => {
       () =>
         t.run(
           async (ctx) =>
-            await saveXAccount(
+            await upsertXAccount(
               ctx,
               creatorId,
-              xAccountLinkArgs({ accessTokenExpiresAt: Date.now() - 1 }),
+              await xAccountLinkArgs(creatorId, { accessTokenExpiresAt: Date.now() - 1 }),
             ),
         ),
       "invalid_state",
@@ -141,7 +225,11 @@ describe("saveXAccount", () => {
       () =>
         t.run(
           async (ctx) =>
-            await saveXAccount(ctx, creatorId, xAccountLinkArgs({ refreshToken: " " })),
+            await upsertXAccount(
+              ctx,
+              creatorId,
+              await xAccountLinkArgs(creatorId, { refreshToken: " " }),
+            ),
         ),
       "invalid_state",
     );
@@ -155,7 +243,11 @@ describe("saveXAccount", () => {
       () =>
         t.run(
           async (ctx) =>
-            await saveXAccount(ctx, creatorId, xAccountLinkArgs({ scopes: ["users.read"] })),
+            await upsertXAccount(
+              ctx,
+              creatorId,
+              await xAccountLinkArgs(creatorId, { scopes: ["users.read"] }),
+            ),
         ),
       "invalid_state",
     );
@@ -167,7 +259,12 @@ describe("saveXAccount", () => {
     await expectApiError(
       () =>
         t.run(
-          async (ctx) => await saveXAccount(ctx, creatorId, xAccountLinkArgs({ xUserId: "ada" })),
+          async (ctx) =>
+            await upsertXAccount(
+              ctx,
+              creatorId,
+              await xAccountLinkArgs(creatorId, { xUserId: "ada" }),
+            ),
         ),
       "invalid_state",
     );
@@ -182,7 +279,10 @@ describe("saveXAccount", () => {
       await ctx.db.patch("users", creator.userId, { isActive: false });
     });
     await expectApiError(
-      () => t.run(async (ctx) => await saveXAccount(ctx, creatorId, xAccountLinkArgs())),
+      () =>
+        t.run(
+          async (ctx) => await upsertXAccount(ctx, creatorId, await xAccountLinkArgs(creatorId)),
+        ),
       "not_found",
     );
   });

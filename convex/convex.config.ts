@@ -11,6 +11,8 @@ const app = defineApp({
     X_CLIENT_ID: v.optional(v.string()),
     X_CLIENT_SECRET: v.optional(v.string()),
     X_REDIRECT_URI: v.optional(v.string()),
+    X_TOKEN_ENCRYPTION_KEYS: v.optional(v.string()),
+    X_TOKEN_ENCRYPTION_KEY_VERSION: v.optional(v.string()),
   },
 });
 app.use(workOSAuthKit);

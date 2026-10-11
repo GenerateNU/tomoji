@@ -12,7 +12,8 @@ import {
   revokeXToken,
 } from "./lib/xOAuth";
 import { creatorQuery } from "./lib/functions";
-import { getOwnXAccount, xAccount } from "./models/xAccounts";
+import { requireCallerCreatorId } from "./models/users";
+import { getXAccount, xAccount } from "./models/xAccounts";
 import type { XAccount } from "./models/xAccounts";
 import type { Infer } from "convex/values";
 import { xLinkClaim, xRevocationTokens, xLinkAttemptTtlMs } from "./models/xLinkAttempts";
@@ -21,7 +22,10 @@ import { xLinkClaim, xRevocationTokens, xLinkAttemptTtlMs } from "./models/xLink
 export const me = creatorQuery({
   args: {},
   returns: v.union(xAccount, v.null()),
-  handler: async (ctx) => await getOwnXAccount(ctx, ctx.user),
+  handler: async (ctx) => {
+    const creatorId = await requireCallerCreatorId(ctx, ctx.user);
+    return await getXAccount(ctx, creatorId);
+  },
 });
 
 /** Starts linking for an active creator without making X a Tomoji sign-in provider. */

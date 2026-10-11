@@ -4,6 +4,9 @@ import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { apiError } from "../lib/errors";
 import { requireNonBlank } from "../lib/validation";
 import { xAccountStatus } from "../schemas/xAccounts.schema";
+import { encryptedXTokens } from "../schemas/xAccountCredentials.schema";
+import { validateEncryptedXTokens } from "../lib/xTokenEncryption";
+import { requireCreatorProfileById } from "./creators";
 
 // X's user-lookup scope mapping requires both read scopes; offline.access
 // requests the refresh token needed to keep the connection usable later.
@@ -23,8 +26,7 @@ export const xAccountLink = v.object({
   xUserId: v.string(),
   username: v.string(),
   displayName: v.string(),
-  accessToken: v.string(),
-  refreshToken: v.string(),
+  encryptedTokens: encryptedXTokens,
   accessTokenExpiresAt: v.number(),
   scopes: v.array(v.string()),
 });
@@ -57,42 +59,24 @@ export async function getXAccount(
   return account === null ? null : toXAccount(account);
 }
 
-/** Resolves a caller's creator row before returning their safe linked-account view. */
-export async function getOwnXAccount(
-  ctx: QueryCtx | MutationCtx,
-  user: Doc<"users">,
-): Promise<XAccount | null> {
-  const creator = await ctx.db
-    .query("creators")
-    .withIndex("by_userId", (q) => q.eq("userId", user._id))
-    .unique();
-  if (creator === null) throw apiError("not_found", { resource: "creator" });
-  return await getXAccount(ctx, creator._id);
-}
-
 /**
- * Persists server-verified X data atomically. Only the OAuth completion path may
- * call this helper; never accept this payload through a public mutation.
+ * Creates or updates server-verified X data atomically. Only the OAuth completion path may
+ * call this helper after action-side encryption; never accept plaintext tokens
+ * here or expose this payload through a public mutation.
  */
-export async function saveXAccount(
+export async function upsertXAccount(
   ctx: MutationCtx,
   creatorId: Id<"creators">,
   link: XAccountLink,
 ): Promise<XAccount> {
-  const creator = await ctx.db.get("creators", creatorId);
-  if (creator === null) throw apiError("not_found", { resource: "creator" });
-  const user = await ctx.db.get("users", creator.userId);
-  if (user === null || !user.isActive || user.role !== "creator") {
-    throw apiError("not_found", { resource: "creator" });
-  }
+  await requireCreatorProfileById(ctx, creatorId);
   if (!/^\d+$/.test(link.xUserId)) {
     throw apiError("invalid_state", { reason: "x_user_id_invalid" });
   }
   if (!Number.isFinite(link.accessTokenExpiresAt) || link.accessTokenExpiresAt <= Date.now()) {
     throw apiError("invalid_state", { reason: "x_token_expired" });
   }
-  requireNonBlank(link.accessToken, "accessToken");
-  requireNonBlank(link.refreshToken, "refreshToken");
+  validateEncryptedXTokens(link.encryptedTokens);
   if (!X_ACCOUNT_SCOPES.every((scope) => link.scopes.includes(scope))) {
     throw apiError("invalid_state", { reason: "x_scopes_missing" });
   }
@@ -127,8 +111,7 @@ export async function saveXAccount(
     .unique();
   const credentialFields = {
     xAccountId: accountId,
-    accessToken: link.accessToken,
-    refreshToken: link.refreshToken,
+    encryptedTokens: link.encryptedTokens,
     accessTokenExpiresAt: link.accessTokenExpiresAt,
     scopes: [...new Set(link.scopes)],
     credentialVersion: (credentials?.credentialVersion ?? 0) + 1,

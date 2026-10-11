@@ -35,6 +35,8 @@ type Env = {
   readonly X_CLIENT_ID: string | undefined;
   readonly X_CLIENT_SECRET: string | undefined;
   readonly X_REDIRECT_URI: string | undefined;
+  readonly X_TOKEN_ENCRYPTION_KEYS: string | undefined;
+  readonly X_TOKEN_ENCRYPTION_KEY_VERSION: string | undefined;
 };
 
 /**

@@ -3,7 +3,7 @@ import { v, type Infer } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { apiError } from "../lib/errors";
-import { requireBoundedText } from "../lib/validation";
+import { requireNonBlank } from "../lib/validation";
 import schema from "../schema";
 import {
   companyDisputeReasons,
@@ -12,12 +12,18 @@ import {
 } from "../schemas/disputes.schema";
 import { userRole } from "../schemas/users.schema";
 import { requireAssignment, type AssignmentViewer } from "./assignments";
-import { getLatestSubmission } from "./submissions";
 
 const disputeDoc = schema.doc("disputes");
 
-export const disputeDraft = disputeDoc.pick("assignmentId", "reason", "description");
-export type DisputeDraft = Infer<typeof disputeDraft>;
+export const disputeCreate = disputeDoc.pick(
+  "assignmentId",
+  "submissionId",
+  "postId",
+  "reason",
+  "customReason",
+  "description",
+);
+export type DisputeCreate = Infer<typeof disputeCreate>;
 
 /** `openedBy` is optional because creators never get user IDs (see `toCreatorView`). */
 export const disputeView = disputeDoc
@@ -39,11 +45,10 @@ const REASONS_BY_ROLE: Record<AssignmentViewer["role"], readonly DisputeReason[]
   operator: [...companyDisputeReasons, ...creatorDisputeReasons],
 };
 
-const MAX_DESCRIPTION_LENGTH = 5000;
-
-// An assignment has at most one approved submission, but a post can be shared
-// to several platforms; this caps the read without expecting to reach it.
-const MAX_EVIDENCE_POSTS = 20;
+const MAX_LENGTH = {
+  customReason: 200,
+  description: 5000,
+} as const;
 
 /**
  * Opens a dispute on any assignment the caller can see, whatever its status.
@@ -53,45 +58,72 @@ export async function createDispute(
   ctx: MutationCtx,
   viewer: AssignmentViewer,
   openedBy: Id<"users">,
-  draft: DisputeDraft,
+  input: DisputeCreate,
 ): Promise<Id<"disputes">> {
-  const assignment = await requireAssignment(ctx, viewer, draft.assignmentId);
-  if (!REASONS_BY_ROLE[viewer.role].includes(draft.reason)) {
+  const assignment = await requireAssignment(ctx, viewer, input.assignmentId);
+  if (!REASONS_BY_ROLE[viewer.role].includes(input.reason)) {
     throw apiError("invalid_state", { reason: "dispute_reason_not_allowed" });
   }
-  const description = requireBoundedText(draft.description, "description", MAX_DESCRIPTION_LENGTH);
+  const customReason = requireCustomReason(input);
+  await requireSubjectOnAssignment(ctx, assignment._id, input);
+  const description = requireNonBlank(input.description, "description", MAX_LENGTH.description);
 
   return await ctx.db.insert("disputes", {
     assignmentId: assignment._id,
     companyId: assignment.companyId,
     creatorId: assignment.creatorId,
     campaignId: assignment.campaignId,
+    submissionId: input.submissionId,
+    postId: input.postId,
     openedBy,
     openedByRole: viewer.role,
-    reason: draft.reason,
+    reason: input.reason,
+    customReason,
     description,
-    ...(await evidenceOnFile(ctx, assignment._id)),
     status: "open",
   });
 }
 
+/** "other" needs the opener's own reason; every other reason must leave it out. */
+function requireCustomReason({
+  reason,
+  customReason,
+}: Pick<DisputeCreate, "reason" | "customReason">): string | undefined {
+  if (reason === "other") {
+    return requireNonBlank(customReason ?? "", "customReason", MAX_LENGTH.customReason);
+  }
+  if (customReason !== undefined) {
+    throw apiError("invalid_state", { reason: "custom_reason_not_allowed" });
+  }
+  return undefined;
+}
+
 /**
- * The assignment's approved submission and its posts. Creating a submission is
- * refused once one is approved, so an approved one is always the newest.
+ * The submission and post a dispute is about must be on its assignment, and a
+ * post must be on the submission when both are given. A missing record and one
+ * from another assignment are reported the same way.
  */
-async function evidenceOnFile(
+async function requireSubjectOnAssignment(
   ctx: MutationCtx,
   assignmentId: Id<"assignments">,
-): Promise<Pick<Doc<"disputes">, "evidenceSubmissionIds" | "evidencePostIds">> {
-  const latest = await getLatestSubmission(ctx, assignmentId);
-  if (latest?.status !== "approved") {
-    return { evidenceSubmissionIds: [], evidencePostIds: [] };
+  { submissionId, postId }: Pick<DisputeCreate, "submissionId" | "postId">,
+): Promise<void> {
+  if (submissionId !== undefined) {
+    const submission = await ctx.db.get("submissions", submissionId);
+    if (submission === null || submission.assignmentId !== assignmentId) {
+      throw apiError("not_found", { resource: "submission" });
+    }
   }
-  const posts = await ctx.db
-    .query("posts")
-    .withIndex("by_submissionId", (q) => q.eq("submissionId", latest._id))
-    .take(MAX_EVIDENCE_POSTS);
-  return { evidenceSubmissionIds: [latest._id], evidencePostIds: posts.map((post) => post._id) };
+  if (postId !== undefined) {
+    const post = await ctx.db.get("posts", postId);
+    const postSubmission = post && (await ctx.db.get("submissions", post.submissionId));
+    if (!post || !postSubmission || postSubmission.assignmentId !== assignmentId) {
+      throw apiError("not_found", { resource: "post" });
+    }
+    if (submissionId !== undefined && post.submissionId !== submissionId) {
+      throw apiError("invalid_state", { reason: "post_not_on_submission" });
+    }
+  }
 }
 
 /** One dispute, as the viewer may see it. */
@@ -193,11 +225,12 @@ function toCreatorView(dispute: Doc<"disputes">): DisputeView {
     companyId: dispute.companyId,
     creatorId: dispute.creatorId,
     campaignId: dispute.campaignId,
+    submissionId: dispute.submissionId,
+    postId: dispute.postId,
     openedByRole: dispute.openedByRole,
     reason: dispute.reason,
+    customReason: dispute.customReason,
     description: dispute.description,
-    evidenceSubmissionIds: dispute.evidenceSubmissionIds,
-    evidencePostIds: dispute.evidencePostIds,
     status: dispute.status,
     resolution: dispute.resolution,
   };

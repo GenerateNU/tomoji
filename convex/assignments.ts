@@ -1,10 +1,8 @@
 import { paginationResultValidator } from "convex/server";
 import { v } from "convex/values";
-import type { Doc } from "./_generated/dataModel";
-import { internalMutation, type QueryCtx } from "./_generated/server";
+import { internalMutation } from "./_generated/server";
 import {
   authedQuery,
-  companyContext,
   companyMutation,
   companyQuery,
   creatorMutation,
@@ -21,7 +19,7 @@ import {
   listAssignments,
   listCreatorAssignments,
   requireAssignment,
-  type AssignmentViewer,
+  requireAssignmentViewer,
 } from "./models/assignments";
 import { requireCallerCreatorId } from "./models/users";
 import schema from "./schema";
@@ -86,7 +84,8 @@ export const get = authedQuery({
   args: { assignmentId: v.id("assignments") },
   returns: assignment,
   handler: async (ctx, args) => {
-    return await requireAssignment(ctx, await assignmentViewer(ctx, ctx.user), args.assignmentId);
+    const viewer = await requireAssignmentViewer(ctx, ctx.user);
+    return await requireAssignment(ctx, viewer, args.assignmentId);
   },
 });
 
@@ -145,17 +144,3 @@ export const complete = internalMutation({
     return await completeAssignment(ctx, args.assignmentId);
   },
 });
-
-async function assignmentViewer(ctx: QueryCtx, user: Doc<"users">): Promise<AssignmentViewer> {
-  switch (user.role) {
-    case "operator":
-      return { role: "operator" };
-    case "creator":
-      return { role: "creator", creatorId: await requireCallerCreatorId(ctx, user) };
-    case "company": {
-      // Proves membership in the token's org, not just the account type.
-      const { membership } = await companyContext(ctx);
-      return { role: "company", companyId: membership.companyId };
-    }
-  }
-}

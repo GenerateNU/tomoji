@@ -440,8 +440,6 @@ export async function seedDispute(
       openedByRole: "creator",
       reason: "unfairReview",
       description: "The brief allows showing the deploy log, which the review asked me to cut.",
-      evidenceSubmissionIds: [],
-      evidencePostIds: [],
       status: "open",
       ...fields,
     });

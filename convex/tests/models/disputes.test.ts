@@ -7,18 +7,20 @@ import {
   createDispute,
   listDisputes,
   requireDispute,
-  type DisputeDraft,
+  type DisputeCreate,
   type DisputeListFilters,
 } from "../../models/disputes";
 import schema from "../../schema";
 import { companyDisputeReasons, creatorDisputeReasons } from "../../schemas/disputes.schema";
 import {
   expectApiError,
+  seedAssignment,
   seedAssignmentFixture,
   seedCreatorId,
   seedDispute,
   seedMembership,
   seedOneSubmission,
+  seedSubmission,
   storedDisputes,
   type AssignmentFixture,
   type TestConvex,
@@ -47,16 +49,16 @@ function companyOf(fixture: AssignmentFixture): AssignmentViewer {
 async function open(
   t: TestConvex,
   fixture: AssignmentFixture,
-  overrides: Partial<DisputeDraft> = {},
+  overrides: Partial<DisputeCreate> = {},
   viewer: AssignmentViewer = creatorOf(fixture),
 ) {
-  const draft: DisputeDraft = {
+  const input: DisputeCreate = {
     assignmentId: fixture.assignmentId,
     reason: "paymentNotReceived",
     description: "  The video went live on Oct 1 and the fixed fee hasn't arrived.  ",
     ...overrides,
   };
-  return await t.run(async (ctx) => await createDispute(ctx, viewer, fixture.creatorUserId, draft));
+  return await t.run(async (ctx) => await createDispute(ctx, viewer, fixture.creatorUserId, input));
 }
 
 async function list(t: TestConvex, viewer: AssignmentViewer, filters: Partial<DisputeListFilters>) {
@@ -101,39 +103,75 @@ describe("createDispute", () => {
         openedByRole: "creator",
         reason: "paymentNotReceived",
         description: "The video went live on Oct 1 and the fixed fee hasn't arrived.",
-        evidenceSubmissionIds: [],
-        evidencePostIds: [],
         status: "open",
       },
     ]);
   });
 
-  test("records the approved submission and its posts as evidence", async () => {
+  test("links the submission and post it's about", async () => {
     const t = convexTest(schema, modules);
     const { fixture, submissionId } = await seedOneSubmission(t, "approved");
     const postId = await insertPost(t, submissionId);
 
-    await open(t, fixture);
+    await open(t, fixture, { reason: "unfairReview", submissionId, postId });
 
     const [stored] = await storedDisputes(t);
-    expect(stored).toMatchObject({
-      evidenceSubmissionIds: [submissionId],
-      evidencePostIds: [postId],
-    });
+    expect(stored).toMatchObject({ submissionId, postId });
   });
 
-  test.each(["pending", "changesRequested"] as const)(
-    "records no evidence when the newest submission is %s",
-    async (status) => {
+  test("links a post on its own", async () => {
+    const t = convexTest(schema, modules);
+    const { fixture, submissionId } = await seedOneSubmission(t, "approved");
+    const postId = await insertPost(t, submissionId);
+
+    await open(t, fixture, { reason: "missingDisclosure", postId }, companyOf(fixture));
+
+    const [stored] = await storedDisputes(t);
+    expect(stored.postId).toBe(postId);
+    expect(stored.submissionId).toBeUndefined();
+  });
+
+  test.each(["submission", "post"] as const)(
+    "conceals a %s from another assignment without writing",
+    async (resource) => {
       const t = convexTest(schema, modules);
-      const { fixture } = await seedOneSubmission(t, status);
+      const fixture = await seedAssignmentFixture(t);
+      const opportunityId = await t.run(
+        async (ctx) => (await ctx.db.get("assignments", fixture.assignmentId))!.opportunityId,
+      );
+      const otherAssignmentId = await seedAssignment(t, {
+        opportunityId,
+        creatorId: await seedCreatorId(t, "other-creator"),
+        status: "active",
+      });
+      const otherSubmissionId = await seedSubmission(
+        t,
+        { ...fixture, assignmentId: otherAssignmentId },
+        "approved",
+      );
+      const subject =
+        resource === "submission"
+          ? { submissionId: otherSubmissionId }
+          : { postId: await insertPost(t, otherSubmissionId) };
 
-      await open(t, fixture);
-
-      const [stored] = await storedDisputes(t);
-      expect(stored).toMatchObject({ evidenceSubmissionIds: [], evidencePostIds: [] });
+      await expect(open(t, fixture, subject)).rejects.toMatchObject({
+        data: { code: "not_found", resource },
+      });
+      expect(await storedDisputes(t)).toEqual([]);
     },
   );
+
+  test("refuses a post that isn't on the given submission", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await seedAssignmentFixture(t);
+    const earlier = await seedSubmission(t, fixture, "changesRequested");
+    const approved = await seedSubmission(t, fixture, "approved");
+    const postId = await insertPost(t, approved);
+
+    await expect(open(t, fixture, { submissionId: earlier, postId })).rejects.toMatchObject({
+      data: { code: "invalid_state", reason: "post_not_on_submission" },
+    });
+  });
 
   test.each(["termsPending", "active", "completed", "cancelled"] as const)(
     "allows a %s assignment",
@@ -157,7 +195,7 @@ describe("createDispute", () => {
     expect(await storedDisputes(t)).toHaveLength(2);
   });
 
-  test.each(creatorDisputeReasons)(
+  test.each(creatorDisputeReasons.filter((reason) => reason !== "other"))(
     "accepts the creator reason %s from a creator",
     async (reason) => {
       const t = convexTest(schema, modules);
@@ -169,7 +207,7 @@ describe("createDispute", () => {
     },
   );
 
-  test.each(companyDisputeReasons)(
+  test.each(companyDisputeReasons.filter((reason) => reason !== "other"))(
     "accepts the company reason %s from a company",
     async (reason) => {
       const t = convexTest(schema, modules);
@@ -189,6 +227,54 @@ describe("createDispute", () => {
     await open(t, fixture, { reason: "payoutAmount" }, { role: "operator" });
 
     expect(await storedDisputes(t)).toHaveLength(2);
+  });
+
+  test.each(["creator", "company"] as const)(
+    "stores a trimmed custom reason when a %s picks other",
+    async (side) => {
+      const t = convexTest(schema, modules);
+      const fixture = await seedAssignmentFixture(t);
+      const viewer = side === "creator" ? creatorOf(fixture) : companyOf(fixture);
+
+      await open(
+        t,
+        fixture,
+        { reason: "other", customReason: "  Posted outside the agreed window  " },
+        viewer,
+      );
+
+      const [stored] = await storedDisputes(t);
+      expect(stored).toMatchObject({
+        reason: "other",
+        customReason: "Posted outside the agreed window",
+      });
+    },
+  );
+
+  test.each([
+    ["no custom reason", undefined, "customReason_blank"],
+    ["a blank custom reason", "   ", "customReason_blank"],
+    ["a custom reason over 200 characters", "x".repeat(201), "customReason_too_long"],
+  ])("refuses other with %s without writing", async (_case, customReason, reason) => {
+    const t = convexTest(schema, modules);
+    const fixture = await seedAssignmentFixture(t);
+
+    await expect(open(t, fixture, { reason: "other", customReason })).rejects.toMatchObject({
+      data: { code: "invalid_state", reason },
+    });
+    expect(await storedDisputes(t)).toEqual([]);
+  });
+
+  test("refuses a custom reason with any reason but other", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await seedAssignmentFixture(t);
+
+    await expect(
+      open(t, fixture, { reason: "paymentNotReceived", customReason: "Late" }),
+    ).rejects.toMatchObject({
+      data: { code: "invalid_state", reason: "custom_reason_not_allowed" },
+    });
+    expect(await storedDisputes(t)).toEqual([]);
   });
 
   test.each([

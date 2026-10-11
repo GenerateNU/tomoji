@@ -42,20 +42,25 @@ export const disputesTable = defineTable({
   companyId: v.id("companies"),
   creatorId: v.id("creators"),
   campaignId: v.id("campaigns"),
+  // What the dispute is about, if it's one part of the assignment. Chosen by
+  // the opener and checked against the assignment.
+  submissionId: v.optional(v.id("submissions")),
+  postId: v.optional(v.id("posts")),
   openedBy: v.id("users"),
   // The opener's role, so the side that raised it is known without a user
   // lookup, and creators can see the side without the person.
   openedByRole: userRole,
   reason: disputeReason,
+  // The opener's own words when `reason` is "other", and only then.
+  customReason: v.optional(v.string()),
   description: v.string(),
-  // What was on file when it was opened, recorded by the server: the
-  // assignment's approved submission and its posts. Never changes after.
-  evidenceSubmissionIds: v.array(v.id("submissions")),
-  evidencePostIds: v.array(v.id("posts")),
   status: disputeStatus,
   resolvedBy: v.optional(v.id("users")),
   resolution: v.optional(v.string()),
 })
+  .index("by_assignmentId", ["assignmentId"])
+  .index("by_submissionId", ["submissionId"])
+  .index("by_postId", ["postId"])
   .index("by_companyId_and_status", ["companyId", "status"])
   .index("by_companyId_and_status_and_openedByRole", ["companyId", "status", "openedByRole"])
   .index("by_creatorId_and_status", ["creatorId", "status"])

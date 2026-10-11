@@ -1,54 +1,37 @@
 import { paginationResultValidator } from "convex/server";
 import { v } from "convex/values";
-import type { Doc } from "./_generated/dataModel";
-import type { MutationCtx, QueryCtx } from "./_generated/server";
-import { authedMutation, authedQuery, companyContext } from "./lib/functions";
-import type { AssignmentViewer } from "./models/assignments";
+import { authedMutation, authedQuery } from "./lib/functions";
+import { requireAssignmentViewer } from "./models/assignments";
 import {
   createDispute,
-  disputeDraft,
+  disputeCreate,
   disputeListFilters,
   disputeView,
   listDisputes,
   requireDispute,
 } from "./models/disputes";
-import { requireCallerCreatorId } from "./models/users";
-
-/** Company users go through `companyContext`, so their token's org must be one they belong to. */
-async function requireViewer(
-  ctx: QueryCtx | MutationCtx,
-  user: Doc<"users">,
-): Promise<AssignmentViewer> {
-  switch (user.role) {
-    case "creator":
-      return { role: "creator", creatorId: await requireCallerCreatorId(ctx, user) };
-    case "company": {
-      const { membership } = await companyContext(ctx);
-      return { role: "company", companyId: membership.companyId };
-    }
-    case "operator":
-      return { role: "operator" };
-  }
-}
 
 /**
  * Opens a dispute on an assignment the caller can see, whatever its status.
  * Creators, company users, and operators can all open one, and an assignment
  * can have several. Creators and companies each have their own reasons;
- * operators can give either. The assignment's approved submission and its
- * posts are recorded as evidence, and the description is stored trimmed.
+ * operators can give either. Picking "other" requires a `customReason` in the
+ * opener's own words. `submissionId` and `postId` optionally say which part of
+ * the assignment it's about. Text is stored trimmed.
  *
- * @throws `not_found` if the assignment doesn't exist or isn't the caller's.
+ * @throws `not_found` if the assignment, submission, or post doesn't exist or
+ * isn't on the caller's assignment.
  * @throws `forbidden` if a company user's token names an org they don't belong to.
- * @throws `invalid_state` if the reason isn't one the caller's side can give,
- * or the description is blank or too long.
+ * @throws `invalid_state` if the reason isn't one the caller's side can give, a
+ * `customReason` is missing for "other" or given for any other reason, the post
+ * isn't on the given submission, or the text is blank or too long.
  * @returns the new dispute's id.
  */
 export const create = authedMutation({
-  args: disputeDraft.fields,
+  args: disputeCreate.fields,
   returns: v.id("disputes"),
   handler: async (ctx, args) => {
-    const viewer = await requireViewer(ctx, ctx.user);
+    const viewer = await requireAssignmentViewer(ctx, ctx.user);
     return await createDispute(ctx, viewer, ctx.user._id, args);
   },
 });
@@ -63,15 +46,16 @@ export const get = authedQuery({
   args: { disputeId: v.id("disputes") },
   returns: disputeView,
   handler: async (ctx, args) => {
-    const viewer = await requireViewer(ctx, ctx.user);
+    const viewer = await requireAssignmentViewer(ctx, ctx.user);
     return await requireDispute(ctx, viewer, args.disputeId);
   },
 });
 
 /**
- * Lists the caller's company's or creator's disputes in one status, newest
- * first, with cursor pagination. `openedByRole` keeps only those one side
- * opened. Each row is what `get` returns to the same caller.
+ * Lists the caller's company's or creator's disputes, newest first, with
+ * cursor pagination. `status` picks open or resolved (the Active and Past
+ * tabs); `openedByRole` keeps only those one side opened. Each row is what
+ * `get` returns to the same caller.
  *
  * @throws `forbidden` for operators, and for a company user whose token names
  * an org they don't belong to.
@@ -80,7 +64,7 @@ export const list = authedQuery({
   args: disputeListFilters.fields,
   returns: paginationResultValidator(disputeView),
   handler: async (ctx, args) => {
-    const viewer = await requireViewer(ctx, ctx.user);
+    const viewer = await requireAssignmentViewer(ctx, ctx.user);
     return await listDisputes(ctx, viewer, args);
   },
 });

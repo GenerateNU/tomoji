@@ -47,10 +47,7 @@ export const markRead = authedMutation({
   },
 });
 
-/**
- * Marks all of the caller's notifications read, finishing large backlogs in
- * scheduled batches. Notifications that arrive after the call stay unread.
- */
+/** Marks all of the caller's notifications read, finishing large backlogs in scheduled batches. */
 export const markAllRead = authedMutation({
   args: {},
   returns: v.null(),

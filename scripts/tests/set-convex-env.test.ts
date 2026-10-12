@@ -72,3 +72,34 @@ test("rejects an empty S3 region before making deployment changes", async () => 
   expect(console.error).toHaveBeenCalledWith(expect.stringContaining("S3_MEDIA_REGION"));
   expect(spawnSync).not.toHaveBeenCalled();
 });
+
+test("copies a complete X encryption configuration without logging its key material", async () => {
+  const encryption = {
+    X_TOKEN_ENCRYPTION_KEYS: '{"v1":"test-only-key"}',
+    X_TOKEN_ENCRYPTION_KEY_VERSION: "v1",
+  };
+  vi.mocked(readFileSync).mockReturnValue(
+    Object.entries({ ...values, ...encryption })
+      .map(([key, value]) => `${key}=${value}`)
+      .join("\n"),
+  );
+  await import("../set-convex-env");
+  for (const [key, value] of Object.entries(encryption)) {
+    expect(spawnSync).toHaveBeenCalledWith(
+      "bunx",
+      ["convex", "env", "set", key, value],
+      expect.any(Object),
+    );
+  }
+  expect(console.error).not.toHaveBeenCalled();
+});
+
+test("rejects partial X encryption configuration before making deployment changes", async () => {
+  vi.mocked(readFileSync).mockReturnValue(
+    Object.entries({ ...values, X_TOKEN_ENCRYPTION_KEY_VERSION: "v1" })
+      .map(([key, value]) => `${key}=${value}`)
+      .join("\n"),
+  );
+  await expect(import("../set-convex-env")).rejects.toThrow("exit 1");
+  expect(spawnSync).not.toHaveBeenCalled();
+});

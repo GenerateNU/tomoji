@@ -4,6 +4,8 @@ This document covers how we structure and write Convex code. Setup instructions 
 
 Shared S3 media configuration and upload guarantees are documented in [S3 media foundation](S3.md).
 
+Linked X account storage and credential handling are documented in [X accounts](X_ACCOUNTS.md).
+
 ## Layout
 
 Convex maps the **file path directly to the API path**. For example, a function exported from `convex/creators.ts` is called as `api.creators.<name>`. There is no separate router because the filename itself defines the namespace.
@@ -95,12 +97,13 @@ A route should only get its own name when it returns or does something meaningfu
 
 Model functions are imported directly, so their names should make sense on their own at the import site. This is different from routes, where the filename already provides the domain. For example, a `create` route in `campaigns.ts` would call a model function named `createCampaign`.
 
-| Prefix                            | Returns                 | Use when                                                             |
-| --------------------------------- | ----------------------- | -------------------------------------------------------------------- |
-| `get…`                            | the row, or `null`      | it is normal for the row not to exist and the caller can handle that |
-| `list…`                           | an array or page        | reading multiple rows                                                |
-| `require…`                        | the row, or throws      | the row must exist for the operation to continue (e.x. auth)         |
-| `create…` / `update…` / `remove…` | the result of the write | creating, updating, or removing a row                                |
+| Prefix                            | Returns                 | Use when                                                                              |
+| --------------------------------- | ----------------------- | ------------------------------------------------------------------------------------- |
+| `get…`                            | the row, or `null`      | it is normal for the row not to exist and the caller can handle that                  |
+| `list…`                           | an array or page        | reading multiple rows                                                                 |
+| `require…`                        | the row, or throws      | the row must exist for the operation to continue (e.x. auth)                          |
+| `create…` / `update…` / `remove…` | the result of the write | creating, updating, or removing a row                                                 |
+| `upsert…`                         | the result of the write | creating or updating a row in one operation, such as provider sync or account linking |
 
 Use the table name as the subject of the function instead of introducing a different term for the same thing. This keeps naming consistent from the schema to the model and route layers. Only add `By<Field>` when the table supports multiple lookups and the function name would otherwise be unclear. In most cases, the arguments already make it obvious what field is being matched.
 

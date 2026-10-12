@@ -8,6 +8,8 @@ const app = defineApp({
   env: {
     S3_MEDIA_BUCKET: v.string(),
     S3_MEDIA_REGION: v.string(),
+    X_TOKEN_ENCRYPTION_KEYS: v.optional(v.string()),
+    X_TOKEN_ENCRYPTION_KEY_VERSION: v.optional(v.string()),
   },
 });
 app.use(workOSAuthKit);

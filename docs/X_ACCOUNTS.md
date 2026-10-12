@@ -15,7 +15,19 @@ X links to a creator profile. WorkOS still handles Tomoji sign-in.
 
 Store X IDs as strings. Derive access-token expiry from the provider's `expires_in`;
 do not invent a refresh-token expiration. Legacy `creators.xId` is not a verified
-connection and is not imported. Removing manual editing belongs in the OAuth follow-up.
+connection and is not imported. `creators.update` no longer accepts `xId`; profile
+reads derive it from `xAccounts`. Check every deployment for legacy values before
+removing the optional schema field.
+
+| Operation                                       | Caller              | Result                                         |
+| ----------------------------------------------- | ------------------- | ---------------------------------------------- |
+| `xAccounts.start({})`                           | Active creator      | `authorizationUrl`, conservative `expiresAt`   |
+| `xAccounts.complete({ state, code?, denied? })` | Same active creator | Safe connected-account metadata                |
+| `xAccounts.me({})`                              | Active creator      | Safe metadata, or `null`                       |
+| `xAccounts.remove({})`                          | Active creator      | `revocation: complete \| failed \| not_needed` |
+
+Completion accepts only callback state/code (or denial), never user IDs, X profile
+claims, or tokens. All token-bearing database operations are internal.
 
 ## Token encryption
 
@@ -49,15 +61,45 @@ use each credential's stored version. Keep old keys until those credentials are
 re-encrypted or removed. Rotation and plaintext-data conversion are not automated;
 check existing data before deployment and approve any conversion or reconnection rollout.
 
-## OAuth follow-up
+## OAuth flow
 
-PR #93 adds start/complete/remove operations and an X callback separate from WorkOS.
-It must be updated to encrypt before its linking mutation and decrypt for server-side
-provider calls. Its current plaintext contract is incompatible with this foundation:
-do not merge or deploy the stack until it is updated.
+The frontend calls `start` and navigates to its authorization URL. X redirects to
+`GET /api/x/callback`. This Next.js handler reads the existing WorkOS session and
+immediately calls `complete` using that session's access token. The callback is
+separate from `/auth/callback` and cannot create a Tomoji session.
 
-PKCE attempts must expire, be single-use, and complete under the creator who started
-them. Failed reconnects must preserve the existing connection.
+State is cryptographically random and stored only as a SHA-256 hash. The independent
+PKCE verifier stays in a server-only `xLinkAttempts` row, never a cookie or browser
+response. Pending callbacks expire after 10 minutes. Claiming removes the stored
+verifier and starts a separate 60-second processing window for exchange and persistence.
+Scheduled cleanup respects that window and deletes abandoned attempts without a table scan.
+Only the same active creator can claim or complete an attempt. A new start or disconnect
+invalidates older/in-flight attempts, and completion rechecks ownership and processing expiry.
+
+The completion action encrypts both tokens before its internal persistence mutation.
+Disconnect returns only encrypted credentials internally and decrypts them in the
+action for revocation. Missing keys or invalid ciphertext cannot block local disconnect.
+
+A failed reconnect leaves the old account/credentials untouched. Authorization
+codes are exchanged once, with no automatic retry. X documents a 30-second code
+lifetime, so the callback must not wait for another frontend step. Network failure
+during exchange or persistence can be ambiguous: check `me` before starting a fresh
+flow rather than replaying the callback. An unpersisted grant may still exist on X.
+
+The callback redirects to `/?x_link=connected|failed|denied|sign_in_required|already_linked`, with
+`Cache-Control: no-store` and `Referrer-Policy: no-referrer`. No provider payload,
+code, state, or token appears in that redirect. Signed-out callbacks require a new
+linking attempt after signing in. TODO for FE: provide the connect/disconnect buttons
+and result messages, and use `me` as the source of truth after returning.
+`already_linked` identifies only the specific account-ownership conflict, without
+exposing the other creator's identity. Other errors stay generic.
+
+Disconnect invalidates attempts and deletes local account/credential rows first,
+then attempts revocation of both tokens with bounded requests. Even when X is down
+or configuration is missing, the local disconnect succeeds. `revocation: failed`
+means upstream access could remain authorized. Ask the user to revoke Tomoji in
+[X connected apps](https://x.com/settings/connected_apps) if they need confirmation.
+No background service or automatic revocation retry is introduced.
 
 Use OAuth 2.0 authorization-code flow with `S256` PKCE. X's
 [authentication mapping](https://docs.x.com/fundamentals/authentication/guides/v2-authentication-mapping)
@@ -69,9 +111,28 @@ not a client-supplied username or ID. See X's
 [OAuth guide](https://docs.x.com/fundamentals/authentication/oauth-2-0/user-access-token)
 and [account lookup](https://docs.x.com/x-api/users/get-my-user).
 
-The follow-up requires backend-only `X_CLIENT_ID`, `X_CLIENT_SECRET`, and
-`X_REDIRECT_URI`, with exact registered dev/prod callback URLs. These must be
-configured separately from pulling the code.
+## Configuration and rollout
+
+Configure a confidential **Web App** in the X Developer Console with OAuth 2.0
+enabled and the exact callback URL registered. Set backend-only `X_CLIENT_ID`,
+`X_CLIENT_SECRET`, and `X_REDIRECT_URI` on each target Convex deployment. Never use
+`NEXT_PUBLIC_` for these credentials. Dev uses `http://localhost:3000/api/x/callback`.
+Production uses `https://<production-domain>/api/x/callback`. Preview origins need
+their own registered callback or a stable configured preview origin. Do not derive
+callback URLs from client input or request headers.
+
+For personal dev, fill the three entries in `.env.local` and run `just convex-env`.
+That command copies a complete X configuration when credentials are supplied and
+rejects a partial configuration before writing any variables. Leaving both X
+credentials blank skips X setup. Typed deployment env fields are optional so
+unrelated backend features can deploy without an X app, but linking fails closed
+unless all three settings are present. Pulling/merging code and CI do not provision
+an X app or configure deployment secrets. CI uses synthetic responses and credentials.
+
+This implementation adds one attempt table and changes the editable profile API,
+but does not run a migration, configure credentials, or enable X as a sign-in provider.
+Live linking must be verified with a real X app before release. No posting, analytics,
+token-refresh service, or ingestion is included.
 
 ## Later X API consumers
 

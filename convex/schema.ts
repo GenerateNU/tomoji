@@ -13,6 +13,7 @@ import { submissionsTable } from "./schemas/submissions.schema";
 import { usersTable } from "./schemas/users.schema";
 import { xAccountsTable } from "./schemas/xAccounts.schema";
 import { xAccountCredentialsTable } from "./schemas/xAccountCredentials.schema";
+import { xLinkAttemptsTable } from "./schemas/xLinkAttempts.schema";
 
 export default defineSchema({
   users: usersTable,
@@ -29,4 +30,5 @@ export default defineSchema({
   mediaUploads: mediaUploadsTable,
   xAccounts: xAccountsTable,
   xAccountCredentials: xAccountCredentialsTable,
+  xLinkAttempts: xLinkAttemptsTable,
 });

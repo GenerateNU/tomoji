@@ -7,6 +7,7 @@ import { xAccountStatus } from "../schemas/xAccounts.schema";
 import { encryptedXTokens } from "../schemas/xAccountCredentials.schema";
 import { validateEncryptedXTokens } from "../lib/xTokenEncryption";
 import { requireCreatorProfileById } from "./creators";
+import { getXAccountByCreatorId } from "./xAccountLookup";
 
 // X's user-lookup scope mapping requires both read scopes; offline.access
 // requests the refresh token needed to keep the connection usable later.
@@ -52,10 +53,7 @@ export async function getXAccount(
   ctx: QueryCtx | MutationCtx,
   creatorId: Id<"creators">,
 ): Promise<XAccount | null> {
-  const account = await ctx.db
-    .query("xAccounts")
-    .withIndex("by_creatorId", (q) => q.eq("creatorId", creatorId))
-    .unique();
+  const account = await getXAccountByCreatorId(ctx, creatorId);
   return account === null ? null : toXAccount(account);
 }
 

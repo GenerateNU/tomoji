@@ -1,5 +1,5 @@
 /**
- * Copies WorkOS, S3, and optional X token encryption settings from .env.local onto the Convex
+ * Copies WorkOS, S3, and optional X OAuth/encryption settings from .env.local onto the Convex
  * deployment.
  *
  * Convex reads these server-side, not from .env.local:
@@ -8,6 +8,7 @@
  *   WORKOS_WEBHOOK_SECRET
  *   S3_MEDIA_BUCKET
  *   S3_MEDIA_REGION
+ *   X_CLIENT_ID / X_CLIENT_SECRET / X_REDIRECT_URI (when supplied together)
  */
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
@@ -28,9 +29,22 @@ function readValue(key: string): string {
   return (match?.[1] ?? "").trim().replace(/^["']|["']$/g, "");
 }
 
+const X_KEYS = ["X_CLIENT_ID", "X_CLIENT_SECRET", "X_REDIRECT_URI"] as const;
+const configureX = readValue("X_CLIENT_ID") !== "" || readValue("X_CLIENT_SECRET") !== "";
+if (configureX && X_KEYS.some((key) => readValue(key) === "")) {
+  console.error(
+    "Set X_CLIENT_ID, X_CLIENT_SECRET, and X_REDIRECT_URI together, or leave both X credentials empty.",
+  );
+  process.exit(1);
+}
+
 const ENCRYPTION_KEYS = ["X_TOKEN_ENCRYPTION_KEYS", "X_TOKEN_ENCRYPTION_KEY_VERSION"] as const;
 const configureEncryption = ENCRYPTION_KEYS.some((key) => readValue(key) !== "");
-const keys = configureEncryption ? [...KEYS, ...ENCRYPTION_KEYS] : [...KEYS];
+const keys = [
+  ...KEYS,
+  ...(configureX ? X_KEYS : []),
+  ...(configureEncryption ? ENCRYPTION_KEYS : []),
+];
 const missing = keys.filter((key) => readValue(key) === "");
 if (missing.length > 0) {
   console.error(

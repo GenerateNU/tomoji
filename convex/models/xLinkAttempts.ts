@@ -3,9 +3,11 @@ import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { apiError } from "../lib/errors";
 import { getCreatorByUserId } from "./creators";
-import { saveXAccount, type XAccountLink, type XAccount } from "./xAccounts";
+import { upsertXAccount, type XAccountLink, type XAccount } from "./xAccounts";
+import { encryptedXTokens } from "../schemas/xAccountCredentials.schema";
 
 export const xLinkAttemptTtlMs = 10 * 60_000;
+export const xLinkProcessingTtlMs = 60_000;
 export const xLinkStart = v.object({
   stateHash: v.string(),
   verifier: v.string(),
@@ -13,12 +15,13 @@ export const xLinkStart = v.object({
 });
 export const xLinkClaim = v.object({
   attemptId: v.id("xLinkAttempts"),
+  creatorId: v.id("creators"),
   verifier: v.string(),
   redirectUri: v.string(),
 });
 export const xRevocationTokens = v.union(
   v.null(),
-  v.object({ accessToken: v.string(), refreshToken: v.string() }),
+  v.object({ creatorId: v.id("creators"), encryptedTokens: encryptedXTokens }),
 );
 
 /** Resolves the creator from an already-authorized caller. */
@@ -68,8 +71,17 @@ export async function claimXLink(
   ) {
     throw apiError("invalid_state", { reason: "x_link_invalid" });
   }
-  await ctx.db.patch("xLinkAttempts", attempt._id, { status: "exchanging", verifier: undefined });
-  return { attemptId: attempt._id, verifier: attempt.verifier, redirectUri: attempt.redirectUri };
+  await ctx.db.patch("xLinkAttempts", attempt._id, {
+    status: "exchanging",
+    verifier: undefined,
+    processingExpiresAt: Date.now() + xLinkProcessingTtlMs,
+  });
+  return {
+    attemptId: attempt._id,
+    creatorId: creator._id,
+    verifier: attempt.verifier,
+    redirectUri: attempt.redirectUri,
+  };
 }
 
 /** Commits only a still-current claimed attempt, so disconnect/new-start wins races. */
@@ -85,11 +97,12 @@ export async function finishXLink(
     attempt === null ||
     attempt.creatorId !== creator._id ||
     attempt.status !== "exchanging" ||
-    attempt.expiresAt <= Date.now()
+    attempt.processingExpiresAt === undefined ||
+    attempt.processingExpiresAt <= Date.now()
   ) {
     throw apiError("invalid_state", { reason: "x_link_invalid" });
   }
-  const account = await saveXAccount(ctx, creator._id, link);
+  const account = await upsertXAccount(ctx, creator._id, link);
   await ctx.db.delete("xLinkAttempts", attemptId);
   return account;
 }
@@ -110,7 +123,8 @@ export async function failXLink(
 /** Removes expired PKCE material in one bounded scheduled mutation. */
 export async function expireXLink(ctx: MutationCtx, attemptId: Id<"xLinkAttempts">): Promise<void> {
   const attempt = await ctx.db.get("xLinkAttempts", attemptId);
-  if (attempt !== null && attempt.expiresAt <= Date.now())
+  // The original cleanup job must not interrupt a callback claimed before expiry.
+  if (attempt !== null && (attempt.processingExpiresAt ?? attempt.expiresAt) <= Date.now())
     await ctx.db.delete("xLinkAttempts", attemptId);
 }
 
@@ -138,5 +152,5 @@ export async function removeOwnXAccount(
   await ctx.db.delete("xAccounts", account._id);
   return credentials === null
     ? null
-    : { accessToken: credentials.accessToken, refreshToken: credentials.refreshToken };
+    : { creatorId: creator._id, encryptedTokens: credentials.encryptedTokens };
 }

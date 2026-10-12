@@ -2,10 +2,29 @@ import { afterEach, expect, test, vi } from "vitest";
 import { withAuth } from "@workos-inc/authkit-nextjs";
 import { fetchAction } from "convex/nextjs";
 import { GET } from "./route";
+import { apiError } from "../../../../../convex/lib/errors";
 
 vi.mock("@workos-inc/authkit-nextjs", () => ({ withAuth: vi.fn() }));
 vi.mock("convex/nextjs", () => ({ fetchAction: vi.fn() }));
 afterEach(() => vi.resetAllMocks());
+
+test("an account ownership conflict gets an actionable result without exposing its details", async () => {
+  vi.mocked(withAuth).mockResolvedValue({ user: { id: "creator" }, accessToken: "token" } as never);
+  vi.mocked(fetchAction).mockRejectedValue(apiError("conflict", { reason: "x_account_linked" }));
+  const response = await GET(
+    new Request("http://localhost:3000/api/x/callback?state=state&code=code"),
+  );
+  expect(response.headers.get("location")).toBe("http://localhost:3000/?x_link=already_linked");
+});
+
+test("other conflicts stay generic", async () => {
+  vi.mocked(withAuth).mockResolvedValue({ user: { id: "creator" }, accessToken: "token" } as never);
+  vi.mocked(fetchAction).mockRejectedValue(apiError("conflict", { reason: "unrelated" }));
+  const response = await GET(
+    new Request("http://localhost:3000/api/x/callback?state=state&code=code"),
+  );
+  expect(response.headers.get("location")).toBe("http://localhost:3000/?x_link=failed");
+});
 
 test("a signed-out callback never exchanges an authorization code", async () => {
   vi.mocked(withAuth).mockResolvedValue({ user: null } as never);

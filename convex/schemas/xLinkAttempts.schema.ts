@@ -8,5 +8,7 @@ export const xLinkAttemptsTable = defineTable({
   verifier: v.optional(v.string()),
   redirectUri: v.string(),
   expiresAt: v.number(),
+  // Claiming starts a bounded processing window independent of callback expiry.
+  processingExpiresAt: v.optional(v.number()),
   status: v.union(v.literal("pending"), v.literal("exchanging"), v.literal("failed")),
 }).index("by_creatorId", ["creatorId"]);

@@ -1,5 +1,6 @@
 import { withAuth } from "@workos-inc/authkit-nextjs";
 import { fetchAction } from "convex/nextjs";
+import { ConvexError } from "convex/values";
 import { api } from "../../../../../convex/_generated/api";
 
 /** Exchanges X's callback immediately under the existing WorkOS session. */
@@ -29,8 +30,21 @@ export async function GET(request: Request): Promise<Response> {
       { token: session.accessToken },
     );
     return resultRedirect(request, "connected");
-  } catch {
+  } catch (error) {
     // Never put provider payloads, codes, state, or credentials into redirect URLs.
+    if (error instanceof ConvexError) {
+      const data: unknown = error.data;
+      if (
+        data !== null &&
+        typeof data === "object" &&
+        "code" in data &&
+        data.code === "conflict" &&
+        "reason" in data &&
+        data.reason === "x_account_linked"
+      ) {
+        return resultRedirect(request, "already_linked");
+      }
+    }
     return resultRedirect(request, denied ? "denied" : "failed");
   }
 }
@@ -38,7 +52,7 @@ export async function GET(request: Request): Promise<Response> {
 /** Clears callback parameters and prevents caching/referrer disclosure. */
 function resultRedirect(
   request: Request,
-  result: "connected" | "failed" | "denied" | "sign_in_required",
+  result: "connected" | "failed" | "denied" | "sign_in_required" | "already_linked",
 ): Response {
   const url = new URL("/", request.url);
   url.searchParams.set("x_link", result);

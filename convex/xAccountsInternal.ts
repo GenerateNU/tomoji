@@ -11,6 +11,7 @@ import {
   finishXLink,
   removeOwnXAccount,
   xLinkAttemptTtlMs,
+  xLinkProcessingTtlMs,
   xLinkClaim,
   xLinkStart,
   xRevocationTokens,
@@ -46,7 +47,11 @@ export const claim = internalMutation({
   returns: xLinkClaim,
   handler: async (ctx, args) => {
     const { user } = await creatorContext(ctx);
-    return await claimXLink(ctx, user, args.stateHash);
+    const claim = await claimXLink(ctx, user, args.stateHash);
+    await ctx.scheduler.runAfter(xLinkProcessingTtlMs, internal.xAccountsInternal.expire, {
+      attemptId: claim.attemptId,
+    });
+    return claim;
   },
 });
 

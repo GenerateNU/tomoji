@@ -4,7 +4,7 @@ import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { apiError } from "../lib/errors";
 import { requireNonBlank } from "../lib/validation";
-import { getXAccount } from "./xAccounts";
+import { getXAccountByCreatorId } from "./xAccountLookup";
 
 export const creatorProfile = v.object({
   creatorId: v.id("creators"),
@@ -67,7 +67,7 @@ export async function requireCreatorProfile(
     throw apiError("not_found", { resource: "creator" });
   }
 
-  const account = await getXAccount(ctx, creator._id);
+  const account = await getXAccountByCreatorId(ctx, creator._id);
   return toCreatorProfile(user, creator, account?.xUserId);
 }
 
@@ -124,7 +124,7 @@ export async function updateCreatorProfile(
   if ("phoneNumber" in updates) patch.phoneNumber = updates.phoneNumber ?? undefined;
 
   await ctx.db.patch("creators", creator._id, patch);
-  const account = await getXAccount(ctx, creator._id);
+  const account = await getXAccountByCreatorId(ctx, creator._id);
   return toCreatorProfile(user, { ...creator, ...patch }, account?.xUserId);
 }
 
@@ -143,6 +143,6 @@ export async function requireCreatorProfileById(
     throw apiError("not_found", { resource: "creator" });
   }
 
-  const account = await getXAccount(ctx, creator._id);
+  const account = await getXAccountByCreatorId(ctx, creator._id);
   return toCreatorProfile(user, creator, account?.xUserId);
 }

@@ -61,12 +61,6 @@ use each credential's stored version. Keep old keys until those credentials are
 re-encrypted or removed. Rotation and plaintext-data conversion are not automated;
 check existing data before deployment and approve any conversion or reconnection rollout.
 
-## Integration status
-
-The OAuth completion and disconnect paths still need to adopt #92's encrypted-token
-contract. Do not deploy this stack until they encrypt before persistence and decrypt
-only for server-side provider calls.
-
 ## OAuth flow
 
 The frontend calls `start` and navigates to its authorization URL. X redirects to
@@ -76,11 +70,15 @@ separate from `/auth/callback` and cannot create a Tomoji session.
 
 State is cryptographically random and stored only as a SHA-256 hash. The independent
 PKCE verifier stays in a server-only `xLinkAttempts` row, never a cookie or browser
-response. One pending attempt per creator expires after 10 minutes. A scheduled
-internal mutation deletes its temporary material without a table scan. Completion
-atomically claims the attempt and removes the stored verifier before contacting X.
-Only the same active creator can claim it. A new start or disconnect invalidates
-older/in-flight attempts, and commit rechecks ownership and expiry.
+response. Pending callbacks expire after 10 minutes. Claiming removes the stored
+verifier and starts a separate 60-second processing window for exchange and persistence.
+Scheduled cleanup respects that window and deletes abandoned attempts without a table scan.
+Only the same active creator can claim or complete an attempt. A new start or disconnect
+invalidates older/in-flight attempts, and completion rechecks ownership and processing expiry.
+
+The completion action encrypts both tokens before its internal persistence mutation.
+Disconnect returns only encrypted credentials internally and decrypts them in the
+action for revocation. Missing keys or invalid ciphertext cannot block local disconnect.
 
 A failed reconnect leaves the old account/credentials untouched. Authorization
 codes are exchanged once, with no automatic retry. X documents a 30-second code
@@ -88,11 +86,13 @@ lifetime, so the callback must not wait for another frontend step. Network failu
 during exchange or persistence can be ambiguous: check `me` before starting a fresh
 flow rather than replaying the callback. An unpersisted grant may still exist on X.
 
-The callback redirects to `/?x_link=connected|failed|denied|sign_in_required`, with
+The callback redirects to `/?x_link=connected|failed|denied|sign_in_required|already_linked`, with
 `Cache-Control: no-store` and `Referrer-Policy: no-referrer`. No provider payload,
 code, state, or token appears in that redirect. Signed-out callbacks require a new
 linking attempt after signing in. TODO for FE: provide the connect/disconnect buttons
 and result messages, and use `me` as the source of truth after returning.
+`already_linked` identifies only the specific account-ownership conflict, without
+exposing the other creator's identity. Other errors stay generic.
 
 Disconnect invalidates attempts and deletes local account/credential rows first,
 then attempts revocation of both tokens with bounded requests. Even when X is down

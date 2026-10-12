@@ -3,6 +3,7 @@ import { internal } from "./_generated/api";
 import { action, env } from "./_generated/server";
 import { requireIdentity } from "./lib/authz";
 import { apiError } from "./lib/errors";
+import { encryptXTokens, decryptXTokens } from "./lib/xTokenEncryption";
 import {
   createXAuthorization,
   exchangeXCode,
@@ -72,9 +73,11 @@ export const complete = action({
         throw apiError("invalid_state", { reason: "x_link_config_changed" });
       const tokens = await exchangeXCode(config, args.code!, claim.verifier);
       const identity = await getXIdentity(tokens.accessToken);
+      const { accessToken, refreshToken, ...metadata } = tokens;
+      const encryptedTokens = await encryptXTokens(claim.creatorId, { accessToken, refreshToken });
       return await ctx.runMutation(internal.xAccountsInternal.finish, {
         attemptId: claim.attemptId,
-        link: { ...tokens, ...identity },
+        link: { ...metadata, ...identity, encryptedTokens },
       });
     } catch (error) {
       // Consumed codes are never retried. A failed reconnect preserves the old account.
@@ -96,13 +99,14 @@ export const remove = action({
   }),
   handler: async (ctx): Promise<{ revocation: "complete" | "failed" | "not_needed" }> => {
     await requireIdentity(ctx);
-    const tokens: Infer<typeof xRevocationTokens> = await ctx.runMutation(
+    const credentials: Infer<typeof xRevocationTokens> = await ctx.runMutation(
       internal.xAccountsInternal.remove,
       {},
     );
-    if (tokens === null) return { revocation: "not_needed" };
+    if (credentials === null) return { revocation: "not_needed" };
     try {
       const config = readXConfig(env);
+      const tokens = await decryptXTokens(credentials.creatorId, credentials.encryptedTokens);
       const results = await Promise.allSettled([
         revokeXToken(config, tokens.refreshToken),
         revokeXToken(config, tokens.accessToken),

@@ -3,7 +3,6 @@ import { convexTest } from "convex-test";
 import type { WithoutSystemFields } from "convex/server";
 import { describe, expect, test, vi } from "vitest";
 import type { Doc, Id } from "../../_generated/dataModel";
-import { companyContext } from "../../lib/functions";
 import {
   closeCampaign,
   closeExpiredCampaigns,
@@ -21,9 +20,10 @@ import { closeExpiredOpportunities } from "../../models/opportunities";
 import schema from "../../schema";
 import {
   expectApiError,
+  campaignArgs,
+  seedMembership,
   seedCreatorId,
   seedOpportunity,
-  seedUser,
   type TestConvex,
 } from "../helpers";
 
@@ -50,28 +50,20 @@ const opportunityFields = {
   usageRights: "Organic reposting only.",
 };
 
+/** Resolves shared membership fixtures into owner fields for raw campaign inserts. */
 async function seedOwner(t: TestConvex, subject: string, orgId = "org_acme") {
-  const as = await seedUser(t, { subject, org: { id: orgId } });
-  return await as.run(async (ctx) => {
-    const { membership } = await companyContext(ctx);
-    return { companyId: membership.companyId, createdBy: membership._id };
-  });
+  const { membership } = await seedMembership(t, subject, orgId);
+  return { companyId: membership.companyId, createdBy: membership._id };
 }
 
+/** Composes shared brief defaults with raw state overrides, including invalid legacy data. */
 function campaignDoc(
   owner: { companyId: Id<"companies">; createdBy: Id<"companyUsers"> },
   overrides: Partial<WithoutSystemFields<Doc<"campaigns">>> = {},
 ): WithoutSystemFields<Doc<"campaigns">> {
   return {
     ...owner,
-    title: "Spring launch",
-    objective: "Introduce the new skincare range",
-    product: "Daily moisturizer",
-    audience: "Gen Z skincare enthusiasts",
-    description: "Campaign supporting the spring launch.",
-    status: "open",
-    budgetCents: 250_000,
-    startsAt: Date.now() + HOUR,
+    ...campaignArgs(),
     ...overrides,
   };
 }

@@ -115,31 +115,10 @@ describe("requireCallerViewer", () => {
   });
 });
 
-async function signedIn(
-  t: ReturnType<typeof convexTest>,
-  subject: string,
-  opts: { orgId?: string; promoteTo?: "operator"; deactivate?: boolean } = {},
-) {
-  const as = await seedUser(t, {
-    subject,
-    org: opts.orgId ? { id: opts.orgId } : undefined,
-  });
-  if (opts.promoteTo || opts.deactivate) {
-    await t.run(async (ctx) => {
-      const user = await getUserByWorkosId(ctx, subject);
-      await ctx.db.patch("users", user!._id, {
-        ...(opts.promoteTo ? { role: opts.promoteTo } : {}),
-        ...(opts.deactivate ? { isActive: false } : {}),
-      });
-    });
-  }
-  return as;
-}
-
 describe("companyContext", () => {
   test("gives a company user their orgId as a plain string", async () => {
     const t = convexTest(schema, modules);
-    const as = await signedIn(t, "u1", { orgId: "org_acme" });
+    const as = await seedUser(t, { subject: "u1", org: { id: "org_acme" } });
 
     const result = await as.run(async (ctx) => await companyContext(ctx));
 
@@ -149,14 +128,14 @@ describe("companyContext", () => {
 
   test("rejects a creator", async () => {
     const t = convexTest(schema, modules);
-    const as = await signedIn(t, "u2");
+    const as = await seedUser(t, { subject: "u2" });
 
     await expectApiError(() => as.run(async (ctx) => await companyContext(ctx)), "forbidden");
   });
 
   test("rejects an operator", async () => {
     const t = convexTest(schema, modules);
-    const as = await signedIn(t, "u3", { promoteTo: "operator" });
+    const as = await seedOperator(t, "u3");
 
     await expectApiError(() => as.run(async (ctx) => await companyContext(ctx)), "forbidden");
   });
@@ -172,7 +151,7 @@ describe("companyContext", () => {
 
   test("resolves the caller's membership for their org", async () => {
     const t = convexTest(schema, modules);
-    const as = await signedIn(t, "u9", { orgId: "org_acme" });
+    const as = await seedUser(t, { subject: "u9", org: { id: "org_acme" } });
 
     const result = await as.run(async (ctx) => await companyContext(ctx));
     const company = await t.run(async (ctx) => await getCompanyByWorkosId(ctx, "org_acme"));
@@ -195,8 +174,8 @@ describe("companyContext", () => {
 
   test("rejects a caller who is not a member of the org", async () => {
     const t = convexTest(schema, modules);
-    await signedIn(t, "u11", { orgId: "org_acme" });
-    await signedIn(t, "u12", { orgId: "org_other" });
+    await seedUser(t, { subject: "u11", org: { id: "org_acme" } });
+    await seedUser(t, { subject: "u12", org: { id: "org_other" } });
     const asWrongOrg = t.withIdentity(workosIdentity({ subject: "u11", org_id: "org_other" }));
 
     await expectApiError(
@@ -209,7 +188,7 @@ describe("companyContext", () => {
 describe("creatorContext", () => {
   test("allows a creator", async () => {
     const t = convexTest(schema, modules);
-    const as = await signedIn(t, "u4");
+    const as = await seedUser(t, { subject: "u4" });
 
     const result = await as.run(async (ctx) => await creatorContext(ctx));
 
@@ -218,7 +197,7 @@ describe("creatorContext", () => {
 
   test("rejects a company user", async () => {
     const t = convexTest(schema, modules);
-    const as = await signedIn(t, "u5", { orgId: "org_acme" });
+    const as = await seedUser(t, { subject: "u5", org: { id: "org_acme" } });
 
     await expectApiError(() => as.run(async (ctx) => await creatorContext(ctx)), "forbidden");
   });
@@ -227,7 +206,7 @@ describe("creatorContext", () => {
 describe("operatorContext", () => {
   test("allows Tomoji staff", async () => {
     const t = convexTest(schema, modules);
-    const as = await signedIn(t, "u6", { promoteTo: "operator" });
+    const as = await seedOperator(t, "u6");
 
     const result = await as.run(async (ctx) => await operatorContext(ctx));
 
@@ -236,14 +215,18 @@ describe("operatorContext", () => {
 
   test("rejects a company admin", async () => {
     const t = convexTest(schema, modules);
-    const as = await signedIn(t, "u7", { orgId: "org_acme" });
+    const as = await seedUser(t, { subject: "u7", org: { id: "org_acme" } });
 
     await expectApiError(() => as.run(async (ctx) => await operatorContext(ctx)), "forbidden");
   });
 
   test("rejects a deactivated operator", async () => {
     const t = convexTest(schema, modules);
-    const as = await signedIn(t, "u8", { promoteTo: "operator", deactivate: true });
+    const as = await seedOperator(t, "u8");
+    await t.run(async (ctx) => {
+      const user = await getUserByWorkosId(ctx, "u8");
+      await ctx.db.patch("users", user!._id, { isActive: false });
+    });
 
     await expectApiError(
       () => as.run(async (ctx) => await operatorContext(ctx)),

@@ -47,11 +47,6 @@ const pausedOrClosed: {
   },
 ];
 
-/** Asserts a call fails with a specific API error reason. */
-async function expectReason(call: () => Promise<unknown>, reason: string) {
-  await expect(call()).rejects.toThrow(new RegExp(`"reason":"${reason}"`));
-}
-
 async function applyAs(
   t: TestConvex,
   creatorId: Awaited<ReturnType<typeof seedCreatorId>>,
@@ -124,7 +119,7 @@ describe("createApplication", () => {
     const { opportunityId } = await seedGatedOpportunity(t, { opportunity });
     const creatorId = await seedCreatorId(t, "creator_a");
 
-    await expectReason(() => applyAs(t, creatorId, opportunityId), reason);
+    await expectApiError(() => applyAs(t, creatorId, opportunityId), "invalid_state", reason);
   });
 
   test.each([
@@ -194,7 +189,11 @@ describe("createApplication", () => {
     await applyAs(t, await seedCreatorId(t, "creator_b"), opportunityId);
     const third = await seedCreatorId(t, "creator_c");
 
-    await expectReason(() => applyAs(t, third, opportunityId), "applications_full");
+    await expectApiError(
+      () => applyAs(t, third, opportunityId),
+      "invalid_state",
+      "applications_full",
+    );
   });
 });
 
@@ -468,9 +467,10 @@ describe("offerApplication", () => {
     const t = convexTest(schema, modules);
     const { companyId, applicationId } = await seedPending(t);
 
-    await expectReason(
+    await expectApiError(
       () =>
         t.run(async (ctx) => await offerApplication(ctx, companyId, applicationId, expiresAt())),
+      "invalid_state",
       "invalid_offer_expiry",
     );
   });
@@ -480,8 +480,9 @@ describe("offerApplication", () => {
     const { companyId, applicationId } = await seedPending(t);
     await t.run(async (ctx) => await offerApplication(ctx, companyId, applicationId));
 
-    await expectReason(
+    await expectApiError(
       () => t.run(async (ctx) => await offerApplication(ctx, companyId, applicationId)),
+      "invalid_state",
       "application_not_pending",
     );
   });
@@ -502,8 +503,9 @@ describe("offerApplication", () => {
     const { companyId, opportunityId, applicationId } = await seedPending(t);
     await t.run(async (ctx) => await patch(ctx, { opportunityId }));
 
-    await expectReason(
+    await expectApiError(
       () => t.run(async (ctx) => await offerApplication(ctx, companyId, applicationId)),
+      "invalid_state",
       reason,
     );
   });
@@ -539,8 +541,9 @@ describe("rejectApplication", () => {
     const { companyId, applicationId } = await seedPending(t);
     await t.run(async (ctx) => await offerApplication(ctx, companyId, applicationId));
 
-    await expectReason(
+    await expectApiError(
       () => t.run(async (ctx) => await rejectApplication(ctx, companyId, applicationId)),
+      "invalid_state",
       "application_not_pending",
     );
   });
@@ -561,8 +564,9 @@ describe("rejectApplication", () => {
     const { companyId, opportunityId, applicationId } = await seedPending(t);
     await t.run(async (ctx) => await patch(ctx, { opportunityId }));
 
-    await expectReason(
+    await expectApiError(
       () => t.run(async (ctx) => await rejectApplication(ctx, companyId, applicationId)),
+      "invalid_state",
       reason,
     );
   });
@@ -639,8 +643,9 @@ describe("acceptApplication", () => {
       async (ctx) => await ctx.db.patch("opportunities", opportunityId, { status: "closed" }),
     );
 
-    await expectReason(
+    await expectApiError(
       () => t.run(async (ctx) => await acceptApplication(ctx, creatorId, applicationId)),
+      "invalid_state",
       "opportunity_closed",
     );
   });
@@ -653,8 +658,9 @@ describe("acceptApplication", () => {
         await ctx.db.patch("applications", applicationId, { offerExpiresAt: Date.now() - 1 }),
     );
 
-    await expectReason(
+    await expectApiError(
       () => t.run(async (ctx) => await acceptApplication(ctx, creatorId, applicationId)),
+      "invalid_state",
       "offer_expired",
     );
   });
@@ -665,8 +671,9 @@ describe("acceptApplication", () => {
     const creatorId = await seedCreatorId(t, "creator_a");
     const applicationId = await applyAs(t, creatorId, opportunityId);
 
-    await expectReason(
+    await expectApiError(
       () => t.run(async (ctx) => await acceptApplication(ctx, creatorId, applicationId)),
+      "invalid_state",
       "application_not_offered",
     );
   });
@@ -691,8 +698,9 @@ describe("acceptApplication", () => {
       async (ctx) => await ctx.db.patch("opportunities", opportunityId, { numFilledSlots: 1 }),
     );
 
-    await expectReason(
+    await expectApiError(
       () => t.run(async (ctx) => await acceptApplication(ctx, creatorId, applicationId)),
+      "invalid_state",
       "opportunity_full",
     );
   });
@@ -777,8 +785,9 @@ describe("declineApplication", () => {
     const creatorId = await seedCreatorId(t, "creator_a");
     const applicationId = await applyAs(t, creatorId, opportunityId);
 
-    await expectReason(
+    await expectApiError(
       () => t.run(async (ctx) => await declineApplication(ctx, creatorId, applicationId)),
+      "invalid_state",
       "application_not_offered",
     );
   });

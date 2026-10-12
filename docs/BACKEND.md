@@ -135,4 +135,10 @@ tests/models/users.test.ts
 
 Shared fixtures and testing utilities should stay in `tests/helpers.ts`.
 
+Use `campaignArgs` and `submissionArgs` for shared input fixtures, with explicit
+scenario overrides. Expected submission views remain independent of production
+serializers. `expectApiError` can assert both code and reason without invoking an
+operation twice. Preserve raw inserts for invalid/legacy data and public-route calls
+when testing route behavior.
+
 Prefer testing model functions directly with `t.run()`. Use the `api.*` route path when the behavior you are testing specifically involves authorization, argument validation, or route behavior.

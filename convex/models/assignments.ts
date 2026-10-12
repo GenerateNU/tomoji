@@ -4,6 +4,7 @@ import { v, type Infer } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { apiError } from "../lib/errors";
+import { canViewResource, type ResourceViewer } from "../lib/authz";
 import schema from "../schema";
 
 /**
@@ -126,10 +127,7 @@ async function createAssignment(
 }
 
 /** Who is reading an assignment, resolved from the caller by the route. */
-export type AssignmentViewer =
-  | { role: "operator" }
-  | { role: "creator"; creatorId: Id<"creators"> }
-  | { role: "company"; companyId: Id<"companies"> };
+export type AssignmentViewer = ResourceViewer;
 
 /**
  * Returns an assignment the viewer may see: creators see their own, company
@@ -144,21 +142,18 @@ export async function requireAssignment(
   assignmentId: Id<"assignments">,
 ): Promise<Doc<"assignments">> {
   const assignment = await ctx.db.get("assignments", assignmentId);
-  if (assignment === null || !canViewAssignment(viewer, assignment)) {
+  if (assignment === null || !canViewResource(viewer, assignment)) {
     throw apiError("not_found", { resource: "assignment" });
   }
   return assignment;
 }
 
-function canViewAssignment(viewer: AssignmentViewer, assignment: Doc<"assignments">): boolean {
-  switch (viewer.role) {
-    case "operator":
-      return true;
-    case "creator":
-      return assignment.creatorId === viewer.creatorId;
-    case "company":
-      return assignment.companyId === viewer.companyId;
+/** Requires an already-loaded assignment to be active without changing its access policy. */
+export function requireActiveAssignment(assignment: Doc<"assignments">): Doc<"assignments"> {
+  if (assignment.status !== "active") {
+    throw apiError("invalid_state", { reason: "assignment_not_active" });
   }
+  return assignment;
 }
 
 export const assignmentListFilters = schema
@@ -375,9 +370,7 @@ export async function completeAssignment(
   if (assignment === null) {
     throw apiError("not_found", { resource: "assignment" });
   }
-  if (assignment.status !== "active") {
-    throw apiError("invalid_state", { reason: "assignment_not_active" });
-  }
+  requireActiveAssignment(assignment);
   await ctx.db.patch("assignments", assignment._id, { status: "completed" });
   return { ...assignment, status: "completed" };
 }

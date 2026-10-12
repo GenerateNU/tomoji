@@ -29,6 +29,57 @@ import {
 
 const modules = import.meta.glob("../../**/*.ts");
 
+test("company lifecycle writes reject a mismatched parent owner without changing the opportunity", async () => {
+  const t = convexTest(schema, modules);
+  const owner = await seedOpportunity(
+    t,
+    { subject: "guard_owner", orgId: "org_guard" },
+    { status: "draft" },
+  );
+  const other = await seedCampaign(t, { subject: "guard_other", orgId: "org_guard_other" });
+  await t.run((ctx) =>
+    ctx.db.patch("campaigns", owner.campaignId, { companyId: other.membership.companyId }),
+  );
+  const before = await t.run((ctx) => ctx.db.get("opportunities", owner.opportunityId));
+  const error = { data: { code: "not_found", resource: "opportunity" } };
+  await expect(
+    t.run((ctx) => publishOpportunity(ctx, owner.membership, owner.opportunityId)),
+  ).rejects.toMatchObject(error);
+  await expect(
+    t.run((ctx) => removeOpportunity(ctx, owner.membership, owner.opportunityId)),
+  ).rejects.toMatchObject(error);
+  await expect(
+    t.run((ctx) =>
+      updateOpportunity(ctx, owner.membership, owner.opportunityId, { title: "Changed" }),
+    ),
+  ).rejects.toMatchObject(error);
+  expect(await t.run((ctx) => ctx.db.get("opportunities", owner.opportunityId))).toEqual(before);
+});
+
+test("company lifecycle writes reject a missing company without changing the opportunity", async () => {
+  const t = convexTest(schema, modules);
+  const owner = await seedOpportunity(
+    t,
+    { subject: "guard_missing", orgId: "org_missing_guard" },
+    { status: "draft" },
+  );
+  await t.run((ctx) => ctx.db.delete("companies", owner.membership.companyId));
+  const before = await t.run((ctx) => ctx.db.get("opportunities", owner.opportunityId));
+  const error = { data: { code: "not_found", resource: "opportunity" } };
+  await expect(
+    t.run((ctx) => publishOpportunity(ctx, owner.membership, owner.opportunityId)),
+  ).rejects.toMatchObject(error);
+  await expect(
+    t.run((ctx) => removeOpportunity(ctx, owner.membership, owner.opportunityId)),
+  ).rejects.toMatchObject(error);
+  await expect(
+    t.run((ctx) =>
+      updateOpportunity(ctx, owner.membership, owner.opportunityId, { title: "Changed" }),
+    ),
+  ).rejects.toMatchObject(error);
+  expect(await t.run((ctx) => ctx.db.get("opportunities", owner.opportunityId))).toEqual(before);
+});
+
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ["Date"] });
   vi.setSystemTime(new Date("2026-09-27T12:00:00Z"));

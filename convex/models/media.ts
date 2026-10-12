@@ -1,13 +1,13 @@
-import type { Infer } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { apiError } from "../lib/errors";
 import { uploadCompletionGracePeriodMs } from "../lib/mediaUploadPolicy";
-import { mediaKind } from "../schemas/mediaUploads.schema";
+import type { MediaKind } from "../schemas/mediaUploads.schema";
+import { requireAssignment, requireActiveAssignment } from "./assignments";
 import { companyContext } from "../lib/functions";
 import { requireCallerCreatorId } from "./users";
 
-export type MediaKind = Infer<typeof mediaKind>;
+export type { MediaKind } from "../schemas/mediaUploads.schema";
 
 export type NewMediaUpload = {
   kind: MediaKind;
@@ -42,13 +42,8 @@ export async function authorizeMediaUpload(
   if (user.role !== "creator") throw apiError("forbidden", { requiredRole: "creator" });
 
   const creatorId = await requireCallerCreatorId(ctx, user);
-  const assignment = await ctx.db.get("assignments", assignmentId);
-  if (assignment === null || assignment.creatorId !== creatorId) {
-    throw apiError("not_found", { resource: "assignment" });
-  }
-  if (assignment.status !== "active") {
-    throw apiError("invalid_state", { reason: "assignment_not_active" });
-  }
+  const assignment = await requireAssignment(ctx, { role: "creator", creatorId }, assignmentId);
+  requireActiveAssignment(assignment);
 }
 
 /** Records the server-issued grant only after its target has been authorized. */

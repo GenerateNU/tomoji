@@ -3,7 +3,7 @@ import { v, type Infer } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { apiError } from "../lib/errors";
-import { requireNonBlank } from "../lib/validation";
+import { requireNonBlank, isHalfHourTimestamp } from "../lib/validation";
 import { requireMembership } from "./companyUsers";
 import schema from "../schema";
 
@@ -98,7 +98,7 @@ export type OpportunityUpdate = Infer<typeof opportunityUpdate>;
 
 /** Requires an exact UTC :00 or :30 deadline with zero seconds and milliseconds. */
 function validateOpportunityDeadline(deadline: number): void {
-  if (!Number.isSafeInteger(deadline) || deadline % (30 * 60 * 1000) !== 0) {
+  if (!isHalfHourTimestamp(deadline)) {
     throw apiError("invalid_state", { reason: "invalid_deadline" });
   }
 }
@@ -218,20 +218,7 @@ export async function publishOpportunity(
   membership: Doc<"companyUsers">,
   opportunityId: Id<"opportunities">,
 ): Promise<Doc<"opportunities">> {
-  const opportunity = await ctx.db.get("opportunities", opportunityId);
-  if (opportunity === null || opportunity.companyId !== membership.companyId) {
-    throw apiError("not_found", { resource: "opportunity" });
-  }
-  const campaign = await ctx.db.get("campaigns", opportunity.campaignId);
-  const company = await ctx.db.get("companies", opportunity.companyId);
-  if (
-    campaign === null ||
-    campaign.companyId !== opportunity.companyId ||
-    company === null ||
-    !company.isActive
-  ) {
-    throw apiError("not_found", { resource: "opportunity" });
-  }
+  const { opportunity, campaign } = await requireOwnedOpportunity(ctx, membership, opportunityId);
   if (opportunity.status !== "draft") {
     throw apiError("invalid_state", { reason: "opportunity_not_draft" });
   }
@@ -253,20 +240,7 @@ export async function removeOpportunity(
   membership: Doc<"companyUsers">,
   opportunityId: Id<"opportunities">,
 ): Promise<void> {
-  const opportunity = await ctx.db.get("opportunities", opportunityId);
-  if (opportunity === null || opportunity.companyId !== membership.companyId) {
-    throw apiError("not_found", { resource: "opportunity" });
-  }
-  const campaign = await ctx.db.get("campaigns", opportunity.campaignId);
-  const company = await ctx.db.get("companies", opportunity.companyId);
-  if (
-    campaign === null ||
-    campaign.companyId !== opportunity.companyId ||
-    company === null ||
-    !company.isActive
-  ) {
-    throw apiError("not_found", { resource: "opportunity" });
-  }
+  const { opportunity } = await requireOwnedOpportunity(ctx, membership, opportunityId);
   if (opportunity.status !== "draft" || opportunity.numFilledSlots !== 0) {
     throw apiError("invalid_state", { reason: "opportunity_not_removable" });
   }
@@ -292,20 +266,7 @@ export async function updateOpportunity(
   opportunityId: Id<"opportunities">,
   updates: OpportunityUpdate,
 ): Promise<Doc<"opportunities">> {
-  const opportunity = await ctx.db.get("opportunities", opportunityId);
-  if (opportunity === null || opportunity.companyId !== membership.companyId) {
-    throw apiError("not_found", { resource: "opportunity" });
-  }
-  const campaign = await ctx.db.get("campaigns", opportunity.campaignId);
-  const company = await ctx.db.get("companies", opportunity.companyId);
-  if (
-    campaign === null ||
-    campaign.companyId !== opportunity.companyId ||
-    company === null ||
-    !company.isActive
-  ) {
-    throw apiError("not_found", { resource: "opportunity" });
-  }
+  const { opportunity, campaign } = await requireOwnedOpportunity(ctx, membership, opportunityId);
   if (opportunity.status === "closed" || campaign.status === "closed") {
     throw apiError("invalid_state", { reason: "opportunity_not_editable" });
   }

@@ -158,6 +158,7 @@ export async function applyMembership(ctx: MutationCtx, event: MembershipEvent):
   }
 }
 
+/** Removes a synced membership and restores a creator profile after the final company membership. */
 export async function removeMembership(
   ctx: MutationCtx,
   event: { workosUserId: string; organizationId: string },

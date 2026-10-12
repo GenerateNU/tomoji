@@ -181,6 +181,7 @@ function toCreatorView(
   }
 }
 
+/** Requires an active assignment before applying submission-specific deadline rules. */
 function requireSubmissionWindowOpen(assignment: Doc<"assignments">): void {
   requireActiveAssignment(assignment);
   // TODO(dueAt): reject after `assignment.dueAt` once assignments have it.

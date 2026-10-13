@@ -11,6 +11,7 @@ import {
   disputeReason,
   disputeShapes,
   disputeStatus,
+  operatorDisputeOutcome,
 } from "../schemas/disputes.schema";
 import { userRole } from "../schemas/users.schema";
 import { requireAssignment, type AssignmentViewer } from "./assignments";
@@ -23,12 +24,19 @@ export const disputeCreate = v.object({
 });
 export type DisputeCreate = Infer<typeof disputeCreate>;
 
-/** An operator's ruling on an open dispute. */
+/** How the opener's side (or Tomoji) closes an open dispute. */
 export const disputeResolution = v.object({
   outcome: disputeOutcome,
-  decision: v.string(),
+  note: v.optional(v.string()),
 });
 export type DisputeResolution = Infer<typeof disputeResolution>;
+
+/** Tomoji's ruling over a result the opener's side reported. The reason is required. */
+export const disputeOverride = v.object({
+  outcome: operatorDisputeOutcome,
+  note: v.string(),
+});
+export type DisputeOverride = Infer<typeof disputeOverride>;
 
 /** User IDs are optional because creators never get them (see `toCreatorView`). */
 export const disputeView = v.union(
@@ -59,7 +67,7 @@ const REASONS_BY_ROLE: Record<AssignmentViewer["role"], readonly DisputeReason[]
 const MAX_LENGTH = {
   customReason: 200,
   description: 5000,
-  decision: 2000,
+  note: 2000,
 } as const;
 
 /**
@@ -107,29 +115,86 @@ function requireCustomReason({
   return undefined;
 }
 
-/** Closes an open dispute. Errors are listed on the `disputes.resolve` route. */
+/**
+ * Closes an open dispute. Anyone on the opener's side can, and so can Tomoji.
+ * Only the opener's side can withdraw. Errors are listed on the
+ * `disputes.resolve` route.
+ */
 export async function resolveDispute(
   ctx: MutationCtx,
+  viewer: AssignmentViewer,
   resolvedBy: Id<"users">,
   disputeId: Id<"disputes">,
-  resolution: DisputeResolution,
-): Promise<ResolvedDispute> {
-  const dispute = await ctx.db.get("disputes", disputeId);
-  if (dispute === null) throw apiError("not_found", { resource: "dispute" });
+  { outcome, note }: DisputeResolution,
+): Promise<DisputeView> {
+  const dispute = await requireVisibleDispute(ctx, viewer, disputeId);
+  const isOpenerSide = viewer.role === dispute.openedByRole;
+  if (!isOpenerSide && viewer.role !== "operator") {
+    throw apiError("forbidden", { reason: "not_opener" });
+  }
   if (dispute.status !== "open") {
     throw apiError("invalid_state", { reason: "already_resolved" });
+  }
+  if (outcome === "withdrawn" && !isOpenerSide) {
+    throw apiError("invalid_state", { reason: "withdraw_by_opener_only" });
   }
 
   const resolved: ResolvedDispute = {
     ...dispute,
     status: "resolved",
     resolvedBy,
+    resolvedByRole: viewer.role,
     resolvedAt: Date.now(),
-    outcome: resolution.outcome,
-    decision: requireNonBlank(resolution.decision, "decision", MAX_LENGTH.decision),
+    outcome,
+    note: optionalNote(note),
   };
-  await ctx.db.replace("disputes", disputeId, resolved);
-  return resolved;
+  await ctx.db.replace("disputes", dispute._id, resolved);
+  return toDisputeView(viewer, resolved);
+}
+
+/**
+ * Replaces the result the opener's side reported with Tomoji's ruling, keeping
+ * the original as `overriddenResolution`. Tomoji's own rulings are final.
+ * Errors are listed on the `disputes.override` route.
+ */
+export async function overrideDispute(
+  ctx: MutationCtx,
+  resolvedBy: Id<"users">,
+  disputeId: Id<"disputes">,
+  { outcome, note }: DisputeOverride,
+): Promise<ResolvedDispute> {
+  const dispute = await ctx.db.get("disputes", disputeId);
+  if (dispute === null) throw apiError("not_found", { resource: "dispute" });
+  if (dispute.status !== "resolved") {
+    throw apiError("invalid_state", { reason: "dispute_not_resolved" });
+  }
+  if (dispute.resolvedByRole === "operator") {
+    throw apiError("invalid_state", { reason: "operator_ruling_final" });
+  }
+
+  const overridden: ResolvedDispute = {
+    ...dispute,
+    resolvedBy,
+    resolvedByRole: "operator",
+    resolvedAt: Date.now(),
+    outcome,
+    note: requireNonBlank(note, "note", MAX_LENGTH.note),
+    overriddenResolution: {
+      resolvedBy: dispute.resolvedBy,
+      resolvedByRole: dispute.resolvedByRole,
+      resolvedAt: dispute.resolvedAt,
+      outcome: dispute.outcome,
+      note: dispute.note,
+    },
+  };
+  await ctx.db.replace("disputes", dispute._id, overridden);
+  return overridden;
+}
+
+/** A missing or blank note is stored as no note. */
+function optionalNote(note: string | undefined): string | undefined {
+  if (note === undefined || note.trim() === "") return undefined;
+  return requireNonBlank(note, "note", MAX_LENGTH.note);
 }
 
 /** One dispute, as the viewer may see it. */
@@ -138,11 +203,20 @@ export async function requireDispute(
   viewer: AssignmentViewer,
   disputeId: Id<"disputes">,
 ): Promise<DisputeView> {
+  return toDisputeView(viewer, await requireVisibleDispute(ctx, viewer, disputeId));
+}
+
+/** Reports a missing dispute and someone else's the same way. */
+async function requireVisibleDispute(
+  ctx: QueryCtx,
+  viewer: AssignmentViewer,
+  disputeId: Id<"disputes">,
+): Promise<Doc<"disputes">> {
   const dispute = await ctx.db.get("disputes", disputeId);
   if (dispute === null || !canViewDispute(viewer, dispute)) {
     throw apiError("not_found", { resource: "dispute" });
   }
-  return toDisputeView(viewer, dispute);
+  return dispute;
 }
 
 function canViewDispute(viewer: AssignmentViewer, dispute: Doc<"disputes">): boolean {
@@ -241,11 +315,22 @@ function toCreatorView(dispute: Doc<"disputes">): DisputeView {
     description: dispute.description,
   };
   if (dispute.status === "open") return { ...opened, status: "open" };
+  const replaced = dispute.overriddenResolution;
   return {
     ...opened,
     status: "resolved",
-    resolvedAt: dispute.resolvedAt,
-    outcome: dispute.outcome,
-    decision: dispute.decision,
+    ...withoutResolver(dispute),
+    overriddenResolution: replaced && withoutResolver(replaced),
+  };
+}
+
+function withoutResolver(
+  resolution: Pick<ResolvedDispute, "resolvedByRole" | "resolvedAt" | "outcome" | "note">,
+) {
+  return {
+    resolvedByRole: resolution.resolvedByRole,
+    resolvedAt: resolution.resolvedAt,
+    outcome: resolution.outcome,
+    note: resolution.note,
   };
 }

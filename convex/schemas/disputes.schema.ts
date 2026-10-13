@@ -37,16 +37,18 @@ export const disputeReason = v.union(
   v.literal("other"),
 );
 
-// TODO(disputes): more states (e.g. awaiting response, withdrawn) as the flow grows.
+// TODO(disputes): more states (e.g. awaiting response) as the flow grows.
 export const disputeStatus = v.union(v.literal("open"), v.literal("resolved"));
 
-// Provisional until design confirms the list.
+/** How a dispute ended. "approved" means in the opener's favor. */
 export const disputeOutcome = v.union(
-  v.literal("inCompanyFavor"),
-  v.literal("inCreatorFavor"),
-  v.literal("termsKept"),
-  v.literal("adjusted"),
+  v.literal("approved"),
+  v.literal("denied"),
+  v.literal("withdrawn"),
 );
+
+/** What Tomoji can rule when overriding; withdrawing is the opener's choice. */
+export const operatorDisputeOutcome = v.union(v.literal("approved"), v.literal("denied"));
 
 const disputeFields = {
   assignmentId: v.id("assignments"),
@@ -74,15 +76,22 @@ export function disputeShapes<
   Extra extends PropertyValidators,
 >(openedBy: OpenedBy, resolvedBy: ResolvedBy, extraFields: Extra) {
   const base = { ...disputeFields, openedBy, ...extraFields };
+  const resolution = {
+    resolvedBy,
+    // Lets creators see which side closed it without seeing who.
+    resolvedByRole: userRole,
+    resolvedAt: v.number(), // Unix milliseconds.
+    outcome: disputeOutcome,
+    note: v.optional(v.string()),
+  };
   return [
     v.object({ ...base, status: v.literal("open") }),
     v.object({
       ...base,
       status: v.literal("resolved"),
-      resolvedBy,
-      resolvedAt: v.number(), // Unix milliseconds.
-      outcome: disputeOutcome,
-      decision: v.string(),
+      ...resolution,
+      // The opener's result, kept when Tomoji overrides it.
+      overriddenResolution: v.optional(v.object(resolution)),
     }),
   ] as const;
 }

@@ -145,29 +145,41 @@ describe("disputes.list", () => {
 });
 
 describe("disputes.resolve", () => {
-  const ruling = { outcome: "termsKept", decision: "Original terms kept." } as const;
+  const result = { outcome: "approved", note: "Paid over email." } as const;
 
-  test("lets an operator close a dispute, which both sides then see", async () => {
+  test("lets the opener close it, and both sides see the result", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await seedAssignmentFixture(t);
+    const disputeId = await seedDispute(t, fixture);
+
+    const view = await fixture.asCreator.mutation(api.disputes.resolve, { disputeId, ...result });
+
+    expect(view).toMatchObject({ status: "resolved", resolvedByRole: "creator", ...result });
+    expect(view).not.toHaveProperty("resolvedBy");
+    expect(await fixture.asCompany.query(api.disputes.get, { disputeId })).toMatchObject({
+      status: "resolved",
+      resolvedBy: fixture.creatorUserId,
+      ...result,
+    });
+  });
+
+  test("lets an operator close it directly", async () => {
     const t = convexTest(schema, modules);
     const fixture = await seedAssignmentFixture(t);
     const disputeId = await seedDispute(t, fixture);
     const asOperator = await seedOperator(t, "dr-operator");
 
-    const resolved = await asOperator.mutation(api.disputes.resolve, { disputeId, ...ruling });
+    await asOperator.mutation(api.disputes.resolve, { disputeId, outcome: "denied" });
 
-    expect(await storedDisputes(t)).toEqual([resolved]);
-    for (const client of [fixture.asCreator, fixture.asCompany]) {
-      expect(await client.query(api.disputes.get, { disputeId })).toMatchObject({
-        status: "resolved",
-        ...ruling,
-      });
-    }
+    expect((await storedDisputes(t))[0]).toMatchObject({
+      resolvedByRole: "operator",
+      outcome: "denied",
+    });
   });
 
   test.each([
     ["a signed-out caller", async (t: TestConvex) => t, "not_authenticated"],
-    ["the creator", async (_t: TestConvex, f: AssignmentFixture) => f.asCreator, "forbidden"],
-    ["the company user", async (_t: TestConvex, f: AssignmentFixture) => f.asCompany, "forbidden"],
+    ["the other side", async (_t: TestConvex, f: AssignmentFixture) => f.asCompany, "forbidden"],
   ] as const)("refuses %s without changing it", async (_who, caller, code) => {
     const t = convexTest(schema, modules);
     const fixture = await seedAssignmentFixture(t);
@@ -175,9 +187,60 @@ describe("disputes.resolve", () => {
     const client = await caller(t, fixture);
 
     await expectApiError(
-      () => client.mutation(api.disputes.resolve, { disputeId, ...ruling }),
+      () => client.mutation(api.disputes.resolve, { disputeId, ...result }),
       code,
     );
     expect((await storedDisputes(t))[0].status).toBe("open");
+  });
+});
+
+describe("disputes.override", () => {
+  const ruling = { outcome: "denied", note: "The brief required the disclosure." } as const;
+
+  /** Seeds a dispute the creator already closed as approved. */
+  async function seedClosedByCreator(t: TestConvex, fixture: AssignmentFixture) {
+    return await seedDispute(
+      t,
+      fixture,
+      {},
+      {
+        resolvedBy: fixture.creatorUserId,
+        resolvedByRole: "creator",
+        resolvedAt: Date.now(),
+        outcome: "approved",
+      },
+    );
+  }
+
+  test("lets an operator override the opener's result", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await seedAssignmentFixture(t);
+    const disputeId = await seedClosedByCreator(t, fixture);
+    const asOperator = await seedOperator(t, "do-operator");
+
+    const overridden = await asOperator.mutation(api.disputes.override, { disputeId, ...ruling });
+
+    expect(await storedDisputes(t)).toEqual([overridden]);
+    expect(overridden).toMatchObject({
+      resolvedByRole: "operator",
+      ...ruling,
+      overriddenResolution: { resolvedByRole: "creator", outcome: "approved" },
+    });
+  });
+
+  test.each([
+    ["the creator", (f: AssignmentFixture) => f.asCreator],
+    ["the company user", (f: AssignmentFixture) => f.asCompany],
+  ] as const)("refuses %s without changing it", async (_who, caller) => {
+    const t = convexTest(schema, modules);
+    const fixture = await seedAssignmentFixture(t);
+    const disputeId = await seedClosedByCreator(t, fixture);
+    const before = await storedDisputes(t);
+
+    await expectApiError(
+      () => caller(fixture).mutation(api.disputes.override, { disputeId, ...ruling }),
+      "forbidden",
+    );
+    expect(await storedDisputes(t)).toEqual(before);
   });
 });

@@ -479,9 +479,10 @@ export async function seedOverriddenSubmission(t: TestConvex) {
     {},
     {
       resolvedBy: operatorId,
+      resolvedByRole: "operator",
       resolvedAt: Date.now(),
-      outcome: "inCreatorFavor",
-      decision: "The brief allows the deploy log; approved as submitted.",
+      outcome: "approved",
+      note: "The brief allows the deploy log; approved as submitted.",
     },
   );
 

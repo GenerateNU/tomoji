@@ -6,9 +6,11 @@ import {
   createDispute,
   disputeCreate,
   disputeListFilters,
+  disputeOverride,
   disputeResolution,
   disputeView,
   listDisputes,
+  overrideDispute,
   requireDispute,
   resolveDispute,
 } from "./models/disputes";
@@ -71,18 +73,41 @@ export const list = authedQuery({
 });
 
 /**
- * Closes an open dispute with an outcome and Tomoji's decision, which both
- * sides can read. Resolving is final. The decision is stored trimmed.
+ * Closes an open dispute once it's settled over email: `approved` (in the
+ * opener's favor), `denied`, or `withdrawn`, with an optional note. Anyone on
+ * the opener's side can close it, and so can Tomoji; only the opener's side can
+ * withdraw. Closing is final; Tomoji can still override the result.
+ *
+ * @throws `not_found` if the dispute doesn't exist or isn't the caller's.
+ * @throws `forbidden` if the caller is on the other side, or a company user's
+ * token names an org they don't belong to.
+ * @throws `invalid_state` if it's already resolved, Tomoji tries to withdraw a
+ * dispute it didn't open, or the note is too long.
+ * @returns the dispute as the caller sees it.
+ */
+export const resolve = authedMutation({
+  args: { disputeId: v.id("disputes"), ...disputeResolution.fields },
+  returns: disputeView,
+  handler: async (ctx, { disputeId, ...resolution }) => {
+    const viewer = await requireAssignmentViewer(ctx, ctx.user);
+    return await resolveDispute(ctx, viewer, ctx.user._id, disputeId, resolution);
+  },
+});
+
+/**
+ * Replaces the result the opener's side reported with Tomoji's ruling
+ * (`approved` or `denied`) and a required reason. The original result stays on
+ * the dispute as `overriddenResolution`. Tomoji's own rulings can't be overridden.
  *
  * @throws `not_found` if the dispute doesn't exist.
- * @throws `invalid_state` if it's already resolved, or the decision is blank or
- * too long.
- * @returns the resolved dispute.
+ * @throws `invalid_state` if it's still open, Tomoji already ruled on it, or the
+ * reason is blank or too long.
+ * @returns the overridden dispute.
  */
-export const resolve = operatorMutation({
-  args: { disputeId: v.id("disputes"), ...disputeResolution.fields },
+export const override = operatorMutation({
+  args: { disputeId: v.id("disputes"), ...disputeOverride.fields },
   returns: schema.doc("disputes"),
-  handler: async (ctx, { disputeId, ...resolution }) => {
-    return await resolveDispute(ctx, ctx.user._id, disputeId, resolution);
+  handler: async (ctx, { disputeId, ...ruling }) => {
+    return await overrideDispute(ctx, ctx.user._id, disputeId, ruling);
   },
 });

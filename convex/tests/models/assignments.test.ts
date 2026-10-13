@@ -1314,7 +1314,7 @@ describe("notifications", () => {
     expect(await memberNotifications(t, owner.membership)).toEqual([
       {
         type: "assignmentClaimed",
-        title: `A creator joined ${title}`,
+        title: `Test joined ${title}`,
         target: { kind: "assignment", assignmentId },
       },
     ]);
@@ -1328,7 +1328,7 @@ describe("notifications", () => {
 
     expect((await memberNotifications(t, owner.membership)).at(-1)).toEqual({
       type: "assignmentTermsAccepted",
-      title: `Terms accepted for ${title}`,
+      title: `Test accepted terms for ${title}`,
       target: { kind: "assignment", assignmentId },
     });
   });
@@ -1341,7 +1341,7 @@ describe("notifications", () => {
 
     expect((await memberNotifications(t, owner.membership)).at(-1)).toEqual({
       type: "assignmentTermsDeclined",
-      title: `Terms declined for ${title}`,
+      title: `Test declined terms for ${title}`,
       target: { kind: "assignment", assignmentId },
     });
   });

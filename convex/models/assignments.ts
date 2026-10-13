@@ -10,7 +10,7 @@ import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { apiError } from "../lib/errors";
 import { canViewResource, type ResourceViewer } from "../lib/authz";
 import schema from "../schema";
-import { notifyCreator, notifyOpportunityCreator } from "./notifications";
+import { creatorName, notifyCompanyUser, notifyCreator } from "./notifications";
 
 /**
  * Creates a creator's assignment on an open, ungated opportunity.
@@ -47,12 +47,17 @@ export async function claimAssignment(
   }
   const assignmentId = await createAssignment(ctx, opportunity, campaign, creatorId);
   // Only claims notify here; an accepted offer is reported by `acceptApplication`.
-  await notifyOpportunityCreator(ctx, opportunity, {
+  await notifyCompanyUser(ctx, opportunity.createdBy, {
     type: "assignmentClaimed",
-    title: `A creator joined ${opportunity.title}`,
-    target: { kind: "assignment", assignmentId },
+    title: `${await creatorName(ctx, creatorId)} joined ${opportunity.title}`,
+    target: assignmentTarget(assignmentId),
   });
   return assignmentId;
+}
+
+/** Links a notification to the assignment. */
+export function assignmentTarget(assignmentId: Id<"assignments">) {
+  return { kind: "assignment" as const, assignmentId };
 }
 
 /**
@@ -397,10 +402,10 @@ export async function acceptAssignmentTerms(
   await ctx.db.patch("assignments", assignment._id, { status: "active" });
   const opportunity = await ctx.db.get("opportunities", assignment.opportunityId);
   if (opportunity !== null) {
-    await notifyOpportunityCreator(ctx, opportunity, {
+    await notifyCompanyUser(ctx, opportunity.createdBy, {
       type: "assignmentTermsAccepted",
-      title: `Terms accepted for ${opportunity.title}`,
-      target: { kind: "assignment", assignmentId: assignment._id },
+      title: `${await creatorName(ctx, creatorId)} accepted terms for ${opportunity.title}`,
+      target: assignmentTarget(assignment._id),
     });
   }
   return { ...assignment, status: "active" };
@@ -427,10 +432,10 @@ export async function declineAssignmentTerms(
   const cancelled = await cancelAssignment(ctx, assignment);
   const opportunity = await ctx.db.get("opportunities", assignment.opportunityId);
   if (opportunity !== null) {
-    await notifyOpportunityCreator(ctx, opportunity, {
+    await notifyCompanyUser(ctx, opportunity.createdBy, {
       type: "assignmentTermsDeclined",
-      title: `Terms declined for ${opportunity.title}`,
-      target: { kind: "assignment", assignmentId: assignment._id },
+      title: `${await creatorName(ctx, creatorId)} declined terms for ${opportunity.title}`,
+      target: assignmentTarget(assignment._id),
     });
   }
   return cancelled;
@@ -460,7 +465,7 @@ export async function cancelPendingAssignment(
     await notifyCreator(ctx, assignment.creatorId, {
       type: "assignmentCancelled",
       title: `Your assignment for ${opportunity.title} was cancelled`,
-      target: { kind: "assignment", assignmentId: assignment._id },
+      target: assignmentTarget(assignment._id),
     });
   }
   return cancelled;

@@ -6,8 +6,8 @@ import { apiError } from "../lib/errors";
 import { canViewResource, type ResourceViewer } from "../lib/authz";
 import { HALF_HOUR_MS, isHalfHourTimestamp } from "../lib/validation";
 import type { applicationStatus } from "../schemas/applications.schema";
-import { createAssignmentFromOffer } from "./assignments";
-import { notifyCreator, notifyOpportunityCreator } from "./notifications";
+import { assignmentTarget, createAssignmentFromOffer } from "./assignments";
+import { creatorName, notifyCompanyUser, notifyCreator } from "./notifications";
 
 /**
  * Creates a pending application from a creator to an open, gated opportunity.
@@ -64,9 +64,9 @@ export async function createApplication(
     note,
     status: "pending",
   });
-  await notifyOpportunityCreator(ctx, opportunity, {
+  await notifyCompanyUser(ctx, opportunity.createdBy, {
     type: "applicationReceived",
-    title: `New application for ${opportunity.title}`,
+    title: `${await creatorName(ctx, creatorId)} applied to ${opportunity.title}`,
     target: applicationTarget({ _id: applicationId, opportunityId: opportunity._id }),
   });
   return applicationId;
@@ -315,10 +315,10 @@ export async function acceptApplication(
   });
   const patch = { status: "accepted" as const, offerAcceptedAt: now, statusLastUpdatedAt: now };
   await ctx.db.patch("applications", application._id, patch);
-  await notifyOpportunityCreator(ctx, opportunity, {
+  await notifyCompanyUser(ctx, opportunity.createdBy, {
     type: "applicationAccepted",
-    title: `Your offer for ${opportunity.title} was accepted`,
-    target: { kind: "assignment", assignmentId },
+    title: `${await creatorName(ctx, creatorId)} accepted your offer for ${opportunity.title}`,
+    target: assignmentTarget(assignmentId),
   });
   if (opportunity.numFilledSlots + 1 >= opportunity.maxSlots) {
     await markRemainingApplicationsFull(ctx, opportunity, now);
@@ -344,9 +344,9 @@ export async function declineApplication(
   await ctx.db.patch("applications", application._id, patch);
   const opportunity = await ctx.db.get("opportunities", application.opportunityId);
   if (opportunity !== null) {
-    await notifyOpportunityCreator(ctx, opportunity, {
+    await notifyCompanyUser(ctx, opportunity.createdBy, {
       type: "applicationDeclined",
-      title: `Your offer for ${opportunity.title} was declined`,
+      title: `${await creatorName(ctx, creatorId)} declined your offer for ${opportunity.title}`,
       target: applicationTarget(application),
     });
   }
@@ -426,9 +426,9 @@ export async function expireApplicationOffers(ctx: MutationCtx): Promise<boolean
       title: `Your offer for ${opportunity.title} expired`,
       target,
     });
-    await notifyOpportunityCreator(ctx, opportunity, {
+    await notifyCompanyUser(ctx, opportunity.createdBy, {
       type: "applicationOfferExpired",
-      title: `An offer for ${opportunity.title} expired unanswered`,
+      title: `${await creatorName(ctx, application.creatorId)}'s offer for ${opportunity.title} expired unanswered`,
       target,
     });
   }

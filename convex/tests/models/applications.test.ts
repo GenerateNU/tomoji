@@ -860,7 +860,7 @@ describe("notifications", () => {
     expect(await memberNotifications(t, membership)).toEqual([
       {
         type: "applicationReceived",
-        title: `New application for ${title}`,
+        title: `Test applied to ${title}`,
         target: { kind: "application", applicationId, opportunityId },
       },
     ]);
@@ -927,7 +927,7 @@ describe("notifications", () => {
     );
     expect((await memberNotifications(t, membership)).at(-1)).toEqual({
       type: "applicationAccepted",
-      title: `Your offer for ${title} was accepted`,
+      title: `Test accepted your offer for ${title}`,
       target: { kind: "assignment", assignmentId: assignment?._id },
     });
   });
@@ -961,7 +961,7 @@ describe("notifications", () => {
 
     expect((await memberNotifications(t, membership)).at(-1)).toEqual({
       type: "applicationDeclined",
-      title: `Your offer for ${title} was declined`,
+      title: `Test declined your offer for ${title}`,
       target: { kind: "application", applicationId, opportunityId },
     });
   });
@@ -984,7 +984,7 @@ describe("notifications", () => {
     });
     expect((await memberNotifications(t, membership)).at(-1)).toEqual({
       type: "applicationOfferExpired",
-      title: `An offer for ${title} expired unanswered`,
+      title: `Test's offer for ${title} expired unanswered`,
       target,
     });
   });

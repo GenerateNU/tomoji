@@ -373,6 +373,27 @@ export const opportunityList = schema
 
 export const opportunityDiscover = opportunityList.pick("paginationOpts");
 
+/**
+ * Returns the creator-facing brief if creators may see the opportunity: it's
+ * open, its campaign is open, and its company is active. Otherwise `null`.
+ */
+export async function getVisibleCreatorOpportunity(
+  ctx: QueryCtx,
+  opportunity: Doc<"opportunities">,
+): Promise<CreatorOpportunity | null> {
+  if (opportunity.status !== "open") return null;
+  const campaign = await ctx.db.get("campaigns", opportunity.campaignId);
+  if (
+    campaign === null ||
+    campaign.status !== "open" ||
+    campaign.companyId !== opportunity.companyId
+  ) {
+    return null;
+  }
+  const company = await ctx.db.get("companies", opportunity.companyId);
+  return company !== null && company.isActive ? toCreatorOpportunity(opportunity, company) : null;
+}
+
 /** Discovers open briefs across active companies without ranking or application eligibility rules. */
 export async function discoverOpportunities(
   ctx: QueryCtx,
@@ -383,20 +404,7 @@ export async function discoverOpportunities(
     .withIndex("by_status_and_deadline", (q) => q.eq("status", "open"))
     .paginate(options.paginationOpts);
   const visible = await Promise.all(
-    result.page.map(async (opportunity) => {
-      const campaign = await ctx.db.get("campaigns", opportunity.campaignId);
-      if (
-        campaign === null ||
-        campaign.status !== "open" ||
-        campaign.companyId !== opportunity.companyId
-      ) {
-        return null;
-      }
-      const company = await ctx.db.get("companies", opportunity.companyId);
-      return company !== null && company.isActive
-        ? toCreatorOpportunity(opportunity, company)
-        : null;
-    }),
+    result.page.map(async (opportunity) => await getVisibleCreatorOpportunity(ctx, opportunity)),
   );
 
   // Visibility can shorten a page; retain the native cursor and isDone so callers can continue.

@@ -2,13 +2,18 @@ import { paginationResultValidator } from "convex/server";
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
 import { internalMutation } from "./_generated/server";
-import { authedQuery, companyMutation, companyQuery, creatorQuery } from "./lib/functions";
+import {
+  authedQuery,
+  companyMutation,
+  companyQuery,
+  creatorMutation,
+  creatorQuery,
+} from "./lib/functions";
 import { findOrgId } from "./lib/identity";
 import {
   closeOpportunity,
   closeExpiredOpportunities,
   createOpportunity,
-  creatorOpportunity,
   discoverOpportunities,
   getOpportunity,
   listOpportunities,
@@ -22,6 +27,16 @@ import {
   resumeOpportunity,
   updateOpportunity,
 } from "./models/opportunities";
+import {
+  isOpportunityStarred,
+  listStarredOpportunities,
+  starOpportunity,
+  starredCreatorOpportunity,
+  starredOpportunityList,
+  unstarOpportunity,
+  withStarredFlags,
+} from "./models/opportunityStars";
+import { requireCallerCreatorId } from "./models/users";
 import schema from "./schema";
 
 /** Closes an owned published opportunity permanently without cancelling existing assignments. */
@@ -93,9 +108,50 @@ export const update = companyMutation({
 /** Returns a creator's paginated discovery feed of visible open opportunity briefs. */
 export const discover = creatorQuery({
   args: opportunityDiscover.fields,
-  returns: paginationResultValidator(creatorOpportunity),
+  returns: paginationResultValidator(starredCreatorOpportunity),
   handler: async (ctx, args) => {
-    return await discoverOpportunities(ctx, args);
+    const creatorId = await requireCallerCreatorId(ctx, ctx.user);
+    const result = await discoverOpportunities(ctx, args);
+    return { ...result, page: await withStarredFlags(ctx, creatorId, result.page) };
+  },
+});
+
+/**
+ * Stars an opportunity for the calling creator. Starring again does nothing.
+ *
+ * @throws `not_found` if the opportunity doesn't exist or isn't visible to creators.
+ */
+export const star = creatorMutation({
+  args: { opportunityId: v.id("opportunities") },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const creatorId = await requireCallerCreatorId(ctx, ctx.user);
+    await starOpportunity(ctx, creatorId, args.opportunityId);
+    return null;
+  },
+});
+
+/** Removes the calling creator's star. Does nothing if the opportunity isn't starred. */
+export const unstar = creatorMutation({
+  args: { opportunityId: v.id("opportunities") },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const creatorId = await requireCallerCreatorId(ctx, ctx.user);
+    await unstarOpportunity(ctx, creatorId, args.opportunityId);
+    return null;
+  },
+});
+
+/**
+ * Lists the calling creator's starred opportunities, most recently starred
+ * first. Ones creators can no longer see (paused, closed) are left out.
+ */
+export const listStarred = creatorQuery({
+  args: starredOpportunityList.fields,
+  returns: paginationResultValidator(starredCreatorOpportunity),
+  handler: async (ctx, args) => {
+    const creatorId = await requireCallerCreatorId(ctx, ctx.user);
+    return await listStarredOpportunities(ctx, creatorId, args);
   },
 });
 
@@ -120,11 +176,17 @@ export const create = companyMutation({
 /** Returns a public brief to creators or the complete document to its company and operators. */
 export const get = authedQuery({
   args: { opportunityId: v.id("opportunities") },
-  returns: v.union(schema.doc("opportunities"), creatorOpportunity),
+  returns: v.union(schema.doc("opportunities"), starredCreatorOpportunity),
   handler: async (ctx, args) => {
-    return await getOpportunity(ctx, args.opportunityId, {
+    const opportunity = await getOpportunity(ctx, args.opportunityId, {
       user: ctx.user,
       orgId: findOrgId(ctx.identity),
     });
+    // Company users and operators get the full document; only creator briefs carry `companyName`.
+    if (!("companyName" in opportunity)) return opportunity;
+    // Creators also get whether they've starred it.
+    const creatorId = await requireCallerCreatorId(ctx, ctx.user);
+    const isStarred = await isOpportunityStarred(ctx, creatorId, args.opportunityId);
+    return { ...opportunity, isStarred };
   },
 });

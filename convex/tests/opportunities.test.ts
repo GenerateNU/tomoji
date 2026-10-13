@@ -800,6 +800,7 @@ describe("opportunities.discover", () => {
         "_id",
         "_creationTime",
         "companyName",
+        "isStarred",
         "title",
         "description",
         "isGated",
@@ -1288,6 +1289,7 @@ describe("opportunities.get", () => {
         "_id",
         "_creationTime",
         "companyName",
+        "isStarred",
         "title",
         "description",
         "isGated",
@@ -1321,5 +1323,83 @@ describe("opportunities.get", () => {
 
     expect(await asCompany.query(api.opportunities.get, { opportunityId })).toEqual(stored);
     expect(await asOperator.query(api.opportunities.get, { opportunityId })).toEqual(stored);
+  });
+});
+
+describe("opportunities.star / unstar / listStarred", () => {
+  const firstPage = { numItems: 10, cursor: null };
+
+  test("a creator stars, sees it in the feed and starred list, then unstars", async () => {
+    const t = convexTest(schema, modules);
+    const { opportunityId } = await seedOpportunity(t, { subject: "star_owner" });
+    const asCreator = await seedUser(t, { subject: "star_creator" });
+
+    await asCreator.mutation(api.opportunities.star, { opportunityId });
+
+    const feed = await asCreator.query(api.opportunities.discover, { paginationOpts: firstPage });
+    expect(feed.page).toMatchObject([{ _id: opportunityId, isStarred: true }]);
+    const detail = await asCreator.query(api.opportunities.get, { opportunityId });
+    expect(detail).toMatchObject({ isStarred: true });
+    const starred = await asCreator.query(api.opportunities.listStarred, {
+      paginationOpts: firstPage,
+    });
+    expect(starred.page.map((opportunity) => opportunity._id)).toEqual([opportunityId]);
+
+    await asCreator.mutation(api.opportunities.unstar, { opportunityId });
+
+    const after = await asCreator.query(api.opportunities.discover, { paginationOpts: firstPage });
+    expect(after.page).toMatchObject([{ _id: opportunityId, isStarred: false }]);
+  });
+
+  test("another creator's stars don't show as starred", async () => {
+    const t = convexTest(schema, modules);
+    const { opportunityId } = await seedOpportunity(t, { subject: "star_owner" });
+    const asCreator = await seedUser(t, { subject: "star_creator" });
+    const asOtherCreator = await seedUser(t, { subject: "other_star_creator" });
+    await asOtherCreator.mutation(api.opportunities.star, { opportunityId });
+
+    const feed = await asCreator.query(api.opportunities.discover, { paginationOpts: firstPage });
+    const starred = await asCreator.query(api.opportunities.listStarred, {
+      paginationOpts: firstPage,
+    });
+
+    expect(feed.page).toMatchObject([{ _id: opportunityId, isStarred: false }]);
+    expect(starred.page).toEqual([]);
+  });
+
+  test("company responses don't include isStarred", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(t, { subject: "star_owner" });
+
+    const detail = await owner.asCompany.query(api.opportunities.get, {
+      opportunityId: owner.opportunityId,
+    });
+
+    expect(detail).not.toHaveProperty("isStarred");
+  });
+
+  test("rejects company users and operators", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(t, { subject: "star_owner" });
+    const asOperator = await seedOperator(t, "star_operator");
+    const args = { opportunityId: owner.opportunityId };
+
+    for (const caller of [owner.asCompany, asOperator]) {
+      await expectApiError(() => caller.mutation(api.opportunities.star, args), "forbidden");
+      await expectApiError(() => caller.mutation(api.opportunities.unstar, args), "forbidden");
+      await expectApiError(
+        () => caller.query(api.opportunities.listStarred, { paginationOpts: firstPage }),
+        "forbidden",
+      );
+    }
+  });
+
+  test("rejects a signed-out caller", async () => {
+    const t = convexTest(schema, modules);
+    const { opportunityId } = await seedOpportunity(t, { subject: "star_owner" });
+    await expectApiError(
+      () => t.mutation(api.opportunities.star, { opportunityId }),
+      "not_authenticated",
+    );
   });
 });

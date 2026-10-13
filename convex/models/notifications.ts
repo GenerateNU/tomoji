@@ -51,14 +51,29 @@ export async function notifyCreator(
   if (creator !== null) await createNotification(ctx, creator.userId, content);
 }
 
-/** Notifies the company member who created the opportunity. Other members are not notified. */
-export async function notifyOpportunityCreator(
+/**
+ * Notifies one company member's user. Company-side notifications go to a single
+ * member, such as `opportunity.createdBy`, not to everyone in the company.
+ */
+export async function notifyCompanyUser(
   ctx: MutationCtx,
-  opportunity: Doc<"opportunities">,
+  companyUserId: Id<"companyUsers">,
   content: NotificationContent,
 ): Promise<void> {
-  const member = await ctx.db.get("companyUsers", opportunity.createdBy);
+  const member = await ctx.db.get("companyUsers", companyUserId);
   if (member !== null) await createNotification(ctx, member.userId, content);
+}
+
+/**
+ * The creator's name for notification titles, so a company can tell
+ * notifications about different creators apart. Falls back through the legacy
+ * name and username to "A creator".
+ */
+export async function creatorName(ctx: QueryCtx, creatorId: Id<"creators">): Promise<string> {
+  const creator = await ctx.db.get("creators", creatorId);
+  const user = creator && (await ctx.db.get("users", creator.userId));
+  const fullName = [user?.firstName, user?.lastName].filter(Boolean).join(" ").trim();
+  return fullName || user?.name?.trim() || creator?.username || "A creator";
 }
 
 /** Lists the user's notifications newest first, optionally only read or unread ones. */

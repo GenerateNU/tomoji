@@ -6,6 +6,8 @@ import type { Doc, Id } from "../_generated/dataModel";
 import type { ApiErrorCode } from "../lib/errors";
 import { companyContext } from "../lib/functions";
 import { getCreatorByUserId } from "../models/creators";
+import { upsertXAccount, type XAccountLink } from "../models/xAccounts";
+import { encryptXTokens } from "../lib/xTokenEncryption";
 import { createCampaign } from "../models/campaigns";
 import { createOpportunity, type OpportunityCreate } from "../models/opportunities";
 import { finalizeMediaUpload, reserveMediaUpload } from "../models/media";
@@ -15,6 +17,89 @@ import type schema from "../schema";
 import type { submissionStatus } from "../schemas/submissions.schema";
 
 export type TestConvex = ConvexTest<typeof schema>;
+
+/** Reads a seeded user for direct model tests. */
+export async function requireSeededUser(t: TestConvex, subject: string) {
+  return await t.run(async (ctx) => {
+    const user = await getUserByWorkosId(ctx, subject);
+    if (user === null) throw new Error("expected seeded user");
+    return user;
+  });
+}
+
+// Synthetic key material only. Never use this fixture on a deployment.
+export const X_TOKEN_TEST_CONFIG = {
+  X_TOKEN_ENCRYPTION_KEY_VERSION: "v1",
+  X_TOKEN_ENCRYPTION_KEYS: JSON.stringify({ v1: btoa("a".repeat(32)) }),
+};
+
+type TestXAccountLink = Omit<XAccountLink, "encryptedTokens"> & {
+  accessToken: string;
+  refreshToken: string;
+};
+
+/** Encrypts synthetic provider tokens for direct model tests, never live credentials. */
+export async function xAccountLinkArgs(
+  creatorId: Id<"creators">,
+  overrides: Partial<TestXAccountLink> = {},
+): Promise<XAccountLink> {
+  const { accessToken, refreshToken, ...metadata } = {
+    xUserId: "123456789",
+    username: "ada",
+    displayName: "Ada Lovelace",
+    accessToken: "test-access-token",
+    refreshToken: "test-refresh-token",
+    accessTokenExpiresAt: Date.now() + 7_200_000,
+    scopes: ["tweet.read", "users.read", "offline.access"],
+    ...overrides,
+  };
+  return {
+    ...metadata,
+    encryptedTokens: await encryptXTokens(
+      creatorId,
+      { accessToken, refreshToken },
+      X_TOKEN_TEST_CONFIG,
+    ),
+  };
+}
+
+/** Seeds a creator and a verified connection through the model, without calling X. */
+export async function seedXAccount(
+  t: TestConvex,
+  subject: string,
+  overrides: Partial<TestXAccountLink> = {},
+) {
+  const existingUser = await t.run((ctx) => getUserByWorkosId(ctx, subject));
+  const creatorId =
+    existingUser === null
+      ? await seedCreatorId(t, subject)
+      : await t.run(async (ctx) => {
+          const creator = await getCreatorByUserId(ctx, existingUser._id);
+          if (creator === null) throw new Error("expected seeded creator");
+          return creator._id;
+        });
+  const link = await xAccountLinkArgs(creatorId, overrides);
+  const account = await t.run(async (ctx) => await upsertXAccount(ctx, creatorId, link));
+  return { creatorId, account, asCreator: t.withIdentity(workosIdentity({ subject })) };
+}
+
+/** Produces a synthetic X token exchange response, never live credentials. */
+export function xTokenResponse() {
+  return Response.json({
+    access_token: "new-access",
+    refresh_token: "new-refresh",
+    token_type: "bearer",
+    expires_in: 7200,
+    scope: "tweet.read users.read offline.access",
+  });
+}
+
+/** Produces an X identity whose ID must retain string precision. */
+export function xIdentityResponse() {
+  return Response.json({
+    data: { id: "12345678901234567890", username: "ada", name: "Ada Lovelace" },
+  });
+}
 
 /** Seeds an owned picture grant, optionally completing it without contacting S3. */
 export async function seedProfilePictureUpload(

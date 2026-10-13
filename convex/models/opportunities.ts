@@ -5,7 +5,7 @@ import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { apiError } from "../lib/errors";
 import { requireNonBlank, isHalfHourTimestamp } from "../lib/validation";
 import { requireMembership } from "./companyUsers";
-import { notifyCreator, notifyOpportunityCreator } from "./notifications";
+import { notifyCompanyUser, notifyCreator } from "./notifications";
 import schema from "../schema";
 
 export const opportunityCreate = schema
@@ -171,7 +171,7 @@ export async function closeExpiredOpportunities(ctx: MutationCtx): Promise<boole
     for (const opportunity of opportunities) {
       await applyOpportunityClose(ctx, opportunity);
       // A manual close is the company's own action; only the deadline close is news to them.
-      await notifyOpportunityCreator(ctx, opportunity, {
+      await notifyCompanyUser(ctx, opportunity.createdBy, {
         type: "opportunityClosed",
         title: `${opportunity.title} closed at its deadline`,
         target: { kind: "opportunity", opportunityId: opportunity._id },

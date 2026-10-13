@@ -6,7 +6,7 @@ import { apiError } from "../lib/errors";
 import { optionalNonBlank, requireNonBlank } from "../lib/validation";
 import { submissionShapes } from "../schemas/submissions.schema";
 import { requireAssignment, requireActiveAssignment, type AssignmentViewer } from "./assignments";
-import { notifyCreator, notifyOpportunityCreator } from "./notifications";
+import { creatorName, notifyCompanyUser, notifyCreator } from "./notifications";
 
 /** The creator-supplied fields of a new submission. */
 export const submissionDraft = v.object({
@@ -227,9 +227,9 @@ export async function createSubmission(
   if (opportunity !== null) {
     // A draft after a change request is the creator's response to that review.
     const isResubmission = latest?.status === "changesRequested";
-    await notifyOpportunityCreator(ctx, opportunity, {
+    await notifyCompanyUser(ctx, opportunity.createdBy, {
       type: isResubmission ? "submissionResubmitted" : "submissionCreated",
-      title: `${isResubmission ? "Updated" : "New"} draft submitted for ${opportunity.title}`,
+      title: `${await creatorName(ctx, creatorId)} ${isResubmission ? "resubmitted" : "submitted"} a draft for ${opportunity.title}`,
       target: { kind: "submission", submissionId, assignmentId: assignment._id },
     });
   }

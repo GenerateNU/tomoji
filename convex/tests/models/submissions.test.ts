@@ -752,7 +752,7 @@ describe("notifications", () => {
     expect(await memberNotifications(t, fixture.membership)).toEqual([
       {
         type: "submissionCreated",
-        title: `New draft submitted for ${title}`,
+        title: `Test submitted a draft for ${title}`,
         target: { kind: "submission", submissionId, assignmentId: fixture.assignmentId },
       },
     ]);
@@ -768,7 +768,7 @@ describe("notifications", () => {
     expect(await memberNotifications(t, fixture.membership)).toEqual([
       {
         type: "submissionResubmitted",
-        title: `Updated draft submitted for ${title}`,
+        title: `Test resubmitted a draft for ${title}`,
         target: { kind: "submission", submissionId, assignmentId: fixture.assignmentId },
       },
     ]);

@@ -177,7 +177,14 @@ export async function requireAssignment(
   return assignment;
 }
 
-function canViewAssignment(viewer: AssignmentViewer, assignment: Doc<"assignments">): boolean {
+/**
+ * Whether the viewer may see an assignment, or a row that copies its company
+ * and creator (such as a dispute).
+ */
+export function canViewAssignment(
+  viewer: AssignmentViewer,
+  assignment: Pick<Doc<"assignments">, "companyId" | "creatorId">,
+): boolean {
   switch (viewer.role) {
     case "operator":
       return true;

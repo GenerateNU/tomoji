@@ -3,7 +3,7 @@ import { v, type Infer } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { apiError } from "../lib/errors";
-import { requireNonBlank } from "../lib/validation";
+import { optionalNonBlank, requireNonBlank } from "../lib/validation";
 import {
   companyDisputeReasons,
   creatorDisputeReasons,
@@ -14,7 +14,7 @@ import {
   operatorDisputeOutcome,
 } from "../schemas/disputes.schema";
 import { userRole } from "../schemas/users.schema";
-import { requireAssignment, type AssignmentViewer } from "./assignments";
+import { canViewAssignment, requireAssignment, type AssignmentViewer } from "./assignments";
 
 export const disputeCreate = v.object({
   assignmentId: v.id("assignments"),
@@ -146,7 +146,8 @@ export async function resolveDispute(
     resolvedByRole: viewer.role,
     resolvedAt: Date.now(),
     outcome,
-    note: optionalNote(note),
+    // A blank note is stored as no note.
+    note: optionalNonBlank(note, "note", MAX_LENGTH.note),
   };
   await ctx.db.replace("disputes", dispute._id, resolved);
   return toDisputeView(viewer, resolved);
@@ -179,22 +180,10 @@ export async function overrideDispute(
     resolvedAt: Date.now(),
     outcome,
     note: requireNonBlank(note, "note", MAX_LENGTH.note),
-    overriddenResolution: {
-      resolvedBy: dispute.resolvedBy,
-      resolvedByRole: dispute.resolvedByRole,
-      resolvedAt: dispute.resolvedAt,
-      outcome: dispute.outcome,
-      note: dispute.note,
-    },
+    overriddenResolution: { resolvedBy: dispute.resolvedBy, ...withoutResolver(dispute) },
   };
   await ctx.db.replace("disputes", dispute._id, overridden);
   return overridden;
-}
-
-/** A missing or blank note is stored as no note. */
-function optionalNote(note: string | undefined): string | undefined {
-  if (note === undefined || note.trim() === "") return undefined;
-  return requireNonBlank(note, "note", MAX_LENGTH.note);
 }
 
 /** One dispute, as the viewer may see it. */
@@ -213,21 +202,12 @@ async function requireVisibleDispute(
   disputeId: Id<"disputes">,
 ): Promise<Doc<"disputes">> {
   const dispute = await ctx.db.get("disputes", disputeId);
-  if (dispute === null || !canViewDispute(viewer, dispute)) {
+  // A dispute's company and creator are copied from its assignment, so the
+  // assignment's access rule applies without reading it.
+  if (dispute === null || !canViewAssignment(viewer, dispute)) {
     throw apiError("not_found", { resource: "dispute" });
   }
   return dispute;
-}
-
-function canViewDispute(viewer: AssignmentViewer, dispute: Doc<"disputes">): boolean {
-  switch (viewer.role) {
-    case "operator":
-      return true;
-    case "creator":
-      return dispute.creatorId === viewer.creatorId;
-    case "company":
-      return dispute.companyId === viewer.companyId;
-  }
 }
 
 /**
@@ -324,6 +304,7 @@ function toCreatorView(dispute: Doc<"disputes">): DisputeView {
   };
 }
 
+/** A resolution's fields minus who resolved it. Also used to copy one aside on override. */
 function withoutResolver(
   resolution: Pick<ResolvedDispute, "resolvedByRole" | "resolvedAt" | "outcome" | "note">,
 ) {

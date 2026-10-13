@@ -18,6 +18,7 @@ import { canViewAssignment, requireAssignment, type AssignmentViewer } from "./a
 
 export const disputeCreate = v.object({
   assignmentId: v.id("assignments"),
+  postId: v.optional(v.id("posts")),
   reason: disputeReason,
   customReason: v.optional(v.string()),
   description: v.string(),
@@ -85,6 +86,9 @@ export async function createDispute(
     throw apiError("invalid_state", { reason: "dispute_reason_not_allowed" });
   }
   const customReason = requireCustomReason(input);
+  if (input.postId !== undefined) {
+    await requirePostOnAssignment(ctx, input.postId, assignment._id);
+  }
   const description = requireNonBlank(input.description, "description", MAX_LENGTH.description);
 
   return await ctx.db.insert("disputes", {
@@ -92,6 +96,7 @@ export async function createDispute(
     companyId: assignment.companyId,
     creatorId: assignment.creatorId,
     campaignId: assignment.campaignId,
+    postId: input.postId,
     openedBy,
     openedByRole: viewer.role,
     reason: input.reason,
@@ -99,6 +104,19 @@ export async function createDispute(
     description,
     status: "open",
   });
+}
+
+/** Reports a missing post and one from another assignment the same way. */
+async function requirePostOnAssignment(
+  ctx: MutationCtx,
+  postId: Id<"posts">,
+  assignmentId: Id<"assignments">,
+): Promise<void> {
+  const post = await ctx.db.get("posts", postId);
+  const submission = post && (await ctx.db.get("submissions", post.submissionId));
+  if (!submission || submission.assignmentId !== assignmentId) {
+    throw apiError("not_found", { resource: "post" });
+  }
 }
 
 /** "other" needs the opener's own reason; every other reason must leave it out. */
@@ -289,6 +307,7 @@ function toCreatorView(dispute: Doc<"disputes">): DisputeView {
     companyId: dispute.companyId,
     creatorId: dispute.creatorId,
     campaignId: dispute.campaignId,
+    postId: dispute.postId,
     openedByRole: dispute.openedByRole,
     reason: dispute.reason,
     customReason: dispute.customReason,

@@ -56,6 +56,8 @@ const disputeFields = {
   companyId: v.id("companies"),
   creatorId: v.id("creators"),
   campaignId: v.id("campaigns"),
+  // The post it's about, if the opener picked one. Always a post on this assignment.
+  postId: v.optional(v.id("posts")),
   // Lets creators see which side opened it without seeing who.
   openedByRole: userRole,
   reason: disputeReason,
@@ -102,6 +104,7 @@ export const disputesTable = defineTable(
   v.union(...disputeShapes(v.id("users"), v.id("users"), {})),
 )
   .index("by_assignmentId", ["assignmentId"])
+  .index("by_postId", ["postId"])
   .index("by_companyId_and_status_and_resolvedAt", ["companyId", "status", "resolvedAt"])
   .index("by_companyId_and_status_and_openedByRole_and_resolvedAt", [
     "companyId",

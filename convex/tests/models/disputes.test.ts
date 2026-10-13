@@ -23,8 +23,10 @@ import {
   seedCreatorId,
   seedDispute,
   seedMembership,
+  seedOneSubmission,
   seedOperatorId,
   seedOpportunity,
+  seedSubmission,
   storedDisputes,
   type AssignmentFixture,
   type TestConvex,
@@ -107,6 +109,18 @@ async function list(t: TestConvex, viewer: AssignmentViewer, filters: Partial<Di
   return page.map((dispute) => dispute._id);
 }
 
+async function insertPost(t: TestConvex, submissionId: Id<"submissions">) {
+  return await t.run(
+    async (ctx) =>
+      await ctx.db.insert("posts", {
+        submissionId,
+        url: "https://www.tiktok.com/@julia/video/1",
+        postedAt: Date.now(),
+        isVerified: true,
+      }),
+  );
+}
+
 /** The creator's result from an earlier day, for seeding disputes that are already resolved. */
 const pastRuling = {
   resolvedByRole: "creator",
@@ -140,6 +154,49 @@ describe("createDispute", () => {
         status: "open",
       },
     ]);
+  });
+
+  test("links the post it's about, which both sides then see", async () => {
+    const t = convexTest(schema, modules);
+    const { fixture, submissionId } = await seedOneSubmission(t, "approved");
+    const postId = await insertPost(t, submissionId);
+
+    const disputeId = await open(
+      t,
+      fixture,
+      { reason: "missingDisclosure", postId },
+      companyOf(fixture),
+    );
+
+    expect((await storedDisputes(t))[0].postId).toBe(postId);
+    const creatorView = await t.run(
+      async (ctx) => await requireDispute(ctx, creatorOf(fixture), disputeId),
+    );
+    expect(creatorView.postId).toBe(postId);
+  });
+
+  test("conceals a post from another assignment without writing", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await seedAssignmentFixture(t);
+    const opportunityId = await t.run(
+      async (ctx) => (await ctx.db.get("assignments", fixture.assignmentId))!.opportunityId,
+    );
+    const otherAssignmentId = await seedAssignment(t, {
+      opportunityId,
+      creatorId: await seedCreatorId(t, "other-creator"),
+      status: "active",
+    });
+    const otherSubmissionId = await seedSubmission(
+      t,
+      { ...fixture, assignmentId: otherAssignmentId },
+      "approved",
+    );
+    const postId = await insertPost(t, otherSubmissionId);
+
+    await expect(open(t, fixture, { postId })).rejects.toMatchObject({
+      data: { code: "not_found", resource: "post" },
+    });
+    expect(await storedDisputes(t)).toEqual([]);
   });
 
   test.each(["termsPending", "active", "completed", "cancelled"] as const)(

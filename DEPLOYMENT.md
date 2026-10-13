@@ -20,7 +20,7 @@ own database, isolated from other PRs and from production.
 [vercel.json](vercel.json) sets one build command for every environment:
 
 ```sh
-bunx convex deploy --cmd 'bun run build' --cmd-url-env-var-name NEXT_PUBLIC_CONVEX_URL
+npx convex deploy --cmd 'bun run build' --cmd-url-env-var-name NEXT_PUBLIC_CONVEX_URL
 ```
 
 `convex deploy` pushes functions and schema, then runs `next build` with

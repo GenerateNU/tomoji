@@ -16,15 +16,13 @@ import {
  * Creators, company users, and operators can all open one, and an assignment
  * can have several. Creators and companies each have their own reasons;
  * operators can give either. Picking "other" requires a `customReason` in the
- * opener's own words. `submissionId` and `postId` optionally say which part of
- * the assignment it's about. Text is stored trimmed.
+ * opener's own words. Evidence goes in the description. Text is stored trimmed.
  *
- * @throws `not_found` if the assignment, submission, or post doesn't exist or
- * isn't on the caller's assignment.
+ * @throws `not_found` if the assignment doesn't exist or isn't the caller's.
  * @throws `forbidden` if a company user's token names an org they don't belong to.
  * @throws `invalid_state` if the reason isn't one the caller's side can give, a
- * `customReason` is missing for "other" or given for any other reason, the post
- * isn't on the given submission, or the text is blank or too long.
+ * `customReason` is missing for "other" or given for any other reason, or the
+ * text is blank or too long.
  * @returns the new dispute's id.
  */
 export const create = authedMutation({

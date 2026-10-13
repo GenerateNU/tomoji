@@ -17,8 +17,6 @@ const disputeDoc = schema.doc("disputes");
 
 export const disputeCreate = disputeDoc.pick(
   "assignmentId",
-  "submissionId",
-  "postId",
   "reason",
   "customReason",
   "description",
@@ -65,7 +63,6 @@ export async function createDispute(
     throw apiError("invalid_state", { reason: "dispute_reason_not_allowed" });
   }
   const customReason = requireCustomReason(input);
-  await requireSubjectOnAssignment(ctx, assignment._id, input);
   const description = requireNonBlank(input.description, "description", MAX_LENGTH.description);
 
   return await ctx.db.insert("disputes", {
@@ -73,8 +70,6 @@ export async function createDispute(
     companyId: assignment.companyId,
     creatorId: assignment.creatorId,
     campaignId: assignment.campaignId,
-    submissionId: input.submissionId,
-    postId: input.postId,
     openedBy,
     openedByRole: viewer.role,
     reason: input.reason,
@@ -96,34 +91,6 @@ function requireCustomReason({
     throw apiError("invalid_state", { reason: "custom_reason_not_allowed" });
   }
   return undefined;
-}
-
-/**
- * The submission and post a dispute is about must be on its assignment, and a
- * post must be on the submission when both are given. A missing record and one
- * from another assignment are reported the same way.
- */
-async function requireSubjectOnAssignment(
-  ctx: MutationCtx,
-  assignmentId: Id<"assignments">,
-  { submissionId, postId }: Pick<DisputeCreate, "submissionId" | "postId">,
-): Promise<void> {
-  if (submissionId !== undefined) {
-    const submission = await ctx.db.get("submissions", submissionId);
-    if (submission === null || submission.assignmentId !== assignmentId) {
-      throw apiError("not_found", { resource: "submission" });
-    }
-  }
-  if (postId !== undefined) {
-    const post = await ctx.db.get("posts", postId);
-    const postSubmission = post && (await ctx.db.get("submissions", post.submissionId));
-    if (!post || !postSubmission || postSubmission.assignmentId !== assignmentId) {
-      throw apiError("not_found", { resource: "post" });
-    }
-    if (submissionId !== undefined && post.submissionId !== submissionId) {
-      throw apiError("invalid_state", { reason: "post_not_on_submission" });
-    }
-  }
 }
 
 /** One dispute, as the viewer may see it. */
@@ -225,8 +192,6 @@ function toCreatorView(dispute: Doc<"disputes">): DisputeView {
     companyId: dispute.companyId,
     creatorId: dispute.creatorId,
     campaignId: dispute.campaignId,
-    submissionId: dispute.submissionId,
-    postId: dispute.postId,
     openedByRole: dispute.openedByRole,
     reason: dispute.reason,
     customReason: dispute.customReason,

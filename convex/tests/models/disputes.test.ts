@@ -1,7 +1,6 @@
 /// <reference types="vite/client" />
 import { convexTest } from "convex-test";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import type { Id } from "../../_generated/dataModel";
 import type { AssignmentViewer } from "../../models/assignments";
 import {
   createDispute,
@@ -14,13 +13,10 @@ import schema from "../../schema";
 import { companyDisputeReasons, creatorDisputeReasons } from "../../schemas/disputes.schema";
 import {
   expectApiError,
-  seedAssignment,
   seedAssignmentFixture,
   seedCreatorId,
   seedDispute,
   seedMembership,
-  seedOneSubmission,
-  seedSubmission,
   storedDisputes,
   type AssignmentFixture,
   type TestConvex,
@@ -69,18 +65,6 @@ async function list(t: TestConvex, viewer: AssignmentViewer, filters: Partial<Di
   return page.map((dispute) => dispute._id);
 }
 
-async function insertPost(t: TestConvex, submissionId: Id<"submissions">) {
-  return await t.run(
-    async (ctx) =>
-      await ctx.db.insert("posts", {
-        submissionId,
-        url: "https://www.tiktok.com/@julia/video/1",
-        postedAt: Date.now(),
-        isVerified: true,
-      }),
-  );
-}
-
 describe("createDispute", () => {
   test("stores an open dispute with the assignment's owners and trimmed text", async () => {
     const t = convexTest(schema, modules);
@@ -106,71 +90,6 @@ describe("createDispute", () => {
         status: "open",
       },
     ]);
-  });
-
-  test("links the submission and post it's about", async () => {
-    const t = convexTest(schema, modules);
-    const { fixture, submissionId } = await seedOneSubmission(t, "approved");
-    const postId = await insertPost(t, submissionId);
-
-    await open(t, fixture, { reason: "unfairReview", submissionId, postId });
-
-    const [stored] = await storedDisputes(t);
-    expect(stored).toMatchObject({ submissionId, postId });
-  });
-
-  test("links a post on its own", async () => {
-    const t = convexTest(schema, modules);
-    const { fixture, submissionId } = await seedOneSubmission(t, "approved");
-    const postId = await insertPost(t, submissionId);
-
-    await open(t, fixture, { reason: "missingDisclosure", postId }, companyOf(fixture));
-
-    const [stored] = await storedDisputes(t);
-    expect(stored.postId).toBe(postId);
-    expect(stored.submissionId).toBeUndefined();
-  });
-
-  test.each(["submission", "post"] as const)(
-    "conceals a %s from another assignment without writing",
-    async (resource) => {
-      const t = convexTest(schema, modules);
-      const fixture = await seedAssignmentFixture(t);
-      const opportunityId = await t.run(
-        async (ctx) => (await ctx.db.get("assignments", fixture.assignmentId))!.opportunityId,
-      );
-      const otherAssignmentId = await seedAssignment(t, {
-        opportunityId,
-        creatorId: await seedCreatorId(t, "other-creator"),
-        status: "active",
-      });
-      const otherSubmissionId = await seedSubmission(
-        t,
-        { ...fixture, assignmentId: otherAssignmentId },
-        "approved",
-      );
-      const subject =
-        resource === "submission"
-          ? { submissionId: otherSubmissionId }
-          : { postId: await insertPost(t, otherSubmissionId) };
-
-      await expect(open(t, fixture, subject)).rejects.toMatchObject({
-        data: { code: "not_found", resource },
-      });
-      expect(await storedDisputes(t)).toEqual([]);
-    },
-  );
-
-  test("refuses a post that isn't on the given submission", async () => {
-    const t = convexTest(schema, modules);
-    const fixture = await seedAssignmentFixture(t);
-    const earlier = await seedSubmission(t, fixture, "changesRequested");
-    const approved = await seedSubmission(t, fixture, "approved");
-    const postId = await insertPost(t, approved);
-
-    await expect(open(t, fixture, { submissionId: earlier, postId })).rejects.toMatchObject({
-      data: { code: "invalid_state", reason: "post_not_on_submission" },
-    });
   });
 
   test.each(["termsPending", "active", "completed", "cancelled"] as const)(

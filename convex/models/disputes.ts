@@ -3,7 +3,7 @@ import { v, type Infer } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { apiError } from "../lib/errors";
-import { requireBoundedText } from "../lib/validation";
+import { requireNonBlank } from "../lib/validation";
 import {
   companyDisputeReasons,
   creatorDisputeReasons,
@@ -14,14 +14,14 @@ import {
 } from "../schemas/disputes.schema";
 import { userRole } from "../schemas/users.schema";
 import { requireAssignment, type AssignmentViewer } from "./assignments";
-import { getLatestSubmission } from "./submissions";
 
-export const disputeDraft = v.object({
+export const disputeCreate = v.object({
   assignmentId: v.id("assignments"),
   reason: disputeReason,
+  customReason: v.optional(v.string()),
   description: v.string(),
 });
-export type DisputeDraft = Infer<typeof disputeDraft>;
+export type DisputeCreate = Infer<typeof disputeCreate>;
 
 /** An operator's ruling on an open dispute. */
 export const disputeResolution = v.object({
@@ -57,13 +57,10 @@ const REASONS_BY_ROLE: Record<AssignmentViewer["role"], readonly DisputeReason[]
 };
 
 const MAX_LENGTH = {
+  customReason: 200,
   description: 5000,
   decision: 2000,
 } as const;
-
-// An assignment has at most one approved submission, but a post can be shared
-// to several platforms; this caps the read without expecting to reach it.
-const MAX_EVIDENCE_POSTS = 20;
 
 /**
  * Opens a dispute on any assignment the caller can see, whatever its status.
@@ -73,13 +70,14 @@ export async function createDispute(
   ctx: MutationCtx,
   viewer: AssignmentViewer,
   openedBy: Id<"users">,
-  draft: DisputeDraft,
+  input: DisputeCreate,
 ): Promise<Id<"disputes">> {
-  const assignment = await requireAssignment(ctx, viewer, draft.assignmentId);
-  if (!REASONS_BY_ROLE[viewer.role].includes(draft.reason)) {
+  const assignment = await requireAssignment(ctx, viewer, input.assignmentId);
+  if (!REASONS_BY_ROLE[viewer.role].includes(input.reason)) {
     throw apiError("invalid_state", { reason: "dispute_reason_not_allowed" });
   }
-  const description = requireBoundedText(draft.description, "description", MAX_LENGTH.description);
+  const customReason = requireCustomReason(input);
+  const description = requireNonBlank(input.description, "description", MAX_LENGTH.description);
 
   return await ctx.db.insert("disputes", {
     assignmentId: assignment._id,
@@ -88,30 +86,25 @@ export async function createDispute(
     campaignId: assignment.campaignId,
     openedBy,
     openedByRole: viewer.role,
-    reason: draft.reason,
+    reason: input.reason,
+    customReason,
     description,
-    ...(await evidenceOnFile(ctx, assignment._id)),
     status: "open",
   });
 }
 
-/**
- * The assignment's approved submission and its posts. Creating a submission is
- * refused once one is approved, so an approved one is always the newest.
- */
-async function evidenceOnFile(
-  ctx: MutationCtx,
-  assignmentId: Id<"assignments">,
-): Promise<Pick<Doc<"disputes">, "evidenceSubmissionIds" | "evidencePostIds">> {
-  const latest = await getLatestSubmission(ctx, assignmentId);
-  if (latest?.status !== "approved") {
-    return { evidenceSubmissionIds: [], evidencePostIds: [] };
+/** "other" needs the opener's own reason; every other reason must leave it out. */
+function requireCustomReason({
+  reason,
+  customReason,
+}: Pick<DisputeCreate, "reason" | "customReason">): string | undefined {
+  if (reason === "other") {
+    return requireNonBlank(customReason ?? "", "customReason", MAX_LENGTH.customReason);
   }
-  const posts = await ctx.db
-    .query("posts")
-    .withIndex("by_submissionId", (q) => q.eq("submissionId", latest._id))
-    .take(MAX_EVIDENCE_POSTS);
-  return { evidenceSubmissionIds: [latest._id], evidencePostIds: posts.map((post) => post._id) };
+  if (customReason !== undefined) {
+    throw apiError("invalid_state", { reason: "custom_reason_not_allowed" });
+  }
+  return undefined;
 }
 
 /** Closes an open dispute. Errors are listed on the `disputes.resolve` route. */
@@ -133,7 +126,7 @@ export async function resolveDispute(
     resolvedBy,
     resolvedAt: Date.now(),
     outcome: resolution.outcome,
-    decision: requireBoundedText(resolution.decision, "decision", MAX_LENGTH.decision),
+    decision: requireNonBlank(resolution.decision, "decision", MAX_LENGTH.decision),
   };
   await ctx.db.replace("disputes", disputeId, resolved);
   return resolved;
@@ -244,9 +237,8 @@ function toCreatorView(dispute: Doc<"disputes">): DisputeView {
     campaignId: dispute.campaignId,
     openedByRole: dispute.openedByRole,
     reason: dispute.reason,
+    customReason: dispute.customReason,
     description: dispute.description,
-    evidenceSubmissionIds: dispute.evidenceSubmissionIds,
-    evidencePostIds: dispute.evidencePostIds,
   };
   if (dispute.status === "open") return { ...opened, status: "open" };
   return {

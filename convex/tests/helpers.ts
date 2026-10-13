@@ -458,8 +458,6 @@ export async function seedDispute(
       openedByRole: "creator" as const,
       reason: "unfairReview" as const,
       description: "The brief allows showing the deploy log, which the review asked me to cut.",
-      evidenceSubmissionIds: [],
-      evidencePostIds: [],
       ...fields,
     };
     return await ctx.db.insert(

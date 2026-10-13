@@ -57,11 +57,9 @@ const disputeFields = {
   // Lets creators see which side opened it without seeing who.
   openedByRole: userRole,
   reason: disputeReason,
+  // The opener's own words when `reason` is "other", and only then.
+  customReason: v.optional(v.string()),
   description: v.string(),
-  // Recorded by the server when it's opened: the assignment's approved
-  // submission and its posts. Never changes after.
-  evidenceSubmissionIds: v.array(v.id("submissions")),
-  evidencePostIds: v.array(v.id("posts")),
 };
 
 type UserIdValidator = Validator<Id<"users"> | undefined, OptionalProperty, string>;
@@ -94,6 +92,7 @@ export function disputeShapes<
 export const disputesTable = defineTable(
   v.union(...disputeShapes(v.id("users"), v.id("users"), {})),
 )
+  .index("by_assignmentId", ["assignmentId"])
   .index("by_companyId_and_status_and_resolvedAt", ["companyId", "status", "resolvedAt"])
   .index("by_companyId_and_status_and_openedByRole_and_resolvedAt", [
     "companyId",

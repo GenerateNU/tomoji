@@ -1,22 +1,32 @@
 /// <reference types="vite/client" />
 import { convexTest } from "convex-test";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import type { Id } from "../../_generated/dataModel";
 import type { AssignmentViewer } from "../../models/assignments";
 import {
   createDispute,
   listDisputes,
   requireDispute,
+  overrideDispute,
+  resolveDispute,
   type DisputeCreate,
   type DisputeListFilters,
+  type DisputeOverride,
+  type DisputeResolution,
 } from "../../models/disputes";
 import schema from "../../schema";
 import { companyDisputeReasons, creatorDisputeReasons } from "../../schemas/disputes.schema";
 import {
   expectApiError,
+  seedAssignment,
   seedAssignmentFixture,
   seedCreatorId,
   seedDispute,
   seedMembership,
+  seedOneSubmission,
+  seedOperatorId,
+  seedOpportunity,
+  seedSubmission,
   storedDisputes,
   type AssignmentFixture,
   type TestConvex,
@@ -41,6 +51,8 @@ function companyOf(fixture: AssignmentFixture): AssignmentViewer {
   return { role: "company", companyId: fixture.membership.companyId };
 }
 
+const operator: AssignmentViewer = { role: "operator" };
+
 /** Opens a dispute on the fixture's assignment, as its creator unless `viewer` says otherwise. */
 async function open(
   t: TestConvex,
@@ -57,6 +69,38 @@ async function open(
   return await t.run(async (ctx) => await createDispute(ctx, viewer, fixture.creatorUserId, input));
 }
 
+/** Resolves a dispute as `viewer`, approved with a note unless `overrides` says otherwise. */
+async function resolve(
+  t: TestConvex,
+  viewer: AssignmentViewer,
+  resolvedBy: Id<"users">,
+  disputeId: Id<"disputes">,
+  overrides: Partial<DisputeResolution> = {},
+) {
+  const resolution: DisputeResolution = {
+    outcome: "approved",
+    note: "  Paid over email on Oct 9.  ",
+    ...overrides,
+  };
+  return await t.run(
+    async (ctx) => await resolveDispute(ctx, viewer, resolvedBy, disputeId, resolution),
+  );
+}
+
+async function override(
+  t: TestConvex,
+  resolvedBy: Id<"users">,
+  disputeId: Id<"disputes">,
+  overrides: Partial<DisputeOverride> = {},
+) {
+  const ruling: DisputeOverride = {
+    outcome: "denied",
+    note: "  The brief required the disclosure in the first 5 seconds.  ",
+    ...overrides,
+  };
+  return await t.run(async (ctx) => await overrideDispute(ctx, resolvedBy, disputeId, ruling));
+}
+
 async function list(t: TestConvex, viewer: AssignmentViewer, filters: Partial<DisputeListFilters>) {
   const { page } = await t.run(
     async (ctx) =>
@@ -64,6 +108,26 @@ async function list(t: TestConvex, viewer: AssignmentViewer, filters: Partial<Di
   );
   return page.map((dispute) => dispute._id);
 }
+
+async function insertPost(t: TestConvex, submissionId: Id<"submissions">) {
+  return await t.run(
+    async (ctx) =>
+      await ctx.db.insert("posts", {
+        submissionId,
+        url: "https://www.tiktok.com/@julia/video/1",
+        postedAt: Date.now(),
+        isVerified: true,
+      }),
+  );
+}
+
+/** The creator's result from an earlier day, for seeding disputes that are already resolved. */
+const pastRuling = {
+  resolvedByRole: "creator",
+  resolvedAt: Date.parse("2026-10-07T12:00:00Z"),
+  outcome: "approved",
+  note: "Sorted over email.",
+} as const;
 
 describe("createDispute", () => {
   test("stores an open dispute with the assignment's owners and trimmed text", async () => {
@@ -90,6 +154,49 @@ describe("createDispute", () => {
         status: "open",
       },
     ]);
+  });
+
+  test("links the post it's about, which both sides then see", async () => {
+    const t = convexTest(schema, modules);
+    const { fixture, submissionId } = await seedOneSubmission(t, "approved");
+    const postId = await insertPost(t, submissionId);
+
+    const disputeId = await open(
+      t,
+      fixture,
+      { reason: "missingDisclosure", postId },
+      companyOf(fixture),
+    );
+
+    expect((await storedDisputes(t))[0].postId).toBe(postId);
+    const creatorView = await t.run(
+      async (ctx) => await requireDispute(ctx, creatorOf(fixture), disputeId),
+    );
+    expect(creatorView.postId).toBe(postId);
+  });
+
+  test("conceals a post from another assignment without writing", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await seedAssignmentFixture(t);
+    const opportunityId = await t.run(
+      async (ctx) => (await ctx.db.get("assignments", fixture.assignmentId))!.opportunityId,
+    );
+    const otherAssignmentId = await seedAssignment(t, {
+      opportunityId,
+      creatorId: await seedCreatorId(t, "other-creator"),
+      status: "active",
+    });
+    const otherSubmissionId = await seedSubmission(
+      t,
+      { ...fixture, assignmentId: otherAssignmentId },
+      "approved",
+    );
+    const postId = await insertPost(t, otherSubmissionId);
+
+    await expect(open(t, fixture, { postId })).rejects.toMatchObject({
+      data: { code: "not_found", resource: "post" },
+    });
+    expect(await storedDisputes(t)).toEqual([]);
   });
 
   test.each(["termsPending", "active", "completed", "cancelled"] as const)(
@@ -142,8 +249,8 @@ describe("createDispute", () => {
     const t = convexTest(schema, modules);
     const fixture = await seedAssignmentFixture(t);
 
-    await open(t, fixture, { reason: "missingDisclosure" }, { role: "operator" });
-    await open(t, fixture, { reason: "payoutAmount" }, { role: "operator" });
+    await open(t, fixture, { reason: "missingDisclosure" }, operator);
+    await open(t, fixture, { reason: "payoutAmount" }, operator);
 
     expect(await storedDisputes(t)).toHaveLength(2);
   });
@@ -235,6 +342,238 @@ describe("createDispute", () => {
   });
 });
 
+describe("resolveDispute", () => {
+  test("lets the opener's side close it with an outcome and a trimmed note", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await seedAssignmentFixture(t);
+    const disputeId = await seedDispute(t, fixture);
+
+    await resolve(t, creatorOf(fixture), fixture.creatorUserId, disputeId);
+
+    const [stored] = await storedDisputes(t);
+    expect(stored).toMatchObject({
+      status: "resolved",
+      resolvedBy: fixture.creatorUserId,
+      resolvedByRole: "creator",
+      resolvedAt: Date.now(),
+      outcome: "approved",
+      note: "Paid over email on Oct 9.",
+    });
+  });
+
+  test("lets any member of a company close the company's dispute", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await seedAssignmentFixture(t);
+    const disputeId = await seedDispute(t, fixture, {
+      openedBy: fixture.membership.userId,
+      openedByRole: "company",
+      reason: "missingDisclosure",
+    });
+    const teammate = await seedMembership(t, "teammate", "org_fixture");
+
+    await resolve(t, companyOf(fixture), teammate.membership.userId, disputeId, {
+      outcome: "denied",
+    });
+
+    expect((await storedDisputes(t))[0]).toMatchObject({
+      resolvedBy: teammate.membership.userId,
+      resolvedByRole: "company",
+      outcome: "denied",
+    });
+  });
+
+  test("leaves a blank note out", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await seedAssignmentFixture(t);
+    const disputeId = await seedDispute(t, fixture);
+
+    await resolve(t, creatorOf(fixture), fixture.creatorUserId, disputeId, { note: "   " });
+
+    expect((await storedDisputes(t))[0]).not.toHaveProperty("note");
+  });
+
+  test("lets the opener withdraw", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await seedAssignmentFixture(t);
+    const disputeId = await seedDispute(t, fixture);
+
+    await resolve(t, creatorOf(fixture), fixture.creatorUserId, disputeId, {
+      outcome: "withdrawn",
+    });
+
+    expect((await storedDisputes(t))[0]).toMatchObject({ outcome: "withdrawn" });
+  });
+
+  test("lets an operator resolve an open dispute directly", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await seedAssignmentFixture(t);
+    const disputeId = await seedDispute(t, fixture);
+    const operatorId = await seedOperatorId(t, "operator");
+
+    await resolve(t, operator, operatorId, disputeId, { outcome: "denied" });
+
+    expect((await storedDisputes(t))[0]).toMatchObject({
+      resolvedBy: operatorId,
+      resolvedByRole: "operator",
+      outcome: "denied",
+    });
+  });
+
+  test("refuses the other side without changing it", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await seedAssignmentFixture(t);
+    const disputeId = await seedDispute(t, fixture);
+
+    await expect(
+      resolve(t, companyOf(fixture), fixture.membership.userId, disputeId),
+    ).rejects.toMatchObject({ data: { code: "forbidden", reason: "not_opener" } });
+    expect((await storedDisputes(t))[0].status).toBe("open");
+  });
+
+  test("refuses an operator withdrawing a dispute they didn't open", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await seedAssignmentFixture(t);
+    const disputeId = await seedDispute(t, fixture);
+    const operatorId = await seedOperatorId(t, "operator");
+
+    await expect(
+      resolve(t, operator, operatorId, disputeId, { outcome: "withdrawn" }),
+    ).rejects.toMatchObject({
+      data: { code: "invalid_state", reason: "withdraw_by_opener_only" },
+    });
+  });
+
+  test("refuses a resolved dispute without changing it", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await seedAssignmentFixture(t);
+    const disputeId = await seedDispute(
+      t,
+      fixture,
+      {},
+      { ...pastRuling, resolvedBy: fixture.creatorUserId },
+    );
+    const before = await storedDisputes(t);
+
+    await expect(
+      resolve(t, creatorOf(fixture), fixture.creatorUserId, disputeId, { outcome: "denied" }),
+    ).rejects.toMatchObject({ data: { code: "invalid_state", reason: "already_resolved" } });
+    expect(await storedDisputes(t)).toEqual(before);
+  });
+
+  test("refuses a note over 2000 characters", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await seedAssignmentFixture(t);
+    const disputeId = await seedDispute(t, fixture);
+
+    await expect(
+      resolve(t, creatorOf(fixture), fixture.creatorUserId, disputeId, {
+        note: "x".repeat(2001),
+      }),
+    ).rejects.toMatchObject({ data: { code: "invalid_state", reason: "note_too_long" } });
+  });
+
+  test("conceals another company's dispute", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await seedAssignmentFixture(t);
+    const disputeId = await seedDispute(t, fixture);
+    const { membership } = await seedMembership(t, "outsider");
+
+    await expectApiError(
+      () =>
+        resolve(
+          t,
+          { role: "company", companyId: membership.companyId },
+          membership.userId,
+          disputeId,
+        ),
+      "not_found",
+    );
+  });
+});
+
+describe("overrideDispute", () => {
+  test("replaces the opener's result and keeps it on record", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await seedAssignmentFixture(t);
+    const disputeId = await seedDispute(
+      t,
+      fixture,
+      {},
+      { ...pastRuling, resolvedBy: fixture.creatorUserId },
+    );
+    const operatorId = await seedOperatorId(t, "operator");
+
+    const result = await override(t, operatorId, disputeId);
+
+    const [stored] = await storedDisputes(t);
+    expect(result).toEqual(stored);
+    expect(stored).toMatchObject({
+      status: "resolved",
+      resolvedBy: operatorId,
+      resolvedByRole: "operator",
+      resolvedAt: Date.now(),
+      outcome: "denied",
+      note: "The brief required the disclosure in the first 5 seconds.",
+      overriddenResolution: { ...pastRuling, resolvedBy: fixture.creatorUserId },
+    });
+  });
+
+  test("refuses an open dispute", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await seedAssignmentFixture(t);
+    const disputeId = await seedDispute(t, fixture);
+    const operatorId = await seedOperatorId(t, "operator");
+
+    await expect(override(t, operatorId, disputeId)).rejects.toMatchObject({
+      data: { code: "invalid_state", reason: "dispute_not_resolved" },
+    });
+  });
+
+  test("refuses to override Tomoji's own ruling without changing it", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await seedAssignmentFixture(t);
+    const operatorId = await seedOperatorId(t, "operator");
+    const disputeId = await seedDispute(
+      t,
+      fixture,
+      {},
+      { ...pastRuling, resolvedBy: operatorId, resolvedByRole: "operator" },
+    );
+    const before = await storedDisputes(t);
+
+    await expect(override(t, operatorId, disputeId)).rejects.toMatchObject({
+      data: { code: "invalid_state", reason: "operator_ruling_final" },
+    });
+    expect(await storedDisputes(t)).toEqual(before);
+  });
+
+  test("requires a reason", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await seedAssignmentFixture(t);
+    const disputeId = await seedDispute(
+      t,
+      fixture,
+      {},
+      { ...pastRuling, resolvedBy: fixture.creatorUserId },
+    );
+    const operatorId = await seedOperatorId(t, "operator");
+
+    await expect(override(t, operatorId, disputeId, { note: "  " })).rejects.toMatchObject({
+      data: { code: "invalid_state", reason: "note_blank" },
+    });
+  });
+
+  test("reports a missing dispute as not found", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await seedAssignmentFixture(t);
+    const disputeId = await seedDispute(t, fixture);
+    const operatorId = await seedOperatorId(t, "operator");
+    await t.run(async (ctx) => await ctx.db.delete("disputes", disputeId));
+
+    await expectApiError(() => override(t, operatorId, disputeId), "not_found");
+  });
+});
+
 describe("requireDispute", () => {
   test("gives company users and operators the stored row", async () => {
     const t = convexTest(schema, modules);
@@ -242,23 +581,32 @@ describe("requireDispute", () => {
     const disputeId = await seedDispute(t, fixture);
     const [stored] = await storedDisputes(t);
 
-    for (const viewer of [companyOf(fixture), { role: "operator" } as const]) {
+    for (const viewer of [companyOf(fixture), operator]) {
       const view = await t.run(async (ctx) => await requireDispute(ctx, viewer, disputeId));
       expect(view).toEqual(stored);
     }
   });
 
-  test("gives creators the side that opened it and the resolution, but no user IDs", async () => {
+  test("gives creators who closed it and how, but no user IDs", async () => {
     const t = convexTest(schema, modules);
     const fixture = await seedAssignmentFixture(t);
-    const disputeId = await seedDispute(t, fixture, {
-      openedBy: fixture.membership.userId,
-      openedByRole: "company",
-      reason: "missingDisclosure",
-      status: "resolved",
+    const companyResult = {
+      ...pastRuling,
       resolvedBy: fixture.membership.userId,
-      resolution: "Disclosure added; no further action.",
-    });
+      resolvedByRole: "company",
+    } as const;
+    const disputeId = await seedDispute(
+      t,
+      fixture,
+      {
+        openedBy: fixture.membership.userId,
+        openedByRole: "company",
+        reason: "missingDisclosure",
+      },
+      companyResult,
+    );
+    const operatorId = await seedOperatorId(t, "operator");
+    await override(t, operatorId, disputeId);
 
     const view = await t.run(
       async (ctx) => await requireDispute(ctx, creatorOf(fixture), disputeId),
@@ -268,8 +616,14 @@ describe("requireDispute", () => {
     expect(view).not.toHaveProperty("resolvedBy");
     expect(view).toMatchObject({
       openedByRole: "company",
-      resolution: "Disclosure added; no further action.",
+      status: "resolved",
+      resolvedByRole: "operator",
+      outcome: "denied",
+      overriddenResolution: { resolvedByRole: "company", outcome: "approved" },
     });
+    expect(view.status === "resolved" && view.overriddenResolution).not.toHaveProperty(
+      "resolvedBy",
+    );
   });
 
   test("reports another company's dispute and a missing one the same way", async () => {
@@ -281,8 +635,10 @@ describe("requireDispute", () => {
     const missingId = await seedDispute(t, fixture);
     await t.run(async (ctx) => await ctx.db.delete("disputes", missingId));
 
-    for (const id of [disputeId, missingId]) {
-      const viewer = id === disputeId ? outsider : companyOf(fixture);
+    for (const [viewer, id] of [
+      [outsider, disputeId],
+      [companyOf(fixture), missingId],
+    ] as const) {
       await expect(
         t.run(async (ctx) => await requireDispute(ctx, viewer, id)),
       ).rejects.toMatchObject({ data: { code: "not_found", resource: "dispute" } });
@@ -291,16 +647,32 @@ describe("requireDispute", () => {
 });
 
 describe("listDisputes", () => {
-  test("lists only the company's disputes in the given status, newest first", async () => {
+  test("lists the company's open disputes newest first", async () => {
     const t = convexTest(schema, modules);
     const fixture = await seedAssignmentFixture(t);
     const older = await seedDispute(t, fixture);
     vi.advanceTimersByTime(1000);
     const newer = await seedDispute(t, fixture);
-    const resolved = await seedDispute(t, fixture, { status: "resolved" });
+    const operatorId = await seedOperatorId(t, "operator");
+    await seedDispute(t, fixture, {}, { ...pastRuling, resolvedBy: operatorId });
 
-    expect(await list(t, companyOf(fixture), { status: "open" })).toEqual([newer, older]);
-    expect(await list(t, companyOf(fixture), { status: "resolved" })).toEqual([resolved]);
+    expect(await list(t, companyOf(fixture), {})).toEqual([newer, older]);
+  });
+
+  test("lists resolved disputes most recently closed first", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await seedAssignmentFixture(t);
+    const operatorId = await seedOperatorId(t, "operator");
+    const closedFirst = await seedDispute(t, fixture);
+    const closedLast = await seedDispute(t, fixture);
+    await resolve(t, operator, operatorId, closedLast);
+    vi.advanceTimersByTime(1000);
+    await resolve(t, operator, operatorId, closedFirst);
+
+    expect(await list(t, companyOf(fixture), { status: "resolved" })).toEqual([
+      closedFirst,
+      closedLast,
+    ]);
   });
 
   test("keeps only one side's disputes when asked", async () => {
@@ -315,6 +687,7 @@ describe("listDisputes", () => {
 
     expect(await list(t, companyOf(fixture), { openedByRole: "creator" })).toEqual([byCreator]);
     expect(await list(t, creatorOf(fixture), { openedByRole: "company" })).toEqual([byCompany]);
+    expect(await list(t, operator, { openedByRole: "company" })).toEqual([byCompany]);
   });
 
   test("lists the creator's disputes and nobody else's", async () => {
@@ -325,6 +698,23 @@ describe("listDisputes", () => {
 
     expect(await list(t, creatorOf(fixture), {})).toEqual([disputeId]);
     expect(await list(t, { role: "creator", creatorId: otherCreatorId }, {})).toEqual([]);
+  });
+
+  test("gives operators every company's open disputes, oldest first", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await seedAssignmentFixture(t);
+    const first = await seedDispute(t, fixture);
+    vi.advanceTimersByTime(1000);
+    const other = await seedOpportunity(t, { subject: "other-owner", orgId: "org_other" });
+    const otherAssignmentId = await seedAssignment(t, {
+      opportunityId: other.opportunityId,
+      creatorId: await seedCreatorId(t, "other-creator"),
+      status: "active",
+    });
+    const second = await seedDispute(t, { ...fixture, assignmentId: otherAssignmentId });
+
+    expect(await list(t, operator, {})).toEqual([first, second]);
+    expect(await list(t, companyOf(fixture), {})).toEqual([first]);
   });
 
   test("gives each row the same view as requireDispute", async () => {
@@ -340,11 +730,5 @@ describe("listDisputes", () => {
     }));
 
     expect(page).toEqual([single]);
-  });
-
-  test("refuses operators, who will have their own queue", async () => {
-    const t = convexTest(schema, modules);
-
-    await expectApiError(() => list(t, { role: "operator" }, {}), "forbidden");
   });
 });

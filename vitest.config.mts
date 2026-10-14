@@ -24,6 +24,8 @@ export default defineConfig({
       },
       {
         // Everything else: pure units, helpers, stage-machine logic.
+        // Mirrors the `@/*` path in tsconfig.json so app code imports resolve.
+        resolve: { alias: { "@/": new URL("./src/", import.meta.url).pathname } },
         test: {
           name: "unit",
           environment: "node",

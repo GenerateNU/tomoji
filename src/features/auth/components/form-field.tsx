@@ -25,6 +25,9 @@ export function FormField({ label, error, hint, labelAction, id, ...inputProps }
         {labelAction}
       </div>
       <Input
+        // Base UI reads defaultValue only on mount. When a server response
+        // hands back what the user typed, start a fresh input with it.
+        key={String(inputProps.defaultValue ?? "")}
         id={inputId}
         aria-invalid={error ? true : undefined}
         aria-describedby={message ? messageId : undefined}

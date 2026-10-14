@@ -3,7 +3,8 @@ import { authkitProxy } from "@workos-inc/authkit-nextjs";
 export default authkitProxy({
   middlewareAuth: {
     enabled: true,
-    unauthenticatedPaths: ["/", "/auth/:path*"],
+    // Handle signed-out X callbacks here without forwarding provider codes to sign-in.
+    unauthenticatedPaths: ["/", "/auth/:path*", "/api/x/callback"],
   },
 });
 

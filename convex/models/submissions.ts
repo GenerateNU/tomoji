@@ -52,11 +52,7 @@ const MAX_LENGTH = {
 } as const;
 
 function requireText(value: string, field: keyof typeof MAX_LENGTH): string {
-  const trimmed = requireNonBlank(value, field);
-  if (trimmed.length > MAX_LENGTH[field]) {
-    throw apiError("invalid_state", { reason: `${field}_too_long` });
-  }
-  return trimmed;
+  return requireNonBlank(value, field, MAX_LENGTH[field]);
 }
 
 /** Like `requireText`, but a missing or blank value becomes `undefined`. */

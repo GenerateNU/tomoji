@@ -16,6 +16,7 @@ import type * as companies from "../companies.js";
 import type * as companyUsers from "../companyUsers.js";
 import type * as creators from "../creators.js";
 import type * as crons from "../crons.js";
+import type * as disputes from "../disputes.js";
 import type * as http from "../http.js";
 import type * as lib_authz from "../lib/authz.js";
 import type * as lib_errors from "../lib/errors.js";
@@ -24,6 +25,7 @@ import type * as lib_identity from "../lib/identity.js";
 import type * as lib_mediaUploadPolicy from "../lib/mediaUploadPolicy.js";
 import type * as lib_s3 from "../lib/s3.js";
 import type * as lib_validation from "../lib/validation.js";
+import type * as lib_xOAuth from "../lib/xOAuth.js";
 import type * as lib_xTokenEncryption from "../lib/xTokenEncryption.js";
 import type * as media from "../media.js";
 import type * as mediaInternal from "../mediaInternal.js";
@@ -37,16 +39,20 @@ import type * as models_campaigns from "../models/campaigns.js";
 import type * as models_companies from "../models/companies.js";
 import type * as models_companyUsers from "../models/companyUsers.js";
 import type * as models_creators from "../models/creators.js";
+import type * as models_disputes from "../models/disputes.js";
 import type * as models_media from "../models/media.js";
 import type * as models_opportunities from "../models/opportunities.js";
 import type * as models_submissions from "../models/submissions.js";
 import type * as models_users from "../models/users.js";
+import type * as models_xAccountLookup from "../models/xAccountLookup.js";
 import type * as models_xAccounts from "../models/xAccounts.js";
+import type * as models_xLinkAttempts from "../models/xLinkAttempts.js";
 import type * as opportunities from "../opportunities.js";
 import type * as submissions from "../submissions.js";
 import type * as tests_helpers from "../tests/helpers.js";
 import type * as users from "../users.js";
 import type * as xAccounts from "../xAccounts.js";
+import type * as xAccountsInternal from "../xAccountsInternal.js";
 
 import type {
   ApiFromModules,
@@ -63,6 +69,7 @@ declare const fullApi: ApiFromModules<{
   companyUsers: typeof companyUsers;
   creators: typeof creators;
   crons: typeof crons;
+  disputes: typeof disputes;
   http: typeof http;
   "lib/authz": typeof lib_authz;
   "lib/errors": typeof lib_errors;
@@ -71,6 +78,7 @@ declare const fullApi: ApiFromModules<{
   "lib/mediaUploadPolicy": typeof lib_mediaUploadPolicy;
   "lib/s3": typeof lib_s3;
   "lib/validation": typeof lib_validation;
+  "lib/xOAuth": typeof lib_xOAuth;
   "lib/xTokenEncryption": typeof lib_xTokenEncryption;
   media: typeof media;
   mediaInternal: typeof mediaInternal;
@@ -84,16 +92,20 @@ declare const fullApi: ApiFromModules<{
   "models/companies": typeof models_companies;
   "models/companyUsers": typeof models_companyUsers;
   "models/creators": typeof models_creators;
+  "models/disputes": typeof models_disputes;
   "models/media": typeof models_media;
   "models/opportunities": typeof models_opportunities;
   "models/submissions": typeof models_submissions;
   "models/users": typeof models_users;
+  "models/xAccountLookup": typeof models_xAccountLookup;
   "models/xAccounts": typeof models_xAccounts;
+  "models/xLinkAttempts": typeof models_xLinkAttempts;
   opportunities: typeof opportunities;
   submissions: typeof submissions;
   "tests/helpers": typeof tests_helpers;
   users: typeof users;
   xAccounts: typeof xAccounts;
+  xAccountsInternal: typeof xAccountsInternal;
 }>;
 
 /**

@@ -39,7 +39,7 @@ describe("creators.me", () => {
       if (creator === null) throw new Error("expected seeded creator");
       return creator._id;
     });
-    const expected = { creatorId, email: "creator_names@example.com", ...names };
+    const expected = { creatorId, email: "creator_names@example.com", niches: [], ...names };
 
     expect(await asCreator.query(api.creators.me, {})).toEqual(expected);
     expect(await asCreator.mutation(api.creators.update, { username: "ada" })).toEqual({
@@ -89,6 +89,7 @@ describe("creators.me", () => {
       xId: "123456789",
       githubLink: "https://github.com/creator",
       phoneNumber: "+15555550123",
+      niches: [],
     });
   });
 
@@ -208,6 +209,7 @@ describe("creators.get", () => {
       firstName: "Test",
       lastName: "",
       email: "target@example.com",
+      niches: [],
     });
   });
 

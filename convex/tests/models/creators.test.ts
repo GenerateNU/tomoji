@@ -114,6 +114,7 @@ describe("listCreators", () => {
         xId: "123456789",
         githubLink: "https://github.com/creator",
         phoneNumber: "+15555550123",
+        niches: [],
       },
     ]);
   });
@@ -159,6 +160,7 @@ describe("listCreators", () => {
         firstName: "Ada",
         lastName: "Lovelace",
         email: "page-one@example.com",
+        niches: [],
       },
     ]);
     expect(firstPage.isDone).toBe(false);
@@ -168,6 +170,7 @@ describe("listCreators", () => {
         firstName: "Grace",
         lastName: "Hopper",
         email: "page-two@example.com",
+        niches: [],
       },
     ]);
     expect(secondPage.isDone).toBe(true);
@@ -403,6 +406,7 @@ describe("requireCreatorProfileById", () => {
       xId: "123456789",
       githubLink: "https://github.com/creator",
       phoneNumber: "+15555550123",
+      niches: [],
     });
   });
 
@@ -458,5 +462,58 @@ describe("requireCreatorProfileById", () => {
       () => t.run(async (ctx) => await requireCreatorProfileById(ctx, creatorId)),
       "not_found",
     );
+  });
+});
+
+describe("creator niches", () => {
+  test("creators set, replace, and clear their niches in their profile", async () => {
+    const t = convexTest(schema, modules);
+    await seedUser(t, { subject: "niche_creator" });
+
+    const profiles = await t.run(async (ctx) => {
+      const user = (await getUserByWorkosId(ctx, "niche_creator"))!;
+      return [
+        await updateCreatorProfile(ctx, user, {
+          niches: ["databases", "web-development", "databases"],
+        }),
+        await updateCreatorProfile(ctx, user, { username: "chef" }),
+        await updateCreatorProfile(ctx, user, { niches: [] }),
+        await requireCreatorProfile(ctx, user),
+      ];
+    });
+
+    expect(profiles.map((profile) => profile.niches)).toEqual([
+      ["databases", "web-development"],
+      ["databases", "web-development"],
+      [],
+      [],
+    ]);
+  });
+
+  test("a new creator's profile has no niches", async () => {
+    const t = convexTest(schema, modules);
+    await seedUser(t, { subject: "niche_creator" });
+
+    const profile = await t.run(async (ctx) => {
+      const user = (await getUserByWorkosId(ctx, "niche_creator"))!;
+      return await requireCreatorProfile(ctx, user);
+    });
+
+    expect(profile.niches).toEqual([]);
+  });
+
+  test("refuses a niche that isn't on the list without changing the profile", async () => {
+    const t = convexTest(schema, modules);
+    await seedUser(t, { subject: "niche_creator" });
+
+    await expect(
+      t.run(async (ctx) => {
+        const user = (await getUserByWorkosId(ctx, "niche_creator"))!;
+        return await updateCreatorProfile(ctx, user, { niches: ["crypto"], username: "x" });
+      }),
+    ).rejects.toMatchObject({ data: { code: "invalid_state", reason: "invalid_niche" } });
+    const creator = await t.run(async (ctx) => await ctx.db.query("creators").first());
+    expect(creator?.username).not.toBe("x");
+    expect(creator).not.toHaveProperty("niches");
   });
 });

@@ -8,6 +8,7 @@ import { withRowsReadCap } from "../lib/pagination";
 import { requireNonBlank, isHalfHourTimestamp } from "../lib/validation";
 import { requireMembership } from "./companyUsers";
 import { notifyCompanyUser, notifyCreator } from "./notifications";
+import { requireNiche, requireNiches } from "./niches";
 import schema from "../schema";
 
 export const opportunityCreate = schema
@@ -41,7 +42,7 @@ export const creatorOpportunity = schema
     "disclosureRequirements",
     "usageRights",
   )
-  .extend({ companyName: v.string() });
+  .extend({ companyName: v.string(), niches: v.array(v.string()) });
 
 export type CreatorOpportunity = Infer<typeof creatorOpportunity>;
 
@@ -71,6 +72,7 @@ export function toCreatorOpportunity(
     disclosureRequirements: opportunity.disclosureRequirements,
     usageRights: opportunity.usageRights,
     companyName: company.name,
+    niches: opportunity.niches ?? [],
   };
 }
 
@@ -342,6 +344,8 @@ export async function updateOpportunity(
   for (const field of ["isGated", "usesAiReviewDefault"] as const) {
     if (updates[field] !== undefined) patch[field] = updates[field];
   }
+  // An empty list clears the niches; omitting the field leaves them unchanged.
+  if (updates.niches !== undefined) patch.niches = requireNiches(updates.niches);
   // Omitted fields stay unchanged; null removes the optional link, as in creator updates.
   if (updates.productAccessLink !== undefined)
     patch.productAccessLink = updates.productAccessLink ?? undefined;
@@ -373,7 +377,9 @@ export const opportunityList = schema
     paginationOpts: paginationOptsValidator,
   });
 
-export const opportunityDiscover = opportunityList.pick("paginationOpts");
+export const opportunityDiscover = opportunityList
+  .pick("paginationOpts")
+  .extend({ niche: v.optional(v.string()) });
 
 /**
  * Returns the creator-facing brief if creators may see the opportunity: it's
@@ -401,11 +407,17 @@ export async function discoverOpportunities(
   ctx: QueryCtx,
   options: Infer<typeof opportunityDiscover>,
 ): Promise<PaginationResult<CreatorOpportunity>> {
-  // Filter inside the stream so hidden opportunities don't leave pages short or empty.
+  const niche = options.niche === undefined ? undefined : requireNiche(options.niche);
+  // Filter inside the stream so hidden or off-niche opportunities don't leave
+  // pages short or empty. Convex can't index inside arrays, so niche matching
+  // happens here rather than in the index.
   return await stream(ctx.db, schema)
     .query("opportunities")
     .withIndex("by_status_and_deadline", (q) => q.eq("status", "open"))
-    .map(async (opportunity) => await getVisibleCreatorOpportunity(ctx, opportunity))
+    .map(async (opportunity) => {
+      const brief = await getVisibleCreatorOpportunity(ctx, opportunity);
+      return brief !== null && (niche === undefined || brief.niches.includes(niche)) ? brief : null;
+    })
     .paginate(withRowsReadCap(options.paginationOpts));
 }
 
@@ -455,8 +467,10 @@ export async function createOpportunity(
   if (campaign.endsAt !== undefined && fields.deadline > campaign.endsAt) {
     throw apiError("invalid_state", { reason: "deadline_after_campaign_end" });
   }
+  const niches = fields.niches === undefined ? {} : { niches: requireNiches(fields.niches) };
   return await ctx.db.insert("opportunities", {
     ...fields,
+    ...niches,
     title,
     description,
     companyId: campaign.companyId,

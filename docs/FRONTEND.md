@@ -9,11 +9,14 @@ src/
   app/                       Next.js routes and layouts
     layout.tsx               fonts and providers
     page.tsx                 landing — no nav bar
-    signup/                  also no nav bar
+    signup/, login/,         sign-in pages, also no nav bar
+    forgot-password/,
+    reset-password/,
+    verify-email/
     (protected)/
       layout.tsx             nav bar
       <route>/               pages requiring sign-in
-    auth/                    WorkOS callback and sign-out action
+    auth/                    auth server actions, WorkOS callback, Google sign-in routes
   features/<domain>/         domain-specific functionality
     components/
     hooks/
@@ -22,7 +25,7 @@ src/
     ui/                      shadcn-generated components
   hooks/                     hooks shared across features
   lib/                       plain functions - no React, usable anywhere
-  proxy.ts                   redirects unauthenticated users
+  proxy.ts                   sends signed-out users to /login (rules in features/auth/lib/access.ts)
 ```
 
 ### Where should new files go?
@@ -90,7 +93,7 @@ export function useOpportunityFeed() {
 
 We use `useMutation` for operations that modify application data.
 
-The exceptions are signing in and signing out, which use server actions defined in `app/auth/actions.ts`.
+The exceptions are signing in and signing out, which use server actions defined in `app/auth/actions.ts`. The forms call them through `useAuthForm` (`features/auth/hooks/`), which checks the same field rules (`features/auth/lib/rules.ts`) in the browser before submitting. After a sign-in succeeds, the hook reloads AuthKit's client state before navigating, so Convex sees the new session.
 
 ### Error handling
 
@@ -113,6 +116,8 @@ setError(errorMessage(error, { conflict: "That username is taken." }));
 ```
 
 Use `errorCode(error)` when a failure needs more than a message — putting the error on a specific field, or sending the user somewhere else.
+
+Sign-in errors come from WorkOS, not Convex, so `features/auth/lib/auth-errors.ts` plays the same role for them: it maps each WorkOS error to a field message, a form message, or the email-verification step.
 
 ## 6. User Experience
 

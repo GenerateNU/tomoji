@@ -107,20 +107,23 @@ export const resolve = authedMutation({
  * the dispute as `overriddenResolution`. Tomoji's own rulings can't be overridden.
  *
  * An approval can also pass an `effect`, recorded on the dispute and applied in
- * the same transaction. Each notifies the creator.
- * - `approveDraft` (unfair review or other): Tomoji's approval replaces the
- *   latest change request.
- * - `requestChanges` (missing disclosure or other): sends the approved draft
- *   back with a required `reviewNote`, so the creator can resubmit.
- * - `cancelAssignment` (published without approval, product misuse, post
- *   removed, or other): cancels the active assignment and frees its slot.
+ * the same transaction. Any effect fits any dispute reason. Each notifies the creator.
+ * - `approveDraft`: Tomoji's approval replaces the change request on `submissionId`.
+ * - `requestChanges`: sends the approved `submissionId` back with a required
+ *   `reviewNote`, so the creator can resubmit.
+ * - `cancelAssignment`: cancels the active assignment and frees its slot.
+ *
+ * Review effects name the draft Tomoji looked at, which must still be the
+ * assignment's latest.
  *
  * @throws `not_found` if the dispute doesn't exist.
+ * @throws `conflict` if `submissionId` is no longer the latest draft; reload and
+ * decide again.
  * @throws `invalid_state` if it's still open, Tomoji already ruled on it, the
  * reason is blank or too long, or the effect can't apply: the ruling isn't
- * `approved`, the dispute's reason doesn't allow it, the assignment isn't
- * active, the newest draft is pending, the latest review is missing, already
- * Tomoji's, or already has that status, or the `reviewNote` is blank or too long.
+ * `approved`, the assignment isn't active, the newest draft is pending, the
+ * review is already Tomoji's or already has that status, or the `reviewNote` is
+ * blank or too long.
  * @returns the overridden dispute.
  */
 export const override = operatorMutation({

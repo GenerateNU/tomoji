@@ -267,29 +267,32 @@ export async function reviewSubmission(
 }
 
 /**
- * Replaces the latest review on an active assignment with Tomoji's, keeping the
- * replaced one as `overriddenReview`. Only dispute resolution calls this, after
- * deciding the operator may.
+ * Replaces the review on `submissionId` with Tomoji's, keeping the replaced one
+ * as `overriddenReview`. That draft must still be the assignment's latest, so a
+ * review made after Tomoji looked is never changed by mistake. Only dispute
+ * resolution calls this, after deciding the operator may.
  *
  * @throws `invalid_state` if the assignment isn't active, the newest draft is
- * still pending, no draft has been reviewed, the latest review is already
- * Tomoji's, or it already has the requested status.
+ * still pending, the review is already Tomoji's, or it already has the
+ * requested status.
+ * @throws `conflict` if `submissionId` isn't the assignment's latest draft.
  */
 export async function overrideLatestReview(
   ctx: MutationCtx,
   assignment: Doc<"assignments">,
+  submissionId: Id<"submissions">,
   operatorId: Id<"users">,
   disputeId: Id<"disputes">,
   review: SubmissionReview,
 ): Promise<Id<"submissions">> {
   requireActiveAssignment(assignment);
   const latest = await getLatestSubmission(ctx, assignment._id);
-  if (latest === null) {
-    throw apiError("invalid_state", { reason: "no_reviewed_submission" });
-  }
   // Overriding an older review would leave the creator's newer draft in limbo.
-  if (latest.status === "pending") {
+  if (latest?.status === "pending") {
     throw apiError("invalid_state", { reason: "submission_pending" });
+  }
+  if (latest === null || latest._id !== submissionId) {
+    throw apiError("conflict", { reason: "submission_not_latest" });
   }
   if (latest.reviewerType === "operator") {
     throw apiError("invalid_state", { reason: "operator_review_final" });

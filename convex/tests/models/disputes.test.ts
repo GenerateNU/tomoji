@@ -738,7 +738,8 @@ describe("listDisputes", () => {
 });
 
 describe("dispute effects", () => {
-  const approveDraft = { effect: { kind: "approveDraft" } } as const;
+  const approveDraft = (submissionId: Id<"submissions">) =>
+    ({ effect: { kind: "approveDraft", submissionId } }) as const;
 
   /** An open unfair-review dispute on an assignment whose only draft got a change request. */
   async function seedReviewDispute(t: TestConvex) {
@@ -753,7 +754,7 @@ describe("dispute effects", () => {
     const t = convexTest(schema, modules);
     const { fixture, submissionId, disputeId, operatorId } = await seedReviewDispute(t);
 
-    const result = await resolve(t, operator, operatorId, disputeId, approveDraft);
+    const result = await resolve(t, operator, operatorId, disputeId, approveDraft(submissionId));
 
     const stored = await storedSubmission(t, submissionId);
     expect(stored).toMatchObject({
@@ -797,7 +798,7 @@ describe("dispute effects", () => {
 
     const result = await override(t, operatorId, disputeId, {
       outcome: "approved",
-      ...approveDraft,
+      ...approveDraft(submissionId),
     });
 
     expect(result.effect).toEqual({ kind: "approveDraft", submissionId });
@@ -809,54 +810,71 @@ describe("dispute effects", () => {
 
   test("only Tomoji can apply an effect", async () => {
     const t = convexTest(schema, modules);
-    const { fixture, disputeId } = await seedReviewDispute(t);
+    const { fixture, submissionId, disputeId } = await seedReviewDispute(t);
     const before = await storedSubmissions(t);
 
     await expect(
-      resolve(t, creatorOf(fixture), fixture.creatorUserId, disputeId, approveDraft),
+      resolve(t, creatorOf(fixture), fixture.creatorUserId, disputeId, approveDraft(submissionId)),
     ).rejects.toMatchObject({ data: { code: "forbidden", reason: "effect_operator_only" } });
     expect(await storedSubmissions(t)).toEqual(before);
   });
 
   test("refuses an effect without approving", async () => {
     const t = convexTest(schema, modules);
-    const { disputeId, operatorId } = await seedReviewDispute(t);
+    const { submissionId, disputeId, operatorId } = await seedReviewDispute(t);
 
     await expect(
-      resolve(t, operator, operatorId, disputeId, { outcome: "denied", ...approveDraft }),
+      resolve(t, operator, operatorId, disputeId, {
+        outcome: "denied",
+        ...approveDraft(submissionId),
+      }),
     ).rejects.toMatchObject({
       data: { code: "invalid_state", reason: "effect_requires_approval" },
     });
   });
 
-  test("refuses an effect the dispute's reason doesn't allow", async () => {
+  test("applies whatever the dispute's reason", async () => {
     const t = convexTest(schema, modules);
     const fixture = await seedAssignmentFixture(t);
-    await seedSubmission(t, fixture, "changesRequested");
+    const submissionId = await seedSubmission(t, fixture, "changesRequested");
     const disputeId = await seedDispute(t, fixture, { reason: "paymentNotReceived" });
     const operatorId = await seedOperatorId(t, "operator");
 
-    await expect(resolve(t, operator, operatorId, disputeId, approveDraft)).rejects.toMatchObject({
-      data: { code: "invalid_state", reason: "effect_not_allowed" },
-    });
+    const result = await resolve(t, operator, operatorId, disputeId, approveDraft(submissionId));
+
+    expect(result).toMatchObject({ effect: { kind: "approveDraft", submissionId } });
   });
 
   test("leaves the dispute open when the effect can't be applied", async () => {
     const t = convexTest(schema, modules);
-    const { fixture, disputeId, operatorId } = await seedReviewDispute(t);
+    const { fixture, submissionId, disputeId, operatorId } = await seedReviewDispute(t);
     await seedSubmission(t, fixture, "pending");
 
-    await expect(resolve(t, operator, operatorId, disputeId, approveDraft)).rejects.toMatchObject({
-      data: { code: "invalid_state", reason: "submission_pending" },
-    });
+    await expect(
+      resolve(t, operator, operatorId, disputeId, approveDraft(submissionId)),
+    ).rejects.toMatchObject({ data: { code: "invalid_state", reason: "submission_pending" } });
     const [dispute] = await storedDisputes(t);
     expect(dispute.status).toBe("open");
+  });
+
+  test("refuses a draft that a newer review has replaced, without changing either", async () => {
+    const t = convexTest(schema, modules);
+    const { fixture, submissionId, disputeId, operatorId } = await seedReviewDispute(t);
+    // The creator resubmitted and the company reviewed the new draft before Tomoji ruled.
+    await seedSubmission(t, fixture, "changesRequested");
+    const before = await storedSubmissions(t);
+
+    await expect(
+      resolve(t, operator, operatorId, disputeId, approveDraft(submissionId)),
+    ).rejects.toMatchObject({ data: { code: "conflict", reason: "submission_not_latest" } });
+    expect(await storedSubmissions(t)).toEqual(before);
   });
 });
 
 describe("requestChanges effect", () => {
   const reviewNote = "  Add #ad in the first 5 seconds, as the brief requires.  ";
-  const requestChanges = { effect: { kind: "requestChanges", reviewNote } } as const;
+  const requestChanges = (submissionId: Id<"submissions">) =>
+    ({ effect: { kind: "requestChanges", submissionId, reviewNote } }) as const;
 
   /** An open missing-disclosure dispute from the company on an approved draft. */
   async function seedDisclosureDispute(t: TestConvex) {
@@ -875,7 +893,7 @@ describe("requestChanges effect", () => {
     const t = convexTest(schema, modules);
     const { fixture, submissionId, disputeId, operatorId } = await seedDisclosureDispute(t);
 
-    const result = await resolve(t, operator, operatorId, disputeId, requestChanges);
+    const result = await resolve(t, operator, operatorId, disputeId, requestChanges(submissionId));
 
     expect(await storedSubmission(t, submissionId)).toMatchObject({
       status: "changesRequested",
@@ -900,8 +918,8 @@ describe("requestChanges effect", () => {
 
   test("lets the creator submit a new draft afterwards", async () => {
     const t = convexTest(schema, modules);
-    const { fixture, disputeId, operatorId } = await seedDisclosureDispute(t);
-    await resolve(t, operator, operatorId, disputeId, requestChanges);
+    const { fixture, submissionId, disputeId, operatorId } = await seedDisclosureDispute(t);
+    await resolve(t, operator, operatorId, disputeId, requestChanges(submissionId));
 
     const newDraftId = await t.run(
       async (ctx) =>
@@ -917,27 +935,15 @@ describe("requestChanges effect", () => {
 
   test("requires a note", async () => {
     const t = convexTest(schema, modules);
-    const { disputeId, operatorId } = await seedDisclosureDispute(t);
+    const { submissionId, disputeId, operatorId } = await seedDisclosureDispute(t);
 
     await expect(
       resolve(t, operator, operatorId, disputeId, {
-        effect: { kind: "requestChanges", reviewNote: "   " },
+        effect: { kind: "requestChanges", submissionId, reviewNote: "   " },
       }),
     ).rejects.toMatchObject({ data: { code: "invalid_state", reason: "reviewNote_blank" } });
     const [dispute] = await storedDisputes(t);
     expect(dispute.status).toBe("open");
-  });
-
-  test("isn't allowed for an unfair-review dispute", async () => {
-    const t = convexTest(schema, modules);
-    const fixture = await seedAssignmentFixture(t);
-    await seedSubmission(t, fixture, "approved");
-    const disputeId = await seedDispute(t, fixture);
-    const operatorId = await seedOperatorId(t, "operator");
-
-    await expect(resolve(t, operator, operatorId, disputeId, requestChanges)).rejects.toMatchObject(
-      { data: { code: "invalid_state", reason: "effect_not_allowed" } },
-    );
   });
 });
 
@@ -997,16 +1003,5 @@ describe("cancelAssignment effect", () => {
     expect((await storedAssignment(t, fixture)).assignment.status).toBe("termsPending");
     const [dispute] = await storedDisputes(t);
     expect(dispute.status).toBe("open");
-  });
-
-  test("isn't allowed for an unfair-review dispute", async () => {
-    const t = convexTest(schema, modules);
-    const fixture = await seedAssignmentFixture(t);
-    const disputeId = await seedDispute(t, fixture);
-    const operatorId = await seedOperatorId(t, "operator");
-
-    await expect(
-      resolve(t, operator, operatorId, disputeId, cancelAssignment),
-    ).rejects.toMatchObject({ data: { code: "invalid_state", reason: "effect_not_allowed" } });
   });
 });

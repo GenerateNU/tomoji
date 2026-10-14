@@ -29,9 +29,14 @@ export type DisputeCreate = Infer<typeof disputeCreate>;
 
 /** What Tomoji's approved ruling changes besides the dispute, applied in the same transaction. */
 export const disputeEffect = v.union(
-  v.object({ kind: v.literal("approveDraft") }),
+  // Review effects name the draft Tomoji looked at, so a newer review isn't changed by mistake.
+  v.object({ kind: v.literal("approveDraft"), submissionId: v.id("submissions") }),
   // Sends the approved draft back; the note tells the creator what to fix.
-  v.object({ kind: v.literal("requestChanges"), reviewNote: v.string() }),
+  v.object({
+    kind: v.literal("requestChanges"),
+    submissionId: v.id("submissions"),
+    reviewNote: v.string(),
+  }),
   // Ends an active assignment and frees its slot.
   v.object({ kind: v.literal("cancelAssignment") }),
 );
@@ -77,20 +82,6 @@ const REASONS_BY_ROLE: Record<AssignmentViewer["role"], readonly DisputeReason[]
   company: companyDisputeReasons,
   creator: creatorDisputeReasons,
   operator: [...companyDisputeReasons, ...creatorDisputeReasons],
-};
-
-// Which effects Tomoji may pick for each reason. Payment and deadline reasons
-// have none until payments and due dates exist.
-const EFFECTS_BY_REASON: Record<DisputeReason, readonly DisputeEffect["kind"][]> = {
-  unfairReview: ["approveDraft"],
-  other: ["approveDraft", "requestChanges", "cancelAssignment"],
-  missingDisclosure: ["requestChanges"],
-  publishedWithoutApproval: ["cancelAssignment"],
-  productMisuse: ["cancelAssignment"],
-  postRemoved: ["cancelAssignment"],
-  payoutAmount: [],
-  paymentNotReceived: [],
-  deadline: [],
 };
 
 const MAX_LENGTH = {
@@ -241,7 +232,8 @@ type AppliedDisputeEffect = NonNullable<ResolvedDispute["effect"]>;
 
 /**
  * Applies Tomoji's chosen effect and returns what to record on the dispute.
- * It runs inside the resolving mutation, so if it throws, nothing is written.
+ * Any effect fits any reason: Tomoji decides what the dispute needs. It runs
+ * inside the resolving mutation, so if it throws, nothing is written.
  */
 async function applyDisputeEffect(
   ctx: MutationCtx,
@@ -254,26 +246,32 @@ async function applyDisputeEffect(
   if (outcome !== "approved") {
     throw apiError("invalid_state", { reason: "effect_requires_approval" });
   }
-  if (!EFFECTS_BY_REASON[dispute.reason].includes(effect.kind)) {
-    throw apiError("invalid_state", { reason: "effect_not_allowed" });
-  }
   const assignment = await ctx.db.get("assignments", dispute.assignmentId);
   if (assignment === null) throw apiError("not_found", { resource: "assignment" });
   switch (effect.kind) {
     case "approveDraft":
       return {
         kind: "approveDraft",
-        submissionId: await overrideLatestReview(ctx, assignment, operatorId, dispute._id, {
-          status: "approved",
-        }),
+        submissionId: await overrideLatestReview(
+          ctx,
+          assignment,
+          effect.submissionId,
+          operatorId,
+          dispute._id,
+          { status: "approved" },
+        ),
       };
     case "requestChanges":
       return {
         kind: "requestChanges",
-        submissionId: await overrideLatestReview(ctx, assignment, operatorId, dispute._id, {
-          status: "changesRequested",
-          reviewNote: effect.reviewNote,
-        }),
+        submissionId: await overrideLatestReview(
+          ctx,
+          assignment,
+          effect.submissionId,
+          operatorId,
+          dispute._id,
+          { status: "changesRequested", reviewNote: effect.reviewNote },
+        ),
       };
     case "cancelAssignment":
       await cancelActiveAssignment(ctx, assignment);

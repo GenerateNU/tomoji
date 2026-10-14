@@ -15,7 +15,8 @@ import {
 } from "../schemas/disputes.schema";
 import { userRole } from "../schemas/users.schema";
 import { canViewResource } from "../lib/authz";
-import { requireAssignment, type AssignmentViewer } from "./assignments";
+import { cancelActiveAssignment, requireAssignment, type AssignmentViewer } from "./assignments";
+import { overrideLatestReview } from "./submissions";
 
 export const disputeCreate = v.object({
   assignmentId: v.id("assignments"),
@@ -26,10 +27,26 @@ export const disputeCreate = v.object({
 });
 export type DisputeCreate = Infer<typeof disputeCreate>;
 
-/** How the opener's side (or Tomoji) closes an open dispute. */
+/** What Tomoji's approved ruling changes besides the dispute, applied in the same transaction. */
+export const disputeEffect = v.union(
+  // Review effects name the draft Tomoji looked at, so a newer review isn't changed by mistake.
+  v.object({ kind: v.literal("approveDraft"), submissionId: v.id("submissions") }),
+  // Sends the approved draft back; the note tells the creator what to fix.
+  v.object({
+    kind: v.literal("requestChanges"),
+    submissionId: v.id("submissions"),
+    reviewNote: v.string(),
+  }),
+  // Ends an active assignment and frees its slot.
+  v.object({ kind: v.literal("cancelAssignment") }),
+);
+export type DisputeEffect = Infer<typeof disputeEffect>;
+
+/** How the opener's side (or Tomoji) closes an open dispute. Only Tomoji can add an effect. */
 export const disputeResolution = v.object({
   outcome: disputeOutcome,
   note: v.optional(v.string()),
+  effect: v.optional(disputeEffect),
 });
 export type DisputeResolution = Infer<typeof disputeResolution>;
 
@@ -37,6 +54,7 @@ export type DisputeResolution = Infer<typeof disputeResolution>;
 export const disputeOverride = v.object({
   outcome: operatorDisputeOutcome,
   note: v.string(),
+  effect: v.optional(disputeEffect),
 });
 export type DisputeOverride = Infer<typeof disputeOverride>;
 
@@ -144,7 +162,7 @@ export async function resolveDispute(
   viewer: AssignmentViewer,
   resolvedBy: Id<"users">,
   disputeId: Id<"disputes">,
-  { outcome, note }: DisputeResolution,
+  { outcome, note, effect }: DisputeResolution,
 ): Promise<DisputeView> {
   const dispute = await requireVisibleDispute(ctx, viewer, disputeId);
   const isOpenerSide = viewer.role === dispute.openedByRole;
@@ -157,6 +175,9 @@ export async function resolveDispute(
   if (outcome === "withdrawn" && !isOpenerSide) {
     throw apiError("invalid_state", { reason: "withdraw_by_opener_only" });
   }
+  if (effect !== undefined && viewer.role !== "operator") {
+    throw apiError("forbidden", { reason: "effect_operator_only" });
+  }
 
   const resolved: ResolvedDispute = {
     ...dispute,
@@ -167,6 +188,7 @@ export async function resolveDispute(
     outcome,
     // A blank note is stored as no note.
     note: optionalNonBlank(note, "note", MAX_LENGTH.note),
+    effect: await applyDisputeEffect(ctx, dispute, resolvedBy, outcome, effect),
   };
   await ctx.db.replace("disputes", dispute._id, resolved);
   return toDisputeView(viewer, resolved);
@@ -181,7 +203,7 @@ export async function overrideDispute(
   ctx: MutationCtx,
   resolvedBy: Id<"users">,
   disputeId: Id<"disputes">,
-  { outcome, note }: DisputeOverride,
+  { outcome, note, effect }: DisputeOverride,
 ): Promise<ResolvedDispute> {
   const dispute = await ctx.db.get("disputes", disputeId);
   if (dispute === null) throw apiError("not_found", { resource: "dispute" });
@@ -200,9 +222,61 @@ export async function overrideDispute(
     outcome,
     note: requireNonBlank(note, "note", MAX_LENGTH.note),
     overriddenResolution: { resolvedBy: dispute.resolvedBy, ...withoutResolver(dispute) },
+    effect: await applyDisputeEffect(ctx, dispute, resolvedBy, outcome, effect),
   };
   await ctx.db.replace("disputes", dispute._id, overridden);
   return overridden;
+}
+
+type AppliedDisputeEffect = NonNullable<ResolvedDispute["effect"]>;
+
+/**
+ * Applies Tomoji's chosen effect and returns what to record on the dispute.
+ * Any effect fits any reason: Tomoji decides what the dispute needs. It runs
+ * inside the resolving mutation, so if it throws, nothing is written.
+ */
+async function applyDisputeEffect(
+  ctx: MutationCtx,
+  dispute: Doc<"disputes">,
+  operatorId: Id<"users">,
+  outcome: DisputeResolution["outcome"],
+  effect: DisputeEffect | undefined,
+): Promise<AppliedDisputeEffect | undefined> {
+  if (effect === undefined) return undefined;
+  if (outcome !== "approved") {
+    throw apiError("invalid_state", { reason: "effect_requires_approval" });
+  }
+  const assignment = await ctx.db.get("assignments", dispute.assignmentId);
+  if (assignment === null) throw apiError("not_found", { resource: "assignment" });
+  switch (effect.kind) {
+    case "approveDraft":
+      return {
+        kind: "approveDraft",
+        submissionId: await overrideLatestReview(
+          ctx,
+          assignment,
+          effect.submissionId,
+          operatorId,
+          dispute._id,
+          { status: "approved" },
+        ),
+      };
+    case "requestChanges":
+      return {
+        kind: "requestChanges",
+        submissionId: await overrideLatestReview(
+          ctx,
+          assignment,
+          effect.submissionId,
+          operatorId,
+          dispute._id,
+          { status: "changesRequested", reviewNote: effect.reviewNote },
+        ),
+      };
+    case "cancelAssignment":
+      await cancelActiveAssignment(ctx, assignment);
+      return { kind: "cancelAssignment" };
+  }
 }
 
 /** One dispute, as the viewer may see it. */
@@ -321,6 +395,7 @@ function toCreatorView(dispute: Doc<"disputes">): DisputeView {
     status: "resolved",
     ...withoutResolver(dispute),
     overriddenResolution: replaced && withoutResolver(replaced),
+    effect: dispute.effect,
   };
 }
 

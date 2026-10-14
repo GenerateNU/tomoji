@@ -50,6 +50,15 @@ export const disputeOutcome = v.union(
 /** What Tomoji can rule when overriding; withdrawing is the opener's choice. */
 export const operatorDisputeOutcome = v.union(v.literal("approved"), v.literal("denied"));
 
+/** What Tomoji's approved ruling changed besides the dispute, naming the row it changed. */
+export const appliedDisputeEffect = v.union(
+  v.object({ kind: v.literal("approveDraft"), submissionId: v.id("submissions") }),
+  // Tomoji's note is the submission's `reviewNote`.
+  v.object({ kind: v.literal("requestChanges"), submissionId: v.id("submissions") }),
+  // The dispute's own assignment.
+  v.object({ kind: v.literal("cancelAssignment") }),
+);
+
 const disputeFields = {
   assignmentId: v.id("assignments"),
   // Copied from the assignment for the list indexes; none of them can change.
@@ -94,6 +103,8 @@ export function disputeShapes<
       ...resolution,
       // The opener's result, kept when Tomoji overrides it.
       overriddenResolution: v.optional(v.object(resolution)),
+      // What Tomoji's ruling changed besides the dispute, if anything.
+      effect: v.optional(appliedDisputeEffect),
     }),
   ] as const;
 }

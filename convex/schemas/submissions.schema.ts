@@ -73,7 +73,7 @@ export function submissionShapes<
     v.object({ ...base, status: v.literal("pending") }),
     ...reviewOutcomeVariants({ ...base, ...aiReview }),
     ...reviewOutcomeVariants({ ...base, ...companyUserReview }),
-    // TODO(disputes): written only by the dispute override
+    // Written only by dispute resolution (`overrideLatestReview`).
     ...reviewOutcomeVariants({
       ...base,
       reviewerType: v.literal("operator"),

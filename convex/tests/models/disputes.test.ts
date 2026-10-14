@@ -14,9 +14,11 @@ import {
   type DisputeOverride,
   type DisputeResolution,
 } from "../../models/disputes";
+import { createSubmission } from "../../models/submissions";
 import schema from "../../schema";
 import { companyDisputeReasons, creatorDisputeReasons } from "../../schemas/disputes.schema";
 import {
+  creatorNotifications,
   expectApiError,
   seedAssignment,
   seedAssignmentFixture,
@@ -28,6 +30,8 @@ import {
   seedOpportunity,
   seedSubmission,
   storedDisputes,
+  storedSubmission,
+  storedSubmissions,
   type AssignmentFixture,
   type TestConvex,
 } from "../helpers";
@@ -730,5 +734,274 @@ describe("listDisputes", () => {
     }));
 
     expect(page).toEqual([single]);
+  });
+});
+
+describe("dispute effects", () => {
+  const approveDraft = (submissionId: Id<"submissions">) =>
+    ({ effect: { kind: "approveDraft", submissionId } }) as const;
+
+  /** An open unfair-review dispute on an assignment whose only draft got a change request. */
+  async function seedReviewDispute(t: TestConvex) {
+    const fixture = await seedAssignmentFixture(t);
+    const submissionId = await seedSubmission(t, fixture, "changesRequested");
+    const disputeId = await seedDispute(t, fixture);
+    const operatorId = await seedOperatorId(t, "operator");
+    return { fixture, submissionId, disputeId, operatorId };
+  }
+
+  test("Tomoji's approval replaces the change request and keeps it on record", async () => {
+    const t = convexTest(schema, modules);
+    const { fixture, submissionId, disputeId, operatorId } = await seedReviewDispute(t);
+
+    const result = await resolve(t, operator, operatorId, disputeId, approveDraft(submissionId));
+
+    const stored = await storedSubmission(t, submissionId);
+    expect(stored).toMatchObject({
+      status: "approved",
+      reviewerType: "operator",
+      reviewedByOperator: operatorId,
+      reviewedAt: Date.now(),
+      disputeId,
+      overriddenReview: {
+        status: "changesRequested",
+        reviewNote: "Add #ad to the caption before posting.",
+        reviewerType: "companyUser",
+        reviewedBy: fixture.membership._id,
+      },
+    });
+    expect(stored).not.toHaveProperty("reviewedBy");
+    expect(result).toMatchObject({
+      status: "resolved",
+      outcome: "approved",
+      effect: { kind: "approveDraft", submissionId },
+    });
+    expect(await creatorNotifications(t, fixture.creatorId)).toEqual([
+      expect.objectContaining({
+        type: "submissionApproved",
+        target: { kind: "submission", submissionId, assignmentId: fixture.assignmentId },
+      }),
+    ]);
+  });
+
+  test("applies when Tomoji overrides the opener's result", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await seedAssignmentFixture(t);
+    const submissionId = await seedSubmission(t, fixture, "changesRequested");
+    const disputeId = await seedDispute(
+      t,
+      fixture,
+      {},
+      { ...pastRuling, resolvedBy: fixture.creatorUserId, outcome: "denied" },
+    );
+    const operatorId = await seedOperatorId(t, "operator");
+
+    const result = await override(t, operatorId, disputeId, {
+      outcome: "approved",
+      ...approveDraft(submissionId),
+    });
+
+    expect(result.effect).toEqual({ kind: "approveDraft", submissionId });
+    expect(await storedSubmission(t, submissionId)).toMatchObject({
+      status: "approved",
+      reviewerType: "operator",
+    });
+  });
+
+  test("only Tomoji can apply an effect", async () => {
+    const t = convexTest(schema, modules);
+    const { fixture, submissionId, disputeId } = await seedReviewDispute(t);
+    const before = await storedSubmissions(t);
+
+    await expect(
+      resolve(t, creatorOf(fixture), fixture.creatorUserId, disputeId, approveDraft(submissionId)),
+    ).rejects.toMatchObject({ data: { code: "forbidden", reason: "effect_operator_only" } });
+    expect(await storedSubmissions(t)).toEqual(before);
+  });
+
+  test("refuses an effect without approving", async () => {
+    const t = convexTest(schema, modules);
+    const { submissionId, disputeId, operatorId } = await seedReviewDispute(t);
+
+    await expect(
+      resolve(t, operator, operatorId, disputeId, {
+        outcome: "denied",
+        ...approveDraft(submissionId),
+      }),
+    ).rejects.toMatchObject({
+      data: { code: "invalid_state", reason: "effect_requires_approval" },
+    });
+  });
+
+  test("applies whatever the dispute's reason", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await seedAssignmentFixture(t);
+    const submissionId = await seedSubmission(t, fixture, "changesRequested");
+    const disputeId = await seedDispute(t, fixture, { reason: "paymentNotReceived" });
+    const operatorId = await seedOperatorId(t, "operator");
+
+    const result = await resolve(t, operator, operatorId, disputeId, approveDraft(submissionId));
+
+    expect(result).toMatchObject({ effect: { kind: "approveDraft", submissionId } });
+  });
+
+  test("leaves the dispute open when the effect can't be applied", async () => {
+    const t = convexTest(schema, modules);
+    const { fixture, submissionId, disputeId, operatorId } = await seedReviewDispute(t);
+    await seedSubmission(t, fixture, "pending");
+
+    await expect(
+      resolve(t, operator, operatorId, disputeId, approveDraft(submissionId)),
+    ).rejects.toMatchObject({ data: { code: "invalid_state", reason: "submission_pending" } });
+    const [dispute] = await storedDisputes(t);
+    expect(dispute.status).toBe("open");
+  });
+
+  test("refuses a draft that a newer review has replaced, without changing either", async () => {
+    const t = convexTest(schema, modules);
+    const { fixture, submissionId, disputeId, operatorId } = await seedReviewDispute(t);
+    // The creator resubmitted and the company reviewed the new draft before Tomoji ruled.
+    await seedSubmission(t, fixture, "changesRequested");
+    const before = await storedSubmissions(t);
+
+    await expect(
+      resolve(t, operator, operatorId, disputeId, approveDraft(submissionId)),
+    ).rejects.toMatchObject({ data: { code: "conflict", reason: "submission_not_latest" } });
+    expect(await storedSubmissions(t)).toEqual(before);
+  });
+});
+
+describe("requestChanges effect", () => {
+  const reviewNote = "  Add #ad in the first 5 seconds, as the brief requires.  ";
+  const requestChanges = (submissionId: Id<"submissions">) =>
+    ({ effect: { kind: "requestChanges", submissionId, reviewNote } }) as const;
+
+  /** An open missing-disclosure dispute from the company on an approved draft. */
+  async function seedDisclosureDispute(t: TestConvex) {
+    const fixture = await seedAssignmentFixture(t);
+    const submissionId = await seedSubmission(t, fixture, "approved");
+    const disputeId = await seedDispute(t, fixture, {
+      reason: "missingDisclosure",
+      openedBy: fixture.membership.userId,
+      openedByRole: "company",
+    });
+    const operatorId = await seedOperatorId(t, "operator");
+    return { fixture, submissionId, disputeId, operatorId };
+  }
+
+  test("sends the approved draft back with Tomoji's note", async () => {
+    const t = convexTest(schema, modules);
+    const { fixture, submissionId, disputeId, operatorId } = await seedDisclosureDispute(t);
+
+    const result = await resolve(t, operator, operatorId, disputeId, requestChanges(submissionId));
+
+    expect(await storedSubmission(t, submissionId)).toMatchObject({
+      status: "changesRequested",
+      reviewNote: "Add #ad in the first 5 seconds, as the brief requires.",
+      reviewerType: "operator",
+      reviewedByOperator: operatorId,
+      disputeId,
+      overriddenReview: {
+        status: "approved",
+        reviewerType: "companyUser",
+        reviewedBy: fixture.membership._id,
+      },
+    });
+    expect(result).toMatchObject({ effect: { kind: "requestChanges", submissionId } });
+    expect(await creatorNotifications(t, fixture.creatorId)).toEqual([
+      expect.objectContaining({
+        type: "submissionChangesRequested",
+        body: "Add #ad in the first 5 seconds, as the brief requires.",
+      }),
+    ]);
+  });
+
+  test("lets the creator submit a new draft afterwards", async () => {
+    const t = convexTest(schema, modules);
+    const { fixture, submissionId, disputeId, operatorId } = await seedDisclosureDispute(t);
+    await resolve(t, operator, operatorId, disputeId, requestChanges(submissionId));
+
+    const newDraftId = await t.run(
+      async (ctx) =>
+        await createSubmission(ctx, fixture.creatorId, {
+          assignmentId: fixture.assignmentId,
+          draftUrl: "https://drive.example.com/drafts/driftwood-with-disclosure",
+          draftDescription: "Same cut with #ad on screen from 0:00.",
+        }),
+    );
+
+    expect(await storedSubmission(t, newDraftId)).toMatchObject({ status: "pending" });
+  });
+
+  test("requires a note", async () => {
+    const t = convexTest(schema, modules);
+    const { submissionId, disputeId, operatorId } = await seedDisclosureDispute(t);
+
+    await expect(
+      resolve(t, operator, operatorId, disputeId, {
+        effect: { kind: "requestChanges", submissionId, reviewNote: "   " },
+      }),
+    ).rejects.toMatchObject({ data: { code: "invalid_state", reason: "reviewNote_blank" } });
+    const [dispute] = await storedDisputes(t);
+    expect(dispute.status).toBe("open");
+  });
+});
+
+describe("cancelAssignment effect", () => {
+  const cancelAssignment = { effect: { kind: "cancelAssignment" } } as const;
+
+  /** An open dispute from the company about a post the creator published without approval. */
+  async function seedPostDispute(t: TestConvex, status: "active" | "termsPending" = "active") {
+    const fixture = await seedAssignmentFixture(t, { status });
+    const disputeId = await seedDispute(t, fixture, {
+      reason: "publishedWithoutApproval",
+      openedBy: fixture.membership.userId,
+      openedByRole: "company",
+    });
+    const operatorId = await seedOperatorId(t, "operator");
+    return { fixture, disputeId, operatorId };
+  }
+
+  async function storedAssignment(t: TestConvex, fixture: AssignmentFixture) {
+    return await t.run(async (ctx) => {
+      const assignment = await ctx.db.get("assignments", fixture.assignmentId);
+      if (assignment === null) throw new Error("expected seeded assignment");
+      const opportunity = await ctx.db.get("opportunities", assignment.opportunityId);
+      return { assignment, opportunity };
+    });
+  }
+
+  test("cancels the active assignment, frees its slot, and tells the creator", async () => {
+    const t = convexTest(schema, modules);
+    const { fixture, disputeId, operatorId } = await seedPostDispute(t);
+    const { opportunity } = await storedAssignment(t, fixture);
+    await t.run(
+      async (ctx) => await ctx.db.patch("opportunities", opportunity!._id, { numFilledSlots: 1 }),
+    );
+
+    const result = await resolve(t, operator, operatorId, disputeId, cancelAssignment);
+
+    const after = await storedAssignment(t, fixture);
+    expect(after.assignment.status).toBe("cancelled");
+    expect(after.opportunity?.numFilledSlots).toBe(0);
+    expect(result).toMatchObject({ effect: { kind: "cancelAssignment" } });
+    expect(await creatorNotifications(t, fixture.creatorId)).toEqual([
+      expect.objectContaining({
+        type: "assignmentCancelled",
+        target: { kind: "assignment", assignmentId: fixture.assignmentId },
+      }),
+    ]);
+  });
+
+  test("refuses an assignment whose terms are still pending", async () => {
+    const t = convexTest(schema, modules);
+    const { fixture, disputeId, operatorId } = await seedPostDispute(t, "termsPending");
+
+    await expect(
+      resolve(t, operator, operatorId, disputeId, cancelAssignment),
+    ).rejects.toMatchObject({ data: { code: "invalid_state", reason: "assignment_not_active" } });
+    expect((await storedAssignment(t, fixture)).assignment.status).toBe("termsPending");
+    const [dispute] = await storedDisputes(t);
+    expect(dispute.status).toBe("open");
   });
 });

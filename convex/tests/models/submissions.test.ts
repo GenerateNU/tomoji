@@ -5,6 +5,7 @@ import type { Doc, Id } from "../../_generated/dataModel";
 import {
   createSubmission,
   listSubmissions,
+  overrideLatestReview,
   requireSubmission,
   reviewSubmission,
   toSubmissionView,
@@ -22,8 +23,11 @@ import {
   memberNotifications,
   seedAssignmentFixture,
   seedCreatorId,
+  seedDispute,
   seedMembership,
   seedOneSubmission,
+  seedOperatorId,
+  seedOverriddenSubmission,
   seedSubmission,
   storedSubmission,
   storedSubmissions,
@@ -794,5 +798,80 @@ describe("notifications", () => {
         target: { kind: "submission", submissionId, assignmentId: fixture.assignmentId },
       },
     ]);
+  });
+});
+
+describe("overrideLatestReview", () => {
+  async function overrideLatest(
+    t: TestConvex,
+    fixture: AssignmentFixture,
+    submissionId: Id<"submissions">,
+    review: SubmissionReview = { status: "approved" },
+  ) {
+    const operatorId = await seedOperatorId(t, "operator");
+    const disputeId = await seedDispute(t, fixture);
+    return await t.run(async (ctx) => {
+      const assignment = await ctx.db.get("assignments", fixture.assignmentId);
+      if (assignment === null) throw new Error("expected seeded assignment");
+      return await overrideLatestReview(
+        ctx,
+        assignment,
+        submissionId,
+        operatorId,
+        disputeId,
+        review,
+      );
+    });
+  }
+
+  test("refuses an assignment that isn't active", async () => {
+    const t = convexTest(schema, modules);
+    const { fixture, submissionId } = await seedOneSubmission(t, "changesRequested", {
+      status: "completed",
+    });
+
+    await expect(overrideLatest(t, fixture, submissionId)).rejects.toMatchObject({
+      data: { code: "invalid_state", reason: "assignment_not_active" },
+    });
+  });
+
+  test("refuses a draft that a newer review has replaced", async () => {
+    const t = convexTest(schema, modules);
+    const { fixture, submissionId } = await seedOneSubmission(t, "changesRequested");
+    await seedSubmission(t, fixture, "approved");
+
+    await expect(overrideLatest(t, fixture, submissionId)).rejects.toMatchObject({
+      data: { code: "conflict", reason: "submission_not_latest" },
+    });
+  });
+
+  test("refuses when a newer draft is waiting for review", async () => {
+    const t = convexTest(schema, modules);
+    const { fixture, submissionId } = await seedOneSubmission(t, "changesRequested");
+    await seedSubmission(t, fixture, "pending");
+    const before = await storedSubmissions(t);
+
+    await expect(overrideLatest(t, fixture, submissionId)).rejects.toMatchObject({
+      data: { code: "invalid_state", reason: "submission_pending" },
+    });
+    expect(await storedSubmissions(t)).toEqual(before);
+  });
+
+  test("refuses to override Tomoji's own review", async () => {
+    const t = convexTest(schema, modules);
+    const { fixture, submissionId } = await seedOverriddenSubmission(t);
+
+    await expect(overrideLatest(t, fixture, submissionId)).rejects.toMatchObject({
+      data: { code: "invalid_state", reason: "operator_review_final" },
+    });
+  });
+
+  test("refuses a review that wouldn't change anything", async () => {
+    const t = convexTest(schema, modules);
+    const { fixture, submissionId } = await seedOneSubmission(t, "approved");
+
+    await expect(overrideLatest(t, fixture, submissionId)).rejects.toMatchObject({
+      data: { code: "invalid_state", reason: "review_unchanged" },
+    });
   });
 });

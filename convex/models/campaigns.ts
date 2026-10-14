@@ -3,7 +3,7 @@ import { v, type Infer } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { apiError } from "../lib/errors";
-import { requireNonBlank } from "../lib/validation";
+import { requireNonBlank, isHalfHourTimestamp } from "../lib/validation";
 import schema from "../schema";
 import { applyOpportunityPause } from "./opportunities";
 
@@ -291,7 +291,7 @@ function validateCampaignForOpening(campaign: Doc<"campaigns">): void {
 
 /** Requires supplied end dates to match the cron's exact :00/:30 UTC boundaries. */
 function validateCampaignEndTime(endsAt: number | undefined): void {
-  if (endsAt !== undefined && (!Number.isSafeInteger(endsAt) || endsAt % (30 * 60 * 1000) !== 0)) {
+  if (endsAt !== undefined && !isHalfHourTimestamp(endsAt)) {
     throw apiError("invalid_state", { reason: "invalid_end_time" });
   }
 }

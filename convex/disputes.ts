@@ -1,7 +1,11 @@
 import { paginationResultValidator } from "convex/server";
 import { v } from "convex/values";
-import { authedMutation, authedQuery, operatorMutation } from "./lib/functions";
-import { requireAssignmentViewer } from "./models/assignments";
+import {
+  authedMutation,
+  authedQuery,
+  operatorMutation,
+  requireCallerViewer,
+} from "./lib/functions";
 import {
   createDispute,
   disputeCreate,
@@ -36,7 +40,7 @@ export const create = authedMutation({
   args: disputeCreate.fields,
   returns: v.id("disputes"),
   handler: async (ctx, args) => {
-    const viewer = await requireAssignmentViewer(ctx, ctx.user);
+    const viewer = await requireCallerViewer(ctx, ctx.user);
     return await createDispute(ctx, viewer, ctx.user._id, args);
   },
 });
@@ -51,7 +55,7 @@ export const get = authedQuery({
   args: { disputeId: v.id("disputes") },
   returns: disputeView,
   handler: async (ctx, args) => {
-    const viewer = await requireAssignmentViewer(ctx, ctx.user);
+    const viewer = await requireCallerViewer(ctx, ctx.user);
     return await requireDispute(ctx, viewer, args.disputeId);
   },
 });
@@ -69,7 +73,7 @@ export const list = authedQuery({
   args: disputeListFilters.fields,
   returns: paginationResultValidator(disputeView),
   handler: async (ctx, args) => {
-    const viewer = await requireAssignmentViewer(ctx, ctx.user);
+    const viewer = await requireCallerViewer(ctx, ctx.user);
     return await listDisputes(ctx, viewer, args);
   },
 });
@@ -91,7 +95,7 @@ export const resolve = authedMutation({
   args: { disputeId: v.id("disputes"), ...disputeResolution.fields },
   returns: disputeView,
   handler: async (ctx, { disputeId, ...resolution }) => {
-    const viewer = await requireAssignmentViewer(ctx, ctx.user);
+    const viewer = await requireCallerViewer(ctx, ctx.user);
     return await resolveDispute(ctx, viewer, ctx.user._id, disputeId, resolution);
   },
 });

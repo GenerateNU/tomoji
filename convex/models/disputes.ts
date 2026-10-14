@@ -14,7 +14,8 @@ import {
   operatorDisputeOutcome,
 } from "../schemas/disputes.schema";
 import { userRole } from "../schemas/users.schema";
-import { canViewAssignment, requireAssignment, type AssignmentViewer } from "./assignments";
+import { canViewResource } from "../lib/authz";
+import { requireAssignment, type AssignmentViewer } from "./assignments";
 
 export const disputeCreate = v.object({
   assignmentId: v.id("assignments"),
@@ -222,7 +223,7 @@ async function requireVisibleDispute(
   const dispute = await ctx.db.get("disputes", disputeId);
   // A dispute's company and creator are copied from its assignment, so the
   // assignment's access rule applies without reading it.
-  if (dispute === null || !canViewAssignment(viewer, dispute)) {
+  if (dispute === null || !canViewResource(viewer, dispute)) {
     throw apiError("not_found", { resource: "dispute" });
   }
   return dispute;

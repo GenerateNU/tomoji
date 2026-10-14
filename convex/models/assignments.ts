@@ -4,9 +4,8 @@ import { v, type Infer } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { apiError } from "../lib/errors";
-import { companyContext } from "../lib/functions";
+import { canViewResource, type ResourceViewer } from "../lib/authz";
 import schema from "../schema";
-import { requireCallerCreatorId } from "./users";
 
 /**
  * Creates a creator's assignment on an open, ungated opportunity.
@@ -128,35 +127,7 @@ async function createAssignment(
 }
 
 /** Who is reading an assignment, resolved from the caller by the route. */
-export type AssignmentViewer =
-  | { role: "operator" }
-  | { role: "creator"; creatorId: Id<"creators"> }
-  | { role: "company"; companyId: Id<"companies"> };
-
-/**
- * Resolves the signed-in caller to the viewer that assignment access checks
- * use. For routes open to more than one account type.
- *
- * @throws `not_found` if a creator has no creator profile.
- * @throws `forbidden` if a company user's token names an org they don't
- * belong to, or their company is inactive.
- */
-export async function requireAssignmentViewer(
-  ctx: QueryCtx | MutationCtx,
-  user: Doc<"users">,
-): Promise<AssignmentViewer> {
-  switch (user.role) {
-    case "operator":
-      return { role: "operator" };
-    case "creator":
-      return { role: "creator", creatorId: await requireCallerCreatorId(ctx, user) };
-    case "company": {
-      // Proves membership in the token's org, not just the account type.
-      const { membership } = await companyContext(ctx);
-      return { role: "company", companyId: membership.companyId };
-    }
-  }
-}
+export type AssignmentViewer = ResourceViewer;
 
 /**
  * Returns an assignment the viewer may see: creators see their own, company
@@ -171,28 +142,18 @@ export async function requireAssignment(
   assignmentId: Id<"assignments">,
 ): Promise<Doc<"assignments">> {
   const assignment = await ctx.db.get("assignments", assignmentId);
-  if (assignment === null || !canViewAssignment(viewer, assignment)) {
+  if (assignment === null || !canViewResource(viewer, assignment)) {
     throw apiError("not_found", { resource: "assignment" });
   }
   return assignment;
 }
 
-/**
- * Whether the viewer may see an assignment, or a row that copies its company
- * and creator (such as a dispute).
- */
-export function canViewAssignment(
-  viewer: AssignmentViewer,
-  assignment: Pick<Doc<"assignments">, "companyId" | "creatorId">,
-): boolean {
-  switch (viewer.role) {
-    case "operator":
-      return true;
-    case "creator":
-      return assignment.creatorId === viewer.creatorId;
-    case "company":
-      return assignment.companyId === viewer.companyId;
+/** Requires an already-loaded assignment to be active without changing its access policy. */
+export function requireActiveAssignment(assignment: Doc<"assignments">): Doc<"assignments"> {
+  if (assignment.status !== "active") {
+    throw apiError("invalid_state", { reason: "assignment_not_active" });
   }
+  return assignment;
 }
 
 export const assignmentListFilters = schema
@@ -409,9 +370,7 @@ export async function completeAssignment(
   if (assignment === null) {
     throw apiError("not_found", { resource: "assignment" });
   }
-  if (assignment.status !== "active") {
-    throw apiError("invalid_state", { reason: "assignment_not_active" });
-  }
+  requireActiveAssignment(assignment);
   await ctx.db.patch("assignments", assignment._id, { status: "completed" });
   return { ...assignment, status: "completed" };
 }

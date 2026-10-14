@@ -1,7 +1,9 @@
 import { customCtx, customMutation, customQuery } from "convex-helpers/server/customFunctions";
 import { mutation, query } from "../_generated/server";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
-import { requireRole, requireUser } from "../models/users";
+import { requireRole, requireUser, requireCallerCreatorId } from "../models/users";
+import type { Doc } from "../_generated/dataModel";
+import type { ResourceViewer } from "./authz";
 import { apiError } from "./errors";
 import { requireMembership } from "../models/companyUsers";
 
@@ -38,6 +40,20 @@ export async function creatorContext(ctx: Ctx) {
 export async function operatorContext(ctx: Ctx) {
   const { identity, user } = await requireRole(ctx, "operator");
   return { identity, user };
+}
+
+/** Resolves ownership scope from an already-authenticated user, verifying the token's company org. */
+export async function requireCallerViewer(ctx: Ctx, user: Doc<"users">): Promise<ResourceViewer> {
+  switch (user.role) {
+    case "operator":
+      return { role: "operator" };
+    case "creator":
+      return { role: "creator", creatorId: await requireCallerCreatorId(ctx, user) };
+    case "company": {
+      const { membership } = await companyContext(ctx);
+      return { role: "company", companyId: membership.companyId };
+    }
+  }
 }
 
 export const authedQuery = customQuery(query, customCtx(authedContext));

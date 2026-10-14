@@ -76,6 +76,12 @@ Use these instead of the raw `query` and `mutation` functions. It proves the cal
 
 Authorization should always happen on the server. Never accept a `userId` from the client to determine what someone is allowed to do. Derive the caller's identity from `ctx` instead.
 
+For application, assignment, and submission reads, `requireCallerViewer` in
+`lib/functions.ts` resolves the caller to the shared `ResourceViewer` ownership scope.
+`canViewResource` checks creator/company ownership; domain `require…` helpers still
+own missing-row errors and resource-specific rules. Do not apply that ownership policy
+to opportunity discovery or private media reads, which have different visibility rules.
+
 ## Errors
 
 Throw `apiError(code, detail)` from `lib/errors.ts` instead of using `new Error()`.
@@ -113,6 +119,10 @@ Opportunity deadlines are Unix milliseconds on exact UTC half-hour boundaries
 (`:00` or `:30`, with zero seconds/milliseconds). Create, update, publish, and resume
 reject off-grid deadlines rather than rounding them. Deadline closure runs at those
 same boundaries through the internal cron, in bounded batches; drafts do not auto-close.
+
+Campaign end dates and offer expiries share `isHalfHourTimestamp` and `HALF_HOUR_MS`
+from `lib/validation.ts`. Callers retain their own optionality, future-time checks,
+and error reasons.
 
 ## Tests
 

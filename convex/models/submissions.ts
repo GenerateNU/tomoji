@@ -5,7 +5,7 @@ import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { apiError } from "../lib/errors";
 import { optionalNonBlank, requireNonBlank } from "../lib/validation";
 import { submissionShapes } from "../schemas/submissions.schema";
-import { requireAssignment, type AssignmentViewer } from "./assignments";
+import { requireAssignment, requireActiveAssignment, type AssignmentViewer } from "./assignments";
 
 /** The creator-supplied fields of a new submission. */
 export const submissionDraft = v.object({
@@ -176,10 +176,9 @@ function toCreatorView(
   }
 }
 
+/** Requires an active assignment before applying submission-specific deadline rules. */
 function requireSubmissionWindowOpen(assignment: Doc<"assignments">): void {
-  if (assignment.status !== "active") {
-    throw apiError("invalid_state", { reason: "assignment_not_active" });
-  }
+  requireActiveAssignment(assignment);
   // TODO(dueAt): reject after `assignment.dueAt` once assignments have it.
 }
 
@@ -240,9 +239,7 @@ export async function reviewSubmission(
   if (submission.status !== "pending") {
     throw apiError("invalid_state", { reason: "already_reviewed" });
   }
-  if (assignment.status !== "active") {
-    throw apiError("invalid_state", { reason: "assignment_not_active" });
-  }
+  requireActiveAssignment(assignment);
   // TODO(ai-layer): reject when `submission.usesAiReview` is true.
 
   const outcome =

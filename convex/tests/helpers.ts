@@ -297,11 +297,11 @@ export function campaignArgs(overrides: Partial<CampaignArgs> = {}): CampaignArg
     title: "Spring launch",
     objective: "Introduce the new skincare range",
     product: "Daily moisturizer",
-    audience: "Gen Z skincare enthusiasts",
+    audience: "Skincare enthusiasts",
     description: "Campaign supporting the spring launch.",
     status: "open",
     budgetCents: 250_000,
-    startsAt: Date.now() + 60 * 60 * 1000,
+    startsAt: Date.now(),
     ...overrides,
   };
 }
@@ -317,7 +317,7 @@ export async function seedCampaign(t: TestConvex, options: SeedCampaignOptions) 
     const campaignId = await createCampaign(ctx, {
       companyId: membership.companyId,
       createdBy: membership._id,
-      ...campaignArgs({ audience: "Skincare enthusiasts", startsAt: Date.now() }),
+      ...campaignArgs(),
     });
     if (options.status !== undefined) {
       await ctx.db.patch("campaigns", campaignId, { status: options.status });

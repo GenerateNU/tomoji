@@ -62,7 +62,15 @@ test("campaign argument overrides remain unvalidated for negative and legacy fix
   expect(args).not.toHaveProperty("createdBy");
 });
 
-test("shared campaign seeding preserves its original current-time and audience defaults", async () => {
+test("campaign arguments use the shared current-time and audience defaults", () => {
+  const before = Date.now();
+  const args = campaignArgs();
+  expect(args.audience).toBe("Skincare enthusiasts");
+  expect(args.startsAt).toBeGreaterThanOrEqual(before);
+  expect(args.startsAt).toBeLessThanOrEqual(Date.now());
+});
+
+test("shared campaign seeding uses the campaign argument defaults", async () => {
   const t = convexTest(schema, modules);
   const before = Date.now();
   const { campaignId } = await seedCampaign(t, { subject: "fixture_defaults" });

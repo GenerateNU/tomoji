@@ -254,10 +254,7 @@ export async function reviewSubmission(
   requireActiveAssignment(assignment);
   // TODO(ai-layer): reject when `submission.usesAiReview` is true.
 
-  const outcome =
-    review.status === "changesRequested"
-      ? { status: review.status, reviewNote: requireText(review.reviewNote, "reviewNote") }
-      : { status: review.status, reviewNote: optionalText(review.reviewNote, "reviewNote") };
+  const outcome = requireReviewOutcome(review);
   const patch = {
     ...outcome,
     reviewerType: "companyUser" as const,
@@ -265,27 +262,106 @@ export async function reviewSubmission(
     reviewedAt: Date.now(),
   };
   await ctx.db.patch("submissions", submissionId, patch);
-  const opportunity = await ctx.db.get("opportunities", assignment.opportunityId);
-  if (opportunity !== null) {
-    const target = { kind: "submission" as const, submissionId, assignmentId: assignment._id };
-    await notifyCreator(
-      ctx,
-      assignment.creatorId,
-      outcome.status === "approved"
-        ? {
-            type: "submissionApproved",
-            title: `Your draft for ${opportunity.title} was approved`,
-            target,
-          }
-        : {
-            type: "submissionChangesRequested",
-            title: `Changes requested on your draft for ${opportunity.title}`,
-            body: outcome.reviewNote,
-            target,
-          },
-    );
-  }
+  await notifyCreatorOfReview(ctx, assignment, submissionId, outcome);
   return { ...submission, ...patch };
+}
+
+/**
+ * Replaces the latest review on an active assignment with Tomoji's, keeping the
+ * replaced one as `overriddenReview`. Only dispute resolution calls this, after
+ * deciding the operator may.
+ *
+ * @throws `invalid_state` if the assignment isn't active, the newest draft is
+ * still pending, no draft has been reviewed, the latest review is already
+ * Tomoji's, or it already has the requested status.
+ */
+export async function overrideLatestReview(
+  ctx: MutationCtx,
+  assignment: Doc<"assignments">,
+  operatorId: Id<"users">,
+  disputeId: Id<"disputes">,
+  review: SubmissionReview,
+): Promise<Id<"submissions">> {
+  requireActiveAssignment(assignment);
+  const latest = await getLatestSubmission(ctx, assignment._id);
+  if (latest === null) {
+    throw apiError("invalid_state", { reason: "no_reviewed_submission" });
+  }
+  // Overriding an older review would leave the creator's newer draft in limbo.
+  if (latest.status === "pending") {
+    throw apiError("invalid_state", { reason: "submission_pending" });
+  }
+  if (latest.reviewerType === "operator") {
+    throw apiError("invalid_state", { reason: "operator_review_final" });
+  }
+  if (latest.status === review.status) {
+    throw apiError("invalid_state", { reason: "review_unchanged" });
+  }
+
+  const outcome = requireReviewOutcome(review);
+  const overriddenReview =
+    latest.reviewerType === "ai"
+      ? {
+          ...reviewOutcome(latest),
+          reviewerType: latest.reviewerType,
+          reviewedAt: latest.reviewedAt,
+        }
+      : {
+          ...reviewOutcome(latest),
+          reviewerType: latest.reviewerType,
+          reviewedBy: latest.reviewedBy,
+          reviewedAt: latest.reviewedAt,
+        };
+  // Replace, not patch: the company reviewer's `reviewedBy` must not survive.
+  await ctx.db.replace("submissions", latest._id, {
+    assignmentId: latest.assignmentId,
+    draftUrl: latest.draftUrl,
+    draftDescription: latest.draftDescription,
+    usesAiReview: latest.usesAiReview,
+    ...outcome,
+    reviewerType: "operator",
+    reviewedByOperator: operatorId,
+    reviewedAt: Date.now(),
+    overriddenReview,
+    disputeId,
+  });
+  await notifyCreatorOfReview(ctx, assignment, latest._id, outcome);
+  return latest._id;
+}
+
+/** Trims the note; a change request needs one. */
+function requireReviewOutcome(review: SubmissionReview) {
+  return review.status === "changesRequested"
+    ? { status: review.status, reviewNote: requireText(review.reviewNote, "reviewNote") }
+    : { status: review.status, reviewNote: optionalText(review.reviewNote, "reviewNote") };
+}
+
+/** Tells the creator their draft was approved or sent back. */
+async function notifyCreatorOfReview(
+  ctx: MutationCtx,
+  assignment: Doc<"assignments">,
+  submissionId: Id<"submissions">,
+  outcome: ReturnType<typeof requireReviewOutcome>,
+): Promise<void> {
+  const opportunity = await ctx.db.get("opportunities", assignment.opportunityId);
+  if (opportunity === null) return;
+  const target = { kind: "submission" as const, submissionId, assignmentId: assignment._id };
+  await notifyCreator(
+    ctx,
+    assignment.creatorId,
+    outcome.status === "approved"
+      ? {
+          type: "submissionApproved",
+          title: `Your draft for ${opportunity.title} was approved`,
+          target,
+        }
+      : {
+          type: "submissionChangesRequested",
+          title: `Changes requested on your draft for ${opportunity.title}`,
+          body: outcome.reviewNote,
+          target,
+        },
+  );
 }
 
 /** One submission, as the viewer may see it. */

@@ -82,13 +82,14 @@ export const list = authedQuery({
  * Closes an open dispute once it's settled over email: `approved` (in the
  * opener's favor), `denied`, or `withdrawn`, with an optional note. Anyone on
  * the opener's side can close it, and so can Tomoji; only the opener's side can
- * withdraw. Closing is final; Tomoji can still override the result.
+ * withdraw. Closing is final; Tomoji can still override the result. When Tomoji
+ * approves, it can pass an `effect` (see `override`).
  *
  * @throws `not_found` if the dispute doesn't exist or isn't the caller's.
- * @throws `forbidden` if the caller is on the other side, or a company user's
- * token names an org they don't belong to.
+ * @throws `forbidden` if the caller is on the other side, a non-operator passes
+ * an effect, or a company user's token names an org they don't belong to.
  * @throws `invalid_state` if it's already resolved, Tomoji tries to withdraw a
- * dispute it didn't open, or the note is too long.
+ * dispute it didn't open, the note is too long, or the effect can't apply.
  * @returns the dispute as the caller sees it.
  */
 export const resolve = authedMutation({
@@ -105,9 +106,21 @@ export const resolve = authedMutation({
  * (`approved` or `denied`) and a required reason. The original result stays on
  * the dispute as `overriddenResolution`. Tomoji's own rulings can't be overridden.
  *
+ * An approval can also pass an `effect`, recorded on the dispute and applied in
+ * the same transaction. Each notifies the creator.
+ * - `approveDraft` (unfair review or other): Tomoji's approval replaces the
+ *   latest change request.
+ * - `requestChanges` (missing disclosure or other): sends the approved draft
+ *   back with a required `reviewNote`, so the creator can resubmit.
+ * - `cancelAssignment` (published without approval, product misuse, post
+ *   removed, or other): cancels the active assignment and frees its slot.
+ *
  * @throws `not_found` if the dispute doesn't exist.
- * @throws `invalid_state` if it's still open, Tomoji already ruled on it, or the
- * reason is blank or too long.
+ * @throws `invalid_state` if it's still open, Tomoji already ruled on it, the
+ * reason is blank or too long, or the effect can't apply: the ruling isn't
+ * `approved`, the dispute's reason doesn't allow it, the assignment isn't
+ * active, the newest draft is pending, the latest review is missing, already
+ * Tomoji's, or already has that status, or the `reviewNote` is blank or too long.
  * @returns the overridden dispute.
  */
 export const override = operatorMutation({

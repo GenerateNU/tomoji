@@ -125,8 +125,7 @@ export const star = creatorMutation({
   args: { opportunityId: v.id("opportunities") },
   returns: v.null(),
   handler: async (ctx, args) => {
-    const creatorId = await requireCallerCreatorId(ctx, ctx.user);
-    await starOpportunity(ctx, creatorId, args.opportunityId);
+    await starOpportunity(ctx, ctx.user, args.opportunityId);
     return null;
   },
 });

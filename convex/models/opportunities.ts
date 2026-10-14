@@ -2,7 +2,9 @@ import { paginationOptsValidator, type PaginationResult } from "convex/server";
 import { v, type Infer } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
+import { stream } from "convex-helpers/server/stream";
 import { apiError } from "../lib/errors";
+import { withRowsReadCap } from "../lib/pagination";
 import { requireNonBlank, isHalfHourTimestamp } from "../lib/validation";
 import { requireMembership } from "./companyUsers";
 import { notifyCompanyUser, notifyCreator } from "./notifications";
@@ -399,16 +401,12 @@ export async function discoverOpportunities(
   ctx: QueryCtx,
   options: Infer<typeof opportunityDiscover>,
 ): Promise<PaginationResult<CreatorOpportunity>> {
-  const result = await ctx.db
+  // Filter inside the stream so hidden opportunities don't leave pages short or empty.
+  return await stream(ctx.db, schema)
     .query("opportunities")
     .withIndex("by_status_and_deadline", (q) => q.eq("status", "open"))
-    .paginate(options.paginationOpts);
-  const visible = await Promise.all(
-    result.page.map(async (opportunity) => await getVisibleCreatorOpportunity(ctx, opportunity)),
-  );
-
-  // Visibility can shorten a page; retain the native cursor and isDone so callers can continue.
-  return { ...result, page: visible.filter((opportunity) => opportunity !== null) };
+    .map(async (opportunity) => await getVisibleCreatorOpportunity(ctx, opportunity))
+    .paginate(withRowsReadCap(options.paginationOpts));
 }
 
 /** Lists the company's opportunities, optionally scoped to an owned campaign and status. */

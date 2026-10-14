@@ -1,3 +1,5 @@
+import { suggestEmail } from "./email-typos";
+
 /**
  * What an auth server action hands back to its form. `values` lets the form
  * keep what the user typed after a failed submit; passwords are never echoed.
@@ -29,11 +31,20 @@ export function required(message: string): Rule {
   return (value) => (value === "" ? message : null);
 }
 
-// Deliberately loose: WorkOS is the real check, this only catches typos.
-const EMAIL_SHAPE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+// The format browsers use for <input type="email"> (WHATWG HTML spec), so
+// we accept exactly what WorkOS does.
+const EMAIL_FORMAT =
+  /^[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$/;
 
 export function email(): Rule {
-  return (value) => (EMAIL_SHAPE.test(value) ? null : "Enter a valid email address.");
+  return (value) => {
+    // The spec allows a dot-less domain like `localhost`; real addresses need one.
+    if (!EMAIL_FORMAT.test(value) || !value.split("@")[1].includes(".")) {
+      return "Enter a valid email address.";
+    }
+    const suggestion = suggestEmail(value);
+    return suggestion ? `Did you mean ${suggestion}?` : null;
+  };
 }
 
 /** The first failing rule's message for one field, or null. Used while the user types. */

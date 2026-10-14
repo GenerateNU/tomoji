@@ -60,3 +60,34 @@ test("passwords are not trimmed", () => {
   );
   expect(result.ok && result.data.password).toBe(" spaced out ");
 });
+
+test("emails follow the browser's email format and need a dot in the domain", () => {
+  const check = (value: string) =>
+    parseForm(formData({ firstName: "Z", email: value, password: "pw" }), rules);
+  for (const bad of [
+    "AHI;WFHA;WEIHFUA@gmail.com",
+    "two@@example.com",
+    "spaced out@example.com",
+    "no-dot@localhost",
+    "trailing@example.",
+  ]) {
+    expect(check(bad).ok, bad).toBe(false);
+  }
+  for (const good of [
+    "zahra@example.com",
+    "zahra.w+tomoji@mail.example.co.uk",
+    "o'neil@example.com",
+  ]) {
+    expect(check(good).ok, good).toBe(true);
+  }
+});
+
+test("a likely typo in the email domain suggests the fix", () => {
+  const result = parseForm(
+    formData({ firstName: "Z", email: "gulnasmosh@gmail.con", password: "pw" }),
+    rules,
+  );
+  expect(result.ok).toBe(false);
+  if (result.ok) return;
+  expect(result.state.fieldErrors.email).toBe("Did you mean gulnasmosh@gmail.com?");
+});

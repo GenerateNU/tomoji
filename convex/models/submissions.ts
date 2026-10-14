@@ -3,7 +3,7 @@ import { v, type Infer } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { apiError } from "../lib/errors";
-import { requireNonBlank } from "../lib/validation";
+import { optionalNonBlank, requireNonBlank } from "../lib/validation";
 import { submissionShapes } from "../schemas/submissions.schema";
 import { requireAssignment, requireActiveAssignment, type AssignmentViewer } from "./assignments";
 
@@ -60,8 +60,7 @@ function optionalText(
   value: string | undefined,
   field: keyof typeof MAX_LENGTH,
 ): string | undefined {
-  if (value === undefined || value.trim() === "") return undefined;
-  return requireText(value, field);
+  return optionalNonBlank(value, field, MAX_LENGTH[field]);
 }
 
 /** Returns the URL in its parsed form, so reviewers open exactly the link that was checked. */

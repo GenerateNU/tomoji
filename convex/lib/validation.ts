@@ -22,3 +22,16 @@ export function requireNonBlank(value: string, field: string, maxLength?: number
   }
   return trimmed;
 }
+
+/**
+ * Like `requireNonBlank`, but a missing or blank value becomes `undefined`.
+ * @throws `invalid_state` with reason `<field>_too_long` if it's longer than `maxLength`.
+ */
+export function optionalNonBlank(
+  value: string | undefined,
+  field: string,
+  maxLength?: number,
+): string | undefined {
+  if (value === undefined || value.trim() === "") return undefined;
+  return requireNonBlank(value, field, maxLength);
+}

@@ -103,11 +103,12 @@ export const resolve = authedMutation({
 /**
  * Replaces the result the opener's side reported with Tomoji's ruling
  * (`approved` or `denied`) and a required reason. The original result stays on
- * the dispute as `overriddenResolution`. Tomoji's own rulings can't be overridden.
+ * the dispute as `overriddenResolution`. Tomoji's own rulings and withdrawals
+ * can't be overridden.
  *
  * @throws `not_found` if the dispute doesn't exist.
- * @throws `invalid_state` if it's still open, Tomoji already ruled on it, or the
- * reason is blank or too long.
+ * @throws `invalid_state` if it's still open, Tomoji already ruled on it, the
+ * opener withdrew it, or the reason is blank or too long.
  * @returns the overridden dispute.
  */
 export const override = operatorMutation({

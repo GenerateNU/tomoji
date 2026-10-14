@@ -38,6 +38,44 @@ export async function createNotification(
   return await ctx.db.insert("notifications", { ...content, userId, isRead: false });
 }
 
+// The recipient helpers below skip a missing recipient instead of throwing: a
+// notification must never block the change it reports.
+
+/** Notifies the creator's user. */
+export async function notifyCreator(
+  ctx: MutationCtx,
+  creatorId: Id<"creators">,
+  content: NotificationContent,
+): Promise<void> {
+  const creator = await ctx.db.get("creators", creatorId);
+  if (creator !== null) await createNotification(ctx, creator.userId, content);
+}
+
+/**
+ * Notifies one company member's user. Company-side notifications go to a single
+ * member, such as `opportunity.createdBy`, not to everyone in the company.
+ */
+export async function notifyCompanyUser(
+  ctx: MutationCtx,
+  companyUserId: Id<"companyUsers">,
+  content: NotificationContent,
+): Promise<void> {
+  const member = await ctx.db.get("companyUsers", companyUserId);
+  if (member !== null) await createNotification(ctx, member.userId, content);
+}
+
+/**
+ * The creator's name for notification titles, so a company can tell
+ * notifications about different creators apart. Falls back through the legacy
+ * name and username to "A creator".
+ */
+export async function creatorName(ctx: QueryCtx, creatorId: Id<"creators">): Promise<string> {
+  const creator = await ctx.db.get("creators", creatorId);
+  const user = creator && (await ctx.db.get("users", creator.userId));
+  const fullName = [user?.firstName, user?.lastName].filter(Boolean).join(" ").trim();
+  return fullName || user?.name?.trim() || creator?.username || "A creator";
+}
+
 /** Lists the user's notifications newest first, optionally only read or unread ones. */
 export async function listNotifications(
   ctx: QueryCtx,

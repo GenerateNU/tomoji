@@ -6,16 +6,25 @@ import type { MutationCtx } from "../../_generated/server";
 import {
   countUnreadNotifications,
   createNotification,
+  creatorName,
   listNotifications,
   MARK_ALL_READ_BATCH_SIZE,
   markAllNotificationsRead,
   markNotificationRead,
+  notifyCompanyUser,
   UNREAD_COUNT_LIMIT,
   type NotificationContent,
 } from "../../models/notifications";
 import { getUserByWorkosId } from "../../models/users";
 import schema from "../../schema";
-import { expectApiError, seedGatedOpportunity, seedUser, type TestConvex } from "../helpers";
+import {
+  expectApiError,
+  seedCreatorId,
+  seedGatedOpportunity,
+  seedMembership,
+  seedUser,
+  type TestConvex,
+} from "../helpers";
 
 const modules = import.meta.glob("../../**/*.ts");
 
@@ -205,5 +214,77 @@ describe("markAllNotificationsRead", () => {
       (await t.run(async (ctx) => await ctx.db.get("notifications", id)))?.isRead;
     expect(await isRead(before)).toBe(true);
     expect(await isRead(after)).toBe(false);
+  });
+});
+
+describe("notifyCompanyUser", () => {
+  test("notifies that member's user", async () => {
+    const t = convexTest(schema, modules);
+    const { membership } = await seedMembership(t, "company_a");
+    const content = await closedContent(t);
+
+    await t.run(async (ctx) => await notifyCompanyUser(ctx, membership._id, content));
+
+    const rows = await t.run(async (ctx) =>
+      ctx.db
+        .query("notifications")
+        .withIndex("by_userId", (q) => q.eq("userId", membership.userId))
+        .take(2),
+    );
+    expect(rows).toMatchObject([content]);
+  });
+
+  test("skips a member that no longer exists", async () => {
+    const t = convexTest(schema, modules);
+    const { membership } = await seedMembership(t, "company_a");
+    const content = await closedContent(t);
+    await t.run(async (ctx) => await ctx.db.delete("companyUsers", membership._id));
+
+    await t.run(async (ctx) => await notifyCompanyUser(ctx, membership._id, content));
+
+    expect(await t.run(async (ctx) => await ctx.db.query("notifications").take(1))).toEqual([]);
+  });
+});
+
+describe("creatorName", () => {
+  async function seedNamed(
+    t: TestConvex,
+    user: { firstName?: string; lastName?: string; name?: string },
+    username?: string,
+  ) {
+    const creatorId = await seedCreatorId(t, "creator_named");
+    await t.run(async (ctx) => {
+      const creator = await ctx.db.get("creators", creatorId);
+      if (creator === null) throw new Error("expected seeded creator");
+      await ctx.db.patch("users", creator.userId, {
+        firstName: user.firstName,
+        lastName: user.lastName,
+        name: user.name,
+      });
+      await ctx.db.patch("creators", creatorId, { username });
+    });
+    return await t.run(async (ctx) => await creatorName(ctx, creatorId));
+  }
+
+  test("uses the first and last name", async () => {
+    const t = convexTest(schema, modules);
+    expect(await seedNamed(t, { firstName: "John", lastName: "Smith" })).toBe("John Smith");
+  });
+
+  test("uses the first name alone when there is no last name", async () => {
+    const t = convexTest(schema, modules);
+    expect(await seedNamed(t, { firstName: "John", lastName: "" })).toBe("John");
+  });
+
+  test("falls back to the legacy name, then the username", async () => {
+    const t = convexTest(schema, modules);
+    expect(await seedNamed(t, { name: "Johnny S" }, "johnsmith")).toBe("Johnny S");
+    const t2 = convexTest(schema, modules);
+    expect(await seedNamed(t2, {}, "johnsmith")).toBe("johnsmith");
+  });
+
+  test("says 'A creator' when nothing is set", async () => {
+    const t = convexTest(schema, modules);
+    expect(await seedNamed(t, {})).toBe("A creator");
   });
 });

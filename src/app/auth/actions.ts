@@ -5,6 +5,7 @@ import { NotFoundException, type AuthenticationResponse } from "@workos-inc/node
 import { redirect } from "next/navigation";
 import {
   classifyAuthError,
+  EMAIL_TAKEN,
   type AuthFailure,
   type AuthFlow,
 } from "@/features/auth/lib/auth-errors";
@@ -52,10 +53,31 @@ export async function signUpAction(
   // Every self-serve account starts as a creator; the user.created webhook
   // syncs it into Convex. A retry after a half-finished attempt hits
   // email_not_available, which tells the user to log in instead.
-  return signIn("sign_up", parsed.data, email, async () => {
+  try {
     await userManagement().createUser({ email, password, firstName, lastName });
-    return userManagement().authenticateWithPassword({ clientId: clientId(), email, password });
-  });
+  } catch (error) {
+    const failure = classifyAuthError(error, "sign_up");
+    // WorkOS rejects a weak password before checking the email, so someone who
+    // already has an account would be told to fix a password they don't need.
+    if (failure.kind === "field" && failure.field === "password" && (await emailTaken(email))) {
+      return toState(EMAIL_TAKEN, error, "sign_up", parsed.data);
+    }
+    return failureState("sign_up", error, parsed.data);
+  }
+
+  return signIn("sign_up", parsed.data, email, () =>
+    userManagement().authenticateWithPassword({ clientId: clientId(), email, password }),
+  );
+}
+
+/** Best effort: on a failed lookup, the caller falls back to its own message. */
+async function emailTaken(email: string): Promise<boolean> {
+  try {
+    const { data } = await userManagement().listUsers({ email });
+    return data.length > 0;
+  } catch {
+    return false;
+  }
 }
 
 export async function logInAction(

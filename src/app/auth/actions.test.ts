@@ -2,10 +2,9 @@ import { beforeEach, expect, test, vi } from "vitest";
 import { getWorkOS, saveSession } from "@workos-inc/authkit-nextjs";
 import {
   AuthenticationException,
+  BadRequestException,
   GenericServerException,
   NotFoundException,
-  OauthException,
-  UnprocessableEntityException,
 } from "@workos-inc/node";
 import { cookies } from "next/headers";
 import {
@@ -31,6 +30,7 @@ vi.mock("next/navigation", () => ({
 
 const userManagement = {
   createUser: vi.fn(),
+  listUsers: vi.fn(),
   authenticateWithPassword: vi.fn(),
   authenticateWithEmailVerification: vi.fn(),
   createPasswordReset: vi.fn(),
@@ -108,11 +108,57 @@ test("invalid sign-up input never reaches WorkOS", async () => {
   expect(userManagement.createUser).not.toHaveBeenCalled();
 });
 
+// Observed: WorkOS checks the password before whether the email is free.
+const weakPassword = () =>
+  new BadRequestException({
+    code: "password_strength_error",
+    errors: [{ code: "password_too_short", minimum_length: 10 }],
+    requestID: "req",
+  });
+
+test("a weak password on a taken email reports the email, since that's the real blocker", async () => {
+  userManagement.createUser.mockRejectedValue(weakPassword());
+  userManagement.listUsers.mockResolvedValue({ data: [{ id: "user_existing" }] });
+
+  const state = await signUpAction(empty, form(signUpFields));
+
+  expect(userManagement.listUsers).toHaveBeenCalledWith({ email: "zahra@example.com" });
+  expect(state.fieldErrors).toEqual({
+    email: "That email already has an account. Log in instead.",
+  });
+});
+
+test("a weak password on a free email reports the password", async () => {
+  userManagement.createUser.mockRejectedValue(weakPassword());
+  userManagement.listUsers.mockResolvedValue({ data: [] });
+
+  const state = await signUpAction(empty, form(signUpFields));
+  expect(state.fieldErrors).toEqual({ password: "Use at least 10 characters." });
+});
+
+test("if the email lookup fails, the password message still shows", async () => {
+  userManagement.createUser.mockRejectedValue(weakPassword());
+  userManagement.listUsers.mockRejectedValue(new Error("network"));
+
+  const state = await signUpAction(empty, form(signUpFields));
+  expect(state.fieldErrors).toEqual({ password: "Use at least 10 characters." });
+});
+
+test("other sign-up failures don't trigger the email lookup", async () => {
+  userManagement.createUser.mockRejectedValue(
+    new GenericServerException(503, "Service Unavailable", {}, "req"),
+  );
+  await signUpAction(empty, form(signUpFields));
+  expect(userManagement.listUsers).not.toHaveBeenCalled();
+});
+
 test("a taken email is reported on the email field, keeping what was typed", async () => {
   userManagement.createUser.mockRejectedValue(
-    new UnprocessableEntityException({
+    // Observed shape for an email that already has an account.
+    new BadRequestException({
       code: "user_creation_error",
-      errors: [{ field: "email", code: "email_not_available" }],
+      message: "Could not create user.",
+      errors: [{ code: "email_not_available", message: "This email is not available." }],
       requestID: "req",
     }),
   );
@@ -145,7 +191,12 @@ test("when WorkOS requires email verification, the pending sign-in is kept serve
 
 test("wrong credentials show one message for the whole form", async () => {
   userManagement.authenticateWithPassword.mockRejectedValue(
-    new OauthException(400, "req", "invalid_grant", "Invalid credentials.", {}),
+    new GenericServerException(
+      400,
+      "Invalid credentials for 'zahra@example.com'.",
+      { code: "invalid_credentials" },
+      "req",
+    ),
   );
   const state = await logInAction(empty, form({ email: "zahra@example.com", password: "wrong" }));
   expect(state).toEqual({

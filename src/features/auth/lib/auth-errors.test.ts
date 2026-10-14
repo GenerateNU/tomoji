@@ -1,5 +1,6 @@
 import {
   AuthenticationException,
+  BadRequestException,
   GenericServerException,
   NotFoundException,
   OauthException,
@@ -29,8 +30,13 @@ test("an unverified email asks for the emailed code", () => {
   });
 });
 
+// Shapes below marked "observed" were captured from the WorkOS sandbox.
+const workosError = (code: string, message: string) =>
+  new GenericServerException(400, message, { code, message }, "req");
+
 test("wrong credentials don't say which part was wrong", () => {
-  const error = new OauthException(400, "req", "invalid_grant", "Invalid credentials.", {});
+  // Observed for both an unknown email and a wrong password.
+  const error = workosError("invalid_credentials", "Invalid credentials for 'z@example.com'.");
   expect(classifyAuthError(error, "log_in")).toEqual({
     kind: "form",
     message: "Wrong email or password.",
@@ -66,6 +72,35 @@ test("a used or expired reset link asks for a new one", () => {
   expect(classifyAuthError(error, "reset_password")).toEqual({
     kind: "form",
     message: "This reset link has expired or was already used. Request a new one.",
+  });
+});
+
+test("an expired pending sign-in asks the user to log in again", () => {
+  // Observed.
+  const error = workosError(
+    "invalid_pending_authentication_token",
+    "The pending_authentication_token has expired or is invalid.",
+  );
+  expect(classifyAuthError(error, "verify_email")).toEqual({
+    kind: "form",
+    message: "Your sign-in expired. Log in again to get a new code.",
+  });
+});
+
+test("an email domain that requires SSO says so", () => {
+  // Observed: the sandbox's test organization claims example.com.
+  const error = new AuthenticationException(
+    400,
+    {
+      error: "sso_required",
+      error_description: "User must authenticate using one of the matching connections.",
+    },
+    "req",
+  );
+  expect(classifyAuthError(error, "log_in")).toEqual({
+    kind: "form",
+    message:
+      "This email signs in through your organization's single sign-on, which Tomoji doesn't support yet.",
   });
 });
 
@@ -107,5 +142,71 @@ test("a sign-in step we don't support explains instead of failing silently", () 
     kind: "form",
     message:
       "This account needs a sign-in step Tomoji doesn't support yet. Contact the Tomoji team.",
+  });
+});
+
+test("an email WorkOS rejects as malformed points at the email field, in every flow", () => {
+  // Observed for "AHI;WFHA;WEIHFUA@gmail.com" on log in and reset request.
+  const error = new UnprocessableEntityException({
+    code: "invalid_request_parameters",
+    errors: [{ field: "", code: "email_required" }],
+    requestID: "req",
+  });
+  for (const flow of ["sign_up", "log_in", "request_reset"] as const) {
+    expect(classifyAuthError(error, flow)).toEqual({
+      kind: "field",
+      field: "email",
+      message: "Enter a valid email address.",
+    });
+  }
+});
+
+test("a taken email reported as a 400 points at the email field", () => {
+  // Observed: createUser for an email that already has an account.
+  const error = new BadRequestException({
+    code: "user_creation_error",
+    message: "Could not create user.",
+    errors: [{ code: "email_not_available", message: "This email is not available." }],
+    requestID: "req",
+  });
+  expect(classifyAuthError(error, "sign_up")).toEqual({
+    kind: "field",
+    field: "email",
+    message: "That email already has an account. Log in instead.",
+  });
+});
+
+// Observed: createUser with "abc12345" — WorkOS checks the password before the email.
+const weakPassword = (details: object[]) =>
+  new BadRequestException({ code: "password_strength_error", errors: details, requestID: "req" });
+const tooShort = { code: "password_too_short", minimum_length: 10 };
+const tooWeak = {
+  code: "password_too_weak",
+  warning: "This is a commonly used password.",
+  suggestions: ["Add more words that are less common."],
+};
+
+test("a short password says WorkOS's minimum length", () => {
+  for (const flow of ["sign_up", "reset_password"] as const) {
+    expect(classifyAuthError(weakPassword([tooShort, tooWeak]), flow)).toEqual({
+      kind: "field",
+      field: "password",
+      message: "Use at least 10 characters.",
+    });
+  }
+});
+
+test("a long but guessable password passes on WorkOS's warning", () => {
+  expect(classifyAuthError(weakPassword([tooWeak]), "sign_up")).toEqual({
+    kind: "field",
+    field: "password",
+    message: "This is a commonly used password. Try adding a few uncommon words.",
+  });
+  expect(
+    classifyAuthError(weakPassword([{ code: "password_too_weak", warning: "" }]), "sign_up"),
+  ).toEqual({
+    kind: "field",
+    field: "password",
+    message: "This password is too easy to guess. Try adding a few uncommon words.",
   });
 });

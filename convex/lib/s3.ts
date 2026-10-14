@@ -1,8 +1,9 @@
 import { CopyObjectCommand, HeadObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { createPresignedPost } from "@aws-sdk/s3-presigned-post";
 import { apiError } from "./errors";
+import type { MediaKind } from "../schemas/mediaUploads.schema";
 
-export type MediaKind = "profile-picture" | "video-submission";
+export type { MediaKind } from "../schemas/mediaUploads.schema";
 
 export const mediaLimits = {
   // Profile pictures: 2 MiB maximum.

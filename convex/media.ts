@@ -21,9 +21,8 @@ import {
   mediaLimits,
   promoteMediaObject,
   readMediaConfig,
-  type MediaKind,
 } from "./lib/s3";
-import { mediaKind } from "./schemas/mediaUploads.schema";
+import { mediaKind, type MediaKind } from "./schemas/mediaUploads.schema";
 
 const videoReadTtlSeconds = 5 * 60;
 

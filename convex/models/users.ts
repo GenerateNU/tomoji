@@ -158,6 +158,7 @@ export async function applyMembership(ctx: MutationCtx, event: MembershipEvent):
   }
 }
 
+/** Removes a synced membership and restores a creator profile after the final company membership. */
 export async function removeMembership(
   ctx: MutationCtx,
   event: { workosUserId: string; organizationId: string },
@@ -175,10 +176,7 @@ export async function removeMembership(
 
   if (remaining === null && user.role === "company") {
     await ctx.db.patch("users", user._id, { role: "creator" });
-    const profile = await ctx.db
-      .query("creators")
-      .withIndex("by_userId", (q) => q.eq("userId", user._id))
-      .unique();
+    const profile = await getCreatorByUserId(ctx, user._id);
     if (profile === null) {
       await ctx.db.insert("creators", { userId: user._id });
     }

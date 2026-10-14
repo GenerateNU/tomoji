@@ -3,6 +3,7 @@ import { v } from "convex/values";
 import { internalMutation } from "./_generated/server";
 import {
   authedQuery,
+  requireCallerViewer,
   companyMutation,
   companyQuery,
   creatorMutation,
@@ -19,7 +20,6 @@ import {
   listAssignments,
   listCreatorAssignments,
   requireAssignment,
-  requireAssignmentViewer,
 } from "./models/assignments";
 import { requireCallerCreatorId } from "./models/users";
 import schema from "./schema";
@@ -84,8 +84,11 @@ export const get = authedQuery({
   args: { assignmentId: v.id("assignments") },
   returns: assignment,
   handler: async (ctx, args) => {
-    const viewer = await requireAssignmentViewer(ctx, ctx.user);
-    return await requireAssignment(ctx, viewer, args.assignmentId);
+    return await requireAssignment(
+      ctx,
+      await requireCallerViewer(ctx, ctx.user),
+      args.assignmentId,
+    );
   },
 });
 

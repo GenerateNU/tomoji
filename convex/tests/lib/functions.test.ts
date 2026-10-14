@@ -1,13 +1,119 @@
 /// <reference types="vite/client" />
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
-import { companyContext, creatorContext, operatorContext } from "../../lib/functions";
+import {
+  companyContext,
+  creatorContext,
+  operatorContext,
+  requireCallerViewer,
+} from "../../lib/functions";
 import { getCompanyByWorkosId } from "../../models/companies";
-import { getUserByWorkosId, upsertUser } from "../../models/users";
+import { getUserByWorkosId, upsertUser, requireUser } from "../../models/users";
 import schema from "../../schema";
-import { expectApiError, seedUser, workosIdentity } from "../helpers";
+import {
+  expectApiError,
+  seedUser,
+  seedOperator,
+  seedCreatorId,
+  seedWrongOrgCaller,
+  workosIdentity,
+} from "../helpers";
 
 const modules = import.meta.glob("../../**/*.ts");
+
+describe("requireCallerViewer", () => {
+  test("resolves the authenticated creator ID", async () => {
+    const t = convexTest(schema, modules);
+    const creatorId = await seedCreatorId(t, "viewer_creator");
+    const asCreator = t.withIdentity(workosIdentity({ subject: "viewer_creator" }));
+    expect(
+      await asCreator.run(async (ctx) => {
+        const { user } = await requireUser(ctx);
+        return await requireCallerViewer(ctx, user);
+      }),
+    ).toEqual({ role: "creator", creatorId });
+  });
+
+  test("resolves an operator without requiring a creator row", async () => {
+    const t = convexTest(schema, modules);
+    const asOperator = await seedOperator(t, "viewer_operator");
+    expect(
+      await asOperator.run(async (ctx) => {
+        const { user } = await requireUser(ctx);
+        return await requireCallerViewer(ctx, user);
+      }),
+    ).toEqual({ role: "operator" });
+  });
+
+  test("resolves the company from verified organization membership", async () => {
+    const t = convexTest(schema, modules);
+    const asCompany = await seedUser(t, { subject: "viewer_company", org: { id: "org_viewer" } });
+    const company = await t.run((ctx) => getCompanyByWorkosId(ctx, "org_viewer"));
+    expect(
+      await asCompany.run(async (ctx) => {
+        const { user } = await requireUser(ctx);
+        return await requireCallerViewer(ctx, user);
+      }),
+    ).toEqual({ role: "company", companyId: company!._id });
+  });
+
+  test("rejects a company caller with a forged organization", async () => {
+    const t = convexTest(schema, modules);
+    const asOther = await seedWrongOrgCaller(t);
+    await expectApiError(
+      () =>
+        asOther.run(async (ctx) => {
+          const { user } = await requireUser(ctx);
+          return await requireCallerViewer(ctx, user);
+        }),
+      "forbidden",
+    );
+  });
+
+  test("preserves the missing-organization error", async () => {
+    const t = convexTest(schema, modules);
+    await seedUser(t, { subject: "viewer_missing_org", org: { id: "org_viewer" } });
+    const asCompany = t.withIdentity(workosIdentity({ subject: "viewer_missing_org" }));
+    await expect(
+      asCompany.run(async (ctx) => {
+        const { user } = await requireUser(ctx);
+        return await requireCallerViewer(ctx, user);
+      }),
+    ).rejects.toMatchObject({
+      data: { code: "misconfigured", reason: "company account has no organization" },
+    });
+  });
+
+  test("rejects an inactive company", async () => {
+    const t = convexTest(schema, modules);
+    const asCompany = await seedUser(t, { subject: "viewer_inactive", org: { id: "org_viewer" } });
+    await t.run(async (ctx) => {
+      const company = await getCompanyByWorkosId(ctx, "org_viewer");
+      await ctx.db.patch("companies", company!._id, { isActive: false });
+    });
+    await expectApiError(
+      () =>
+        asCompany.run(async (ctx) => {
+          const { user } = await requireUser(ctx);
+          return await requireCallerViewer(ctx, user);
+        }),
+      "forbidden",
+    );
+  });
+
+  test("reports a missing creator row instead of granting a viewer scope", async () => {
+    const t = convexTest(schema, modules);
+    const creatorId = await seedCreatorId(t, "viewer_missing_creator");
+    const asCreator = t.withIdentity(workosIdentity({ subject: "viewer_missing_creator" }));
+    await t.run((ctx) => ctx.db.delete("creators", creatorId));
+    await expect(
+      asCreator.run(async (ctx) => {
+        const { user } = await requireUser(ctx);
+        return await requireCallerViewer(ctx, user);
+      }),
+    ).rejects.toMatchObject({ data: { code: "not_found", resource: "creator" } });
+  });
+});
 
 async function signedIn(
   t: ReturnType<typeof convexTest>,

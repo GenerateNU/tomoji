@@ -2,6 +2,7 @@
 import { convexTest } from "convex-test";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import type { Doc, Id } from "../../_generated/dataModel";
+import { requireCallerViewer } from "../../lib/functions";
 import {
   acceptAssignmentTerms,
   cancelAssignment,
@@ -13,7 +14,6 @@ import {
   listAssignments,
   listCreatorAssignments,
   requireAssignment,
-  requireAssignmentViewer,
 } from "../../models/assignments";
 import { createOpportunity } from "../../models/opportunities";
 import { requireUser } from "../../models/users";
@@ -664,12 +664,12 @@ describe("listCreatorAssignments", () => {
   });
 });
 
-describe("requireAssignmentViewer", () => {
+describe("requireCallerViewer", () => {
   /** Resolves the caller the way an `authedQuery` route would. */
   async function viewerOf(caller: ReturnType<TestConvex["withIdentity"]>) {
     return await caller.run(async (ctx) => {
       const { user } = await requireUser(ctx);
-      return await requireAssignmentViewer(ctx, user);
+      return await requireCallerViewer(ctx, user);
     });
   }
 

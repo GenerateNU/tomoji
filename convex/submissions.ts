@@ -1,8 +1,12 @@
 import { paginationOptsValidator, paginationResultValidator } from "convex/server";
 import { v } from "convex/values";
-import { authedQuery, companyMutation, creatorMutation } from "./lib/functions";
-import { requireAssignmentViewer } from "./models/assignments";
-import { requireCreatorProfile } from "./models/creators";
+import {
+  authedQuery,
+  requireCallerViewer,
+  companyMutation,
+  creatorMutation,
+} from "./lib/functions";
+import { requireCallerCreatorId } from "./models/users";
 import {
   createSubmission,
   listSubmissions,
@@ -29,7 +33,7 @@ export const create = creatorMutation({
   args: submissionDraft.fields,
   returns: v.id("submissions"),
   handler: async (ctx, args) => {
-    const { creatorId } = await requireCreatorProfile(ctx, ctx.user);
+    const creatorId = await requireCallerCreatorId(ctx, ctx.user);
     return await createSubmission(ctx, creatorId, args);
   },
 });
@@ -67,7 +71,7 @@ export const get = authedQuery({
   args: { submissionId: v.id("submissions") },
   returns: submissionView,
   handler: async (ctx, args) => {
-    const viewer = await requireAssignmentViewer(ctx, ctx.user);
+    const viewer = await requireCallerViewer(ctx, ctx.user);
     return await requireSubmission(ctx, viewer, args.submissionId);
   },
 });
@@ -85,7 +89,7 @@ export const list = authedQuery({
   },
   returns: paginationResultValidator(submissionView),
   handler: async (ctx, args) => {
-    const viewer = await requireAssignmentViewer(ctx, ctx.user);
+    const viewer = await requireCallerViewer(ctx, ctx.user);
     return await listSubmissions(ctx, viewer, args.assignmentId, args.paginationOpts);
   },
 });

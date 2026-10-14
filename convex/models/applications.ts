@@ -3,6 +3,8 @@ import type { Infer } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { apiError } from "../lib/errors";
+import { canViewResource, type ResourceViewer } from "../lib/authz";
+import { HALF_HOUR_MS, isHalfHourTimestamp } from "../lib/validation";
 import type { applicationStatus } from "../schemas/applications.schema";
 import { createAssignmentFromOffer } from "./assignments";
 
@@ -88,10 +90,7 @@ async function requireOpportunityOpen(
 }
 
 /** Who is reading an application, resolved from the caller by the route. */
-export type ApplicationViewer =
-  | { role: "operator" }
-  | { role: "creator"; creatorId: Id<"creators"> }
-  | { role: "company"; companyId: Id<"companies"> };
+export type ApplicationViewer = ResourceViewer;
 
 /**
  * Returns an application the viewer may see: creators see their own, company
@@ -107,21 +106,10 @@ export async function requireApplication(
   applicationId: Id<"applications">,
 ): Promise<Doc<"applications">> {
   const application = await ctx.db.get("applications", applicationId);
-  if (application === null || !canViewApplication(viewer, application)) {
+  if (application === null || !canViewResource(viewer, application)) {
     throw apiError("not_found", { resource: "application" });
   }
   return application;
-}
-
-function canViewApplication(viewer: ApplicationViewer, application: Doc<"applications">): boolean {
-  switch (viewer.role) {
-    case "operator":
-      return true;
-    case "creator":
-      return application.creatorId === viewer.creatorId;
-    case "company":
-      return application.companyId === viewer.companyId;
-  }
 }
 
 /**
@@ -185,10 +173,6 @@ export async function listApplicationsByOpportunityId(
 /** How long an offer stays open when the company does not choose an expiry. */
 export const DEFAULT_OFFER_DURATION_MS = 48 * 60 * 60 * 1000;
 
-// Offer expiries sit on :00/:30 UTC boundaries, the same times the expiry cron
-// runs, so an offer is marked expired exactly when it expires.
-const HALF_HOUR_MS = 30 * 60 * 1000;
-
 /**
  * Sends an offer on a pending application to one of the company's
  * opportunities. Offers are not capped by open slots: the first creators to
@@ -214,11 +198,7 @@ export async function offerApplication(
   const offerExpiresAt =
     requestedExpiresAt ??
     Math.ceil((now + DEFAULT_OFFER_DURATION_MS) / HALF_HOUR_MS) * HALF_HOUR_MS;
-  if (
-    !Number.isSafeInteger(offerExpiresAt) ||
-    offerExpiresAt % HALF_HOUR_MS !== 0 ||
-    offerExpiresAt <= now
-  ) {
+  if (!isHalfHourTimestamp(offerExpiresAt) || offerExpiresAt <= now) {
     throw apiError("invalid_state", { reason: "invalid_offer_expiry" });
   }
 

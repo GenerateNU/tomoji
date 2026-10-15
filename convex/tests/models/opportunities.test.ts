@@ -2693,3 +2693,171 @@ describe("notifications", () => {
     expect(await creatorNotifications(t, pending.creatorId)).toEqual([closedNotice(pending)]);
   });
 });
+
+describe("opportunity niches", () => {
+  const firstPage = { numItems: 10, cursor: null };
+
+  test("create stores niches by their lowercase name, without repeats", async () => {
+    const t = convexTest(schema, modules);
+    const { campaignId, membership } = await seedCampaign(t, { subject: "niche_owner" });
+
+    const opportunityId = await t.run(
+      async (ctx) =>
+        await createOpportunity(
+          ctx,
+          membership,
+          opportunityArgs(campaignId, { niches: ["LLMs", "AI Agents", "llms"] }),
+        ),
+    );
+
+    const stored = await t.run(async (ctx) => await ctx.db.get("opportunities", opportunityId));
+    expect(stored?.niches).toEqual(["llms", "ai-agents"]);
+  });
+
+  test("create refuses a niche that isn't on the list", async () => {
+    const t = convexTest(schema, modules);
+    const { campaignId, membership } = await seedCampaign(t, { subject: "niche_owner" });
+
+    await expect(
+      t.run(
+        async (ctx) =>
+          await createOpportunity(
+            ctx,
+            membership,
+            opportunityArgs(campaignId, { niches: ["crypto"] }),
+          ),
+      ),
+    ).rejects.toMatchObject({ data: { code: "invalid_state", reason: "invalid_niche" } });
+  });
+
+  test("update replaces niches, and an empty list clears them", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(
+      t,
+      { subject: "niche_owner" },
+      { niches: ["developer-tools"] },
+    );
+
+    const replaced = await t.run(
+      async (ctx) =>
+        await updateOpportunity(ctx, owner.membership, owner.opportunityId, {
+          niches: ["game-dev", "developer-tools"],
+        }),
+    );
+    const cleared = await t.run(
+      async (ctx) =>
+        await updateOpportunity(ctx, owner.membership, owner.opportunityId, { niches: [] }),
+    );
+
+    expect(replaced.niches).toEqual(["game-dev", "developer-tools"]);
+    expect(cleared.niches).toEqual([]);
+    expect(
+      (await t.run(async (ctx) => await ctx.db.get("opportunities", owner.opportunityId)))?.niches,
+    ).toEqual([]);
+  });
+
+  test("update leaves niches alone when they aren't sent", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(
+      t,
+      { subject: "niche_owner" },
+      { niches: ["developer-tools"] },
+    );
+
+    const updated = await t.run(
+      async (ctx) =>
+        await updateOpportunity(ctx, owner.membership, owner.opportunityId, { title: "Renamed" }),
+    );
+
+    expect(updated.niches).toEqual(["developer-tools"]);
+  });
+
+  test("update refuses too many niches without changing the opportunity", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(t, { subject: "niche_owner" });
+    const before = await t.run(
+      async (ctx) => await ctx.db.get("opportunities", owner.opportunityId),
+    );
+
+    await expect(
+      t.run(
+        async (ctx) =>
+          await updateOpportunity(ctx, owner.membership, owner.opportunityId, {
+            niches: ["ai-agents", "llms", "open-source", "devops", "cybersecurity", "databases"],
+          }),
+      ),
+    ).rejects.toMatchObject({ data: { code: "invalid_state", reason: "too_many_niches" } });
+    expect(
+      await t.run(async (ctx) => await ctx.db.get("opportunities", owner.opportunityId)),
+    ).toEqual(before);
+  });
+
+  test("creator briefs always include niches, empty when none were set", async () => {
+    const t = convexTest(schema, modules);
+    const tagged = await seedOpportunity(
+      t,
+      { subject: "niche_owner" },
+      { niches: ["web-development"] },
+    );
+    const untagged = await seedOpportunity(t, { subject: "niche_owner" });
+
+    const feed = await t.run(
+      async (ctx) => await discoverOpportunities(ctx, { paginationOpts: firstPage }),
+    );
+    const niches = Object.fromEntries(feed.page.map((brief) => [brief._id, brief.niches]));
+
+    expect(niches).toEqual({
+      [tagged.opportunityId]: ["web-development"],
+      [untagged.opportunityId]: [],
+    });
+  });
+
+  test("discover filters to one niche", async () => {
+    const t = convexTest(schema, modules);
+    const fitness = await seedOpportunity(
+      t,
+      { subject: "niche_owner" },
+      { niches: ["devops", "cybersecurity"] },
+    );
+    await seedOpportunity(t, { subject: "niche_owner" }, { niches: ["game-dev"] });
+    await seedOpportunity(t, { subject: "niche_owner" });
+
+    const feed = await t.run(
+      async (ctx) =>
+        await discoverOpportunities(ctx, { niche: "cybersecurity", paginationOpts: firstPage }),
+    );
+
+    expect(feed.page.map((brief) => brief._id)).toEqual([fitness.opportunityId]);
+  });
+
+  test("the niche filter fills the page instead of returning it short", async () => {
+    const t = convexTest(schema, modules);
+    // Three off-niche opportunities are read first, then one match.
+    for (let i = 0; i < 3; i++) {
+      await seedOpportunity(t, { subject: "niche_owner" }, { niches: ["game-dev"] });
+    }
+    const match = await seedOpportunity(t, { subject: "niche_owner" }, { niches: ["llms"] });
+
+    const feed = await t.run(
+      async (ctx) =>
+        await discoverOpportunities(ctx, {
+          niche: "LLMs",
+          paginationOpts: { numItems: 2, cursor: null },
+        }),
+    );
+
+    expect(feed.page.map((brief) => brief._id)).toEqual([match.opportunityId]);
+  });
+
+  test("discover refuses a niche filter that isn't on the list", async () => {
+    const t = convexTest(schema, modules);
+    await seedOpportunity(t, { subject: "niche_owner" });
+
+    await expect(
+      t.run(
+        async (ctx) =>
+          await discoverOpportunities(ctx, { niche: "crypto", paginationOpts: firstPage }),
+      ),
+    ).rejects.toMatchObject({ data: { code: "invalid_state", reason: "invalid_niche" } });
+  });
+});

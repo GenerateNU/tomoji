@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useConvexAuth, useQuery } from "convex/react";
 import { api } from "@convex/_generated/api";
+import { BasicDetailsSection } from "./basic-details-section";
 import { GithubLinkSection } from "./github-link-section";
 import { ProfilePictureSection } from "./profile-picture-section";
 import { XAccountSection } from "./x-account-section";
@@ -47,6 +48,7 @@ function CreatorSettings() {
 
   return (
     <div className="space-y-6">
+      <BasicDetailsSection />
       <ProfilePictureSection mediaId={profile.profilePictureMediaId} />
       <section aria-label="Portfolio" className="space-y-6 rounded-2xl bg-card p-6 sm:p-8">
         <h2 className="text-xl font-semibold tracking-tight">Portfolio</h2>
@@ -63,7 +65,7 @@ function SettingsSkeleton() {
   return (
     <div role="status" className="space-y-6">
       <span className="sr-only">Loading settings…</span>
-      {[0, 1].map((section) => (
+      {[0, 1, 2].map((section) => (
         <div key={section} aria-hidden className="space-y-6 rounded-2xl bg-card p-6 sm:p-8">
           <div className="h-6 w-36 animate-pulse rounded bg-muted" />
           <div className="h-24 animate-pulse rounded-xl bg-muted" />

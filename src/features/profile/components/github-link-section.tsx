@@ -24,11 +24,11 @@ export function GithubLinkSection({ githubLink }: { githubLink?: string }) {
   }, [editing]);
 
   return (
-    <section aria-labelledby={headingId} className="rounded-2xl bg-card p-6 sm:p-8">
+    <section aria-labelledby={headingId} className="min-w-0">
       <div className="mb-6 flex flex-wrap items-center justify-between gap-4">
-        <h2 id={headingId} className="text-xl font-semibold tracking-tight">
-          Portfolio
-        </h2>
+        <h3 id={headingId} className="font-semibold">
+          GitHub profile
+        </h3>
         {!editing && (
           <Button
             ref={editButton}
@@ -54,7 +54,6 @@ export function GithubLinkSection({ githubLink }: { githubLink?: string }) {
         />
       ) : (
         <div className="space-y-2">
-          <h3 className="text-sm font-medium">GitHub profile</h3>
           {savedLink.ok && savedLink.value ? (
             <a
               href={savedLink.value}

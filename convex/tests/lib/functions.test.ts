@@ -4,6 +4,7 @@ import { describe, expect, test } from "vitest";
 import {
   companyAdminContext,
   companyContext,
+  requireCompanyScope,
   creatorContext,
   operatorContext,
   requireCallerViewer,
@@ -262,5 +263,65 @@ describe("companyAdminContext", () => {
     const as = await seedUser(t, { subject: "ad3" });
 
     await expectApiError(() => as.run(async (ctx) => await companyAdminContext(ctx)), "forbidden");
+  });
+});
+
+describe("requireCompanyScope", () => {
+  test("gives a company user their own company and membership", async () => {
+    const t = convexTest(schema, modules);
+    const as = await seedUser(t, { subject: "sc1", org: { id: "org_acme", role: "member" } });
+
+    const scope = await as.run(async (ctx) => {
+      const { user } = await requireUser(ctx);
+      return await requireCompanyScope(ctx, user);
+    });
+
+    expect(scope.membership).not.toBeNull();
+    expect(scope.companyId).toBe(scope.membership?.companyId);
+  });
+
+  test("refuses a company user who names a company", async () => {
+    const t = convexTest(schema, modules);
+    const as = await seedUser(t, { subject: "sc2", org: { id: "org_acme", role: "admin" } });
+    const companyId = await as.run(async (ctx) => (await companyContext(ctx)).membership.companyId);
+
+    await expectApiError(
+      () =>
+        as.run(async (ctx) => {
+          const { user } = await requireUser(ctx);
+          return await requireCompanyScope(ctx, user, companyId);
+        }),
+      "forbidden",
+      "company_scope_not_allowed",
+    );
+  });
+
+  test("gives an operator the company they name, with no membership", async () => {
+    const t = convexTest(schema, modules);
+    const as = await seedUser(t, { subject: "sc3", org: { id: "org_acme", role: "admin" } });
+    const companyId = await as.run(async (ctx) => (await companyContext(ctx)).membership.companyId);
+    const asOperator = await seedOperator(t, "sc-operator");
+
+    const scope = await asOperator.run(async (ctx) => {
+      const { user } = await requireUser(ctx);
+      return await requireCompanyScope(ctx, user, companyId);
+    });
+
+    expect(scope).toEqual({ companyId, membership: null });
+  });
+
+  test("refuses an operator who names no company", async () => {
+    const t = convexTest(schema, modules);
+    const asOperator = await seedOperator(t, "sc-operator-2");
+
+    await expectApiError(
+      () =>
+        asOperator.run(async (ctx) => {
+          const { user } = await requireUser(ctx);
+          return await requireCompanyScope(ctx, user);
+        }),
+      "forbidden",
+      "company_required",
+    );
   });
 });

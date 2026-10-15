@@ -1,5 +1,6 @@
 import { getWorkOS, saveSession } from "@workos-inc/authkit-nextjs";
 import { NextResponse, type NextRequest } from "next/server";
+import { safeNext } from "./access";
 
 /**
  * Our own Google flow, so the button skips the WorkOS-hosted page.
@@ -13,10 +14,11 @@ const COOKIE = "tomoji-google-oauth";
 // Covers /auth/google, which sets it, and /auth/callback, which reads it.
 const COOKIE_PATH = "/auth";
 
-type GoogleAttempt = { state: string; codeVerifier: string };
+type GoogleAttempt = { state: string; codeVerifier: string; next: string };
 
-/** Redirects to Google, remembering the attempt for the callback. */
-export async function startGoogleSignIn(): Promise<Response> {
+/** Redirects to Google, remembering the attempt (and where to land after) for the callback. */
+export async function startGoogleSignIn(request: NextRequest): Promise<Response> {
+  const next = safeNext(request.nextUrl.searchParams.get("next"));
   const { url, state, codeVerifier } = await getWorkOS().userManagement.getAuthorizationUrlWithPKCE(
     {
       provider: "GoogleOAuth",
@@ -29,7 +31,7 @@ export async function startGoogleSignIn(): Promise<Response> {
   response.headers.set("cache-control", "no-store");
   // The callback checks `state` against this cookie (CSRF) and needs the
   // verifier to exchange the code (PKCE).
-  response.cookies.set(COOKIE, JSON.stringify({ state, codeVerifier }), {
+  response.cookies.set(COOKIE, JSON.stringify({ state, codeVerifier, next }), {
     httpOnly: true,
     sameSite: "lax",
     secure: process.env.NODE_ENV === "production",
@@ -46,7 +48,7 @@ export function googleAttemptFor(request: NextRequest): GoogleAttempt | null {
   return attempt && state === attempt.state ? attempt : null;
 }
 
-/** Exchanges the code for a session, then goes home, or back to log in on failure. */
+/** Exchanges the code for a session, then goes where the user was headed, or back to log in on failure. */
 export async function finishGoogleSignIn(
   request: NextRequest,
   attempt: GoogleAttempt,
@@ -69,7 +71,7 @@ export async function finishGoogleSignIn(
     });
     return finish(request, "/login?error=google");
   }
-  return finish(request, "/");
+  return finish(request, safeNext(attempt.next));
 }
 
 /** Redirects within the app and always drops the one-time attempt cookie. */
@@ -93,7 +95,10 @@ function parseAttempt(raw: string | undefined): GoogleAttempt | null {
       typeof parsed.state === "string" &&
       typeof parsed.codeVerifier === "string"
     ) {
-      return { state: parsed.state, codeVerifier: parsed.codeVerifier };
+      // Older cookies have no `next`; the cookie is client-held, so re-validate it.
+      const next =
+        "next" in parsed && typeof parsed.next === "string" ? safeNext(parsed.next) : "/";
+      return { state: parsed.state, codeVerifier: parsed.codeVerifier, next };
     }
   } catch {
     // A tampered or stale cookie is treated as missing.

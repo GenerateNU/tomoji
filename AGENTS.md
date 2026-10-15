@@ -96,7 +96,8 @@ commands that exist today:
 | `just bd`         | Convex dev — watches `convex/`, streams function logs   |
 | `just ci`         | typecheck + lint + format:check + test (what CI runs)   |
 | `just test`       | Vitest once                                             |
-| `just test-e2e`   | Playwright                                              |
+| `just test-e2e`   | Playwright (not run in CI)                              |
+| `just ci-full`    | `just ci`, then the Playwright tests                    |
 | `just build`      | Production build                                        |
 
 Recipes are thin wrappers over `package.json` scripts; CI runs `bun run ci`. There is no

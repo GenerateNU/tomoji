@@ -15,6 +15,9 @@ ci:
     bun run format
     bun run ci
 
+# `just ci` plus the Playwright browser tests (CI doesn't run these). Reuses `just fd` if it's running.
+ci-full: ci test-e2e
+
 # Run the test suite once
 test:
     bun run test

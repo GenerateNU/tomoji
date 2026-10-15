@@ -104,7 +104,11 @@ test("invalid sign-up input never reaches WorkOS", async () => {
     firstName: "First name required",
     password: "Password required",
   });
-  expect(state.values).toEqual({ firstName: "", lastName: "Wibisana", email: "zahra@example.com" });
+  expect(state.values).toEqual({
+    firstName: "",
+    lastName: "Wibisana",
+    email: "zahra@example.com",
+  });
   expect(userManagement.createUser).not.toHaveBeenCalled();
 });
 
@@ -118,11 +122,15 @@ const weakPassword = () =>
 
 test("a weak password on a taken email reports the email, since that's the real blocker", async () => {
   userManagement.createUser.mockRejectedValue(weakPassword());
-  userManagement.listUsers.mockResolvedValue({ data: [{ id: "user_existing" }] });
+  userManagement.listUsers.mockResolvedValue({
+    data: [{ id: "user_existing" }],
+  });
 
   const state = await signUpAction(empty, form(signUpFields));
 
-  expect(userManagement.listUsers).toHaveBeenCalledWith({ email: "zahra@example.com" });
+  expect(userManagement.listUsers).toHaveBeenCalledWith({
+    email: "zahra@example.com",
+  });
   expect(state.fieldErrors).toEqual({
     email: "That email already has an account. Log in instead.",
   });
@@ -133,7 +141,9 @@ test("a weak password on a free email reports the password", async () => {
   userManagement.listUsers.mockResolvedValue({ data: [] });
 
   const state = await signUpAction(empty, form(signUpFields));
-  expect(state.fieldErrors).toEqual({ password: "Use at least 10 characters." });
+  expect(state.fieldErrors).toEqual({
+    password: "Use at least 10 characters.",
+  });
 });
 
 test("if the email lookup fails, the password message still shows", async () => {
@@ -141,7 +151,9 @@ test("if the email lookup fails, the password message still shows", async () => 
   userManagement.listUsers.mockRejectedValue(new Error("network"));
 
   const state = await signUpAction(empty, form(signUpFields));
-  expect(state.fieldErrors).toEqual({ password: "Use at least 10 characters." });
+  expect(state.fieldErrors).toEqual({
+    password: "Use at least 10 characters.",
+  });
 });
 
 test("other sign-up failures don't trigger the email lookup", async () => {
@@ -158,14 +170,25 @@ test("a taken email is reported on the email field, keeping what was typed", asy
     new BadRequestException({
       code: "user_creation_error",
       message: "Could not create user.",
-      errors: [{ code: "email_not_available", message: "This email is not available." }],
+      errors: [
+        {
+          code: "email_not_available",
+          message: "This email is not available.",
+        },
+      ],
       requestID: "req",
     }),
   );
   const state = await signUpAction(empty, form(signUpFields));
   expect(state).toEqual({
-    values: { firstName: "Zahra", lastName: "Wibisana", email: "zahra@example.com" },
-    fieldErrors: { email: "That email already has an account. Log in instead." },
+    values: {
+      firstName: "Zahra",
+      lastName: "Wibisana",
+      email: "zahra@example.com",
+    },
+    fieldErrors: {
+      email: "That email already has an account. Log in instead.",
+    },
     formError: null,
   });
   expect(saveSession).not.toHaveBeenCalled();
@@ -175,7 +198,10 @@ test("when WorkOS requires email verification, the pending sign-in is kept serve
   userManagement.authenticateWithPassword.mockRejectedValue(
     new AuthenticationException(
       403,
-      { code: "email_verification_required", pending_authentication_token: "pending-token" },
+      {
+        code: "email_verification_required",
+        pending_authentication_token: "pending-token",
+      },
       "req",
     ),
   );
@@ -185,8 +211,84 @@ test("when WorkOS requires email verification, the pending sign-in is kept serve
   expect(JSON.parse(cookieJar.get("tomoji-pending-auth")!)).toEqual({
     token: "pending-token",
     email: "zahra@example.com",
+    next: "/",
   });
   expect(saveSession).not.toHaveBeenCalled();
+});
+
+test("logging in sends the user to where they were headed", async () => {
+  userManagement.authenticateWithPassword.mockResolvedValue(session);
+  const state = await logInAction(
+    empty,
+    form({
+      email: "zahra@example.com",
+      password: "correct horse",
+      next: "/campaigns/abc",
+    }),
+  );
+  expect(state.redirectTo).toBe("/campaigns/abc");
+  expect(state.values).toEqual({});
+});
+
+test("signing up sends the user to where they were headed", async () => {
+  userManagement.createUser.mockResolvedValue({ id: "user_1" });
+  userManagement.authenticateWithPassword.mockResolvedValue(session);
+  const state = await signUpAction(empty, form({ ...signUpFields, next: "/campaigns/abc" }));
+  expect(state.redirectTo).toBe("/campaigns/abc");
+});
+
+test.each(["https://evil.com", "//evil.com"])(
+  "an off-site next (%s) on log in is ignored",
+  async (next) => {
+    userManagement.authenticateWithPassword.mockResolvedValue(session);
+    const state = await logInAction(
+      empty,
+      form({ email: "zahra@example.com", password: "correct horse", next }),
+    );
+    expect(state.redirectTo).toBe("/");
+  },
+);
+
+test("where the user was headed survives the email verification step", async () => {
+  userManagement.authenticateWithPassword.mockRejectedValue(
+    new AuthenticationException(
+      403,
+      {
+        code: "email_verification_required",
+        pending_authentication_token: "pending-token",
+      },
+      "req",
+    ),
+  );
+  await expect(
+    logInAction(
+      empty,
+      form({
+        email: "zahra@example.com",
+        password: "correct horse",
+        next: "/campaigns/abc",
+      }),
+    ),
+  ).rejects.toThrow("NEXT_REDIRECT /verify-email");
+  expect(JSON.parse(cookieJar.get("tomoji-pending-auth")!).next).toBe("/campaigns/abc");
+
+  userManagement.authenticateWithEmailVerification.mockResolvedValue(session);
+  const state = await verifyEmailAction(empty, form({ code: "123456" }));
+  expect(state.redirectTo).toBe("/campaigns/abc");
+});
+
+test("a tampered next in the pending cookie is ignored", async () => {
+  cookieJar.set(
+    "tomoji-pending-auth",
+    JSON.stringify({
+      token: "pending-token",
+      email: "z@x.com",
+      next: "//evil.com",
+    }),
+  );
+  userManagement.authenticateWithEmailVerification.mockResolvedValue(session);
+  const state = await verifyEmailAction(empty, form({ code: "123456" }));
+  expect(state.redirectTo).toBe("/");
 });
 
 test("wrong credentials show one message for the whole form", async () => {
@@ -258,7 +360,10 @@ test("a reset request confirms the same way whether or not the account exists", 
   );
 
   userManagement.createPasswordReset.mockRejectedValueOnce(
-    new NotFoundException({ path: "/user_management/password_reset", requestID: "req" }),
+    new NotFoundException({
+      path: "/user_management/password_reset",
+      requestID: "req",
+    }),
   );
   const unknown = await requestPasswordResetAction(
     { ...empty, sentTo: null },
@@ -271,7 +376,9 @@ test("a reset request confirms the same way whether or not the account exists", 
 });
 
 test("resetting the password signs the user in with the new one", async () => {
-  userManagement.resetPassword.mockResolvedValue({ user: { email: "zahra@example.com" } });
+  userManagement.resetPassword.mockResolvedValue({
+    user: { email: "zahra@example.com" },
+  });
   userManagement.authenticateWithPassword.mockResolvedValue(session);
 
   expect(
@@ -289,9 +396,28 @@ test("resetting the password signs the user in with the new one", async () => {
   });
 });
 
+test("resetting the password always lands home, even if a next field is sent", async () => {
+  userManagement.resetPassword.mockResolvedValue({
+    user: { email: "zahra@example.com" },
+  });
+  userManagement.authenticateWithPassword.mockResolvedValue(session);
+  const state = await resetPasswordAction(
+    empty,
+    form({
+      token: "reset-token",
+      password: "new password",
+      next: "/campaigns/abc",
+    }),
+  );
+  expect(state.redirectTo).toBe("/");
+});
+
 test("an expired reset link asks for a new one", async () => {
   userManagement.resetPassword.mockRejectedValue(
-    new NotFoundException({ path: "/user_management/password_reset/confirm", requestID: "req" }),
+    new NotFoundException({
+      path: "/user_management/password_reset/confirm",
+      requestID: "req",
+    }),
   );
   const state = await resetPasswordAction(empty, form({ token: "old", password: "new password" }));
   expect(state.formError).toBe(

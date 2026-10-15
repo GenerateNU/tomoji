@@ -198,6 +198,7 @@ Branch from `main`, open a PR, get one approval, squash merge. CI must pass befo
 just fd        # frontend — localhost:3000
 just bd        # Convex — watches convex/, streams logs
 just ci        # typecheck + lint + format + test. Run before you push.
+just ci-full   # just ci, then the Playwright browser tests (not run in CI)
 just test      # tests once
 just format    # format everything in place
 ```

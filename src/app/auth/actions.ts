@@ -3,6 +3,7 @@
 import { getWorkOS, saveSession, signOut } from "@workos-inc/authkit-nextjs";
 import { NotFoundException, type AuthenticationResponse } from "@workos-inc/node";
 import { redirect } from "next/navigation";
+import { safeNext } from "@/features/auth/lib/access";
 import {
   classifyAuthError,
   EMAIL_TAKEN,
@@ -65,8 +66,12 @@ export async function signUpAction(
     return failureState("sign_up", error, parsed.data);
   }
 
-  return signIn("sign_up", parsed.data, email, () =>
-    userManagement().authenticateWithPassword({ clientId: clientId(), email, password }),
+  return signIn("sign_up", parsed.data, email, safeNext(formData.get("next")), () =>
+    userManagement().authenticateWithPassword({
+      clientId: clientId(),
+      email,
+      password,
+    }),
   );
 }
 
@@ -88,8 +93,12 @@ export async function logInAction(
   if (!parsed.ok) return parsed.state;
   const { email, password } = parsed.data;
 
-  return signIn("log_in", parsed.data, email, () =>
-    userManagement().authenticateWithPassword({ clientId: clientId(), email, password }),
+  return signIn("log_in", parsed.data, email, safeNext(formData.get("next")), () =>
+    userManagement().authenticateWithPassword({
+      clientId: clientId(),
+      email,
+      password,
+    }),
   );
 }
 
@@ -109,7 +118,7 @@ export async function verifyEmailAction(
     };
   }
 
-  return signIn("verify_email", parsed.data, pending.email, async () => {
+  return signIn("verify_email", parsed.data, pending.email, pending.next, async () => {
     const response = await userManagement().authenticateWithEmailVerification({
       clientId: clientId(),
       code: parsed.data.code,
@@ -120,7 +129,9 @@ export async function verifyEmailAction(
   });
 }
 
-export type ForgotPasswordState = FormState<ForgotPasswordField> & { sentTo: string | null };
+export type ForgotPasswordState = FormState<ForgotPasswordField> & {
+  sentTo: string | null;
+};
 
 export async function requestPasswordResetAction(
   _previous: ForgotPasswordState,
@@ -137,7 +148,10 @@ export async function requestPasswordResetAction(
     // Unknown emails get the same confirmation, so this form can't be used to
     // find out who has an account.
     if (!(error instanceof NotFoundException)) {
-      return { ...failureState("request_reset", error, parsed.data), sentTo: null };
+      return {
+        ...failureState("request_reset", error, parsed.data),
+        sentTo: null,
+      };
     }
   }
   return { values: { email }, fieldErrors: {}, formError: null, sentTo: email };
@@ -160,8 +174,13 @@ export async function resetPasswordAction(
     return failureState("reset_password", error, parsed.data);
   }
 
-  return signIn("log_in", parsed.data, email, () =>
-    userManagement().authenticateWithPassword({ clientId: clientId(), email, password }),
+  // The link comes from an email, so there's no page to return to.
+  return signIn("log_in", parsed.data, email, HOME, () =>
+    userManagement().authenticateWithPassword({
+      clientId: clientId(),
+      email,
+      password,
+    }),
   );
 }
 
@@ -169,6 +188,8 @@ export async function resetPasswordAction(
  * Runs a WorkOS authentication and saves the session. Failures come back as
  * form state, except a required email code, which moves the user to
  * /verify-email.
+ *
+ * `next` is where the user was headed; it rides along through the verify-email step.
  *
  * Success returns `redirectTo` rather than redirecting here: the client's
  * AuthKitProvider (and Convex with it) only learns about the new session when
@@ -178,6 +199,7 @@ async function signIn<Field extends string>(
   flow: AuthFlow,
   data: Record<Field, string>,
   email: string,
+  next: string,
   authenticate: () => Promise<AuthenticationResponse>,
 ): Promise<FormState<Field>> {
   let response: AuthenticationResponse;
@@ -186,11 +208,15 @@ async function signIn<Field extends string>(
   } catch (error) {
     const failure = classifyAuthError(error, flow);
     if (failure.kind !== "verify_email") return toState(failure, error, flow, data);
-    await savePendingAuth({ token: failure.pendingAuthenticationToken, email });
+    await savePendingAuth({
+      token: failure.pendingAuthenticationToken,
+      email,
+      next,
+    });
     redirect("/verify-email");
   }
   await saveSession(response, sessionUrl());
-  return { values: {}, fieldErrors: {}, formError: null, redirectTo: HOME };
+  return { values: {}, fieldErrors: {}, formError: null, redirectTo: next };
 }
 
 function failureState<Field extends string>(

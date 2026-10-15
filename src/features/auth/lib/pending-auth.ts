@@ -1,4 +1,5 @@
 import { cookies } from "next/headers";
+import { safeNext } from "./access";
 
 /**
  * When WorkOS wants an emailed code before finishing sign-in, it hands back a
@@ -7,7 +8,7 @@ import { cookies } from "next/headers";
  */
 const COOKIE = "tomoji-pending-auth";
 
-export type PendingAuth = { token: string; email: string };
+export type PendingAuth = { token: string; email: string; next: string };
 
 export async function savePendingAuth(pending: PendingAuth): Promise<void> {
   (await cookies()).set(COOKIE, JSON.stringify(pending), {
@@ -33,7 +34,10 @@ export async function readPendingAuth(): Promise<PendingAuth | null> {
       typeof parsed.token === "string" &&
       typeof parsed.email === "string"
     ) {
-      return { token: parsed.token, email: parsed.email };
+      // Older cookies have no `next`; the cookie is client-held, so re-validate it.
+      const next =
+        "next" in parsed && typeof parsed.next === "string" ? safeNext(parsed.next) : "/";
+      return { token: parsed.token, email: parsed.email, next };
     }
   } catch {
     // Fall through: a tampered or stale cookie is treated as missing.

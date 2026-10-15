@@ -3,6 +3,7 @@
 import { signUpAction } from "@/app/auth/actions";
 import { useAuthForm } from "../hooks/use-auth-form";
 import { emptyFormState } from "../lib/form";
+import { withNext } from "../lib/access";
 import { signUpRules, type SignUpField } from "../lib/rules";
 import { OrDivider } from "./auth-layout";
 import { FormAlert } from "./form-alert";
@@ -13,14 +14,16 @@ import { TextLink } from "./text-link";
 
 const initialState = emptyFormState<SignUpField>();
 
-export function SignUpForm() {
+/** `next` is where to go after signing up. */
+export function SignUpForm({ next = "/" }: { next?: string }) {
   const { state, field, formProps, busy } = useAuthForm(signUpAction, initialState, signUpRules);
 
   return (
     <>
-      <GoogleButton />
-      <OrDivider />
+      {/*<GoogleButton next={next} />*/}
+      {/*<OrDivider />*/}
       <form {...formProps} className="grid gap-4">
+        <input type="hidden" name="next" value={next} />
         <FormAlert message={state.formError} />
         <div className="grid gap-4 sm:grid-cols-2">
           <FormField
@@ -42,7 +45,7 @@ export function SignUpForm() {
         <SubmitButton busy={busy}>Get started</SubmitButton>
       </form>
       <p className="text-center text-sm text-muted-foreground">
-        Already have an account? <TextLink href="/login">Log in</TextLink>
+        Already have an account? <TextLink href={withNext("/login", next)}>Log in</TextLink>
       </p>
     </>
   );

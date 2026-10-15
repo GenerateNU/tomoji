@@ -4,7 +4,7 @@ import { expect, test } from "@playwright/test";
 
 test("signed-out visitors to app pages land on log in", async ({ page }) => {
   await page.goto("/opportunities");
-  await expect(page).toHaveURL(/\/login$/);
+  await expect(page).toHaveURL(/\/login\?next=%2Fopportunities$/);
   await expect(page.getByRole("heading", { name: "Welcome back" })).toBeVisible();
 });
 
@@ -44,7 +44,8 @@ test("fixing a field clears its error as the user types", async ({ page }) => {
   await expect(page.getByText("Enter a valid email address.")).toBeHidden();
 });
 
-test("the Google button starts our own Google flow", async ({ page }) => {
+// Google sign-in is hidden for now; re-enable with the buttons in the auth forms.
+test.skip("the Google button starts our own Google flow", async ({ page }) => {
   await page.goto("/login");
   await expect(page.getByRole("link", { name: "Continue with Google" })).toHaveAttribute(
     "href",
@@ -63,7 +64,8 @@ test("verify email without a pending sign-in sends the user back to log in", asy
   await expect(page.getByText("This sign-in has expired.")).toBeVisible();
 });
 
-test("a failed Google sign-in is explained on the log-in page", async ({ page }) => {
+// Google sign-in is hidden for now; re-enable with the buttons in the auth forms.
+test.skip("a failed Google sign-in is explained on the log-in page", async ({ page }) => {
   await page.goto("/login?error=google");
   // Filtered because Next.js's route announcer is also role="alert".
   await expect(

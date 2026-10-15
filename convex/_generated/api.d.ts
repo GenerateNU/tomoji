@@ -58,6 +58,7 @@ import type * as models_xLinkAttempts from "../models/xLinkAttempts.js";
 import type * as niches from "../niches.js";
 import type * as notifications from "../notifications.js";
 import type * as opportunities from "../opportunities.js";
+import type * as seed from "../seed.js";
 import type * as submissions from "../submissions.js";
 import type * as tests_helpers from "../tests/helpers.js";
 import type * as users from "../users.js";
@@ -121,6 +122,7 @@ declare const fullApi: ApiFromModules<{
   niches: typeof niches;
   notifications: typeof notifications;
   opportunities: typeof opportunities;
+  seed: typeof seed;
   submissions: typeof submissions;
   "tests/helpers": typeof tests_helpers;
   users: typeof users;

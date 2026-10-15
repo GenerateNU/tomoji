@@ -3,8 +3,9 @@
 import { useAuth } from "@workos-inc/authkit-nextjs/components";
 import Link from "next/link";
 import { signOutAction } from "@/app/auth/actions";
+import { InvitesLink } from "@/features/invites/components/invites-link";
 
-/** Shows account actions and the inbox entry point for signed-in users. */
+/** Shows account actions, the inbox, and company-admin invitation navigation. */
 export function NavAuth() {
   const { user, loading } = useAuth();
 
@@ -18,13 +19,14 @@ export function NavAuth() {
 
   if (user) {
     return (
-      <div className="flex items-center gap-4">
+      <div className="flex min-w-0 flex-wrap items-center gap-4">
         <Link
           href="/notifications"
           className="inline-flex min-h-11 items-center rounded-md text-sm underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-offset-4"
         >
           Notifications
         </Link>
+        <InvitesLink />
         <span className="hidden text-sm text-zinc-600 sm:inline dark:text-zinc-400">
           {user.email}
         </span>

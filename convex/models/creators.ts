@@ -62,6 +62,26 @@ export async function getCreatorByUserId(
     .unique();
 }
 
+/** True when the creator has a linked X account, an application, or an assignment. */
+export async function hasCreatorActivity(
+  ctx: QueryCtx | MutationCtx,
+  creatorId: Id<"creators">,
+): Promise<boolean> {
+  if ((await getXAccountByCreatorId(ctx, creatorId)) !== null) return true;
+
+  const application = await ctx.db
+    .query("applications")
+    .withIndex("by_creatorId_and_status", (q) => q.eq("creatorId", creatorId))
+    .first();
+  if (application !== null) return true;
+
+  const assignment = await ctx.db
+    .query("assignments")
+    .withIndex("by_creatorId_and_status", (q) => q.eq("creatorId", creatorId))
+    .first();
+  return assignment !== null;
+}
+
 /** Returns the complete creator profile or throws when its data is missing. */
 export async function requireCreatorProfile(
   ctx: QueryCtx | MutationCtx,

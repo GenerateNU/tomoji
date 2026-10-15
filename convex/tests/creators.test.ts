@@ -1,6 +1,6 @@
 /// <reference types="vite/client" />
 import { convexTest } from "convex-test";
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import { api } from "../_generated/api";
 import { getCreatorByUserId, updateCreatorProfile } from "../models/creators";
 import { getUserByWorkosId } from "../models/users";
@@ -185,6 +185,29 @@ describe("creators.list", () => {
       "one@example.com",
       "two@example.com",
     ]);
+  });
+
+  test("skips duplicate-email accounts, which have no creator row, instead of throwing", async () => {
+    const t = convexTest(schema, modules);
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const asCompany = await seedUser(t, {
+      subject: "dup_list_company",
+      org: { id: "org_dup_list" },
+    });
+    await seedUser(t, {
+      subject: "dup_list_owner",
+      email: "dup-creator@example.com",
+    });
+    await seedUser(t, {
+      subject: "dup_list_claimant",
+      email: "dup-creator@example.com",
+    });
+
+    const result = await asCompany.query(api.creators.list, {
+      paginationOpts: { cursor: null, numItems: 10 },
+    });
+
+    expect(result.page.map((creator) => creator.email)).toEqual(["dup-creator@example.com"]);
   });
 });
 

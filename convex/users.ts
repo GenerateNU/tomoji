@@ -3,9 +3,10 @@ import { v } from "convex/values";
 import { query } from "./_generated/server";
 import { requireIdentity } from "./lib/authz";
 import { apiError } from "./lib/errors";
-import { operatorQuery } from "./lib/functions";
-import { findOrgId, toCompanyRole } from "./lib/identity";
-import { getUserByWorkosId, listUsers } from "./models/users";
+import { operatorMutation, operatorQuery } from "./lib/functions";
+import { findOrgId } from "./lib/identity";
+import { requireMembership } from "./models/companyUsers";
+import { getUserByWorkosId, listUsers, setUserActive } from "./models/users";
 import schema from "./schema";
 import { companyRole } from "./schemas/companyUsers.schema";
 import { userRole } from "./schemas/users.schema";
@@ -40,6 +41,7 @@ export const me = query({
 
     // `synced: false` is the window before the WorkOS webhook has landed.
     if (user === null) return { synced: false as const };
+    if (!user.isActive) throw apiError("account_deactivated");
 
     const base = {
       synced: true as const,
@@ -54,10 +56,20 @@ export const me = query({
 
     const orgId = findOrgId(identity);
     if (orgId === null) {
-      throw apiError("misconfigured", { reason: "company account has no organization" });
+      throw apiError("misconfigured", {
+        reason: "company account has no organization",
+      });
     }
 
-    return { ...base, role: "company" as const, orgId, companyRole: toCompanyRole(identity.role) };
+    // The membership row is authoritative. The token's role claim can be stale
+    // until it refreshes, and `companyContext` already reads it from here.
+    const membership = await requireMembership(ctx, user._id, orgId);
+    return {
+      ...base,
+      role: "company" as const,
+      orgId,
+      companyRole: membership.role,
+    };
   },
 });
 
@@ -71,5 +83,24 @@ export const list = operatorQuery({
   returns: paginationResultValidator(schema.doc("users")),
   handler: async (ctx, args) => {
     return await listUsers(ctx, args);
+  },
+});
+
+/**
+ * Activates or deactivates an account. Deactivation is our soft delete: the
+ * row and everything referencing it stay, but `requireUser` refuses the caller.
+ * WorkOS removing someone from their company deactivates them automatically.
+ *
+ * @throws `not_found` if the user does not exist.
+ * @throws `invalid_state` with `no_active_membership` when activating a company
+ * user who has no active membership.
+ * @throws `invalid_state` with `email_in_use` when activating a duplicate-email
+ * account whose email another account still holds.
+ */
+export const setActive = operatorMutation({
+  args: { userId: v.id("users"), isActive: v.boolean() },
+  returns: schema.doc("users"),
+  handler: async (ctx, args) => {
+    return await setUserActive(ctx, args.userId, args.isActive);
   },
 });

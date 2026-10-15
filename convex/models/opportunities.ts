@@ -2,10 +2,13 @@ import { paginationOptsValidator, type PaginationResult } from "convex/server";
 import { v, type Infer } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
+import { stream } from "convex-helpers/server/stream";
 import { apiError } from "../lib/errors";
+import { withRowsReadCap } from "../lib/pagination";
 import { requireNonBlank, isHalfHourTimestamp } from "../lib/validation";
 import { requireMembership } from "./companyUsers";
 import { notifyCompanyUser, notifyCreator } from "./notifications";
+import { requireNiche, requireNiches } from "./niches";
 import schema from "../schema";
 
 export const opportunityCreate = schema
@@ -39,7 +42,7 @@ export const creatorOpportunity = schema
     "disclosureRequirements",
     "usageRights",
   )
-  .extend({ companyName: v.string() });
+  .extend({ companyName: v.string(), niches: v.array(v.string()) });
 
 export type CreatorOpportunity = Infer<typeof creatorOpportunity>;
 
@@ -69,6 +72,7 @@ export function toCreatorOpportunity(
     disclosureRequirements: opportunity.disclosureRequirements,
     usageRights: opportunity.usageRights,
     companyName: company.name,
+    niches: opportunity.niches ?? [],
   };
 }
 
@@ -340,6 +344,8 @@ export async function updateOpportunity(
   for (const field of ["isGated", "usesAiReviewDefault"] as const) {
     if (updates[field] !== undefined) patch[field] = updates[field];
   }
+  // An empty list clears the niches; omitting the field leaves them unchanged.
+  if (updates.niches !== undefined) patch.niches = requireNiches(updates.niches);
   // Omitted fields stay unchanged; null removes the optional link, as in creator updates.
   if (updates.productAccessLink !== undefined)
     patch.productAccessLink = updates.productAccessLink ?? undefined;
@@ -371,36 +377,48 @@ export const opportunityList = schema
     paginationOpts: paginationOptsValidator,
   });
 
-export const opportunityDiscover = opportunityList.pick("paginationOpts");
+export const opportunityDiscover = opportunityList
+  .pick("paginationOpts")
+  .extend({ niche: v.optional(v.string()) });
+
+/**
+ * Returns the creator-facing brief if creators may see the opportunity: it's
+ * open, its campaign is open, and its company is active. Otherwise `null`.
+ */
+export async function getVisibleCreatorOpportunity(
+  ctx: QueryCtx,
+  opportunity: Doc<"opportunities">,
+): Promise<CreatorOpportunity | null> {
+  if (opportunity.status !== "open") return null;
+  const campaign = await ctx.db.get("campaigns", opportunity.campaignId);
+  if (
+    campaign === null ||
+    campaign.status !== "open" ||
+    campaign.companyId !== opportunity.companyId
+  ) {
+    return null;
+  }
+  const company = await ctx.db.get("companies", opportunity.companyId);
+  return company !== null && company.isActive ? toCreatorOpportunity(opportunity, company) : null;
+}
 
 /** Discovers open briefs across active companies without ranking or application eligibility rules. */
 export async function discoverOpportunities(
   ctx: QueryCtx,
   options: Infer<typeof opportunityDiscover>,
 ): Promise<PaginationResult<CreatorOpportunity>> {
-  const result = await ctx.db
+  const niche = options.niche === undefined ? undefined : requireNiche(options.niche);
+  // Filter inside the stream so hidden or off-niche opportunities don't leave
+  // pages short or empty. Convex can't index inside arrays, so niche matching
+  // happens here rather than in the index.
+  return await stream(ctx.db, schema)
     .query("opportunities")
     .withIndex("by_status_and_deadline", (q) => q.eq("status", "open"))
-    .paginate(options.paginationOpts);
-  const visible = await Promise.all(
-    result.page.map(async (opportunity) => {
-      const campaign = await ctx.db.get("campaigns", opportunity.campaignId);
-      if (
-        campaign === null ||
-        campaign.status !== "open" ||
-        campaign.companyId !== opportunity.companyId
-      ) {
-        return null;
-      }
-      const company = await ctx.db.get("companies", opportunity.companyId);
-      return company !== null && company.isActive
-        ? toCreatorOpportunity(opportunity, company)
-        : null;
-    }),
-  );
-
-  // Visibility can shorten a page; retain the native cursor and isDone so callers can continue.
-  return { ...result, page: visible.filter((opportunity) => opportunity !== null) };
+    .map(async (opportunity) => {
+      const brief = await getVisibleCreatorOpportunity(ctx, opportunity);
+      return brief !== null && (niche === undefined || brief.niches.includes(niche)) ? brief : null;
+    })
+    .paginate(withRowsReadCap(options.paginationOpts));
 }
 
 /** Lists the company's opportunities, optionally scoped to an owned campaign and status. */
@@ -449,8 +467,10 @@ export async function createOpportunity(
   if (campaign.endsAt !== undefined && fields.deadline > campaign.endsAt) {
     throw apiError("invalid_state", { reason: "deadline_after_campaign_end" });
   }
+  const niches = fields.niches === undefined ? {} : { niches: requireNiches(fields.niches) };
   return await ctx.db.insert("opportunities", {
     ...fields,
+    ...niches,
     title,
     description,
     companyId: campaign.companyId,

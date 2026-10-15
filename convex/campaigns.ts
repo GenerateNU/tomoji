@@ -16,7 +16,7 @@ import {
   resumeCampaign,
   updateCampaign,
 } from "./models/campaigns";
-import { companyMutation, companyQuery } from "./lib/functions";
+import { companyAdminMutation, companyMutation, companyQuery } from "./lib/functions";
 import schema from "./schema";
 import { campaignStatus } from "./schemas/campaigns.schema";
 
@@ -56,7 +56,7 @@ export const list = companyQuery({
  * or an end date before an existing opportunity deadline.
  * @returns the updated campaign document.
  */
-export const update = companyMutation({
+export const update = companyAdminMutation({
   args: { campaignId: v.id("campaigns"), ...campaignUpdate.fields },
   returns: schema.doc("campaigns"),
   handler: async (ctx, args) => {
@@ -73,7 +73,7 @@ export const update = companyMutation({
  * @throws `invalid_state` if the campaign is not a draft or has any opportunities.
  * @returns the removed campaign's id.
  */
-export const remove = companyMutation({
+export const remove = companyAdminMutation({
   args: { campaignId: v.id("campaigns") },
   returns: v.id("campaigns"),
   handler: async (ctx, args) => {
@@ -162,7 +162,7 @@ export const close = companyMutation({
  * @throws `invalid_state` for blank brief fields or an invalid budget or schedule.
  * @returns the new campaign's id.
  */
-export const create = companyMutation({
+export const create = companyAdminMutation({
   args: schema
     .doc("campaigns")
     .omit("_id", "_creationTime", "companyId", "createdBy", "isPausingOpportunities")

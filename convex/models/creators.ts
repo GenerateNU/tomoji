@@ -4,6 +4,7 @@ import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { apiError } from "../lib/errors";
 import { requireNonBlank } from "../lib/validation";
+import { requireNiches } from "./niches";
 import { getXAccountByCreatorId } from "./xAccountLookup";
 
 export const creatorProfile = v.object({
@@ -16,12 +17,15 @@ export const creatorProfile = v.object({
   xId: v.optional(v.string()),
   githubLink: v.optional(v.string()),
   phoneNumber: v.optional(v.string()),
+  niches: v.array(v.string()),
 });
 
 export const creatorProfileUpdate = v.object({
   username: v.optional(v.string()),
   githubLink: v.optional(v.union(v.string(), v.null())),
   phoneNumber: v.optional(v.union(v.string(), v.null())),
+  // Names from models/niches.ts. An empty list clears them.
+  niches: v.optional(v.array(v.string())),
 });
 
 export type CreatorProfile = Infer<typeof creatorProfile>;
@@ -43,6 +47,7 @@ function toCreatorProfile(
     xId,
     githubLink: creator.githubLink,
     phoneNumber: creator.phoneNumber,
+    niches: creator.niches ?? [],
   };
 }
 
@@ -55,6 +60,26 @@ export async function getCreatorByUserId(
     .query("creators")
     .withIndex("by_userId", (q) => q.eq("userId", userId))
     .unique();
+}
+
+/** True when the creator has a linked X account, an application, or an assignment. */
+export async function hasCreatorActivity(
+  ctx: QueryCtx | MutationCtx,
+  creatorId: Id<"creators">,
+): Promise<boolean> {
+  if ((await getXAccountByCreatorId(ctx, creatorId)) !== null) return true;
+
+  const application = await ctx.db
+    .query("applications")
+    .withIndex("by_creatorId_and_status", (q) => q.eq("creatorId", creatorId))
+    .first();
+  if (application !== null) return true;
+
+  const assignment = await ctx.db
+    .query("assignments")
+    .withIndex("by_creatorId_and_status", (q) => q.eq("creatorId", creatorId))
+    .first();
+  return assignment !== null;
 }
 
 /** Returns the complete creator profile or throws when its data is missing. */
@@ -115,7 +140,10 @@ export async function updateCreatorProfile(
     throw apiError("not_found", { resource: "creator" });
   }
 
-  const patch: Partial<Pick<Doc<"creators">, "username" | "githubLink" | "phoneNumber">> = {};
+  const patch: Partial<
+    Pick<Doc<"creators">, "username" | "githubLink" | "phoneNumber" | "niches">
+  > = {};
+  if (updates.niches !== undefined) patch.niches = requireNiches(updates.niches);
   if (updates.username !== undefined) {
     patch.username = await requireAvailableCreatorUsername(ctx, creator._id, updates.username);
   }

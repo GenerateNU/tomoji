@@ -9,6 +9,9 @@ export const creatorsTable = defineTable({
   xId: v.optional(v.string()),
   githubLink: v.optional(v.string()),
   phoneNumber: v.optional(v.string()),
+  // Names from the fixed list in models/niches.ts. Optional so existing rows
+  // need no migration; read missing as "no niches".
+  niches: v.optional(v.array(v.string())),
 })
   .index("by_userId", ["userId"])
   .index("by_username", ["username"]);

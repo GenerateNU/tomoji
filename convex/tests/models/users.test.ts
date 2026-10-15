@@ -309,33 +309,26 @@ describe("applyMembership", () => {
 });
 
 describe("removeMembership", () => {
-  test("recreates a missing creator profile without assigning a username", async () => {
+  test("keeps the membership row so attribution survives", async () => {
     const t = convexTest(schema, modules);
-    await seedUser(t, { subject: "recreated_creator", org: { id: "org_acme" } });
-    const creator = await t.run(async (ctx) => {
-      const user = await getUserByWorkosId(ctx, "recreated_creator");
-      if (user === null) throw new Error("expected seeded user");
-      const previous = await ctx.db
-        .query("creators")
-        .withIndex("by_userId", (q) => q.eq("userId", user._id))
-        .unique();
-      if (previous === null) throw new Error("expected seeded creator");
-      await ctx.db.delete("creators", previous._id);
-      await removeMembership(ctx, {
-        workosUserId: "recreated_creator",
-        organizationId: "org_acme",
-      });
-      return await ctx.db
-        .query("creators")
-        .withIndex("by_userId", (q) => q.eq("userId", user._id))
-        .unique();
-    });
+    await seedUser(t, { subject: "kept_membership", org: { id: "org_acme" } });
+    const before = await t.run(async (ctx) => await ctx.db.query("companyUsers").collect());
+    await t.run(
+      async (ctx) =>
+        await removeMembership(ctx, {
+          workosUserId: "kept_membership",
+          organizationId: "org_acme",
+        }),
+    );
 
-    expect(creator).not.toBeNull();
-    expect(creator).not.toHaveProperty("username");
+    const after = await t.run(async (ctx) => await ctx.db.query("companyUsers").collect());
+
+    expect(after).toHaveLength(1);
+    expect(after[0]?._id).toBe(before[0]?._id);
+    expect(after[0]?.isActive).toBe(false);
   });
 
-  test("drops the membership and returns the user to creator", async () => {
+  test("deactivates the account instead of turning them back into a creator", async () => {
     const t = convexTest(schema, modules);
     await seedUser(t, { subject: "u11", org: { id: "org_acme" } });
     await t.run(
@@ -344,10 +337,35 @@ describe("removeMembership", () => {
     );
 
     const user = await t.run(async (ctx) => await getUserByWorkosId(ctx, "u11"));
+
+    expect(user?.role).toBe("company");
+    expect(user?.isActive).toBe(false);
+  });
+
+  test("rejoining a company reopens the membership and restores access", async () => {
+    const t = convexTest(schema, modules);
+    await seedUser(t, { subject: "rejoin", org: { id: "org_acme" } });
+    await t.run(
+      async (ctx) =>
+        await removeMembership(ctx, { workosUserId: "rejoin", organizationId: "org_acme" }),
+    );
+    await t.run(
+      async (ctx) =>
+        await applyMembership(ctx, {
+          workosUserId: "rejoin",
+          organizationId: "org_acme",
+          organizationName: "Acme",
+          role: "admin",
+        }),
+    );
+
+    const user = await t.run(async (ctx) => await getUserByWorkosId(ctx, "rejoin"));
     const memberships = await t.run(async (ctx) => await ctx.db.query("companyUsers").collect());
 
-    expect(user?.role).toBe("creator");
-    expect(memberships).toHaveLength(0);
+    expect(user?.isActive).toBe(true);
+    expect(memberships).toHaveLength(1);
+    expect(memberships[0]?.isActive).toBe(true);
+    expect(memberships[0]?.role).toBe("admin");
   });
 
   test("ignores a removal event for another company", async () => {
@@ -521,8 +539,9 @@ describe("syncMembership", () => {
 
     const user = await t.run(async (ctx) => await getUserByWorkosId(ctx, "u20"));
     const memberships = await t.run(async (ctx) => await ctx.db.query("companyUsers").collect());
-    expect(user?.role).toBe("creator");
-    expect(memberships).toHaveLength(0);
+    expect(user?.isActive).toBe(false);
+    expect(memberships).toHaveLength(1);
+    expect(memberships[0]?.isActive).toBe(false);
   });
 
   test("an active membership grants access", async () => {

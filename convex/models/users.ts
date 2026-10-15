@@ -94,6 +94,24 @@ export async function upsertUser(ctx: MutationCtx, profile: WorkosProfile): Prom
   return existing._id;
 }
 
+/**
+ * Restores access for a deactivated account, such as someone re-added to a
+ * company. Only an operator can call this.
+ *
+ * @throws `not_found` if the user does not exist.
+ */
+export async function setUserActive(
+  ctx: MutationCtx,
+  userId: Id<"users">,
+  isActive: boolean,
+): Promise<Doc<"users">> {
+  const user = await ctx.db.get("users", userId);
+  if (user === null) throw apiError("not_found", { resource: "user" });
+  if (user.isActive === isActive) return user;
+  await ctx.db.patch("users", userId, { isActive });
+  return { ...user, isActive };
+}
+
 export async function deactivateUser(ctx: MutationCtx, workosId: string): Promise<void> {
   const user = await getUserByWorkosId(ctx, workosId);
   if (user !== null) {
@@ -147,18 +165,38 @@ export async function applyMembership(ctx: MutationCtx, event: MembershipEvent):
       isActive: true,
     }));
 
-  if (membership === null) {
-    await ctx.db.insert("companyUsers", { userId: user._id, companyId, role: event.role });
-  } else if (membership.role !== event.role) {
-    await ctx.db.patch("companyUsers", membership._id, { role: event.role });
+  // A prior membership at this same company is reopened rather than duplicated.
+  const prior = membership ?? (await getCompanyUser(ctx, user._id, companyId));
+  if (prior === null) {
+    await ctx.db.insert("companyUsers", {
+      userId: user._id,
+      companyId,
+      role: event.role,
+      isActive: true,
+    });
+  } else {
+    await ctx.db.patch("companyUsers", prior._id, { role: event.role, isActive: true });
   }
 
   if (user.role === "creator") {
     await ctx.db.patch("users", user._id, { role: "company" });
   }
+  // Joining a company undoes the deactivation that leaving one applied.
+  if (!user.isActive) {
+    await ctx.db.patch("users", user._id, { isActive: true });
+  }
 }
 
 /** Removes a synced membership and restores a creator profile after the final company membership. */
+/**
+ * Deactivates a user WorkOS removed from their company. The membership row
+ * stays: `campaigns.createdBy`, `opportunities.createdBy`,
+ * `submissions.reviewedBy`, and `assignments.productAccessDeliveredBy` all
+ * point at it, so deleting it would orphan that history.
+ *
+ * `requireUser` already refuses an inactive account, so this is the whole
+ * lockout. Reactivating is an operator action.
+ */
 export async function removeMembership(
   ctx: MutationCtx,
   event: { workosUserId: string; organizationId: string },
@@ -168,18 +206,11 @@ export async function removeMembership(
   if (user === null || company === null) return;
 
   const membership = await getCompanyUser(ctx, user._id, company._id);
-  if (membership !== null) {
-    await ctx.db.delete("companyUsers", membership._id);
-  }
+  if (membership === null || !membership.isActive) return;
 
-  const remaining = await getCompanyUserByUserId(ctx, user._id);
-
-  if (remaining === null && user.role === "company") {
-    await ctx.db.patch("users", user._id, { role: "creator" });
-    const profile = await getCreatorByUserId(ctx, user._id);
-    if (profile === null) {
-      await ctx.db.insert("creators", { userId: user._id });
-    }
+  await ctx.db.patch("companyUsers", membership._id, { isActive: false });
+  if (user.isActive) {
+    await ctx.db.patch("users", user._id, { isActive: false });
   }
 }
 

@@ -3,10 +3,10 @@ import { v } from "convex/values";
 import { query } from "./_generated/server";
 import { requireIdentity } from "./lib/authz";
 import { apiError } from "./lib/errors";
-import { operatorQuery } from "./lib/functions";
+import { operatorMutation, operatorQuery } from "./lib/functions";
 import { findOrgId } from "./lib/identity";
 import { requireMembership } from "./models/companyUsers";
-import { getUserByWorkosId, listUsers } from "./models/users";
+import { getUserByWorkosId, listUsers, setUserActive } from "./models/users";
 import schema from "./schema";
 import { companyRole } from "./schemas/companyUsers.schema";
 import { userRole } from "./schemas/users.schema";
@@ -75,5 +75,20 @@ export const list = operatorQuery({
   returns: paginationResultValidator(schema.doc("users")),
   handler: async (ctx, args) => {
     return await listUsers(ctx, args);
+  },
+});
+
+/**
+ * Activates or deactivates an account. Deactivation is our soft delete: the
+ * row and everything referencing it stay, but `requireUser` refuses the caller.
+ * WorkOS removing someone from their company deactivates them automatically.
+ *
+ * @throws `not_found` if the user does not exist.
+ */
+export const setActive = operatorMutation({
+  args: { userId: v.id("users"), isActive: v.boolean() },
+  returns: schema.doc("users"),
+  handler: async (ctx, args) => {
+    return await setUserActive(ctx, args.userId, args.isActive);
   },
 });

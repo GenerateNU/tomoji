@@ -158,7 +158,18 @@ We should avoid showing users actions they don't have permission to perform, but
 
 **The backend is responsible for enforcing permissions.** Frontend checks are there to improve the user experience and prevent users from attempting actions that would ultimately fail.
 
-## 7. Naming and Types
+## 7. Opportunity applications
+
+The creator feed opens the shared application modal for gated opportunities from
+both grid cards and list rows. The feed owns the selected opportunity ID and open
+state; the modal fetches the brief and submits through `applications.create`.
+Closing resets the unsaved form. Ungated details/claiming remain a separate flow.
+
+Run `E2E_BASE_URL=http://applications.test bunx playwright test e2e/applications.spec.ts`
+for the browser integration tests. They render the real components with simulated
+Convex responses and do not authenticate or write to a live deployment.
+
+## 8. Naming and Types
 
 To keep the codebase consistent, we follow a few naming conventions:
 

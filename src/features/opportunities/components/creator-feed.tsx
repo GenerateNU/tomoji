@@ -1,9 +1,11 @@
 "use client";
 
 import { api } from "@convex/_generated/api";
+import type { Id } from "@convex/_generated/dataModel";
 import { useQuery } from "convex/react";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
+import { ApplicationModal } from "@/features/applications/components/application-modal";
 import { useOpportunityFeed } from "../hooks/use-opportunity-feed";
 import type { FeedView } from "../lib/types";
 import { FilterSelect } from "./filter-select";
@@ -24,6 +26,10 @@ export function CreatorFeed() {
   const [type, setType] = useState<TypeFilter>("all");
   const [niche, setNiche] = useState("");
   const [starredOnly, setStarredOnly] = useState(false);
+  const [application, setApplication] = useState<{
+    opportunityId: Id<"opportunities">;
+    open: boolean;
+  } | null>(null);
   // Read once per render so every row's "posted N days ago" agrees.
   const [now] = useState(() => Date.now());
 
@@ -38,6 +44,11 @@ export function CreatorFeed() {
       (!starredOnly || niche === "" || opportunity.niches.includes(niche)),
   );
   const loading = feed.status === "LoadingFirstPage";
+
+  /** Opens one shared modal without passing a stale copy of the opportunity brief. */
+  function openApplication(opportunityId: Id<"opportunities">) {
+    setApplication({ opportunityId, open: true });
+  }
 
   return (
     <div className="mx-auto flex w-full max-w-[1241px] flex-col gap-10 px-4 py-12 sm:px-10 lg:px-20 lg:py-[120px]">
@@ -134,11 +145,15 @@ export function CreatorFeed() {
         ) : view === "grid" ? (
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
             {shown.map((opportunity) => (
-              <OpportunityCard key={opportunity._id} opportunity={opportunity} />
+              <OpportunityCard
+                key={opportunity._id}
+                opportunity={opportunity}
+                onApply={openApplication}
+              />
             ))}
           </div>
         ) : (
-          <OpportunityTable opportunities={shown} now={now} />
+          <OpportunityTable opportunities={shown} now={now} onApply={openApplication} />
         )}
 
         {(feed.status === "CanLoadMore" || feed.status === "LoadingMore") && (
@@ -152,6 +167,13 @@ export function CreatorFeed() {
           </Button>
         )}
       </section>
+      {application !== null && (
+        <ApplicationModal
+          opportunityId={application.opportunityId}
+          open={application.open}
+          onOpenChange={(open) => setApplication((current) => current && { ...current, open })}
+        />
+      )}
     </div>
   );
 }

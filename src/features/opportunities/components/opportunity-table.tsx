@@ -8,9 +8,11 @@ import { StarButton } from "./star-button";
 export function OpportunityTable({
   opportunities,
   now,
+  onApply,
 }: {
   opportunities: FeedOpportunity[];
   now: number;
+  onApply: (opportunityId: Id<"opportunities">) => void;
 }) {
   return (
     <div className="w-full overflow-x-auto">
@@ -31,6 +33,9 @@ export function OpportunityTable({
             </th>
             <th scope="col" className="font-normal">
               Compensation
+            </th>
+            <th scope="col">
+              <span className="sr-only">Actions</span>
             </th>
           </tr>
         </thead>
@@ -59,6 +64,13 @@ export function OpportunityTable({
                 <AvailabilityPill opportunity={opportunity} />
               </td>
               <td>{formatCompensation(opportunity)}</td>
+              <td>
+                {opportunity.isGated && (
+                  <Button type="button" onClick={() => onApply(opportunity._id)}>
+                    Apply
+                  </Button>
+                )}
+              </td>
             </tr>
           ))}
         </tbody>
@@ -66,3 +78,5 @@ export function OpportunityTable({
     </div>
   );
 }
+import type { Id } from "@convex/_generated/dataModel";
+import { Button } from "@/components/ui/button";

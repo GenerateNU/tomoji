@@ -231,3 +231,12 @@ actions. It sends one email at a time; existing-member editing and bulk invitati
 Successful cancellation stays visible as requested until the WorkOS webhook removes the row.
 No local optimistic removal or automatic action retry is performed. Browser tests never send email:
 `E2E_BASE_URL=http://invites.test bun run test:e2e e2e/invites.spec.ts`.
+
+## 12. Company campaigns
+
+`/campaigns` lists the signed-in company's campaigns using `campaigns.list`. Status filters
+use the backend's draft/open/paused/closed states and reset cursor pagination. Budgets display
+USD cents as dollars; dates use the viewer's timezone. The home page links company users here.
+Creation, lifecycle actions, analytics, and the full Figma sidebar are separate work.
+Browser verification uses isolated service responses, with no live writes:
+`E2E_BASE_URL=http://campaigns.test bun run test:e2e e2e/campaigns.spec.ts`.

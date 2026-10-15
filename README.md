@@ -15,6 +15,10 @@ if one wishes to develop vs to deploy).
 
 Once completed, please reach out to a _Technical Chief_ if you wish to have some aid deploying.
 
+Tomoji deploys the frontend to Vercel and the backend to Convex. Publishing a GitHub Release ships production;
+every pull request gets its own frontend preview and its own Convex preview deployment. See
+[DEPLOYMENT.md](DEPLOYMENT.md).
+
 ## Documentation
 
 Documentation, style-guides, and best practices should be kept in a repo level folder `docs/`. It is crucial to have

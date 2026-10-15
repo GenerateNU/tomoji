@@ -20,9 +20,8 @@ test("HEAD requests are redirected like GET", () => {
   expect(redirectFor(head("/opportunities"), false)).toBe("/login?next=%2Fopportunities");
 });
 
-test("signed-out visitors can reach the landing page and every auth page", () => {
+test("signed-out visitors can reach every auth page", () => {
   for (const path of [
-    "/",
     "/login",
     "/signup",
     "/forgot-password",
@@ -34,6 +33,18 @@ test("signed-out visitors can reach the landing page and every auth page", () =>
   ]) {
     expect(redirectFor(get(path), false)).toBeNull();
   }
+});
+
+test("home is signed-in only; signed-out visitors go to log in with no next", () => {
+  expect(redirectFor(get("/"), false)).toBe("/login");
+  expect(redirectFor(head("/"), false)).toBe("/login");
+  expect(redirectFor(get("/"), true)).toBeNull();
+});
+
+test("signed-out visitors to home with a query string keep it in next", () => {
+  expect(redirectFor(get("/?x_link=sign_in_required"), false)).toBe(
+    "/login?next=%2F%3Fx_link%3Dsign_in_required",
+  );
 });
 
 test("non-GET requests pass through for signed-in users, so AuthKit's getAuth() action keeps its session", () => {

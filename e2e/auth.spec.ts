@@ -8,6 +8,12 @@ test("signed-out visitors to app pages land on log in", async ({ page }) => {
   await expect(page.getByRole("heading", { name: "Welcome back" })).toBeVisible();
 });
 
+test("signed-out visitors to home land on log in", async ({ page }) => {
+  await page.goto("/");
+  await expect(page).toHaveURL(/\/login$/);
+  await expect(page.getByRole("heading", { name: "Welcome back" })).toBeVisible();
+});
+
 test("log in, sign up and forgot password link to each other", async ({ page }) => {
   await page.goto("/login");
   await page.getByRole("link", { name: "Sign up" }).click();

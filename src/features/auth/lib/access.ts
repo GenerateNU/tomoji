@@ -3,8 +3,8 @@ const SIGNED_OUT_ONLY = ["/login", "/signup"];
 
 const AUTH_PAGES = [...SIGNED_OUT_ONLY, "/forgot-password", "/reset-password", "/verify-email"];
 
+// Everything else, including the home page at "/", is signed-in only.
 const PUBLIC = [
-  "/",
   ...AUTH_PAGES,
   // Signed-out X callbacks are handled there, without forwarding provider codes to sign-in.
   "/api/x/callback",

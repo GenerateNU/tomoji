@@ -19,9 +19,19 @@ let profile: Profile = {
   githubLink: "https://github.com/zahra",
 };
 const calls: Call[] = [];
+const queries: Call[] = [];
 const failures = new Map<string, Error[]>();
 const delays = new Map<string, { promise: Promise<void>; release: () => void }>();
-const role = new URLSearchParams(location.search).get("role") ?? "creator";
+const parameters = new URLSearchParams(location.search);
+let session = {
+  role: parameters.get("role") ?? "creator",
+  isAuthenticated: !parameters.has("auth"),
+  isLoading: parameters.get("auth") === "loading",
+  synced: parameters.get("account") !== "unsynced",
+  userLoading: parameters.get("account") === "loading",
+  profileLoading: parameters.get("profile") === "loading",
+  failedQuery: parameters.get("failedQuery") ?? "",
+};
 
 function notify() {
   revision += 1;
@@ -30,6 +40,11 @@ function notify() {
 
 export const fixture = {
   calls,
+  queries,
+  setSession(updates: Partial<typeof session>) {
+    session = { ...session, ...updates };
+    notify();
+  },
   setGithubLink(githubLink: string) {
     profile = { ...profile, githubLink };
     notify();
@@ -60,10 +75,11 @@ export const fixture = {
 };
 
 export function useConvexAuth() {
-  return { isAuthenticated: true, isLoading: false };
+  useRevision();
+  return { isAuthenticated: session.isAuthenticated, isLoading: session.isLoading };
 }
 
-export function useQuery(reference: FunctionReference<"query">, args: unknown) {
+function useRevision() {
   useSyncExternalStore(
     (listener) => {
       listeners.add(listener);
@@ -71,12 +87,51 @@ export function useQuery(reference: FunctionReference<"query">, args: unknown) {
     },
     () => revision,
   );
+}
+
+export function useQuery(reference: FunctionReference<"query">, args: unknown) {
+  useRevision();
+  return queryResult(reference, args);
+}
+
+export function useQueries(
+  requests: Record<string, { query: FunctionReference<"query">; args: unknown }>,
+) {
+  useRevision();
+  return Object.fromEntries(
+    Object.entries(requests).map(([key, { query, args }]) => {
+      try {
+        return [key, queryResult(query, args)];
+      } catch (error) {
+        return [key, error];
+      }
+    }),
+  );
+}
+
+function queryResult(reference: FunctionReference<"query">, args: unknown) {
   if (args === "skip") return undefined;
   const name = getFunctionName(reference);
-  if (name === "users:me") return { synced: true, role, firstName: "Zahra", lastName: "Wibisana" };
+  if (!queries.some((query) => query.name === name)) {
+    queries.push({ name, args: args as Record<string, unknown> });
+  }
+  if (session.failedQuery === name) throw new Error("Simulated query failure");
+  if (name === "users:me") {
+    if (!session.isAuthenticated) throw new Error("Signed-out visitors must not query users.me");
+    if (session.userLoading) return undefined;
+    return {
+      synced: session.synced,
+      role: session.role,
+      userId: "test-user",
+      firstName: "Zahra",
+      lastName: "Wibisana",
+    };
+  }
   if (name === "creators:me") {
-    if (role !== "creator") throw new Error("A non-creator must not request creators.me");
-    return profile;
+    if (session.role !== "creator" || !session.synced || session.userLoading) {
+      throw new Error("Only a synced creator must request creators.me");
+    }
+    return session.profileLoading ? undefined : profile;
   }
   throw new Error(`Unexpected query: ${name}`);
 }

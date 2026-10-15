@@ -124,3 +124,75 @@ describe("posts.get", () => {
     await expectApiError(() => asWrongOrg.query(api.posts.get, { postId }), "forbidden");
   });
 });
+
+describe("posts.list", () => {
+  const firstPage = { numItems: 10, cursor: null };
+
+  test("lists an assignment's post for its creator and its company", async () => {
+    const t = convexTest(schema, modules);
+    const { fixture, postId } = await seedPost(t);
+
+    for (const caller of [fixture.asCreator, fixture.asCompany]) {
+      const result = await caller.query(api.posts.list, {
+        assignmentId: fixture.assignmentId,
+        paginationOpts: firstPage,
+      });
+      expect(result.page.map((post) => post._id)).toEqual([postId]);
+    }
+  });
+
+  test("lists a campaign's posts for the owning company", async () => {
+    const t = convexTest(schema, modules);
+    const { fixture, postId } = await seedPost(t);
+    const campaignId = await t.run(
+      async (ctx) => (await ctx.db.get("assignments", fixture.assignmentId))!.campaignId,
+    );
+
+    const result = await fixture.asCompany.query(api.posts.list, {
+      campaignId,
+      paginationOpts: firstPage,
+    });
+
+    expect(result.page.map((post) => post._id)).toEqual([postId]);
+  });
+
+  test("refuses a creator listing a campaign", async () => {
+    const t = convexTest(schema, modules);
+    const { fixture } = await seedPost(t);
+    const campaignId = await t.run(
+      async (ctx) => (await ctx.db.get("assignments", fixture.assignmentId))!.campaignId,
+    );
+
+    await expectApiError(
+      () => fixture.asCreator.query(api.posts.list, { campaignId, paginationOpts: firstPage }),
+      "forbidden",
+    );
+  });
+
+  test("rejects a signed-out caller", async () => {
+    const t = convexTest(schema, modules);
+    const { fixture } = await seedPost(t);
+    await expectApiError(
+      () =>
+        t.query(api.posts.list, {
+          assignmentId: fixture.assignmentId,
+          paginationOpts: firstPage,
+        }),
+      "not_authenticated",
+    );
+  });
+
+  test("rejects a forged organization claim", async () => {
+    const t = convexTest(schema, modules);
+    const { fixture } = await seedPost(t);
+    const asWrongOrg = await seedWrongOrgCaller(t);
+    await expectApiError(
+      () =>
+        asWrongOrg.query(api.posts.list, {
+          assignmentId: fixture.assignmentId,
+          paginationOpts: firstPage,
+        }),
+      "forbidden",
+    );
+  });
+});

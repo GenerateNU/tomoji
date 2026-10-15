@@ -1,6 +1,7 @@
+import { paginationResultValidator } from "convex/server";
 import { v } from "convex/values";
 import { authedQuery, creatorMutation, requireCallerViewer } from "./lib/functions";
-import { createPost, postCreate, requirePost } from "./models/posts";
+import { createPost, listPosts, postCreate, postListFilters, requirePost } from "./models/posts";
 import { requireCallerCreatorId } from "./models/users";
 import schema from "./schema";
 
@@ -36,5 +37,22 @@ export const get = authedQuery({
   returns: schema.doc("posts"),
   handler: async (ctx, args) => {
     return await requirePost(ctx, await requireCallerViewer(ctx, ctx.user), args.postId);
+  },
+});
+
+/**
+ * Lists posts, newest first, for exactly one of `assignmentId` or `campaignId`.
+ * An assignment has at most one post. Listing by campaign is for the owning
+ * company and operators.
+ *
+ * @throws `invalid_state` unless exactly one filter is given.
+ * @throws `not_found` if the assignment or campaign isn't visible to the caller.
+ * @throws `forbidden` if a creator lists by campaign.
+ */
+export const list = authedQuery({
+  args: postListFilters.fields,
+  returns: paginationResultValidator(schema.doc("posts")),
+  handler: async (ctx, args) => {
+    return await listPosts(ctx, await requireCallerViewer(ctx, ctx.user), args);
   },
 });

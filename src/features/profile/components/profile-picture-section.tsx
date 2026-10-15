@@ -16,6 +16,8 @@ import {
   type PictureUploadPhase,
 } from "../lib/profile-picture";
 
+const UPLOADS_ENABLED = false;
+
 type Selection = { file: File; url: string; upload: ReturnType<typeof createProfilePictureUpload> };
 
 export function ProfilePictureSection({ mediaId }: { mediaId?: Id<"mediaUploads"> }) {
@@ -174,7 +176,9 @@ export function ProfilePictureSection({ mediaId }: { mediaId?: Id<"mediaUploads"
         </div>
         <div className="min-w-0 space-y-3">
           <p id={`${id}-hint`} className="text-sm text-muted-foreground">
-            JPEG, PNG, or WebP. Up to 2 MB.
+            {UPLOADS_ENABLED
+              ? "JPEG, PNG, or WebP. Up to 2 MB."
+              : "Profile picture uploads are coming soon."}
           </p>
           <input
             ref={input}
@@ -183,14 +187,14 @@ export function ProfilePictureSection({ mediaId }: { mediaId?: Id<"mediaUploads"
             aria-label="Choose profile picture"
             aria-describedby={`${id}-hint`}
             hidden
-            disabled={busy}
+            disabled={busy || !UPLOADS_ENABLED}
             onChange={(event) => void choose(event)}
           />
           <Button
             ref={chooseButton}
             className="min-h-11"
             variant="outline"
-            disabled={busy}
+            disabled={busy || !UPLOADS_ENABLED}
             onClick={() => input.current?.click()}
           >
             {mediaId || selection ? "Change picture" : "Choose picture"}

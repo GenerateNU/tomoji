@@ -174,8 +174,8 @@ export async function resolveDispute(
 
 /**
  * Replaces the result the opener's side reported with Tomoji's ruling, keeping
- * the original as `overriddenResolution`. Tomoji's own rulings are final.
- * Errors are listed on the `disputes.override` route.
+ * the original as `overriddenResolution`. Tomoji's own rulings and withdrawals
+ * are final. Errors are listed on the `disputes.override` route.
  */
 export async function overrideDispute(
   ctx: MutationCtx,
@@ -190,6 +190,10 @@ export async function overrideDispute(
   }
   if (dispute.resolvedByRole === "operator") {
     throw apiError("invalid_state", { reason: "operator_ruling_final" });
+  }
+  // Withdrawing is the opener's choice, so there's no result to overrule.
+  if (dispute.outcome === "withdrawn") {
+    throw apiError("invalid_state", { reason: "dispute_withdrawn" });
   }
 
   const overridden: ResolvedDispute = {

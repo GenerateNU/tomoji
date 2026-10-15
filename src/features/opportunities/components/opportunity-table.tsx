@@ -1,3 +1,4 @@
+import type { Id } from "@convex/_generated/dataModel";
 import { formatCompensation, formatDeadline, formatPostedAgo } from "../lib/format";
 import type { FeedOpportunity } from "../lib/types";
 import { AvailabilityPill } from "./availability-pill";
@@ -8,9 +9,11 @@ import { StarButton } from "./star-button";
 export function OpportunityTable({
   opportunities,
   now,
+  onOpen,
 }: {
   opportunities: FeedOpportunity[];
   now: number;
+  onOpen: (opportunityId: Id<"opportunities">) => void;
 }) {
   return (
     <div className="w-full overflow-x-auto">
@@ -42,7 +45,13 @@ export function OpportunityTable({
                   <CompanyAvatar name={opportunity.companyName} size="md" />
                   <div>
                     <div className="flex items-center gap-2">
-                      <p className="text-xl font-medium">{opportunity.title}</p>
+                      <button
+                        type="button"
+                        onClick={() => onOpen(opportunity._id)}
+                        className="text-left text-xl font-medium underline-offset-4 outline-none hover:underline focus-visible:underline"
+                      >
+                        {opportunity.title}
+                      </button>
                       <StarButton
                         opportunityId={opportunity._id}
                         title={opportunity.title}

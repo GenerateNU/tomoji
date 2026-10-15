@@ -1,3 +1,4 @@
+import type { Id } from "@convex/_generated/dataModel";
 import { Button } from "@/components/ui/button";
 import { formatCompensation, formatDeadline } from "../lib/format";
 import type { FeedOpportunity } from "../lib/types";
@@ -6,7 +7,13 @@ import { CompanyAvatar } from "./company-avatar";
 import { StarButton } from "./star-button";
 
 /** Grid view card for one opportunity in the creator feed. */
-export function OpportunityCard({ opportunity }: { opportunity: FeedOpportunity }) {
+export function OpportunityCard({
+  opportunity,
+  onOpen,
+}: {
+  opportunity: FeedOpportunity;
+  onOpen: (opportunityId: Id<"opportunities">) => void;
+}) {
   return (
     <article className="flex flex-col gap-[22px] rounded-2xl bg-muted/60 p-[22px]">
       <div className="flex flex-col gap-4">
@@ -43,8 +50,11 @@ export function OpportunityCard({ opportunity }: { opportunity: FeedOpportunity 
           </div>
         </dl>
       </div>
-      {/* No action yet: the application modal (#110) attaches here. */}
-      <Button type="button" className="mt-auto h-[41px] w-full rounded-[10px]">
+      <Button
+        type="button"
+        className="mt-auto h-[41px] w-full rounded-[10px]"
+        onClick={() => onOpen(opportunity._id)}
+      >
         {opportunity.isGated ? "Apply" : "View opportunity"}
       </Button>
     </article>

@@ -193,6 +193,8 @@ We should avoid manually recreating backend types on the frontend because those 
 
 `/settings` uses the components in `features/profile/`. It waits for authentication and account synchronization before loading `creators.me`; other roles see an explanation instead of making creator-only requests.
 
+Basic details displays the creator's first name, last name, and email as read-only account information synced from WorkOS. Username and optional phone number are edited through `creators.update`. Changed usernames are trimmed and lowercased, and the backend enforces uniqueness. An unset username can remain unset when editing the phone number; an existing username cannot be cleared. Saving a blank phone number clears it with `null`. Each edit starts with a snapshot of the saved values and sends only changed fields, so live updates do not overwrite drafts and untouched fields are not written back. Discard returns to the latest saved values. Errors preserve the draft for correction or retry.
+
 The Portfolio section edits the existing single `githubLink` through `creators.update`. Save accepts an HTTPS GitHub URL (or adds HTTPS to a pasted `github.com/...` link); saving a blank field clears it. Discard leaves the saved value unchanged. Live query updates do not overwrite an unsaved draft. Older invalid links are never rendered as clickable URLs.
 
 Portfolio also shows an X account card with a disabled **Connect X** button and a coming-soon message. It does not request account data or start authorization. The existing X backend is documented in [X accounts](X_ACCOUNTS.md); connecting it to Settings is future work.

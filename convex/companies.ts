@@ -3,7 +3,6 @@ import { v, type Infer } from "convex/values";
 import type { Doc } from "./_generated/dataModel";
 import {
   companyAdminMutation,
-  companyMutation,
   operatorMutation,
   operatorQuery,
 } from "./lib/functions";

@@ -22,6 +22,7 @@ import {
   expectApiError,
   memberNotifications,
   opportunityArgs,
+  withoutDeliverables,
   readOpportunityHistory,
   seedCampaign,
   seedCreatorId,
@@ -2119,7 +2120,7 @@ describe("createOpportunity", () => {
 
     const id = await t.run(async (ctx) => await createOpportunity(ctx, membership, args));
     expect(await t.run(async (ctx) => await ctx.db.get("opportunities", id))).toMatchObject({
-      ...args,
+      ...withoutDeliverables(args),
       title: "Launch video",
       description: "Show your routine.",
     });
@@ -2134,7 +2135,9 @@ describe("createOpportunity", () => {
     const args = opportunityArgs(campaignId, { status: "draft", deadline: Date.now() - 1_800_000 });
 
     const id = await t.run(async (ctx) => await createOpportunity(ctx, membership, args));
-    expect(await t.run(async (ctx) => await ctx.db.get("opportunities", id))).toMatchObject(args);
+    expect(await t.run(async (ctx) => await ctx.db.get("opportunities", id))).toMatchObject(
+      withoutDeliverables(args),
+    );
   });
   test("stores the brief with campaign ownership and zero filled slots", async () => {
     const t = convexTest(schema, modules);
@@ -2145,7 +2148,7 @@ describe("createOpportunity", () => {
     const stored = await t.run(async (ctx) => await ctx.db.get("opportunities", id));
 
     expect(stored).toMatchObject({
-      ...args,
+      ...withoutDeliverables(args),
       companyId: membership.companyId,
       createdBy: membership._id,
       numFilledSlots: 0,
@@ -2192,7 +2195,9 @@ describe("createOpportunity", () => {
     });
 
     const id = await t.run(async (ctx) => await createOpportunity(ctx, membership, args));
-    expect(await t.run(async (ctx) => await ctx.db.get("opportunities", id))).toMatchObject(args);
+    expect(await t.run(async (ctx) => await ctx.db.get("opportunities", id))).toMatchObject(
+      withoutDeliverables(args),
+    );
   });
 
   test("rejects publishing beneath a draft campaign", async () => {
@@ -2425,7 +2430,9 @@ describe("createOpportunity", () => {
     );
 
     const id = await t.run(async (ctx) => await createOpportunity(ctx, membership, args));
-    expect(await t.run(async (ctx) => await ctx.db.get("opportunities", id))).toMatchObject(args);
+    expect(await t.run(async (ctx) => await ctx.db.get("opportunities", id))).toMatchObject(
+      withoutDeliverables(args),
+    );
   });
 
   test("rejects publishing with an elapsed deadline without writing", async () => {

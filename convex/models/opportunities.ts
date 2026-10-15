@@ -7,6 +7,7 @@ import { apiError } from "../lib/errors";
 import { withRowsReadCap } from "../lib/pagination";
 import { requireNonBlank, isHalfHourTimestamp } from "../lib/validation";
 import { requireMembership } from "./companyUsers";
+import { deliverableCreate, hasDeliverables, insertDeliverables } from "./deliverableDrafts";
 import { notifyCompanyUser, notifyCreator } from "./notifications";
 import { requireNiche, requireNiches } from "./niches";
 import schema from "../schema";
@@ -14,7 +15,11 @@ import schema from "../schema";
 export const opportunityCreate = schema
   .doc("opportunities")
   .omit("_id", "_creationTime", "companyId", "createdBy", "numFilledSlots", "status")
-  .extend({ status: v.union(v.literal("draft"), v.literal("open")) });
+  .extend({
+    status: v.union(v.literal("draft"), v.literal("open")),
+    // Required to create it open; a draft can get them later through `deliverables.create`.
+    deliverables: v.optional(v.array(deliverableCreate)),
+  });
 
 export type OpportunityCreate = Infer<typeof opportunityCreate>;
 
@@ -92,8 +97,9 @@ export async function getOpportunity(
   return toCreatorOpportunity(opportunity, company);
 }
 
+// Deliverables change through the `deliverables` routes.
 export const opportunityUpdate = opportunityCreate
-  .omit("campaignId", "status", "productAccessLink")
+  .omit("campaignId", "status", "productAccessLink", "deliverables")
   .partial()
   .extend({
     productAccessLink: v.optional(v.union(v.string(), v.null())),
@@ -187,7 +193,7 @@ export async function closeExpiredOpportunities(ctx: MutationCtx): Promise<boole
 }
 
 /** Loads an owned opportunity and its campaign for company lifecycle transitions. */
-async function requireOwnedOpportunity(
+export async function requireOwnedOpportunity(
   ctx: MutationCtx,
   membership: Doc<"companyUsers">,
   opportunityId: Id<"opportunities">,
@@ -268,6 +274,9 @@ export async function publishOpportunity(
   }
   if (campaign.status !== "open") {
     throw apiError("invalid_state", { reason: "campaign_not_open" });
+  }
+  if (!(await hasDeliverables(ctx, opportunityId))) {
+    throw apiError("invalid_state", { reason: "deliverables_required" });
   }
   // Validate the target state so a deadline allowed on a draft must still be future at publication.
   const normalized = validateOpportunityFields({ ...opportunity, status: "open" });
@@ -464,12 +473,16 @@ export async function createOpportunity(
     throw apiError("invalid_state", { reason: "campaign_not_open" });
   }
   const { title, description } = validateOpportunityFields(fields);
+  const { deliverables = [], ...brief } = fields;
+  if (fields.status === "open" && deliverables.length === 0) {
+    throw apiError("invalid_state", { reason: "deliverables_required" });
+  }
   if (campaign.endsAt !== undefined && fields.deadline > campaign.endsAt) {
     throw apiError("invalid_state", { reason: "deadline_after_campaign_end" });
   }
   const niches = fields.niches === undefined ? {} : { niches: requireNiches(fields.niches) };
-  return await ctx.db.insert("opportunities", {
-    ...fields,
+  const opportunityId = await ctx.db.insert("opportunities", {
+    ...brief,
     ...niches,
     title,
     description,
@@ -477,6 +490,8 @@ export async function createOpportunity(
     createdBy: membership._id,
     numFilledSlots: 0,
   });
+  await insertDeliverables(ctx, opportunityId, membership._id, deliverables, 0);
+  return opportunityId;
 }
 
 /** Validates shared write bounds and returns the normalized brief text. */

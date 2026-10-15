@@ -8,12 +8,16 @@ This document outlines how we organize and develop the Next.js frontend for Tomo
 src/
   app/                       Next.js routes and layouts
     layout.tsx               fonts and providers
-    page.tsx                 landing — no nav bar
-    signup/                  also no nav bar
+    signup/, login/,         sign-in pages, no nav bar
+    forgot-password/,
+    reset-password/,
+    verify-email/
     (protected)/
       layout.tsx             nav bar
+      page.tsx               home (/) — where sign-in lands
+      error.tsx              error boundary for signed-in pages
       <route>/               pages requiring sign-in
-    auth/                    WorkOS callback and sign-out action
+    auth/                    auth server actions, WorkOS callback, Google sign-in routes
   features/<domain>/         domain-specific functionality
     components/
     hooks/
@@ -22,7 +26,7 @@ src/
     ui/                      shadcn-generated components
   hooks/                     hooks shared across features
   lib/                       plain functions - no React, usable anywhere
-  proxy.ts                   redirects unauthenticated users
+  proxy.ts                   sends signed-out page visits to /login?next=<path>; server actions and other non-GET requests pass through and must check auth themselves (rules in features/auth/lib/access.ts)
 ```
 
 ### Where should new files go?
@@ -35,8 +39,6 @@ When adding a new file, use these guidelines to decide where it belongs:
 | Is it related to a specific Tomoji feature, such as opportunities, campaigns, or creators? | `features/<domain>/`               |
 | Is it shared or general-purpose code?                                                      | `components/`, `hooks/`, or `lib/` |
 
-                                                                                                       |
-
 ## 2. Routes
 
 Our routes should describe the resource being accessed rather than the role of the person accessing it, so keep URLs independent of user roles. For example, `/opportunities` serves as the discovery feed for creators and the company's opportunity list for company users. The page determines which component to render based on the current user.
@@ -48,7 +50,7 @@ We want components to be reusable, consistent, and easy to maintain. These conve
 | Principle                                 | Guidelines                                                                                                                                                                                                                                         |
 | ----------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Prefer variants over duplicate components | If two components have the same functionality and mainly differ in styling, use a `variant` prop instead of maintaining separate implementations.                                                                                                  |
-| Pass IDs instead of entire objects        | Rather than passing data through several component layers, child components can call `useQuery` directly. Convex shares subscriptions for identical queries, so multiple components requesting the same data don't create duplicate subscriptions. |     |
+| Pass IDs instead of entire objects        | Rather than passing data through several component layers, child components can call `useQuery` directly. Convex shares subscriptions for identical queries, so multiple components requesting the same data don't create duplicate subscriptions. |
 | Prefer SVGs for icons                     | Prefer SVG images for scalability and better performance. They offer crisp quality on all screen sizes and are more flexible for styling (e.g., changing colors).                                                                                  |
 | Build responsive layouts                  | Use flexbox, grid, and relative widths rather than relying on fixed pixel dimensions. This will allow us to make components responsive across different screen sizes.                                                                              |
 | Let parent components manage spacing      | Reusable components generally shouldn't define their own outer margins. Their parent components have a better understanding of the surrounding layout and can handle spacing accordingly.                                                          |
@@ -90,7 +92,7 @@ export function useOpportunityFeed() {
 
 We use `useMutation` for operations that modify application data.
 
-The exceptions are signing in and signing out, which use server actions defined in `app/auth/actions.ts`.
+The exceptions are signing in and signing out, which use server actions defined in `app/auth/actions.ts`. The forms call them through `useAuthForm` (`features/auth/hooks/`), which checks the same field rules (`features/auth/lib/rules.ts`) in the browser before submitting. After a sign-in succeeds, the hook reloads AuthKit's client state before navigating, so Convex sees the new session, then navigates to `next` — the page the user was sent to log in from, validated by `safeNext` and carried through the verify-email step and Google sign-in — or home (`/`, signed-in only). Password-reset links always land home.
 
 ### Error handling
 
@@ -113,6 +115,8 @@ setError(errorMessage(error, { conflict: "That username is taken." }));
 ```
 
 Use `errorCode(error)` when a failure needs more than a message — putting the error on a specific field, or sending the user somewhere else.
+
+Sign-in errors come from WorkOS, not Convex, so `features/auth/lib/auth-errors.ts` plays the same role for them: it maps each WorkOS error to a field message, a form message, or the email-verification step.
 
 ## 6. User Experience
 

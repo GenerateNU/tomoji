@@ -128,7 +128,8 @@ just fd         # http://localhost:3000
 
 ## Step 6 — Confirm it works
 
-1. Open http://localhost:3000 and click **Sign in**. You should land on a real WorkOS page.
+1. Open http://localhost:3000 and click **Sign in**. You should land on Tomoji's `/login`
+   page. Sign up or log in with an email and password, or with Google.
 2. After signing in, your email should appear in the header.
 3. `just test` — the suite should pass.
 4. `just ci` — should exit clean.
@@ -197,6 +198,7 @@ Branch from `main`, open a PR, get one approval, squash merge. CI must pass befo
 just fd        # frontend — localhost:3000
 just bd        # Convex — watches convex/, streams logs
 just ci        # typecheck + lint + format + test. Run before you push.
+just ci-full   # just ci, then the Playwright browser tests (not run in CI)
 just test      # tests once
 just format    # format everything in place
 ```

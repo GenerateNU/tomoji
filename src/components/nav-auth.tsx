@@ -1,10 +1,11 @@
 "use client";
 
 import { useAuth } from "@workos-inc/authkit-nextjs/components";
+import Link from "next/link";
 import { signOutAction } from "@/app/auth/actions";
 
 export function NavAuth() {
-  const { user, loading, refreshAuth } = useAuth();
+  const { user, loading } = useAuth();
 
   if (loading) {
     return (
@@ -31,12 +32,11 @@ export function NavAuth() {
   }
 
   return (
-    <button
-      type="button"
-      onClick={() => void refreshAuth({ ensureSignedIn: true })}
+    <Link
+      href="/login"
       className="flex h-10 items-center justify-center rounded-full bg-foreground px-5 text-sm font-medium text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc]"
     >
       Sign in
-    </button>
+    </Link>
   );
 }

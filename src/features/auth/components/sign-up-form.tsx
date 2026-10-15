@@ -5,10 +5,10 @@ import { useAuthForm } from "../hooks/use-auth-form";
 import { emptyFormState } from "../lib/form";
 import { withNext } from "../lib/access";
 import { signUpRules, type SignUpField } from "../lib/rules";
-import { OrDivider } from "./auth-layout";
+// import { OrDivider } from "./auth-layout";
 import { FormAlert } from "./form-alert";
 import { FormField } from "./form-field";
-import { GoogleButton } from "./google-button";
+// import { GoogleButton } from "./google-button";
 import { SubmitButton } from "./submit-button";
 import { TextLink } from "./text-link";
 

@@ -1,15 +1,38 @@
 import { useSyncExternalStore } from "react";
-import { getFunctionName, type FunctionReference } from "convex/server";
+import { getFunctionName, type FunctionReference, type FunctionReturnType } from "convex/server";
+import { ConvexError } from "convex/values";
+import type { api } from "../../convex/_generated/api";
+import type { Id } from "../../convex/_generated/dataModel";
 
 type Call = { name: string; args: Record<string, unknown> };
-type Profile = { githubLink?: string; profilePictureMediaId?: string };
+type Profile = FunctionReturnType<typeof api.creators.me>;
 
 const listeners = new Set<() => void>();
 let revision = 0;
-let profile: Profile = { githubLink: "https://github.com/zahra" };
+let profile: Profile = {
+  creatorId: "test-creator" as Id<"creators">,
+  firstName: "Zahra",
+  lastName: "Wibisana",
+  email: "zahra@example.test",
+  username: "zahra",
+  phoneNumber: "+1 617 555 0100",
+  githubLink: "https://github.com/zahra",
+  niches: [],
+};
 const calls: Call[] = [];
-const failures: Record<string, number> = {};
-const role = new URLSearchParams(location.search).get("role") ?? "creator";
+const queries: Call[] = [];
+const failures = new Map<string, Error[]>();
+const delays = new Map<string, { promise: Promise<void>; release: () => void }>();
+const parameters = new URLSearchParams(location.search);
+let session = {
+  role: parameters.get("role") ?? "creator",
+  isAuthenticated: !parameters.has("auth"),
+  isLoading: parameters.get("auth") === "loading",
+  synced: parameters.get("account") !== "unsynced",
+  userLoading: parameters.get("account") === "loading",
+  profileLoading: parameters.get("profile") === "loading",
+  failedQuery: parameters.get("failedQuery") ?? "",
+};
 
 function notify() {
   revision += 1;
@@ -18,20 +41,46 @@ function notify() {
 
 export const fixture = {
   calls,
+  queries,
+  setSession(updates: Partial<typeof session>) {
+    session = { ...session, ...updates };
+    notify();
+  },
   setGithubLink(githubLink: string) {
     profile = { ...profile, githubLink };
     notify();
   },
+  setProfile(updates: Partial<Profile>) {
+    profile = { ...profile, ...updates };
+    notify();
+  },
   failNext(name: string) {
-    failures[name] = (failures[name] ?? 0) + 1;
+    failures.set(name, [...(failures.get(name) ?? []), new Error("Simulated service failure")]);
+  },
+  rejectUsername() {
+    failures.set("creators:update", [
+      new ConvexError({ code: "conflict", reason: "username_taken" }),
+    ]);
+  },
+  delayNext(name: string) {
+    let release!: () => void;
+    const promise = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    delays.set(name, { promise, release });
+  },
+  release(name: string) {
+    delays.get(name)?.release();
+    delays.delete(name);
   },
 };
 
 export function useConvexAuth() {
-  return { isAuthenticated: true, isLoading: false };
+  useRevision();
+  return { isAuthenticated: session.isAuthenticated, isLoading: session.isLoading };
 }
 
-export function useQuery(reference: FunctionReference<"query">, args: unknown) {
+function useRevision() {
   useSyncExternalStore(
     (listener) => {
       listeners.add(listener);
@@ -39,12 +88,51 @@ export function useQuery(reference: FunctionReference<"query">, args: unknown) {
     },
     () => revision,
   );
+}
+
+export function useQuery(reference: FunctionReference<"query">, args: unknown) {
+  useRevision();
+  return queryResult(reference, args);
+}
+
+export function useQueries(
+  requests: Record<string, { query: FunctionReference<"query">; args: unknown }>,
+) {
+  useRevision();
+  return Object.fromEntries(
+    Object.entries(requests).map(([key, { query, args }]) => {
+      try {
+        return [key, queryResult(query, args)];
+      } catch (error) {
+        return [key, error];
+      }
+    }),
+  );
+}
+
+function queryResult(reference: FunctionReference<"query">, args: unknown) {
   if (args === "skip") return undefined;
   const name = getFunctionName(reference);
-  if (name === "users:me") return { synced: true, role, firstName: "Zahra", lastName: "Wibisana" };
+  if (!queries.some((query) => query.name === name)) {
+    queries.push({ name, args: args as Record<string, unknown> });
+  }
+  if (session.failedQuery === name) throw new Error("Simulated query failure");
+  if (name === "users:me") {
+    if (!session.isAuthenticated) throw new Error("Signed-out visitors must not query users.me");
+    if (session.userLoading) return undefined;
+    return {
+      synced: session.synced,
+      role: session.role,
+      userId: "test-user",
+      firstName: "Zahra",
+      lastName: "Wibisana",
+    };
+  }
   if (name === "creators:me") {
-    if (role !== "creator") throw new Error("A non-creator must not request creators.me");
-    return profile;
+    if (session.role !== "creator" || !session.synced || session.userLoading) {
+      throw new Error("Only a synced creator must request creators.me");
+    }
+    return session.profileLoading ? undefined : profile;
   }
   throw new Error(`Unexpected query: ${name}`);
 }
@@ -56,12 +144,20 @@ function operation(reference: FunctionReference<"mutation" | "action">) {
   if (!operations.has(name)) {
     operations.set(name, async (args) => {
       calls.push({ name, args });
-      if (failures[name]) {
-        failures[name] -= 1;
-        throw new Error("Simulated service failure");
-      }
+      if (delays.has(name)) await delays.get(name)!.promise;
+      const failure = failures.get(name)?.shift();
+      if (failure) throw failure;
       if (name === "creators:update") {
-        profile = { ...profile, githubLink: (args.githubLink as string | null) ?? undefined };
+        profile = {
+          ...profile,
+          ...(args.username !== undefined ? { username: args.username as string } : {}),
+          ...("githubLink" in args
+            ? { githubLink: (args.githubLink as string | null) ?? undefined }
+            : {}),
+          ...("phoneNumber" in args
+            ? { phoneNumber: (args.phoneNumber as string | null) ?? undefined }
+            : {}),
+        };
         notify();
         return profile;
       }
@@ -74,7 +170,10 @@ function operation(reference: FunctionReference<"mutation" | "action">) {
         };
       }
       if (name === "media:completeUpload") {
-        profile = { ...profile, profilePictureMediaId: "test-upload" };
+        profile = {
+          ...profile,
+          profilePictureMediaId: "test-upload" as Id<"mediaUploads">,
+        };
         notify();
         return { mediaId: "test-upload", kind: "profile-picture" };
       }

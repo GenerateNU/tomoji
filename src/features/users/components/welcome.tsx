@@ -2,7 +2,9 @@
 
 import { api } from "@convex/_generated/api";
 import { useConvexAuth, useQuery } from "convex/react";
+import Link from "next/link";
 
+/** Shows the synced identity and company entry points without requesting company data. */
 export function Welcome() {
   const { isAuthenticated } = useConvexAuth();
   // users.me requires an identity, so wait until Convex has the token.
@@ -31,8 +33,18 @@ export function Welcome() {
   }
 
   return (
-    <h1 className="text-2xl font-semibold tracking-tight">
-      {me.firstName ? `Welcome, ${me.firstName}` : "Welcome"}
-    </h1>
+    <div className="space-y-5">
+      <h1 className="text-2xl font-semibold tracking-tight">
+        {me.firstName ? `Welcome, ${me.firstName}` : "Welcome"}
+      </h1>
+      {me.role === "company" && (
+        <Link
+          href="/campaigns"
+          className="inline-flex min-h-11 items-center rounded-md underline underline-offset-4 focus-visible:outline-2 focus-visible:outline-offset-4"
+        >
+          View campaigns
+        </Link>
+      )}
+    </div>
   );
 }

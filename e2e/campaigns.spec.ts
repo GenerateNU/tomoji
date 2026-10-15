@@ -19,7 +19,7 @@ test.afterAll(() => {
 test.use({ timezoneId: "America/New_York" });
 
 /** Renders production components against local responses, never live company data. */
-async function openCampaigns(page: Page, scenario = "company") {
+async function openCampaigns(page: Page, scenario = "company", path = "/") {
   await page.route("http://campaigns.test/**", async (route) => {
     const path = new URL(route.request().url()).pathname;
     if (path === "/app.js")
@@ -31,7 +31,7 @@ async function openCampaigns(page: Page, scenario = "company") {
         body: '<!doctype html><html lang="en"><head><meta name="viewport" content="width=device-width, initial-scale=1"><link rel="stylesheet" href="/app.css"></head><body><main id="root"></main><script type="module" src="/app.js"></script></body></html>',
       });
   });
-  await page.goto(`http://campaigns.test/?scenario=${scenario}`);
+  await page.goto(`http://campaigns.test${path}?scenario=${scenario}`);
 }
 
 test("lists campaigns and resets pagination when the status changes", async ({ page }) => {
@@ -85,5 +85,88 @@ test("captures the responsive campaign list", async ({ page }) => {
   await page.screenshot({ path: test.info().outputPath("campaigns-desktop.png"), fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });
   await page.screenshot({ path: test.info().outputPath("campaigns-mobile.png"), fullPage: true });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+});
+
+/** Completes the backend-supported brief; there are no payment or publishing steps. */
+async function fillDraft(page: Page) {
+  await page.getByLabel("Campaign name").fill("  Developer launch  ");
+  await page.getByLabel("Objective").fill("Introduce our developer platform");
+  await page.getByLabel("Product", { exact: true }).fill("Developer platform");
+  await page.getByLabel("Audience").fill("Developers");
+  await page.getByLabel("Description").fill("Show a practical workflow using our platform.");
+  await page.getByLabel("Budget (USD)").fill("1250.05");
+  await page.getByLabel("Start (UTC)").fill("2026-10-15T12:00");
+}
+
+test("saves an exact draft payload once and offers a return to the list", async ({ page }) => {
+  await openCampaigns(page, "company", "/new");
+  await fillDraft(page);
+  await page.evaluate(() => {
+    window.campaignsFixture.hold = true;
+  });
+  await page.getByRole("button", { name: "Save draft" }).click();
+  await expect(page.getByRole("button", { name: "Saving" })).toBeDisabled();
+  await page.evaluate(() => window.campaignsFixture.release?.());
+  await expect(page.getByRole("heading", { name: "Campaign draft saved" })).toBeVisible();
+  expect(await page.evaluate(() => window.campaignsFixture.writes)).toEqual([
+    {
+      title: "Developer launch",
+      objective: "Introduce our developer platform",
+      product: "Developer platform",
+      audience: "Developers",
+      description: "Show a practical workflow using our platform.",
+      budgetCents: 125005,
+      startsAt: Date.parse("2026-10-15T12:00Z"),
+      status: "draft",
+    },
+  ]);
+  await expect(page.getByRole("link", { name: "View campaigns", exact: true })).toHaveAttribute(
+    "href",
+    "/campaigns",
+  );
+});
+
+test("keeps the draft on service failure and rejects fractional cents locally", async ({
+  page,
+}) => {
+  await openCampaigns(page, "company", "/new");
+  await fillDraft(page);
+  await page.getByLabel("Budget (USD)").fill("1.005");
+  await page.getByRole("button", { name: "Save draft" }).click();
+  await expect(page.getByRole("alert")).toContainText("two decimal places");
+  expect(await page.evaluate(() => window.campaignsFixture.writes)).toEqual([]);
+  await page.getByLabel("Budget (USD)").fill("1250.05");
+  await page.evaluate(() => {
+    window.campaignsFixture.fail = true;
+  });
+  await page.getByRole("button", { name: "Save draft" }).click();
+  await expect(page.getByRole("alert")).toHaveText("Something went wrong. Try again.");
+  await expect(page.getByLabel("Campaign name")).toHaveValue("  Developer launch  ");
+  await page.getByRole("button", { name: "Save draft" }).click();
+  await expect(page.getByRole("heading", { name: "Campaign draft saved" })).toBeVisible();
+});
+
+test("members can view campaigns but cannot create drafts", async ({ page }) => {
+  await openCampaigns(page, "member");
+  await expect(page.getByRole("listitem")).toHaveCount(2);
+  await expect(page.getByRole("link", { name: "Create campaign" })).toBeHidden();
+  await page.goto("http://campaigns.test/new?scenario=member");
+  await expect(page.getByRole("alert")).toHaveText("Only company admins can create campaigns.");
+  expect(await page.evaluate(() => window.campaignsFixture.writes)).toEqual([]);
+});
+
+test("captures the responsive campaign draft form", async ({ page }) => {
+  await openCampaigns(page, "company", "/new");
+  await fillDraft(page);
+  await page.screenshot({
+    path: test.info().outputPath("campaign-create-desktop.png"),
+    fullPage: true,
+  });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.screenshot({
+    path: test.info().outputPath("campaign-create-mobile.png"),
+    fullPage: true,
+  });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 });

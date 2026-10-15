@@ -1,6 +1,7 @@
 import { Component, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { CampaignList } from "@/features/campaigns/components/campaign-list";
+import { CampaignDraftForm } from "@/features/campaigns/components/campaign-draft-form";
 import ProtectedError from "@/app/(protected)/error";
 import { fixture } from "./campaigns-convex";
 
@@ -30,7 +31,5 @@ class Boundary extends Component<{ children: ReactNode }, { error: Error | null 
   }
 }
 createRoot(document.getElementById("root")!).render(
-  <Boundary>
-    <CampaignList />
-  </Boundary>,
+  <Boundary>{location.pathname === "/new" ? <CampaignDraftForm /> : <CampaignList />}</Boundary>,
 );

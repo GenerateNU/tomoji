@@ -237,6 +237,8 @@ No local optimistic removal or automatic action retry is performed. Browser test
 `/campaigns` lists the signed-in company's campaigns using `campaigns.list`. Status filters
 use the backend's draft/open/paused/closed states and reset cursor pagination. Budgets display
 USD cents as dollars; dates use the viewer's timezone. The home page links company users here.
-Creation, lifecycle actions, analytics, and the full Figma sidebar are separate work.
+Company admins can save a complete draft at `/campaigns/new`; dates are explicitly entered in UTC,
+end dates use :00/:30, and money converts to integer cents without rounding. Creation never publishes.
+Lifecycle actions, analytics, and the full Figma sidebar are separate work.
 Browser verification uses isolated service responses, with no live writes:
 `E2E_BASE_URL=http://campaigns.test bun run test:e2e e2e/campaigns.spec.ts`.

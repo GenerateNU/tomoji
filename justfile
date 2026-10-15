@@ -84,6 +84,14 @@ setup:
 convex-env:
     @bun scripts/set-convex-env.ts
 
+# Fill your dev deployment with demo data for every frontend flow
+seed *EMAIL:
+    @bunx convex run seed:run '{{ if EMAIL == "" { "{}" } else { "{\"creatorEmail\":\"" + EMAIL + "\"}" } }}'
+
+# Remove everything `just seed` created, leaving accounts and companies alone
+seed-clear:
+    @bunx convex run seed:clear
+
 # Print the webhook URL to send a TL, who creates your WorkOS webhook
 webhook-url:
     @echo "$(bunx convex env get CONVEX_SITE_URL)/workos/webhook"

@@ -82,6 +82,19 @@ just webhook-url
 They'll create the webhook in the WorkOS dashboard and send back a secret. Do this
 before step 4, you can't finish setup without it.
 
+The webhook must be subscribed to all ten events `convex/auth.ts` handles. WorkOS
+only sends what the endpoint asked for, so a missing one fails silently:
+
+| Event                                                                | What it does                                  |
+| -------------------------------------------------------------------- | --------------------------------------------- |
+| `user.created`, `user.updated`                                       | Create or refresh the `users` row             |
+| `user.deleted`                                                       | Deactivate the account                        |
+| `organization_membership.created`, `organization_membership.updated` | Join a company, or change role                |
+| `organization_membership.deleted`                                    | End the membership and deactivate the account |
+| `invitation.created`                                                 | Record the pending invite                     |
+| `invitation.accepted`, `invitation.revoked`                          | Clear the pending invite                      |
+| `invitation.resent`                                                  | Push the invite's expiry out                  |
+
 > [!NOTE]
 > There is no localhost URL for the backend. Convex runs your `convex/` code in the cloud;
 > `just bd` is a file watcher that pushes changes up and streams logs back. Use
@@ -91,16 +104,22 @@ before step 4, you can't finish setup without it.
 
 Paste the secret from step 3 into `.env.local` as `WORKOS_WEBHOOK_SECRET`.
 Ask a TL for the QA/dev bucket name and region, then fill in `S3_MEDIA_BUCKET`
-and `S3_MEDIA_REGION` in `.env.local`. Existing contributors must add these two
-entries too. Then run:
+and `S3_MEDIA_REGION` in `.env.local`, and for `WORKOS_OPERATOR_ORG_ID` — the
+WorkOS organization that stands for Tomoji itself. Existing contributors must add
+all three entries too. Then run:
 
 ```bash
 just convex-env
 ```
 
-Convex reads `WORKOS_CLIENT_ID`, `WORKOS_API_KEY`, and `WORKOS_WEBHOOK_SECRET` from the
-deployment rather than `.env.local`, and this copies all three across along with
-`S3_MEDIA_BUCKET` and `S3_MEDIA_REGION`.
+Convex reads `WORKOS_CLIENT_ID`, `WORKOS_API_KEY`, `WORKOS_WEBHOOK_SECRET`, and
+`WORKOS_OPERATOR_ORG_ID` from the deployment rather than `.env.local`, and this copies
+all four across along with `S3_MEDIA_BUCKET` and `S3_MEDIA_REGION`.
+
+`WORKOS_OPERATOR_ORG_ID` is what makes someone an operator: joining that one
+organization grants the role, and joining any other makes an ordinary company user.
+Point it at a customer's org by mistake and that customer's whole team becomes
+Tomoji staff.
 
 The S3 media foundation also requires a bucket and region on **your personal Convex dev
 deployment**. This is a one-time setup for new and existing contributors; pulling the PR
@@ -156,6 +175,16 @@ sign-in, so this means the webhook isn't reaching your deployment. Check the Wor
 dashboard's webhook delivery log first — it shows the response your endpoint gave. A 401
 means your `WORKOS_WEBHOOK_SECRET` doesn't match that webhook; nothing at all means the URL
 points somewhere else. Your `users` table stays empty either way.
+
+**Invites never disappear after someone accepts them, or never show up at all** —
+your webhook is missing the `invitation.*` events. The TL who created it subscribed
+to the six account events but not the four in step 3's table. Have them add the
+missing ones in the WorkOS dashboard; no code change or redeploy is needed.
+
+**You're signed in but every operator route returns `forbidden`** — either
+`WORKOS_OPERATOR_ORG_ID` isn't set on your deployment (`bunx convex env get
+WORKOS_OPERATOR_ORG_ID`), or you aren't in that organization. Without it, joining the
+staff org makes you an ordinary company user instead.
 
 **`Module has no exported member` from `convex/_generated`** — generated types are stale.
 Make sure `just bd` is running.

@@ -67,17 +67,23 @@ export async function createCompany(
 /**
  * Updates only the fields that were provided.
  *
- * @throws `invalid_state` if `name` or `profilePicture` is provided but blank.
+ * @throws `invalid_state` if a provided field is blank.
  */
 export async function updateCompany(
   ctx: MutationCtx,
   companyId: Id<"companies">,
-  fields: { name?: string; profilePicture?: string },
+  fields: { name?: string; profilePicture?: string; website?: string; description?: string },
 ): Promise<void> {
-  const patch: Partial<Pick<Doc<"companies">, "name" | "profilePicture">> = {};
+  const patch: Partial<
+    Pick<Doc<"companies">, "name" | "profilePicture" | "website" | "description">
+  > = {};
   if (fields.name !== undefined) patch.name = requireNonBlank(fields.name, "company_name");
   if (fields.profilePicture !== undefined) {
     patch.profilePicture = requireNonBlank(fields.profilePicture, "profile_picture");
+  }
+  if (fields.website !== undefined) patch.website = requireNonBlank(fields.website, "website");
+  if (fields.description !== undefined) {
+    patch.description = requireNonBlank(fields.description, "description");
   }
   await ctx.db.patch("companies", companyId, patch);
 }

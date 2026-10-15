@@ -9,6 +9,7 @@ const values = {
   WORKOS_CLIENT_ID: "client_test",
   WORKOS_API_KEY: "api_test",
   WORKOS_WEBHOOK_SECRET: "webhook_test",
+  WORKOS_OPERATOR_ORG_ID: "org_tomoji_test",
   S3_MEDIA_BUCKET: "example-dev-media",
   S3_MEDIA_REGION: "us-east-1",
 };
@@ -47,7 +48,22 @@ test("copies WorkOS and S3 configuration from the local env file", async () => {
       expect.any(Object),
     );
   }
-  expect(spawnSync).toHaveBeenCalledTimes(5);
+  expect(spawnSync).toHaveBeenCalledTimes(6);
+});
+
+// Without it no org is the staff org, so staff invites quietly create
+// companies instead of operators.
+test("rejects a missing operator org id before making deployment changes", async () => {
+  vi.mocked(readFileSync).mockReturnValue(
+    Object.entries(values)
+      .filter(([key]) => key !== "WORKOS_OPERATOR_ORG_ID")
+      .map(([key, value]) => `${key}=${value}`)
+      .join("\n"),
+  );
+
+  await expect(import("../set-convex-env")).rejects.toThrow("exit 1");
+  expect(console.error).toHaveBeenCalledWith(expect.stringContaining("WORKOS_OPERATOR_ORG_ID"));
+  expect(spawnSync).not.toHaveBeenCalled();
 });
 
 test("rejects a missing S3 bucket before making deployment changes", async () => {
@@ -93,7 +109,7 @@ test("copies a complete X OAuth configuration without requiring it for unrelated
       expect.any(Object),
     );
   }
-  expect(spawnSync).toHaveBeenCalledTimes(8);
+  expect(spawnSync).toHaveBeenCalledTimes(9);
 });
 
 test("rejects partial X configuration before making any deployment changes", async () => {

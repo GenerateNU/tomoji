@@ -1,5 +1,6 @@
 import type { PaginationOptions, PaginationResult, UserIdentity } from "convex/server";
 import type { Doc, Id } from "../_generated/dataModel";
+import { env } from "../_generated/server";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { requireIdentity } from "../lib/authz";
 import { apiError } from "../lib/errors";
@@ -255,10 +256,22 @@ export async function syncMembership(
   await applyMembership(ctx, event);
 }
 
+/** Whether a WorkOS organization is the Tomoji staff org rather than a customer. */
+export function isOperatorOrg(organizationId: string): boolean {
+  const operatorOrgId = env.WORKOS_OPERATOR_ORG_ID;
+  return operatorOrgId !== undefined && operatorOrgId === organizationId;
+}
+
 export async function applyMembership(ctx: MutationCtx, event: MembershipEvent): Promise<void> {
   const user = await getUserByWorkosId(ctx, event.workosUserId);
   if (user === null) {
     throw apiError("not_synced", { workosUserId: event.workosUserId });
+  }
+
+  // Tomoji staff get the operator role and no company of their own.
+  if (isOperatorOrg(event.organizationId)) {
+    await makeOperator(ctx, user);
+    return;
   }
 
   const existingCompany = await getCompanyByWorkosId(ctx, event.organizationId);
@@ -319,6 +332,20 @@ export async function applyMembership(ctx: MutationCtx, event: MembershipEvent):
 }
 
 /**
+ * Promotes a user to operator. They keep any creator row they already had; it
+ * is simply unreachable while their role is `operator`.
+ */
+async function makeOperator(ctx: MutationCtx, user: Doc<"users">): Promise<void> {
+  const patch: Partial<Doc<"users">> = {};
+  if (user.role !== "operator") patch.role = "operator";
+  if (!user.isActive) {
+    patch.isActive = true;
+    patch.deactivatedReason = undefined;
+  }
+  if (Object.keys(patch).length > 0) await ctx.db.patch("users", user._id, patch);
+}
+
+/**
  * Deactivates a user WorkOS removed from their company. The membership row
  * stays: `campaigns.createdBy`, `opportunities.createdBy`,
  * `submissions.reviewedBy`, and `assignments.productAccessDeliveredBy` all
@@ -332,6 +359,17 @@ export async function removeMembership(
   event: { workosUserId: string; organizationId: string },
 ): Promise<void> {
   const user = await getUserByWorkosId(ctx, event.workosUserId);
+  // Leaving the staff org revokes operator access the same way leaving a
+  // company revokes company access.
+  if (isOperatorOrg(event.organizationId)) {
+    if (user !== null && user.isActive) {
+      await ctx.db.patch("users", user._id, {
+        isActive: false,
+        deactivatedReason: "left_company",
+      });
+    }
+    return;
+  }
   const company = await getCompanyByWorkosId(ctx, event.organizationId);
   if (user === null || company === null) return;
 

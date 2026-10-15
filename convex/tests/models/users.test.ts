@@ -1,6 +1,6 @@
 /// <reference types="vite/client" />
 import { convexTest } from "convex-test";
-import { describe, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import type { Doc, Id } from "../../_generated/dataModel";
 import { getCompanyByWorkosId } from "../../models/companies";
 import { getCompanyUserByUserId } from "../../models/companyUsers";
@@ -1191,5 +1191,99 @@ describe("syncMembership", () => {
 
     const user = await t.run(async (ctx) => await getUserByWorkosId(ctx, "u21"));
     expect(user?.role).toBe("company");
+  });
+});
+
+describe("the Tomoji staff org", () => {
+  const STAFF_ORG = "org_tomoji";
+
+  async function joinStaffOrg(t: TestConvex, subject: string) {
+    await t.run(
+      async (ctx) =>
+        await applyMembership(ctx, {
+          workosUserId: subject,
+          organizationId: STAFF_ORG,
+          organizationName: "Tomoji",
+          role: "admin",
+        }),
+    );
+  }
+
+  beforeEach(() => {
+    vi.stubEnv("WORKOS_OPERATOR_ORG_ID", STAFF_ORG);
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  test("joining it makes the user an operator", async () => {
+    const t = convexTest(schema, modules);
+    await seedUser(t, { subject: "staff1" });
+
+    await joinStaffOrg(t, "staff1");
+
+    expect(await requireSeededUser(t, "staff1")).toMatchObject({ role: "operator" });
+  });
+
+  // Operators work across every company, so giving them one of their own
+  // would scope them to it.
+  test("joining it creates no company and no membership", async () => {
+    const t = convexTest(schema, modules);
+    await seedUser(t, { subject: "staff2" });
+
+    await joinStaffOrg(t, "staff2");
+
+    const user = await requireSeededUser(t, "staff2");
+    expect(await t.run(async (ctx) => await getCompanyByWorkosId(ctx, STAFF_ORG))).toBeNull();
+    expect(await t.run(async (ctx) => await getCompanyUserByUserId(ctx, user._id))).toBeNull();
+  });
+
+  test("joining it reactivates a deactivated account", async () => {
+    const t = convexTest(schema, modules);
+    await seedUser(t, { subject: "staff3" });
+    await t.run(async (ctx) => await deactivateUser(ctx, "staff3"));
+
+    await joinStaffOrg(t, "staff3");
+
+    const user = await requireSeededUser(t, "staff3");
+    expect(user).toMatchObject({ role: "operator", isActive: true });
+    expect(user.deactivatedReason).toBeUndefined();
+  });
+
+  test("leaving it deactivates the operator", async () => {
+    const t = convexTest(schema, modules);
+    await seedUser(t, { subject: "staff4" });
+    await joinStaffOrg(t, "staff4");
+
+    await t.run(
+      async (ctx) =>
+        await removeMembership(ctx, { workosUserId: "staff4", organizationId: STAFF_ORG }),
+    );
+
+    expect(await requireSeededUser(t, "staff4")).toMatchObject({
+      isActive: false,
+      deactivatedReason: "left_company",
+    });
+  });
+
+  // Without the env var every org looks like a customer, so a staff invite
+  // would quietly create a company instead of an operator.
+  test("is just another company when the deployment does not name one", async () => {
+    const t = convexTest(schema, modules);
+    vi.stubEnv("WORKOS_OPERATOR_ORG_ID", "");
+    await seedUser(t, { subject: "staff5" });
+
+    await joinStaffOrg(t, "staff5");
+
+    expect(await requireSeededUser(t, "staff5")).toMatchObject({ role: "company" });
+    expect(await t.run(async (ctx) => await getCompanyByWorkosId(ctx, STAFF_ORG))).not.toBeNull();
+  });
+
+  test("a different org still makes an ordinary company user", async () => {
+    const t = convexTest(schema, modules);
+    await seedUser(t, { subject: "staff6", org: { id: "org_acme" } });
+
+    expect(await requireSeededUser(t, "staff6")).toMatchObject({ role: "company" });
   });
 });

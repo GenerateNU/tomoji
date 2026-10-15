@@ -2,7 +2,20 @@ import { AuthKit, type AuthFunctions } from "@convex-dev/workos-authkit";
 import { components, internal } from "./_generated/api";
 import type { DataModel } from "./_generated/dataModel";
 import { toCompanyRole } from "./lib/identity";
-import { deactivateUser, removeMembership, syncMembership, upsertUser } from "./models/users";
+import {
+  closeInvite,
+  invitationFrom,
+  recordInvite,
+  refreshInvite,
+  type WorkosInvitation,
+} from "./models/invites";
+import {
+  deactivateUser,
+  isOperatorOrg,
+  removeMembership,
+  syncMembership,
+  upsertUser,
+} from "./models/users";
 
 const authFunctions: AuthFunctions = internal.auth;
 
@@ -12,6 +25,10 @@ export const authKit = new AuthKit<DataModel>(components.workOSAuthKit, {
     "organization_membership.created",
     "organization_membership.updated",
     "organization_membership.deleted",
+    "invitation.created",
+    "invitation.accepted",
+    "invitation.revoked",
+    "invitation.resent",
   ],
 });
 
@@ -58,6 +75,25 @@ export const { authKitEvent } = authKit.events({
   },
   "organization_membership.updated": async (ctx, event) => {
     await syncMembership(ctx, membershipFrom(event.data));
+  },
+  "invitation.created": async (ctx, event) => {
+    const invitation = invitationFrom(event.data as WorkosInvitation);
+    await recordInvite(
+      ctx,
+      invitation,
+      invitation.organizationId !== undefined && isOperatorOrg(invitation.organizationId),
+    );
+  },
+  // Accepting also fires user.created and organization_membership.created,
+  // which do the real work; this only clears the pending row.
+  "invitation.accepted": async (ctx, event) => {
+    await closeInvite(ctx, (event.data as WorkosInvitation).id);
+  },
+  "invitation.revoked": async (ctx, event) => {
+    await closeInvite(ctx, (event.data as WorkosInvitation).id);
+  },
+  "invitation.resent": async (ctx, event) => {
+    await refreshInvite(ctx, invitationFrom(event.data as WorkosInvitation));
   },
   "organization_membership.deleted": async (ctx, event) => {
     await removeMembership(ctx, {

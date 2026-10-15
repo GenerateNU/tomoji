@@ -126,6 +126,50 @@ describe("updateCompany", () => {
     });
   });
 
+  test("sets the website and description", async () => {
+    const t = convexTest(schema, modules);
+    const companyId = await insertCompany(t, "org_profile", "Acme");
+
+    await t.run(
+      async (ctx) =>
+        await updateCompany(ctx, companyId, {
+          website: "https://acme.com",
+          description: "Developer tools.",
+        }),
+    );
+
+    expect(await companyRow(t, companyId)).toMatchObject({
+      website: "https://acme.com",
+      description: "Developer tools.",
+    });
+  });
+
+  test("rejects a blank website and leaves the row unchanged", async () => {
+    const t = convexTest(schema, modules);
+    const companyId = await insertCompany(t, "org_site");
+    await t.run(
+      async (ctx) => await updateCompany(ctx, companyId, { website: "https://acme.com" }),
+    );
+
+    await expectApiError(
+      () => t.run(async (ctx) => await updateCompany(ctx, companyId, { website: " " })),
+      "invalid_state",
+    );
+    expect((await companyRow(t, companyId))?.website).toBe("https://acme.com");
+  });
+
+  test("rejects a blank description and leaves the row unchanged", async () => {
+    const t = convexTest(schema, modules);
+    const companyId = await insertCompany(t, "org_desc");
+    await t.run(async (ctx) => await updateCompany(ctx, companyId, { description: "Tools." }));
+
+    await expectApiError(
+      () => t.run(async (ctx) => await updateCompany(ctx, companyId, { description: "\n" })),
+      "invalid_state",
+    );
+    expect((await companyRow(t, companyId))?.description).toBe("Tools.");
+  });
+
   test("rejects a blank name and leaves the row unchanged", async () => {
     const t = convexTest(schema, modules);
     const companyId = await insertCompany(t, "org_blank", "Keep");

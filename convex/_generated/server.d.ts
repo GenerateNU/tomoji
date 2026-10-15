@@ -32,6 +32,8 @@ type Env = {
   readonly CONVEX_SITE_URL: string;
   readonly S3_MEDIA_BUCKET: string;
   readonly S3_MEDIA_REGION: string;
+  readonly WORKOS_API_KEY: string | undefined;
+  readonly WORKOS_OPERATOR_ORG_ID: string | undefined;
   readonly X_CLIENT_ID: string | undefined;
   readonly X_CLIENT_SECRET: string | undefined;
   readonly X_REDIRECT_URI: string | undefined;

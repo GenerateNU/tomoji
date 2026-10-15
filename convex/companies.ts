@@ -1,11 +1,7 @@
 import { paginationOptsValidator, paginationResultValidator } from "convex/server";
 import { v, type Infer } from "convex/values";
 import type { Doc } from "./_generated/dataModel";
-import {
-  companyAdminMutation,
-  operatorMutation,
-  operatorQuery,
-} from "./lib/functions";
+import { companyAdminMutation, operatorMutation, operatorQuery } from "./lib/functions";
 import { createCompany, listCompanies, requireCompany, updateCompany } from "./models/companies";
 import schema from "./schema";
 

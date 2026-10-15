@@ -30,7 +30,6 @@ type ApplicationModalProps = {
   onOpenChange: (open: boolean) => void;
 };
 
-
 export function ApplicationModal({ opportunityId, open, onOpenChange }: ApplicationModalProps) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>

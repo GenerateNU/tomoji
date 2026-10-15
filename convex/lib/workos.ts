@@ -22,6 +22,16 @@ export function workosClient(): WorkOS {
   return new WorkOS(apiKey);
 }
 
+/**
+ * Why WorkOS refused to invite an address. `email_already_invited` means an
+ * invitation is still pending; `user_already_exists` means they already have an
+ * account, which happens once someone has accepted an earlier invite.
+ */
+const DUPLICATE_REASONS: Record<string, string | undefined> = {
+  email_already_invited: "invite_already_pending",
+  user_already_exists: "already_registered",
+};
+
 export type SendInvite = {
   email: string;
   organizationId?: string;
@@ -47,10 +57,9 @@ export async function sendInvite(invite: SendInvite): Promise<void> {
       expiresInDays: INVITE_EXPIRES_IN_DAYS,
     });
   } catch (error) {
-    const status = (error as { status?: number } | null)?.status;
-    if (status === 409 || status === 422) {
-      throw apiError("conflict", { reason: "invite_already_pending" });
-    }
+    // WorkOS reports both of these as a 400 carrying a code, not as a 409.
+    const reason = DUPLICATE_REASONS[(error as { code?: string } | null)?.code ?? ""];
+    if (reason !== undefined) throw apiError("conflict", { reason });
     throw apiError("upstream_failure", { reason: "workos_invite_failed" });
   }
 }

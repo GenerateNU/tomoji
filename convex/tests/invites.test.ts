@@ -31,6 +31,13 @@ function stubWorkos() {
   };
 }
 
+/** The errors WorkOS actually throws for a duplicate: a 400 carrying a code. */
+function workosDuplicateError(code: "email_already_invited" | "user_already_exists") {
+  const message =
+    code === "email_already_invited" ? "Email already invited." : "User already exists.";
+  return Object.assign(new Error(message), { status: 400, code, rawData: { message, code } });
+}
+
 let workos: ReturnType<typeof stubWorkos>;
 
 beforeEach(() => {
@@ -139,12 +146,24 @@ describe("inviteCreator", () => {
     expect(workos.sendInvitation).not.toHaveBeenCalled();
   });
 
+  // WorkOS uses a different code once the person has accepted an earlier invite
+  // and has a real account, and the operator needs to tell those apart.
+  test("reports an email that already has an account as a conflict", async () => {
+    const t = convexTest(schema, modules);
+    const asOperator = await seedOperator(t, "op18");
+    workos.sendInvitation.mockRejectedValueOnce(workosDuplicateError("user_already_exists"));
+
+    await expectApiError(
+      () => asOperator.action(api.invites.inviteCreator, { email: "taken@example.com" }),
+      "conflict",
+      "already_registered",
+    );
+  });
+
   test("reports an already pending invitation as a conflict", async () => {
     const t = convexTest(schema, modules);
     const asOperator = await seedOperator(t, "op4");
-    workos.sendInvitation.mockRejectedValueOnce(
-      Object.assign(new Error("exists"), { status: 409 }),
-    );
+    workos.sendInvitation.mockRejectedValueOnce(workosDuplicateError("email_already_invited"));
 
     await expectApiError(
       () => asOperator.action(api.invites.inviteCreator, { email: "dupe@example.com" }),
@@ -225,9 +244,7 @@ describe("inviteCompany", () => {
   test("reports the company it created when the invitation fails", async () => {
     const t = convexTest(schema, modules);
     const asOperator = await seedOperator(t, "op17");
-    workos.sendInvitation.mockRejectedValueOnce(
-      Object.assign(new Error("exists"), { status: 409 }),
-    );
+    workos.sendInvitation.mockRejectedValueOnce(workosDuplicateError("email_already_invited"));
 
     await expect(
       asOperator.action(api.invites.inviteCompany, {

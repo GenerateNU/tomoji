@@ -274,15 +274,28 @@ export async function applyMembership(ctx: MutationCtx, event: MembershipEvent):
     return;
   }
 
+  // A serving operator belongs to no customer company: recording the membership
+  // would list Tomoji staff among a customer's own people. One who has left the
+  // staff org is deactivated, and is allowed through to become a company user.
+  if (user.role === "operator" && user.isActive) {
+    console.warn("ignoring company membership for an operator", {
+      workosId: event.workosUserId,
+      userId: user._id,
+      organizationId: event.organizationId,
+    });
+    return;
+  }
+
   const existingCompany = await getCompanyByWorkosId(ctx, event.organizationId);
   const membership = await getCompanyUserByUserId(ctx, user._id);
   if (membership !== null && membership.companyId !== existingCompany?._id) {
     throw apiError("conflict", { reason: "already_in_company" });
   }
 
-  // A creator with linked X, application, or assignment data must not be
-  // converted: those rows are creator-scoped and would be stranded.
-  if (user.role === "creator" && membership === null) {
+  // Linked X, application, or assignment data must not be converted away:
+  // those rows are creator-scoped and would be stranded. A former operator
+  // reaches this too, because promotion leaves their creator row in place.
+  if (user.role !== "company" && membership === null) {
     const creator = await getCreatorByUserId(ctx, user._id);
     if (creator !== null && (await hasCreatorActivity(ctx, creator._id))) {
       console.warn("refusing to convert creator with activity to company", {
@@ -319,7 +332,10 @@ export async function applyMembership(ctx: MutationCtx, event: MembershipEvent):
     });
   }
 
-  if (user.role === "creator") {
+  // Whoever reaches here is a member of this company now, so the account role
+  // follows. A former operator must not keep `operator` through the
+  // reactivation below, which would hand back every company.
+  if (user.role !== "company") {
     await ctx.db.patch("users", user._id, { role: "company" });
   }
   // Joining a company undoes only the deactivation that leaving one applied.
@@ -360,7 +376,8 @@ export async function removeMembership(
 ): Promise<void> {
   const user = await getUserByWorkosId(ctx, event.workosUserId);
   // Leaving the staff org revokes operator access the same way leaving a
-  // company revokes company access.
+  // company revokes company access. The role stays, so an operator can restore
+  // them; joining a customer company instead converts them there.
   if (isOperatorOrg(event.organizationId)) {
     if (user !== null && user.isActive) {
       await ctx.db.patch("users", user._id, {

@@ -1267,6 +1267,110 @@ describe("the Tomoji staff org", () => {
     });
   });
 
+  // The role stays so an operator can restore them; the lockout is isActive.
+  test("leaving it leaves an inactive operator", async () => {
+    const t = convexTest(schema, modules);
+    await seedUser(t, { subject: "staff_demote" });
+    await joinStaffOrg(t, "staff_demote");
+
+    await t.run(
+      async (ctx) =>
+        await removeMembership(ctx, { workosUserId: "staff_demote", organizationId: STAFF_ORG }),
+    );
+
+    expect(await requireSeededUser(t, "staff_demote")).toMatchObject({
+      role: "operator",
+      isActive: false,
+      deactivatedReason: "left_company",
+    });
+  });
+
+  // A company admin can invite any email, so without this a removed operator
+  // regains cross-company access the moment any customer invites them.
+  test("a removed operator who joins a company becomes a company user, not an operator", async () => {
+    const t = convexTest(schema, modules);
+    await seedUser(t, { subject: "staff_rejoin" });
+    await joinStaffOrg(t, "staff_rejoin");
+    await t.run(
+      async (ctx) =>
+        await removeMembership(ctx, { workosUserId: "staff_rejoin", organizationId: STAFF_ORG }),
+    );
+
+    await t.run(
+      async (ctx) =>
+        await applyMembership(ctx, {
+          workosUserId: "staff_rejoin",
+          organizationId: "org_acme",
+          organizationName: "Acme",
+          role: "member",
+        }),
+    );
+
+    expect(await requireSeededUser(t, "staff_rejoin")).toMatchObject({
+      role: "company",
+      isActive: true,
+    });
+  });
+
+  // A serving operator works across every company, so belonging to one is
+  // meaningless; recording it would also list staff among a customer's people.
+  test("a serving operator added to a company gains no membership", async () => {
+    const t = convexTest(schema, modules);
+    await seedUser(t, { subject: "staff_also_company" });
+    await joinStaffOrg(t, "staff_also_company");
+    const logged = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    await t.run(
+      async (ctx) =>
+        await applyMembership(ctx, {
+          workosUserId: "staff_also_company",
+          organizationId: "org_acme",
+          organizationName: "Acme",
+          role: "member",
+        }),
+    );
+
+    expect(await requireSeededUser(t, "staff_also_company")).toMatchObject({ role: "operator" });
+    expect(await t.run(async (ctx) => await ctx.db.query("companyUsers").collect())).toEqual([]);
+    // Pins the log: it is the only signal that a membership was dropped.
+    expect(logged).toHaveBeenCalledOnce();
+    logged.mockRestore();
+  });
+
+  // Promotion leaves their creator row, so a former operator can still own X
+  // links and assignments that converting them would strand.
+  test("a removed operator with creator activity is not converted to a company user", async () => {
+    const t = convexTest(schema, modules);
+    await seedXAccount(t, "staff_with_activity");
+    await joinStaffOrg(t, "staff_with_activity");
+    await t.run(
+      async (ctx) =>
+        await removeMembership(ctx, {
+          workosUserId: "staff_with_activity",
+          organizationId: STAFF_ORG,
+        }),
+    );
+    const logged = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    await t.run(
+      async (ctx) =>
+        await applyMembership(ctx, {
+          workosUserId: "staff_with_activity",
+          organizationId: "org_acme",
+          organizationName: "Acme",
+          role: "member",
+        }),
+    );
+
+    expect(await requireSeededUser(t, "staff_with_activity")).toMatchObject({
+      role: "operator",
+      isActive: false,
+    });
+    expect(await t.run(async (ctx) => await ctx.db.query("companyUsers").collect())).toEqual([]);
+    expect(logged).toHaveBeenCalledOnce();
+    logged.mockRestore();
+  });
+
   // Without the env var every org looks like a customer, so a staff invite
   // would quietly create a company instead of an operator.
   test("is just another company when the deployment does not name one", async () => {

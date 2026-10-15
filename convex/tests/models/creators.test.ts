@@ -3,6 +3,7 @@ import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
 import {
   getCreatorByUserId,
+  hasCreatorActivity,
   listCreators,
   requireCreatorProfile,
   requireCreatorProfileById,
@@ -12,6 +13,9 @@ import { deactivateUser, getUserByWorkosId } from "../../models/users";
 import schema from "../../schema";
 import {
   expectApiError,
+  seedAssignment,
+  seedCreatorId,
+  seedOpportunity,
   seedOperator,
   seedProfilePictureUpload,
   seedUser,
@@ -114,6 +118,7 @@ describe("listCreators", () => {
         xId: "123456789",
         githubLink: "https://github.com/creator",
         phoneNumber: "+15555550123",
+        niches: [],
       },
     ]);
   });
@@ -159,6 +164,7 @@ describe("listCreators", () => {
         firstName: "Ada",
         lastName: "Lovelace",
         email: "page-one@example.com",
+        niches: [],
       },
     ]);
     expect(firstPage.isDone).toBe(false);
@@ -168,6 +174,7 @@ describe("listCreators", () => {
         firstName: "Grace",
         lastName: "Hopper",
         email: "page-two@example.com",
+        niches: [],
       },
     ]);
     expect(secondPage.isDone).toBe(true);
@@ -403,6 +410,7 @@ describe("requireCreatorProfileById", () => {
       xId: "123456789",
       githubLink: "https://github.com/creator",
       phoneNumber: "+15555550123",
+      niches: [],
     });
   });
 
@@ -458,5 +466,112 @@ describe("requireCreatorProfileById", () => {
       () => t.run(async (ctx) => await requireCreatorProfileById(ctx, creatorId)),
       "not_found",
     );
+  });
+});
+
+describe("creator niches", () => {
+  test("creators set, replace, and clear their niches in their profile", async () => {
+    const t = convexTest(schema, modules);
+    await seedUser(t, { subject: "niche_creator" });
+
+    const profiles = await t.run(async (ctx) => {
+      const user = (await getUserByWorkosId(ctx, "niche_creator"))!;
+      return [
+        await updateCreatorProfile(ctx, user, {
+          niches: ["databases", "web-development", "databases"],
+        }),
+        await updateCreatorProfile(ctx, user, { username: "chef" }),
+        await updateCreatorProfile(ctx, user, { niches: [] }),
+        await requireCreatorProfile(ctx, user),
+      ];
+    });
+
+    expect(profiles.map((profile) => profile.niches)).toEqual([
+      ["databases", "web-development"],
+      ["databases", "web-development"],
+      [],
+      [],
+    ]);
+  });
+
+  test("a new creator's profile has no niches", async () => {
+    const t = convexTest(schema, modules);
+    await seedUser(t, { subject: "niche_creator" });
+
+    const profile = await t.run(async (ctx) => {
+      const user = (await getUserByWorkosId(ctx, "niche_creator"))!;
+      return await requireCreatorProfile(ctx, user);
+    });
+
+    expect(profile.niches).toEqual([]);
+  });
+
+  test("refuses a niche that isn't on the list without changing the profile", async () => {
+    const t = convexTest(schema, modules);
+    await seedUser(t, { subject: "niche_creator" });
+
+    await expect(
+      t.run(async (ctx) => {
+        const user = (await getUserByWorkosId(ctx, "niche_creator"))!;
+        return await updateCreatorProfile(ctx, user, { niches: ["crypto"], username: "x" });
+      }),
+    ).rejects.toMatchObject({ data: { code: "invalid_state", reason: "invalid_niche" } });
+    const creator = await t.run(async (ctx) => await ctx.db.query("creators").first());
+    expect(creator?.username).not.toBe("x");
+    expect(creator).not.toHaveProperty("niches");
+  });
+});
+
+describe("hasCreatorActivity", () => {
+  test("is false for a creator with no X account, application, or assignment", async () => {
+    const t = convexTest(schema, modules);
+    const creatorId = await seedCreatorId(t, "idle_creator");
+
+    expect(await t.run(async (ctx) => await hasCreatorActivity(ctx, creatorId))).toBe(false);
+  });
+
+  test("is true when the creator has a linked X account", async () => {
+    const t = convexTest(schema, modules);
+    const { creatorId } = await seedXAccount(t, "x_linked_creator");
+
+    expect(await t.run(async (ctx) => await hasCreatorActivity(ctx, creatorId))).toBe(true);
+  });
+
+  test("is true when the creator has an application in a non-default status", async () => {
+    const t = convexTest(schema, modules);
+    const creatorId = await seedCreatorId(t, "applicant_creator");
+    const { opportunityId, membership } = await seedOpportunity(t, {
+      subject: "activity_owner",
+    });
+    await t.run(
+      async (ctx) =>
+        await ctx.db.insert("applications", {
+          opportunityId,
+          creatorId,
+          companyId: membership.companyId,
+          status: "rejected",
+        }),
+    );
+
+    expect(await t.run(async (ctx) => await hasCreatorActivity(ctx, creatorId))).toBe(true);
+  });
+
+  test("is true when the creator has an assignment", async () => {
+    const t = convexTest(schema, modules);
+    const creatorId = await seedCreatorId(t, "assigned_creator");
+    const { opportunityId } = await seedOpportunity(t, {
+      subject: "assignment_owner",
+    });
+    await seedAssignment(t, { opportunityId, creatorId, status: "completed" });
+
+    expect(await t.run(async (ctx) => await hasCreatorActivity(ctx, creatorId))).toBe(true);
+  });
+
+  test("ignores activity that belongs to another creator", async () => {
+    const t = convexTest(schema, modules);
+    const idleId = await seedCreatorId(t, "bystander_creator");
+    await seedXAccount(t, "other_x_creator");
+
+    expect(await t.run(async (ctx) => await hasCreatorActivity(ctx, idleId))).toBe(false);
   });
 });

@@ -3,7 +3,12 @@ import { convexTest } from "convex-test";
 import { describe, expect, test, vi } from "vitest";
 import type { Id } from "../../_generated/dataModel";
 import { getCompanyByWorkosId } from "../../models/companies";
-import { getCompanyUser, listCompanyUsers, requireMembership } from "../../models/companyUsers";
+import {
+  getCompanyUser,
+  getCompanyUserByUserId,
+  listCompanyUsers,
+  requireMembership,
+} from "../../models/companyUsers";
 import { getUserByWorkosId, removeMembership } from "../../models/users";
 import schema from "../../schema";
 import { expectApiError, seedProfilePictureUpload, seedUser, type TestConvex } from "../helpers";
@@ -77,7 +82,7 @@ describe("getCompanyUser", () => {
     expect(membership).toBeNull();
   });
 
-  test("returns null after the membership is removed", async () => {
+  test("still finds the row after the membership ends, now marked inactive", async () => {
     const t = convexTest(schema, modules);
     await seedUser(t, { subject: "cu4", org: { id: "org_acme" } });
     const { userId, companyId } = await idsFor(t, "cu4", "org_acme");
@@ -88,10 +93,11 @@ describe("getCompanyUser", () => {
 
     const membership = await t.run(async (ctx) => await getCompanyUser(ctx, userId, companyId));
 
-    expect(membership).toBeNull();
+    expect(membership).not.toBeNull();
+    expect(membership?.isActive).toBe(false);
   });
 
-  test("finds only the new company after the previous membership is removed", async () => {
+  test("keeps the old company's row inactive while the new one is current", async () => {
     const t = convexTest(schema, modules);
     await seedUser(t, { subject: "cu5", org: { id: "org_acme" } });
     await t.run(
@@ -110,9 +116,15 @@ describe("getCompanyUser", () => {
     );
 
     expect(membership?.companyId).toBe(otherCompanyId);
-    expect(
-      await t.run(async (ctx) => await getCompanyUser(ctx, userId, previousCompanyId)),
-    ).toBeNull();
+    expect(membership?.isActive).toBe(true);
+    const previous = await t.run(
+      async (ctx) => await getCompanyUser(ctx, userId, previousCompanyId),
+    );
+    expect(previous?.isActive).toBe(false);
+    // Only the current one answers "which company is this user in?".
+    expect(await t.run(async (ctx) => await getCompanyUserByUserId(ctx, userId))).toMatchObject({
+      companyId: otherCompanyId,
+    });
   });
 });
 

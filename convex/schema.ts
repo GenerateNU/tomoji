@@ -9,6 +9,7 @@ import { disputesTable } from "./schemas/disputes.schema";
 import { mediaUploadsTable } from "./schemas/mediaUploads.schema";
 import { notificationsTable } from "./schemas/notifications.schema";
 import { opportunitiesTable } from "./schemas/opportunities.schema";
+import { opportunityStarsTable } from "./schemas/opportunityStars.schema";
 import { postsTable } from "./schemas/posts.schema";
 import { submissionsTable } from "./schemas/submissions.schema";
 import { usersTable } from "./schemas/users.schema";
@@ -23,6 +24,7 @@ export default defineSchema({
   companies: companiesTable,
   campaigns: campaignsTable,
   opportunities: opportunitiesTable,
+  opportunityStars: opportunityStarsTable,
   applications: applicationsTable,
   assignments: assignmentsTable,
   submissions: submissionsTable,

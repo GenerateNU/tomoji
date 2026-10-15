@@ -1,10 +1,16 @@
 /// <reference types="vite/client" />
 import { convexTest } from "convex-test";
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import { api } from "../_generated/api";
-import { deactivateUser, getUserByWorkosId } from "../models/users";
+import { deactivateUser, getUserByWorkosId, removeMembership } from "../models/users";
 import schema from "../schema";
-import { expectApiError, seedOperator, seedUser, workosIdentity } from "./helpers";
+import {
+  expectApiError,
+  requireSeededUser,
+  seedOperator,
+  seedUser,
+  workosIdentity,
+} from "./helpers";
 
 const modules = import.meta.glob("../**/*.ts");
 
@@ -81,6 +87,26 @@ describe("users.me", () => {
 
     expect(me.orgId).toBe("org_acme");
     expect(me.companyRole).toBe("admin");
+  });
+
+  test("rejects a deactivated account", async () => {
+    const t = convexTest(schema, modules);
+    const asUser = await seedUser(t, { subject: "me_deactivated" });
+    await t.run(async (ctx) => await deactivateUser(ctx, "me_deactivated"));
+
+    await expectApiError(() => asUser.query(api.users.me, {}), "account_deactivated");
+  });
+
+  test("rejects an account locked for a duplicate email", async () => {
+    const t = convexTest(schema, modules);
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    await seedUser(t, { subject: "me_dup_owner", email: "me-dup@example.com" });
+    const asDuplicate = await seedUser(t, {
+      subject: "me_dup_claimant",
+      email: "me-dup@example.com",
+    });
+
+    await expectApiError(() => asDuplicate.query(api.users.me, {}), "account_deactivated");
   });
 });
 
@@ -237,5 +263,137 @@ describe("users.list", () => {
       "filter_active_creator",
       "filter_requested_inactive_creator",
     ]);
+  });
+});
+
+describe("users.list duplicate-email accounts", () => {
+  test("excludes a duplicate-email account by default and includes it when requested", async () => {
+    const t = convexTest(schema, modules);
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const asOperator = await seedOperator(t, "dup_list_operator");
+    await seedUser(t, {
+      subject: "dup_list_owner",
+      email: "dup-list@example.com",
+    });
+    await seedUser(t, {
+      subject: "dup_list_claimant",
+      email: "dup-list@example.com",
+    });
+
+    const byDefault = await asOperator.query(api.users.list, {
+      paginationOpts: { cursor: null, numItems: 10 },
+    });
+    const withInactive = await asOperator.query(api.users.list, {
+      includeInactive: true,
+      paginationOpts: { cursor: null, numItems: 10 },
+    });
+
+    expect(byDefault.page.map((user) => user.workosId).sort()).toEqual([
+      "dup_list_operator",
+      "dup_list_owner",
+    ]);
+    expect(withInactive.page.map((user) => user.workosId).sort()).toEqual([
+      "dup_list_claimant",
+      "dup_list_operator",
+      "dup_list_owner",
+    ]);
+  });
+});
+
+describe("users.setActive", () => {
+  test("rejects a non-operator caller", async () => {
+    const t = convexTest(schema, modules);
+    const asCreator = await seedUser(t, { subject: "set_active_creator" });
+    const userId = (await requireSeededUser(t, "set_active_creator"))._id;
+
+    await expectApiError(
+      () => asCreator.mutation(api.users.setActive, { userId, isActive: false }),
+      "forbidden",
+    );
+  });
+
+  test("lets an operator deactivate an account and records operator as the reason", async () => {
+    const t = convexTest(schema, modules);
+    const asOperator = await seedOperator(t, "set_active_operator");
+    await seedUser(t, { subject: "set_active_target" });
+    const userId = (await requireSeededUser(t, "set_active_target"))._id;
+
+    const result = await asOperator.mutation(api.users.setActive, {
+      userId,
+      isActive: false,
+    });
+
+    expect(result).toMatchObject({
+      _id: userId,
+      isActive: false,
+      deactivatedReason: "operator",
+    });
+    expect(await requireSeededUser(t, "set_active_target")).toMatchObject({
+      isActive: false,
+      deactivatedReason: "operator",
+    });
+  });
+
+  test("rejects reactivating a company user with no active membership", async () => {
+    const t = convexTest(schema, modules);
+    const asOperator = await seedOperator(t, "no_membership_operator");
+    await seedUser(t, {
+      subject: "no_membership_target",
+      org: { id: "org_acme" },
+    });
+    await t.run(async (ctx) => {
+      await removeMembership(ctx, {
+        workosUserId: "no_membership_target",
+        organizationId: "org_acme",
+      });
+    });
+    const userId = (await requireSeededUser(t, "no_membership_target"))._id;
+
+    await expectApiError(
+      () => asOperator.mutation(api.users.setActive, { userId, isActive: true }),
+      "invalid_state",
+      "no_active_membership",
+    );
+  });
+
+  test("rejects reactivating a duplicate-email account while the email is taken", async () => {
+    const t = convexTest(schema, modules);
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const asOperator = await seedOperator(t, "email_in_use_operator");
+    await seedUser(t, {
+      subject: "email_in_use_owner",
+      email: "in-use@example.com",
+    });
+    await seedUser(t, {
+      subject: "email_in_use_claimant",
+      email: "in-use@example.com",
+    });
+    const userId = (await requireSeededUser(t, "email_in_use_claimant"))._id;
+
+    await expectApiError(
+      () => asOperator.mutation(api.users.setActive, { userId, isActive: true }),
+      "invalid_state",
+      "email_in_use",
+    );
+  });
+
+  test("reports not_found for a user ID that no longer exists", async () => {
+    const t = convexTest(schema, modules);
+    const asOperator = await seedOperator(t, "not_found_operator");
+    await seedUser(t, { subject: "not_found_target" });
+    const userId = (await requireSeededUser(t, "not_found_target"))._id;
+    await t.run(async (ctx) => {
+      const creator = await ctx.db
+        .query("creators")
+        .withIndex("by_userId", (q) => q.eq("userId", userId))
+        .unique();
+      if (creator !== null) await ctx.db.delete("creators", creator._id);
+      await ctx.db.delete("users", userId);
+    });
+
+    await expectApiError(
+      () => asOperator.mutation(api.users.setActive, { userId, isActive: true }),
+      "not_found",
+    );
   });
 });

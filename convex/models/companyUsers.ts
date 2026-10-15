@@ -6,14 +6,17 @@ import { apiError } from "../lib/errors";
 import { companyRole } from "../schemas/companyUsers.schema";
 import { getCompanyByWorkosId } from "./companies";
 
-/** Finds the user's sole company membership; membership writes enforce this invariant. */
+/**
+ * The user's current membership, ignoring companies they have left. A user can
+ * hold several rows over time but only one that is active.
+ */
 export async function getCompanyUserByUserId(
   ctx: QueryCtx | MutationCtx,
   userId: Id<"users">,
 ): Promise<Doc<"companyUsers"> | null> {
   return await ctx.db
     .query("companyUsers")
-    .withIndex("by_userId", (q) => q.eq("userId", userId))
+    .withIndex("by_userId_and_isActive", (q) => q.eq("userId", userId).eq("isActive", true))
     .unique();
 }
 
@@ -110,7 +113,7 @@ export async function requireMembership(
     throw apiError("forbidden");
   }
   const membership = await getCompanyUser(ctx, userId, company._id);
-  if (membership === null) {
+  if (membership === null || !membership.isActive) {
     throw apiError("forbidden");
   }
   return membership;

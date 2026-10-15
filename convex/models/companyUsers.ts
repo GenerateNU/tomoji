@@ -6,7 +6,6 @@ import { apiError } from "../lib/errors";
 import { companyRole } from "../schemas/companyUsers.schema";
 import { getCompanyByWorkosId } from "./companies";
 
-/** Finds the user's sole company membership; membership writes enforce this invariant. */
 /**
  * The user's current membership, ignoring companies they have left. A user can
  * hold several rows over time but only one that is active.

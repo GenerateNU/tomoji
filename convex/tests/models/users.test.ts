@@ -1,6 +1,10 @@
 /// <reference types="vite/client" />
 import { convexTest } from "convex-test";
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
+import type { Doc, Id } from "../../_generated/dataModel";
+import { getCompanyByWorkosId } from "../../models/companies";
+import { getCompanyUserByUserId } from "../../models/companyUsers";
+import { getCreatorByUserId } from "../../models/creators";
 import {
   applyMembership,
   getUserByWorkosId,
@@ -9,19 +13,62 @@ import {
   requireCallerCreatorId,
   requireRole,
   requireUser,
+  setUserActive,
   syncMembership,
   upsertUser,
 } from "../../models/users";
 import schema from "../../schema";
 import {
   expectApiError,
+  requireSeededUser,
   seedCreatorId,
+  seedOpportunity,
+  seedAssignment,
   seedProfilePictureUpload,
   seedUser,
+  seedXAccount,
   workosIdentity,
+  type TestConvex,
 } from "../helpers";
 
 const modules = import.meta.glob("../../**/*.ts");
+
+function joinOrg(workosUserId: string, organizationId = "org_acme") {
+  return {
+    workosUserId,
+    organizationId,
+    organizationName: "Acme",
+    role: "admin" as const,
+  };
+}
+
+/** Reads the creators row for a seeded user, or null when none exists. */
+async function readCreatorRow(t: TestConvex, subject: string): Promise<Doc<"creators"> | null> {
+  return await t.run(async (ctx) => {
+    const user = await requireSeededUserInCtx(ctx, subject);
+    return await getCreatorByUserId(ctx, user._id);
+  });
+}
+
+async function requireSeededUserInCtx(
+  ctx: Parameters<typeof getUserByWorkosId>[0],
+  subject: string,
+) {
+  const user = await getUserByWorkosId(ctx, subject);
+  if (user === null) throw new Error("expected seeded user");
+  return user;
+}
+
+/** Seeds a company user whose WorkOS membership is then removed, leaving `left_company`. */
+async function seedLeftCompanyUser(t: TestConvex, subject: string, orgId = "org_acme") {
+  await seedUser(t, { subject, org: { id: orgId } });
+  await t.run(async (ctx) => {
+    await removeMembership(ctx, {
+      workosUserId: subject,
+      organizationId: orgId,
+    });
+  });
+}
 
 describe("upsertUser", () => {
   test("preserves the S3 picture reference when WorkOS updates the user", async () => {
@@ -215,6 +262,180 @@ describe("upsertUser", () => {
     const user = await t.run(async (ctx) => await getUserByWorkosId(ctx, "u5"));
     expect(user?.isActive).toBe(false);
   });
+
+  test("stores the email trimmed and lowercased", async () => {
+    const t = convexTest(schema, modules);
+    await seedUser(t, {
+      subject: "normalized",
+      email: "  Ada.Lovelace@Example.COM \t",
+    });
+
+    expect(await requireSeededUser(t, "normalized")).toMatchObject({
+      email: "ada.lovelace@example.com",
+      isActive: true,
+    });
+  });
+
+  test("locks a second account with the same email, ignoring case, and leaves the first untouched", async () => {
+    const t = convexTest(schema, modules);
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    await seedUser(t, { subject: "first_owner", email: "shared@example.com" });
+    const original = await requireSeededUser(t, "first_owner");
+
+    await seedUser(t, {
+      subject: "second_claimant",
+      email: "Shared@Example.com",
+    });
+
+    const duplicate = await requireSeededUser(t, "second_claimant");
+    expect(duplicate).toMatchObject({
+      email: "shared@example.com",
+      role: "creator",
+      isActive: false,
+      deactivatedReason: "duplicate_email",
+    });
+    expect(await readCreatorRow(t, "second_claimant")).toBeNull();
+    expect(await requireSeededUser(t, "first_owner")).toEqual(original);
+    expect(await readCreatorRow(t, "first_owner")).not.toBeNull();
+  });
+
+  test("logs the user IDs but never the email when it locks a duplicate", async () => {
+    const t = convexTest(schema, modules);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    await seedUser(t, { subject: "log_owner", email: "private@example.com" });
+    await seedUser(t, {
+      subject: "log_claimant",
+      email: "private@example.com",
+    });
+
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(warn.mock.calls)).not.toContain("private@example.com");
+    expect(JSON.stringify(warn.mock.calls)).toContain("log_claimant");
+  });
+
+  test("acknowledges a duplicate-email user.created instead of throwing", async () => {
+    const t = convexTest(schema, modules);
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    await seedUser(t, { subject: "ack_owner", email: "ack@example.com" });
+
+    await expect(
+      t.run(async (ctx) => upsertUser(ctx, { workosId: "ack_claimant", email: "ack@example.com" })),
+    ).resolves.toBeTruthy();
+  });
+
+  test("requireUser refuses a duplicate-email account", async () => {
+    const t = convexTest(schema, modules);
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    await seedUser(t, { subject: "req_owner", email: "req@example.com" });
+    const asDuplicate = await seedUser(t, {
+      subject: "req_claimant",
+      email: "req@example.com",
+    });
+
+    await expectApiError(
+      () => asDuplicate.run(async (ctx) => await requireUser(ctx)),
+      "account_deactivated",
+    );
+  });
+
+  test("lets a new account reuse the email of a WorkOS-deleted user", async () => {
+    const t = convexTest(schema, modules);
+    await seedUser(t, { subject: "gone", email: "reuse@example.com" });
+    await t.run(async (ctx) => await deactivateUser(ctx, "gone"));
+
+    await seedUser(t, { subject: "reuser", email: "reuse@example.com" });
+
+    expect(await requireSeededUser(t, "reuser")).toMatchObject({
+      isActive: true,
+      email: "reuse@example.com",
+    });
+    expect(await requireSeededUser(t, "reuser")).not.toHaveProperty("deactivatedReason");
+    expect(await readCreatorRow(t, "reuser")).not.toBeNull();
+  });
+
+  test("an operator-locked user still holds their email", async () => {
+    const t = convexTest(schema, modules);
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    await seedUser(t, { subject: "locked_owner", email: "held@example.com" });
+    await t.run(async (ctx) => {
+      const user = await requireSeededUserInCtx(ctx, "locked_owner");
+      await setUserActive(ctx, user._id, false);
+    });
+
+    await seedUser(t, {
+      subject: "locked_claimant",
+      email: "held@example.com",
+    });
+
+    expect(await requireSeededUser(t, "locked_claimant")).toMatchObject({
+      isActive: false,
+      deactivatedReason: "duplicate_email",
+    });
+  });
+
+  test("user.updated cannot take another user's email but still updates names", async () => {
+    const t = convexTest(schema, modules);
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    await seedUser(t, { subject: "email_holder", email: "holder@example.com" });
+    await seedUser(t, { subject: "email_taker", email: "taker@example.com" });
+
+    await t.run(async (ctx) =>
+      upsertUser(ctx, {
+        workosId: "email_taker",
+        email: "Holder@Example.com",
+        firstName: "Renamed",
+        lastName: "Taker",
+      }),
+    );
+
+    expect(await requireSeededUser(t, "email_taker")).toMatchObject({
+      email: "taker@example.com",
+      firstName: "Renamed",
+      lastName: "Taker",
+      isActive: true,
+    });
+    expect(await requireSeededUser(t, "email_holder")).toMatchObject({
+      email: "holder@example.com",
+    });
+  });
+
+  test("a case-only change to a legacy mixed-case email is stored lowercase without conflict", async () => {
+    const t = convexTest(schema, modules);
+    await t.run(async (ctx) => {
+      const userId = await ctx.db.insert("users", {
+        workosId: "legacy_case",
+        firstName: "Legacy",
+        lastName: "",
+        email: "Legacy@Example.com",
+        role: "creator",
+        isActive: true,
+      });
+      await ctx.db.insert("creators", { userId });
+    });
+
+    await t.run(async (ctx) =>
+      upsertUser(ctx, { workosId: "legacy_case", email: "Legacy@Example.com" }),
+    );
+
+    expect(await requireSeededUser(t, "legacy_case")).toMatchObject({
+      email: "legacy@example.com",
+      isActive: true,
+    });
+  });
+
+  test("an update does not touch the deactivation reason", async () => {
+    const t = convexTest(schema, modules);
+    await seedUser(t, { subject: "reason_kept" });
+    await t.run(async (ctx) => await deactivateUser(ctx, "reason_kept"));
+
+    await seedUser(t, { subject: "reason_kept", firstName: "Again" });
+
+    expect(await requireSeededUser(t, "reason_kept")).toMatchObject({
+      isActive: false,
+      deactivatedReason: "deleted",
+      firstName: "Again",
+    });
+  });
 });
 
 describe("applyMembership", () => {
@@ -277,6 +498,7 @@ describe("applyMembership", () => {
             }),
         ),
       "conflict",
+      "already_in_company",
     );
 
     const after = await t.run(async (ctx) => ({
@@ -305,6 +527,132 @@ describe("applyMembership", () => {
 
     const user = await t.run(async (ctx) => await getUserByWorkosId(ctx, "u10"));
     expect(user?.role).toBe("operator");
+  });
+  test.each([
+    {
+      name: "a WorkOS-deleted account",
+      lock: async (t: TestConvex) => {
+        await t.run(async (ctx) => await deactivateUser(ctx, "locked_rejoin"));
+      },
+      reason: "deleted",
+    },
+    {
+      name: "an operator-locked account",
+      lock: async (t: TestConvex) => {
+        await t.run(async (ctx) => {
+          const user = await requireSeededUserInCtx(ctx, "locked_rejoin");
+          await setUserActive(ctx, user._id, false);
+        });
+      },
+      reason: "operator",
+    },
+  ])("does not reactivate $name when its membership is re-applied", async ({ lock, reason }) => {
+    const t = convexTest(schema, modules);
+    await seedUser(t, { subject: "locked_rejoin", org: { id: "org_acme" } });
+    await lock(t);
+
+    await t.run(async (ctx) => await applyMembership(ctx, joinOrg("locked_rejoin")));
+
+    const user = await requireSeededUser(t, "locked_rejoin");
+    const membership = await t.run(async (ctx) => await getCompanyUserByUserId(ctx, user._id));
+    expect(membership?.isActive).toBe(true);
+    expect(user).toMatchObject({
+      isActive: false,
+      deactivatedReason: reason,
+    });
+  });
+
+  test("does not reactivate a legacy inactive account that has no reason", async () => {
+    const t = convexTest(schema, modules);
+    await seedUser(t, { subject: "legacy_inactive", org: { id: "org_acme" } });
+    await t.run(async (ctx) => {
+      const user = await requireSeededUserInCtx(ctx, "legacy_inactive");
+      await ctx.db.patch("users", user._id, { isActive: false });
+    });
+
+    await t.run(async (ctx) => await applyMembership(ctx, joinOrg("legacy_inactive")));
+
+    const user = await requireSeededUser(t, "legacy_inactive");
+    expect(user.isActive).toBe(false);
+    expect(user.deactivatedReason).toBeUndefined();
+  });
+
+  test("does not unlock a duplicate-email account", async () => {
+    const t = convexTest(schema, modules);
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    await seedUser(t, { subject: "dup_owner", email: "dup@example.com" });
+    await seedUser(t, { subject: "dup_claimant", email: "dup@example.com" });
+
+    await t.run(async (ctx) => await applyMembership(ctx, joinOrg("dup_claimant")));
+
+    const user = await requireSeededUser(t, "dup_claimant");
+    const membership = await t.run(async (ctx) => await getCompanyUserByUserId(ctx, user._id));
+    expect(membership?.isActive).toBe(true);
+    expect(user).toMatchObject({
+      role: "company",
+      isActive: false,
+      deactivatedReason: "duplicate_email",
+    });
+  });
+
+  describe("a creator who already has marketplace activity", () => {
+    async function seedActiveCreator(
+      t: TestConvex,
+      activity: "xAccount" | "application" | "assignment",
+    ) {
+      let creatorId: Id<"creators">;
+      if (activity === "xAccount") {
+        ({ creatorId } = await seedXAccount(t, "busy_creator"));
+      } else {
+        creatorId = await seedCreatorId(t, "busy_creator");
+        const { opportunityId, membership } = await seedOpportunity(t, {
+          subject: "busy_owner",
+          orgId: "org_owner",
+        });
+        if (activity === "application") {
+          await t.run(
+            async (ctx) =>
+              await ctx.db.insert("applications", {
+                opportunityId,
+                creatorId,
+                companyId: membership.companyId,
+                status: "declined",
+              }),
+          );
+        } else {
+          await seedAssignment(t, {
+            opportunityId,
+            creatorId,
+            status: "active",
+          });
+        }
+      }
+      return creatorId;
+    }
+
+    test.each(["xAccount", "application", "assignment"] as const)(
+      "is not converted to a company account when they have an %s",
+      async (activity) => {
+        const t = convexTest(schema, modules);
+        vi.spyOn(console, "warn").mockImplementation(() => {});
+        const creatorId = await seedActiveCreator(t, activity);
+
+        await t.run(
+          async (ctx) => await applyMembership(ctx, joinOrg("busy_creator", "org_target")),
+        );
+
+        const user = await requireSeededUser(t, "busy_creator");
+        const state = await t.run(async (ctx) => ({
+          membership: await getCompanyUserByUserId(ctx, user._id),
+          company: await getCompanyByWorkosId(ctx, "org_target"),
+          creator: await getCreatorByUserId(ctx, user._id),
+        }));
+        expect(user).toMatchObject({ role: "creator", isActive: true });
+        expect(state.membership).toBeNull();
+        expect(state.company).toBeNull();
+        expect(state.creator?._id).toBe(creatorId);
+      },
+    );
   });
 });
 
@@ -363,6 +711,7 @@ describe("removeMembership", () => {
     const memberships = await t.run(async (ctx) => await ctx.db.query("companyUsers").collect());
 
     expect(user?.isActive).toBe(true);
+    expect(user?.deactivatedReason).toBeUndefined();
     expect(memberships).toHaveLength(1);
     expect(memberships[0]?.isActive).toBe(true);
     expect(memberships[0]?.role).toBe("admin");
@@ -380,9 +729,81 @@ describe("removeMembership", () => {
     const user = await t.run(async (ctx) => await getUserByWorkosId(ctx, "u12"));
     expect(user?.role).toBe("company");
   });
+
+  test("records left_company as the deactivation reason", async () => {
+    const t = convexTest(schema, modules);
+    await seedLeftCompanyUser(t, "left_reason");
+
+    expect(await requireSeededUser(t, "left_reason")).toMatchObject({
+      isActive: false,
+      deactivatedReason: "left_company",
+    });
+  });
+
+  test("does not overwrite an operator lock when the member is removed", async () => {
+    const t = convexTest(schema, modules);
+    await seedUser(t, {
+      subject: "operator_then_left",
+      org: { id: "org_acme" },
+    });
+    await t.run(async (ctx) => {
+      const user = await requireSeededUserInCtx(ctx, "operator_then_left");
+      await setUserActive(ctx, user._id, false);
+      await removeMembership(ctx, {
+        workosUserId: "operator_then_left",
+        organizationId: "org_acme",
+      });
+    });
+
+    expect(await requireSeededUser(t, "operator_then_left")).toMatchObject({
+      isActive: false,
+      deactivatedReason: "operator",
+    });
+  });
+
+  test("does not overwrite a WorkOS deletion when the member is removed afterwards", async () => {
+    const t = convexTest(schema, modules);
+    await seedUser(t, {
+      subject: "deleted_then_left",
+      org: { id: "org_acme" },
+    });
+    await t.run(async (ctx) => {
+      await deactivateUser(ctx, "deleted_then_left");
+      await removeMembership(ctx, {
+        workosUserId: "deleted_then_left",
+        organizationId: "org_acme",
+      });
+    });
+
+    expect(await requireSeededUser(t, "deleted_then_left")).toMatchObject({
+      isActive: false,
+      deactivatedReason: "deleted",
+    });
+  });
 });
 
 describe("deactivateUser", () => {
+  test("records deleted as the deactivation reason", async () => {
+    const t = convexTest(schema, modules);
+    await seedUser(t, { subject: "deleted_reason" });
+    await t.run(async (ctx) => await deactivateUser(ctx, "deleted_reason"));
+
+    expect(await requireSeededUser(t, "deleted_reason")).toMatchObject({
+      isActive: false,
+      deactivatedReason: "deleted",
+    });
+  });
+
+  test("overrides left_company on an already inactive account", async () => {
+    const t = convexTest(schema, modules);
+    await seedLeftCompanyUser(t, "left_then_deleted");
+    await t.run(async (ctx) => await deactivateUser(ctx, "left_then_deleted"));
+
+    expect(await requireSeededUser(t, "left_then_deleted")).toMatchObject({
+      isActive: false,
+      deactivatedReason: "deleted",
+    });
+  });
   test("soft deletes rather than removing the row", async () => {
     const t = convexTest(schema, modules);
     await seedUser(t, { subject: "u13" });
@@ -499,6 +920,217 @@ describe("out-of-order webhook delivery", () => {
     const memberships = await t.run(async (ctx) => await ctx.db.query("companyUsers").collect());
     expect(user?.role).toBe("company");
     expect(memberships).toHaveLength(1);
+  });
+
+  test("a membership arriving after the user was deleted is recorded but leaves the account locked", async () => {
+    const t = convexTest(schema, modules);
+    await seedUser(t, { subject: "late_membership" });
+    await t.run(async (ctx) => await deactivateUser(ctx, "late_membership"));
+
+    await t.run(async (ctx) => await applyMembership(ctx, joinOrg("late_membership")));
+
+    const user = await requireSeededUser(t, "late_membership");
+    const membership = await t.run(async (ctx) => await getCompanyUserByUserId(ctx, user._id));
+    expect(membership?.isActive).toBe(true);
+    expect(user).toMatchObject({
+      isActive: false,
+      deactivatedReason: "deleted",
+    });
+  });
+
+  test("a rejoin after removal and a late user.deleted leaves the account locked", async () => {
+    const t = convexTest(schema, modules);
+    await seedLeftCompanyUser(t, "removed_deleted_rejoined");
+    await t.run(async (ctx) => {
+      await deactivateUser(ctx, "removed_deleted_rejoined");
+      await applyMembership(ctx, joinOrg("removed_deleted_rejoined"));
+    });
+
+    expect(await requireSeededUser(t, "removed_deleted_rejoined")).toMatchObject({
+      isActive: false,
+      deactivatedReason: "deleted",
+    });
+  });
+});
+
+describe("setUserActive", () => {
+  test("deactivating an active account records operator", async () => {
+    const t = convexTest(schema, modules);
+    await seedUser(t, { subject: "op_deactivate" });
+
+    await t.run(async (ctx) => {
+      const user = await requireSeededUserInCtx(ctx, "op_deactivate");
+      await setUserActive(ctx, user._id, false);
+    });
+
+    expect(await requireSeededUser(t, "op_deactivate")).toMatchObject({
+      isActive: false,
+      deactivatedReason: "operator",
+    });
+  });
+
+  test("deactivating a left_company account upgrades it to operator so a later rejoin cannot unlock it", async () => {
+    const t = convexTest(schema, modules);
+    await seedLeftCompanyUser(t, "left_upgraded");
+    await t.run(async (ctx) => {
+      const user = await requireSeededUserInCtx(ctx, "left_upgraded");
+      await setUserActive(ctx, user._id, false);
+    });
+    expect(await requireSeededUser(t, "left_upgraded")).toMatchObject({
+      deactivatedReason: "operator",
+    });
+
+    await t.run(async (ctx) => await applyMembership(ctx, joinOrg("left_upgraded")));
+
+    expect(await requireSeededUser(t, "left_upgraded")).toMatchObject({
+      isActive: false,
+      deactivatedReason: "operator",
+    });
+  });
+
+  test.each(["deleted", "duplicate_email"] as const)(
+    "deactivating an account already locked as %s leaves the reason unchanged",
+    async (reason) => {
+      const t = convexTest(schema, modules);
+      await seedUser(t, { subject: "keep_reason" });
+      await t.run(async (ctx) => {
+        const user = await requireSeededUserInCtx(ctx, "keep_reason");
+        await ctx.db.patch("users", user._id, {
+          isActive: false,
+          deactivatedReason: reason,
+        });
+        await setUserActive(ctx, user._id, false);
+      });
+
+      expect(await requireSeededUser(t, "keep_reason")).toMatchObject({
+        isActive: false,
+        deactivatedReason: reason,
+      });
+    },
+  );
+
+  test("reactivating clears the reason", async () => {
+    const t = convexTest(schema, modules);
+    await seedUser(t, { subject: "op_reactivate" });
+    await t.run(async (ctx) => {
+      const user = await requireSeededUserInCtx(ctx, "op_reactivate");
+      await setUserActive(ctx, user._id, false);
+      await setUserActive(ctx, user._id, true);
+    });
+
+    const user = await requireSeededUser(t, "op_reactivate");
+    expect(user.isActive).toBe(true);
+    expect(user.deactivatedReason).toBeUndefined();
+  });
+
+  test("refuses to reactivate a company user who has no active membership", async () => {
+    const t = convexTest(schema, modules);
+    await seedLeftCompanyUser(t, "no_membership");
+
+    await expectApiError(
+      () =>
+        t.run(async (ctx) => {
+          const user = await requireSeededUserInCtx(ctx, "no_membership");
+          return await setUserActive(ctx, user._id, true);
+        }),
+      "invalid_state",
+      "no_active_membership",
+    );
+
+    expect(await requireSeededUser(t, "no_membership")).toMatchObject({
+      isActive: false,
+      deactivatedReason: "left_company",
+    });
+  });
+
+  test("reactivates a legacy inactive company user who still has an active membership", async () => {
+    const t = convexTest(schema, modules);
+    await seedUser(t, {
+      subject: "legacy_reactivate",
+      org: { id: "org_acme" },
+    });
+    await t.run(async (ctx) => {
+      const user = await requireSeededUserInCtx(ctx, "legacy_reactivate");
+      await ctx.db.patch("users", user._id, { isActive: false });
+      await setUserActive(ctx, user._id, true);
+    });
+
+    expect((await requireSeededUser(t, "legacy_reactivate")).isActive).toBe(true);
+  });
+
+  test("refuses to reactivate a duplicate-email account while the other account holds the email", async () => {
+    const t = convexTest(schema, modules);
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    await seedUser(t, {
+      subject: "email_owner",
+      email: "contested@example.com",
+    });
+    await seedUser(t, {
+      subject: "email_loser",
+      email: "contested@example.com",
+    });
+
+    await expectApiError(
+      () =>
+        t.run(async (ctx) => {
+          const user = await requireSeededUserInCtx(ctx, "email_loser");
+          return await setUserActive(ctx, user._id, true);
+        }),
+      "invalid_state",
+      "email_in_use",
+    );
+
+    expect((await requireSeededUser(t, "email_loser")).isActive).toBe(false);
+  });
+
+  test("reactivates a duplicate-email account once the owner is deleted and gives it a creator profile", async () => {
+    const t = convexTest(schema, modules);
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    await seedUser(t, { subject: "freed_owner", email: "freed@example.com" });
+    await seedUser(t, {
+      subject: "freed_claimant",
+      email: "freed@example.com",
+    });
+    await t.run(async (ctx) => await deactivateUser(ctx, "freed_owner"));
+
+    const creatorId = await t.run(async (ctx) => {
+      const user = await requireSeededUserInCtx(ctx, "freed_claimant");
+      await setUserActive(ctx, user._id, true);
+      const reloaded = await requireSeededUserInCtx(ctx, "freed_claimant");
+      return await requireCallerCreatorId(ctx, reloaded);
+    });
+
+    const user = await requireSeededUser(t, "freed_claimant");
+    expect(user.isActive).toBe(true);
+    expect(user.deactivatedReason).toBeUndefined();
+    expect((await readCreatorRow(t, "freed_claimant"))?._id).toBe(creatorId);
+  });
+
+  test("is a no-op on an account that is already active", async () => {
+    const t = convexTest(schema, modules);
+    await seedUser(t, { subject: "already_active" });
+    const before = await requireSeededUser(t, "already_active");
+
+    const result = await t.run(async (ctx) => await setUserActive(ctx, before._id, true));
+
+    expect(result).toEqual(before);
+    expect(await requireSeededUser(t, "already_active")).toEqual(before);
+  });
+
+  test("throws not_found for a user that no longer exists", async () => {
+    const t = convexTest(schema, modules);
+    await seedUser(t, { subject: "vanished" });
+    const userId = (await requireSeededUser(t, "vanished"))._id;
+    await t.run(async (ctx) => {
+      const creator = await getCreatorByUserId(ctx, userId);
+      if (creator !== null) await ctx.db.delete("creators", creator._id);
+      await ctx.db.delete("users", userId);
+    });
+
+    await expectApiError(
+      () => t.run(async (ctx) => await setUserActive(ctx, userId, true)),
+      "not_found",
+    );
   });
 });
 

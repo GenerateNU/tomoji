@@ -43,6 +43,7 @@ import type * as models_disputes from "../models/disputes.js";
 import type * as models_media from "../models/media.js";
 import type * as models_notifications from "../models/notifications.js";
 import type * as models_opportunities from "../models/opportunities.js";
+import type * as models_opportunityStars from "../models/opportunityStars.js";
 import type * as models_submissions from "../models/submissions.js";
 import type * as models_users from "../models/users.js";
 import type * as models_xAccountLookup from "../models/xAccountLookup.js";
@@ -98,6 +99,7 @@ declare const fullApi: ApiFromModules<{
   "models/media": typeof models_media;
   "models/notifications": typeof models_notifications;
   "models/opportunities": typeof models_opportunities;
+  "models/opportunityStars": typeof models_opportunityStars;
   "models/submissions": typeof models_submissions;
   "models/users": typeof models_users;
   "models/xAccountLookup": typeof models_xAccountLookup;

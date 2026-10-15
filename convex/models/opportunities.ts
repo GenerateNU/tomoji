@@ -2,7 +2,9 @@ import { paginationOptsValidator, type PaginationResult } from "convex/server";
 import { v, type Infer } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
+import { stream } from "convex-helpers/server/stream";
 import { apiError } from "../lib/errors";
+import { withRowsReadCap } from "../lib/pagination";
 import { requireNonBlank, isHalfHourTimestamp } from "../lib/validation";
 import { requireMembership } from "./companyUsers";
 import { notifyCompanyUser, notifyCreator } from "./notifications";
@@ -373,34 +375,38 @@ export const opportunityList = schema
 
 export const opportunityDiscover = opportunityList.pick("paginationOpts");
 
+/**
+ * Returns the creator-facing brief if creators may see the opportunity: it's
+ * open, its campaign is open, and its company is active. Otherwise `null`.
+ */
+export async function getVisibleCreatorOpportunity(
+  ctx: QueryCtx,
+  opportunity: Doc<"opportunities">,
+): Promise<CreatorOpportunity | null> {
+  if (opportunity.status !== "open") return null;
+  const campaign = await ctx.db.get("campaigns", opportunity.campaignId);
+  if (
+    campaign === null ||
+    campaign.status !== "open" ||
+    campaign.companyId !== opportunity.companyId
+  ) {
+    return null;
+  }
+  const company = await ctx.db.get("companies", opportunity.companyId);
+  return company !== null && company.isActive ? toCreatorOpportunity(opportunity, company) : null;
+}
+
 /** Discovers open briefs across active companies without ranking or application eligibility rules. */
 export async function discoverOpportunities(
   ctx: QueryCtx,
   options: Infer<typeof opportunityDiscover>,
 ): Promise<PaginationResult<CreatorOpportunity>> {
-  const result = await ctx.db
+  // Filter inside the stream so hidden opportunities don't leave pages short or empty.
+  return await stream(ctx.db, schema)
     .query("opportunities")
     .withIndex("by_status_and_deadline", (q) => q.eq("status", "open"))
-    .paginate(options.paginationOpts);
-  const visible = await Promise.all(
-    result.page.map(async (opportunity) => {
-      const campaign = await ctx.db.get("campaigns", opportunity.campaignId);
-      if (
-        campaign === null ||
-        campaign.status !== "open" ||
-        campaign.companyId !== opportunity.companyId
-      ) {
-        return null;
-      }
-      const company = await ctx.db.get("companies", opportunity.companyId);
-      return company !== null && company.isActive
-        ? toCreatorOpportunity(opportunity, company)
-        : null;
-    }),
-  );
-
-  // Visibility can shorten a page; retain the native cursor and isDone so callers can continue.
-  return { ...result, page: visible.filter((opportunity) => opportunity !== null) };
+    .map(async (opportunity) => await getVisibleCreatorOpportunity(ctx, opportunity))
+    .paginate(withRowsReadCap(options.paginationOpts));
 }
 
 /** Lists the company's opportunities, optionally scoped to an owned campaign and status. */

@@ -1742,10 +1742,21 @@ describe("discoverOpportunities", () => {
       { _id: later.opportunityId, companyName: "Acme", title: "Moisturizer launch video" },
     ]);
     expect(secondPage.page[0]).not.toHaveProperty("productAccessLink");
-    expect(secondPage.isDone).toBe(true);
+    // A stream that fills a page exactly can't know nothing follows, so the
+    // end may arrive as one more empty, finished page.
+    const lastPage = secondPage.isDone
+      ? secondPage
+      : await t.run(
+          async (ctx) =>
+            await discoverOpportunities(ctx, {
+              paginationOpts: { numItems: 1, cursor: secondPage.continueCursor },
+            }),
+        );
+    expect(lastPage.isDone).toBe(true);
+    expect(secondPage.isDone ? [] : lastPage.page).toEqual([]);
   });
 
-  test("continues past an empty visibility-filtered page", async () => {
+  test("skips hidden opportunities instead of returning an empty page", async () => {
     const t = convexTest(schema, modules);
     const hidden = await seedOpportunity(t, { subject: "discover_hidden" });
     await t.run(
@@ -1763,17 +1774,8 @@ describe("discoverOpportunities", () => {
           paginationOpts: { numItems: 1, cursor: null },
         }),
     );
-    const secondPage = await t.run(
-      async (ctx) =>
-        await discoverOpportunities(ctx, {
-          paginationOpts: { numItems: 1, cursor: firstPage.continueCursor },
-        }),
-    );
 
-    expect(firstPage.page).toEqual([]);
-    expect(firstPage.isDone).toBe(false);
-    expect(secondPage.page).toMatchObject([{ _id: visible.opportunityId, companyName: "Acme" }]);
-    expect(secondPage.isDone).toBe(true);
+    expect(firstPage.page).toMatchObject([{ _id: visible.opportunityId, companyName: "Acme" }]);
   });
 
   test("returns open briefs across companies, including gated and filled opportunities", async () => {

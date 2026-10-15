@@ -3,8 +3,9 @@
 import { api } from "@convex/_generated/api";
 import { useConvexAuth, useQuery } from "convex/react";
 import Link from "next/link";
+import { buttonVariants } from "@/components/ui/button";
 
-/** Shows the synced identity and company entry points without requesting company data. */
+/** Shows the synced identity and each role's entry points without requesting role data. */
 export function Welcome() {
   const { isAuthenticated } = useConvexAuth();
   // users.me requires an identity, so wait until Convex has the token.
@@ -37,6 +38,16 @@ export function Welcome() {
       <h1 className="text-2xl font-semibold tracking-tight">
         {me.firstName ? `Welcome, ${me.firstName}` : "Welcome"}
       </h1>
+      {me.role === "creator" && (
+        <nav aria-label="Get started" className="flex flex-wrap gap-3">
+          <Link href="/opportunities" className={buttonVariants({ size: "lg" })}>
+            Browse opportunities
+          </Link>
+          <Link href="/applications" className={buttonVariants({ size: "lg", variant: "outline" })}>
+            My applications
+          </Link>
+        </nav>
+      )}
       {me.role === "company" && (
         <Link
           href="/campaigns"

@@ -39,7 +39,10 @@ describe("campaigns.get", () => {
     "lets a company %s read a campaign created by a teammate",
     async (role) => {
       const t = convexTest(schema, modules);
-      const asAuthor = await seedUser(t, { subject: "cg-author", org: { id: "org_acme" } });
+      const asAuthor = await seedUser(t, {
+        subject: "cg-author",
+        org: { id: "org_acme", role: "admin" },
+      });
       const asTeammate = await seedUser(t, {
         subject: "cg-teammate",
         org: { id: "org_acme", role },
@@ -58,8 +61,14 @@ describe("campaigns.get", () => {
 
   test("rejects access to another company's campaign", async () => {
     const t = convexTest(schema, modules);
-    const asOwner = await seedUser(t, { subject: "cg-owner", org: { id: "org_acme" } });
-    const asOther = await seedUser(t, { subject: "cg-other", org: { id: "org_other" } });
+    const asOwner = await seedUser(t, {
+      subject: "cg-owner",
+      org: { id: "org_acme", role: "admin" },
+    });
+    const asOther = await seedUser(t, {
+      subject: "cg-other",
+      org: { id: "org_other", role: "admin" },
+    });
     const campaignId = await asOwner.mutation(api.campaigns.create, campaignArgs());
 
     await expectApiError(() => asOther.query(api.campaigns.get, { campaignId }), "not_found");
@@ -67,7 +76,10 @@ describe("campaigns.get", () => {
 
   test("rejects a signed-out caller", async () => {
     const t = convexTest(schema, modules);
-    const asOwner = await seedUser(t, { subject: "cg-owner", org: { id: "org_acme" } });
+    const asOwner = await seedUser(t, {
+      subject: "cg-owner",
+      org: { id: "org_acme", role: "admin" },
+    });
     const campaignId = await asOwner.mutation(api.campaigns.create, campaignArgs());
 
     await expectApiError(() => t.query(api.campaigns.get, { campaignId }), "not_authenticated");
@@ -75,7 +87,10 @@ describe("campaigns.get", () => {
 
   test("rejects a creator", async () => {
     const t = convexTest(schema, modules);
-    const asOwner = await seedUser(t, { subject: "cg-owner", org: { id: "org_acme" } });
+    const asOwner = await seedUser(t, {
+      subject: "cg-owner",
+      org: { id: "org_acme", role: "admin" },
+    });
     const asCreator = await seedUser(t, { subject: "cg-creator" });
     const campaignId = await asOwner.mutation(api.campaigns.create, campaignArgs());
 
@@ -84,8 +99,11 @@ describe("campaigns.get", () => {
 
   test("rejects a caller whose token claims the campaign's org without membership", async () => {
     const t = convexTest(schema, modules);
-    const asOwner = await seedUser(t, { subject: "cg-owner", org: { id: "org_acme" } });
-    await seedUser(t, { subject: "cg-outsider", org: { id: "org_other" } });
+    const asOwner = await seedUser(t, {
+      subject: "cg-owner",
+      org: { id: "org_acme", role: "admin" },
+    });
+    await seedUser(t, { subject: "cg-outsider", org: { id: "org_other", role: "admin" } });
     const campaignId = await asOwner.mutation(api.campaigns.create, campaignArgs());
     const asWrongOrg = t.withIdentity(
       workosIdentity({ subject: "cg-outsider", org_id: "org_acme" }),
@@ -100,12 +118,18 @@ describe("campaigns.list", () => {
     "lets a company %s list and filter their teammates' campaigns",
     async (role) => {
       const t = convexTest(schema, modules);
-      const asAuthor = await seedUser(t, { subject: "cl-author", org: { id: "org_acme" } });
+      const asAuthor = await seedUser(t, {
+        subject: "cl-author",
+        org: { id: "org_acme", role: "admin" },
+      });
       const asTeammate = await seedUser(t, {
         subject: "cl-teammate",
         org: { id: "org_acme", role },
       });
-      const asOther = await seedUser(t, { subject: "cl-other", org: { id: "org_other" } });
+      const asOther = await seedUser(t, {
+        subject: "cl-other",
+        org: { id: "org_other", role: "admin" },
+      });
       const openId = await asAuthor.mutation(api.campaigns.create, campaignArgs());
       await asOther.mutation(api.campaigns.create, campaignArgs());
       const draftId = await asAuthor.mutation(
@@ -124,7 +148,10 @@ describe("campaigns.list", () => {
 
   test("accepts a continuation cursor for the next page", async () => {
     const t = convexTest(schema, modules);
-    const asMember = await seedUser(t, { subject: "cl-pages", org: { id: "org_acme" } });
+    const asMember = await seedUser(t, {
+      subject: "cl-pages",
+      org: { id: "org_acme", role: "admin" },
+    });
     const olderId = await asMember.mutation(api.campaigns.create, campaignArgs());
     const newerId = await asMember.mutation(api.campaigns.create, campaignArgs());
 
@@ -143,8 +170,11 @@ describe("campaigns.list", () => {
 
   test("rejects a client-supplied company filter", async () => {
     const t = convexTest(schema, modules);
-    const asMember = await seedUser(t, { subject: "cl-member", org: { id: "org_acme" } });
-    await seedUser(t, { subject: "cl-other", org: { id: "org_other" } });
+    const asMember = await seedUser(t, {
+      subject: "cl-member",
+      org: { id: "org_acme", role: "admin" },
+    });
+    await seedUser(t, { subject: "cl-other", org: { id: "org_other", role: "admin" } });
     const company = await t.run(async (ctx) => await getCompanyByWorkosId(ctx, "org_other"));
     const args = { ...firstPage, companyId: company!._id };
 
@@ -155,7 +185,10 @@ describe("campaigns.list", () => {
 
   test("rejects an invalid status filter", async () => {
     const t = convexTest(schema, modules);
-    const asMember = await seedUser(t, { subject: "cl-status", org: { id: "org_acme" } });
+    const asMember = await seedUser(t, {
+      subject: "cl-status",
+      org: { id: "org_acme", role: "admin" },
+    });
     const args = { ...firstPage, status: "archived" };
     // @ts-expect-error Clients can send invalid statuses despite the generated argument types.
     const result = asMember.query(api.campaigns.list, args);
@@ -178,8 +211,8 @@ describe("campaigns.list", () => {
 
   test("rejects a company caller acting on an org they are not a member of", async () => {
     const t = convexTest(schema, modules);
-    await seedUser(t, { subject: "cl-outsider", org: { id: "org_acme" } });
-    await seedUser(t, { subject: "cl-insider", org: { id: "org_other" } });
+    await seedUser(t, { subject: "cl-outsider", org: { id: "org_acme", role: "admin" } });
+    await seedUser(t, { subject: "cl-insider", org: { id: "org_other", role: "admin" } });
     const asWrongOrg = t.withIdentity(
       workosIdentity({ subject: "cl-outsider", org_id: "org_other" }),
     );
@@ -189,38 +222,44 @@ describe("campaigns.list", () => {
 });
 
 describe("campaigns.update", () => {
-  test.each(["admin", "member"] as const)(
-    "lets a company %s update a teammate's campaign",
-    async (role) => {
-      const t = convexTest(schema, modules);
-      const asAuthor = await seedUser(t, { subject: "cu-author", org: { id: "org_acme" } });
-      const asTeammate = await seedUser(t, {
-        subject: "cu-teammate",
-        org: { id: "org_acme", role },
-      });
-      const campaignId = await asAuthor.mutation(api.campaigns.create, campaignArgs());
-      const before = await t.run(async (ctx) => await ctx.db.get("campaigns", campaignId));
+  test.each(["admin"] as const)("lets a company %s update a teammate's campaign", async (role) => {
+    const t = convexTest(schema, modules);
+    const asAuthor = await seedUser(t, {
+      subject: "cu-author",
+      org: { id: "org_acme", role: "admin" },
+    });
+    const asTeammate = await seedUser(t, {
+      subject: "cu-teammate",
+      org: { id: "org_acme", role },
+    });
+    const campaignId = await asAuthor.mutation(api.campaigns.create, campaignArgs());
+    const before = await t.run(async (ctx) => await ctx.db.get("campaigns", campaignId));
 
-      const result = await asTeammate.mutation(api.campaigns.update, {
-        campaignId,
-        title: "  Revised launch  ",
-        budgetCents: 0,
-      });
+    const result = await asTeammate.mutation(api.campaigns.update, {
+      campaignId,
+      title: "  Revised launch  ",
+      budgetCents: 0,
+    });
 
-      const stored = await t.run(async (ctx) => ctx.db.get("campaigns", campaignId));
-      expect(stored).toEqual({
-        ...before,
-        title: "Revised launch",
-        budgetCents: 0,
-      });
-      expect(result).toStrictEqual(stored);
-    },
-  );
+    const stored = await t.run(async (ctx) => ctx.db.get("campaigns", campaignId));
+    expect(stored).toEqual({
+      ...before,
+      title: "Revised launch",
+      budgetCents: 0,
+    });
+    expect(result).toStrictEqual(stored);
+  });
 
   test("rejects another company's campaign without modifying it", async () => {
     const t = convexTest(schema, modules);
-    const asOwner = await seedUser(t, { subject: "cu-owner", org: { id: "org_acme" } });
-    const asOther = await seedUser(t, { subject: "cu-other", org: { id: "org_other" } });
+    const asOwner = await seedUser(t, {
+      subject: "cu-owner",
+      org: { id: "org_acme", role: "admin" },
+    });
+    const asOther = await seedUser(t, {
+      subject: "cu-other",
+      org: { id: "org_other", role: "admin" },
+    });
     const campaignId = await asOwner.mutation(api.campaigns.create, campaignArgs());
     const before = await t.run(async (ctx) => await ctx.db.get("campaigns", campaignId));
 
@@ -235,8 +274,11 @@ describe("campaigns.update", () => {
     "rejects changes to %s without applying any edits",
     async (field) => {
       const t = convexTest(schema, modules);
-      const asMember = await seedUser(t, { subject: "cu-member", org: { id: "org_acme" } });
-      await seedUser(t, { subject: "cu-other", org: { id: "org_other" } });
+      const asMember = await seedUser(t, {
+        subject: "cu-member",
+        org: { id: "org_acme", role: "admin" },
+      });
+      await seedUser(t, { subject: "cu-other", org: { id: "org_other", role: "admin" } });
       const campaignId = await asMember.mutation(api.campaigns.create, campaignArgs());
       const before = await t.run(async (ctx) => await ctx.db.get("campaigns", campaignId));
       const forbiddenFields = await t.run(async (ctx) => {
@@ -256,7 +298,10 @@ describe("campaigns.update", () => {
 
   test("accepts null to remove the optional end date", async () => {
     const t = convexTest(schema, modules);
-    const asMember = await seedUser(t, { subject: "cu-clear", org: { id: "org_acme" } });
+    const asMember = await seedUser(t, {
+      subject: "cu-clear",
+      org: { id: "org_acme", role: "admin" },
+    });
     const campaignId = await asMember.mutation(
       api.campaigns.create,
       campaignArgs({ endsAt: Math.floor(Date.now() / HOUR) * HOUR + 2 * HOUR }),
@@ -271,7 +316,10 @@ describe("campaigns.update", () => {
 
   test("rejects an off-grid end date without applying other updates", async () => {
     const t = convexTest(schema, modules);
-    const asMember = await seedUser(t, { subject: "cu-end-time", org: { id: "org_acme" } });
+    const asMember = await seedUser(t, {
+      subject: "cu-end-time",
+      org: { id: "org_acme", role: "admin" },
+    });
     const campaignId = await asMember.mutation(api.campaigns.create, campaignArgs());
     const before = await t.run(async (ctx) => ctx.db.get("campaigns", campaignId));
 
@@ -288,7 +336,10 @@ describe("campaigns.update", () => {
 
   test("rejects updates to a closed campaign without changing it", async () => {
     const t = convexTest(schema, modules);
-    const asMember = await seedUser(t, { subject: "cu-closed", org: { id: "org_acme" } });
+    const asMember = await seedUser(t, {
+      subject: "cu-closed",
+      org: { id: "org_acme", role: "admin" },
+    });
     const campaignId = await asMember.mutation(api.campaigns.create, campaignArgs());
     const before = await t.run(async (ctx) => {
       await ctx.db.patch("campaigns", campaignId, { status: "closed" });
@@ -304,7 +355,10 @@ describe("campaigns.update", () => {
 
   test("rejects a signed-out caller", async () => {
     const t = convexTest(schema, modules);
-    const asOwner = await seedUser(t, { subject: "cu-owner", org: { id: "org_acme" } });
+    const asOwner = await seedUser(t, {
+      subject: "cu-owner",
+      org: { id: "org_acme", role: "admin" },
+    });
     const campaignId = await asOwner.mutation(api.campaigns.create, campaignArgs());
 
     await expectApiError(
@@ -315,7 +369,10 @@ describe("campaigns.update", () => {
 
   test("rejects a creator", async () => {
     const t = convexTest(schema, modules);
-    const asOwner = await seedUser(t, { subject: "cu-owner", org: { id: "org_acme" } });
+    const asOwner = await seedUser(t, {
+      subject: "cu-owner",
+      org: { id: "org_acme", role: "admin" },
+    });
     const asCreator = await seedUser(t, { subject: "cu-creator" });
     const campaignId = await asOwner.mutation(api.campaigns.create, campaignArgs());
 
@@ -327,8 +384,11 @@ describe("campaigns.update", () => {
 
   test("rejects a caller claiming the owner's org without membership", async () => {
     const t = convexTest(schema, modules);
-    const asOwner = await seedUser(t, { subject: "cu-owner", org: { id: "org_acme" } });
-    await seedUser(t, { subject: "cu-outsider", org: { id: "org_other" } });
+    const asOwner = await seedUser(t, {
+      subject: "cu-owner",
+      org: { id: "org_acme", role: "admin" },
+    });
+    await seedUser(t, { subject: "cu-outsider", org: { id: "org_other", role: "admin" } });
     const campaignId = await asOwner.mutation(api.campaigns.create, campaignArgs());
     const asWrongOrg = t.withIdentity(
       workosIdentity({ subject: "cu-outsider", org_id: "org_acme" }),
@@ -342,11 +402,14 @@ describe("campaigns.update", () => {
 });
 
 describe("campaigns.remove", () => {
-  test.each(["admin", "member"] as const)(
+  test.each(["admin"] as const)(
     "lets a company %s remove a teammate's empty draft",
     async (role) => {
       const t = convexTest(schema, modules);
-      const asAuthor = await seedUser(t, { subject: "cr-author", org: { id: "org_acme" } });
+      const asAuthor = await seedUser(t, {
+        subject: "cr-author",
+        org: { id: "org_acme", role: "admin" },
+      });
       const asTeammate = await seedUser(t, {
         subject: "cr-teammate",
         org: { id: "org_acme", role },
@@ -365,8 +428,14 @@ describe("campaigns.remove", () => {
 
   test("rejects another company's draft without deleting it", async () => {
     const t = convexTest(schema, modules);
-    const asOwner = await seedUser(t, { subject: "cr-owner", org: { id: "org_acme" } });
-    const asOther = await seedUser(t, { subject: "cr-other", org: { id: "org_other" } });
+    const asOwner = await seedUser(t, {
+      subject: "cr-owner",
+      org: { id: "org_acme", role: "admin" },
+    });
+    const asOther = await seedUser(t, {
+      subject: "cr-other",
+      org: { id: "org_other", role: "admin" },
+    });
     const campaignId = await asOwner.mutation(
       api.campaigns.create,
       campaignArgs({ status: "draft" }),
@@ -380,8 +449,14 @@ describe("campaigns.remove", () => {
 
   test("rejects a client-supplied company identity", async () => {
     const t = convexTest(schema, modules);
-    const asOwner = await seedUser(t, { subject: "cr-owner", org: { id: "org_acme" } });
-    const asOther = await seedUser(t, { subject: "cr-other", org: { id: "org_other" } });
+    const asOwner = await seedUser(t, {
+      subject: "cr-owner",
+      org: { id: "org_acme", role: "admin" },
+    });
+    const asOther = await seedUser(t, {
+      subject: "cr-other",
+      org: { id: "org_other", role: "admin" },
+    });
     const campaignId = await asOwner.mutation(
       api.campaigns.create,
       campaignArgs({ status: "draft" }),
@@ -397,7 +472,10 @@ describe("campaigns.remove", () => {
 
   test("rejects a signed-out caller", async () => {
     const t = convexTest(schema, modules);
-    const asOwner = await seedUser(t, { subject: "cr-owner", org: { id: "org_acme" } });
+    const asOwner = await seedUser(t, {
+      subject: "cr-owner",
+      org: { id: "org_acme", role: "admin" },
+    });
     const campaignId = await asOwner.mutation(
       api.campaigns.create,
       campaignArgs({ status: "draft" }),
@@ -412,7 +490,10 @@ describe("campaigns.remove", () => {
 
   test("rejects a creator", async () => {
     const t = convexTest(schema, modules);
-    const asOwner = await seedUser(t, { subject: "cr-owner", org: { id: "org_acme" } });
+    const asOwner = await seedUser(t, {
+      subject: "cr-owner",
+      org: { id: "org_acme", role: "admin" },
+    });
     const asCreator = await seedUser(t, { subject: "cr-creator" });
     const campaignId = await asOwner.mutation(
       api.campaigns.create,
@@ -428,8 +509,11 @@ describe("campaigns.remove", () => {
 
   test("rejects a caller claiming the owner's org without membership", async () => {
     const t = convexTest(schema, modules);
-    const asOwner = await seedUser(t, { subject: "cr-owner", org: { id: "org_acme" } });
-    await seedUser(t, { subject: "cr-outsider", org: { id: "org_other" } });
+    const asOwner = await seedUser(t, {
+      subject: "cr-owner",
+      org: { id: "org_acme", role: "admin" },
+    });
+    await seedUser(t, { subject: "cr-outsider", org: { id: "org_other", role: "admin" } });
     const campaignId = await asOwner.mutation(
       api.campaigns.create,
       campaignArgs({ status: "draft" }),
@@ -451,7 +535,10 @@ describe("campaigns.publish", () => {
     "lets a company %s publish a teammate's draft",
     async (role) => {
       const t = convexTest(schema, modules);
-      const asAuthor = await seedUser(t, { subject: "cp-author", org: { id: "org_acme" } });
+      const asAuthor = await seedUser(t, {
+        subject: "cp-author",
+        org: { id: "org_acme", role: "admin" },
+      });
       const asTeammate = await seedUser(t, {
         subject: "cp-teammate",
         org: { id: "org_acme", role },
@@ -475,8 +562,14 @@ describe("campaigns.publish", () => {
 
   test("rejects another company's draft without changing it", async () => {
     const t = convexTest(schema, modules);
-    const asOwner = await seedUser(t, { subject: "cp-owner", org: { id: "org_acme" } });
-    const asOther = await seedUser(t, { subject: "cp-other", org: { id: "org_other" } });
+    const asOwner = await seedUser(t, {
+      subject: "cp-owner",
+      org: { id: "org_acme", role: "admin" },
+    });
+    const asOther = await seedUser(t, {
+      subject: "cp-other",
+      org: { id: "org_other", role: "admin" },
+    });
     const campaignId = await asOwner.mutation(
       api.campaigns.create,
       campaignArgs({ status: "draft" }),
@@ -492,8 +585,14 @@ describe("campaigns.publish", () => {
 
   test("rejects a client-supplied company identity", async () => {
     const t = convexTest(schema, modules);
-    const asOwner = await seedUser(t, { subject: "cp-owner", org: { id: "org_acme" } });
-    const asOther = await seedUser(t, { subject: "cp-other", org: { id: "org_other" } });
+    const asOwner = await seedUser(t, {
+      subject: "cp-owner",
+      org: { id: "org_acme", role: "admin" },
+    });
+    const asOther = await seedUser(t, {
+      subject: "cp-other",
+      org: { id: "org_other", role: "admin" },
+    });
     const campaignId = await asOwner.mutation(
       api.campaigns.create,
       campaignArgs({ status: "draft" }),
@@ -509,7 +608,10 @@ describe("campaigns.publish", () => {
 
   test("rejects a signed-out caller", async () => {
     const t = convexTest(schema, modules);
-    const asOwner = await seedUser(t, { subject: "cp-owner", org: { id: "org_acme" } });
+    const asOwner = await seedUser(t, {
+      subject: "cp-owner",
+      org: { id: "org_acme", role: "admin" },
+    });
     const campaignId = await asOwner.mutation(
       api.campaigns.create,
       campaignArgs({ status: "draft" }),
@@ -527,7 +629,10 @@ describe("campaigns.publish", () => {
 
   test("rejects a creator", async () => {
     const t = convexTest(schema, modules);
-    const asOwner = await seedUser(t, { subject: "cp-owner", org: { id: "org_acme" } });
+    const asOwner = await seedUser(t, {
+      subject: "cp-owner",
+      org: { id: "org_acme", role: "admin" },
+    });
     const asCreator = await seedUser(t, { subject: "cp-creator" });
     const campaignId = await asOwner.mutation(
       api.campaigns.create,
@@ -546,8 +651,11 @@ describe("campaigns.publish", () => {
 
   test("rejects a caller claiming the owner's org without membership", async () => {
     const t = convexTest(schema, modules);
-    const asOwner = await seedUser(t, { subject: "cp-owner", org: { id: "org_acme" } });
-    await seedUser(t, { subject: "cp-outsider", org: { id: "org_other" } });
+    const asOwner = await seedUser(t, {
+      subject: "cp-owner",
+      org: { id: "org_acme", role: "admin" },
+    });
+    await seedUser(t, { subject: "cp-outsider", org: { id: "org_other", role: "admin" } });
     const campaignId = await asOwner.mutation(
       api.campaigns.create,
       campaignArgs({ status: "draft" }),
@@ -572,8 +680,14 @@ describe("campaigns.pause", () => {
     vi.useFakeTimers();
     const t = convexTest(schema, modules);
     try {
-      const asOwner = await seedUser(t, { subject: "cascade-owner", org: { id: "org_acme" } });
-      const asOther = await seedUser(t, { subject: "cascade-other", org: { id: "org_other" } });
+      const asOwner = await seedUser(t, {
+        subject: "cascade-owner",
+        org: { id: "org_acme", role: "admin" },
+      });
+      const asOther = await seedUser(t, {
+        subject: "cascade-other",
+        org: { id: "org_other", role: "admin" },
+      });
       const campaignId = await asOwner.mutation(api.campaigns.create, campaignArgs());
       const opportunityIds: Id<"opportunities">[] = [];
       for (let i = 0; i < 105; i++) {
@@ -697,7 +811,10 @@ describe("campaigns.pause", () => {
 
   test("does not let clients set or clear the pause progress flag", async () => {
     const t = convexTest(schema, modules);
-    const asOwner = await seedUser(t, { subject: "cascade-flag", org: { id: "org_acme" } });
+    const asOwner = await seedUser(t, {
+      subject: "cascade-flag",
+      org: { id: "org_acme", role: "admin" },
+    });
     const createWithFlag = { ...campaignArgs(), isPausingOpportunities: true };
     await expect(asOwner.mutation(api.campaigns.create, createWithFlag)).rejects.toThrow(
       "Unexpected field `isPausingOpportunities`",
@@ -718,7 +835,10 @@ describe("campaigns.pause", () => {
     "lets a company $role pause a teammate's campaign with $opportunityCount opportunities without scheduling",
     async ({ role, opportunityCount }) => {
       const t = convexTest(schema, modules);
-      const asAuthor = await seedUser(t, { subject: "cpa-author", org: { id: "org_acme" } });
+      const asAuthor = await seedUser(t, {
+        subject: "cpa-author",
+        org: { id: "org_acme", role: "admin" },
+      });
       const asTeammate = await seedUser(t, {
         subject: "cpa-teammate",
         org: { id: "org_acme", role },
@@ -757,8 +877,14 @@ describe("campaigns.pause", () => {
 
   test("rejects another company's campaign without changing it", async () => {
     const t = convexTest(schema, modules);
-    const asOwner = await seedUser(t, { subject: "cpa-owner", org: { id: "org_acme" } });
-    const asOther = await seedUser(t, { subject: "cpa-other", org: { id: "org_other" } });
+    const asOwner = await seedUser(t, {
+      subject: "cpa-owner",
+      org: { id: "org_acme", role: "admin" },
+    });
+    const asOther = await seedUser(t, {
+      subject: "cpa-other",
+      org: { id: "org_other", role: "admin" },
+    });
     const campaignId = await asOwner.mutation(api.campaigns.create, campaignArgs());
     const before = await t.run(async (ctx) => ctx.db.get("campaigns", campaignId));
 
@@ -768,8 +894,14 @@ describe("campaigns.pause", () => {
 
   test("rejects a client-supplied company identity", async () => {
     const t = convexTest(schema, modules);
-    const asOwner = await seedUser(t, { subject: "cpa-owner", org: { id: "org_acme" } });
-    const asOther = await seedUser(t, { subject: "cpa-other", org: { id: "org_other" } });
+    const asOwner = await seedUser(t, {
+      subject: "cpa-owner",
+      org: { id: "org_acme", role: "admin" },
+    });
+    const asOther = await seedUser(t, {
+      subject: "cpa-other",
+      org: { id: "org_other", role: "admin" },
+    });
     const campaignId = await asOwner.mutation(api.campaigns.create, campaignArgs());
     const campaign = await t.run(async (ctx) => ctx.db.get("campaigns", campaignId));
     const args = { campaignId, companyId: campaign!.companyId };
@@ -782,7 +914,10 @@ describe("campaigns.pause", () => {
 
   test("rejects a signed-out caller", async () => {
     const t = convexTest(schema, modules);
-    const asOwner = await seedUser(t, { subject: "cpa-owner", org: { id: "org_acme" } });
+    const asOwner = await seedUser(t, {
+      subject: "cpa-owner",
+      org: { id: "org_acme", role: "admin" },
+    });
     const campaignId = await asOwner.mutation(api.campaigns.create, campaignArgs());
 
     await expectApiError(
@@ -797,7 +932,10 @@ describe("campaigns.pause", () => {
 
   test("rejects a creator", async () => {
     const t = convexTest(schema, modules);
-    const asOwner = await seedUser(t, { subject: "cpa-owner", org: { id: "org_acme" } });
+    const asOwner = await seedUser(t, {
+      subject: "cpa-owner",
+      org: { id: "org_acme", role: "admin" },
+    });
     const asCreator = await seedUser(t, { subject: "cpa-creator" });
     const campaignId = await asOwner.mutation(api.campaigns.create, campaignArgs());
 
@@ -813,8 +951,11 @@ describe("campaigns.pause", () => {
 
   test("rejects a caller claiming the owner's org without membership", async () => {
     const t = convexTest(schema, modules);
-    const asOwner = await seedUser(t, { subject: "cpa-owner", org: { id: "org_acme" } });
-    await seedUser(t, { subject: "cpa-outsider", org: { id: "org_other" } });
+    const asOwner = await seedUser(t, {
+      subject: "cpa-owner",
+      org: { id: "org_acme", role: "admin" },
+    });
+    await seedUser(t, { subject: "cpa-outsider", org: { id: "org_other", role: "admin" } });
     const campaignId = await asOwner.mutation(api.campaigns.create, campaignArgs());
     const asWrongOrg = t.withIdentity(
       workosIdentity({ subject: "cpa-outsider", org_id: "org_acme" }),
@@ -836,7 +977,10 @@ describe("campaigns.resume", () => {
     "lets a company %s resume a teammate's paused campaign",
     async (role) => {
       const t = convexTest(schema, modules);
-      const asAuthor = await seedUser(t, { subject: "cre-author", org: { id: "org_acme" } });
+      const asAuthor = await seedUser(t, {
+        subject: "cre-author",
+        org: { id: "org_acme", role: "admin" },
+      });
       const asTeammate = await seedUser(t, {
         subject: "cre-teammate",
         org: { id: "org_acme", role },
@@ -858,8 +1002,14 @@ describe("campaigns.resume", () => {
 
   test("rejects another company's campaign without changing it", async () => {
     const t = convexTest(schema, modules);
-    const asOwner = await seedUser(t, { subject: "cre-owner", org: { id: "org_acme" } });
-    const asOther = await seedUser(t, { subject: "cre-other", org: { id: "org_other" } });
+    const asOwner = await seedUser(t, {
+      subject: "cre-owner",
+      org: { id: "org_acme", role: "admin" },
+    });
+    const asOther = await seedUser(t, {
+      subject: "cre-other",
+      org: { id: "org_other", role: "admin" },
+    });
     const campaignId = await asOwner.mutation(api.campaigns.create, campaignArgs());
     await asOwner.mutation(api.campaigns.pause, { campaignId });
     const before = await t.run(async (ctx) => ctx.db.get("campaigns", campaignId));
@@ -870,8 +1020,14 @@ describe("campaigns.resume", () => {
 
   test("rejects a client-supplied company identity", async () => {
     const t = convexTest(schema, modules);
-    const asOwner = await seedUser(t, { subject: "cre-owner", org: { id: "org_acme" } });
-    const asOther = await seedUser(t, { subject: "cre-other", org: { id: "org_other" } });
+    const asOwner = await seedUser(t, {
+      subject: "cre-owner",
+      org: { id: "org_acme", role: "admin" },
+    });
+    const asOther = await seedUser(t, {
+      subject: "cre-other",
+      org: { id: "org_other", role: "admin" },
+    });
     const campaignId = await asOwner.mutation(api.campaigns.create, campaignArgs());
     await asOwner.mutation(api.campaigns.pause, { campaignId });
     const campaign = await t.run(async (ctx) => ctx.db.get("campaigns", campaignId));
@@ -885,7 +1041,10 @@ describe("campaigns.resume", () => {
 
   test("rejects a signed-out caller", async () => {
     const t = convexTest(schema, modules);
-    const asOwner = await seedUser(t, { subject: "cre-owner", org: { id: "org_acme" } });
+    const asOwner = await seedUser(t, {
+      subject: "cre-owner",
+      org: { id: "org_acme", role: "admin" },
+    });
     const campaignId = await asOwner.mutation(api.campaigns.create, campaignArgs());
     await asOwner.mutation(api.campaigns.pause, { campaignId });
 
@@ -901,7 +1060,10 @@ describe("campaigns.resume", () => {
 
   test("rejects a creator", async () => {
     const t = convexTest(schema, modules);
-    const asOwner = await seedUser(t, { subject: "cre-owner", org: { id: "org_acme" } });
+    const asOwner = await seedUser(t, {
+      subject: "cre-owner",
+      org: { id: "org_acme", role: "admin" },
+    });
     const asCreator = await seedUser(t, { subject: "cre-creator" });
     const campaignId = await asOwner.mutation(api.campaigns.create, campaignArgs());
     await asOwner.mutation(api.campaigns.pause, { campaignId });
@@ -918,8 +1080,11 @@ describe("campaigns.resume", () => {
 
   test("rejects a caller claiming the owner's org without membership", async () => {
     const t = convexTest(schema, modules);
-    const asOwner = await seedUser(t, { subject: "cre-owner", org: { id: "org_acme" } });
-    await seedUser(t, { subject: "cre-outsider", org: { id: "org_other" } });
+    const asOwner = await seedUser(t, {
+      subject: "cre-owner",
+      org: { id: "org_acme", role: "admin" },
+    });
+    await seedUser(t, { subject: "cre-outsider", org: { id: "org_other", role: "admin" } });
     const campaignId = await asOwner.mutation(api.campaigns.create, campaignArgs());
     await asOwner.mutation(api.campaigns.pause, { campaignId });
     const asWrongOrg = t.withIdentity(
@@ -942,7 +1107,10 @@ describe("campaigns.close", () => {
     "lets a company %s close a teammate's campaign and safely repeat the request",
     async (role) => {
       const t = convexTest(schema, modules);
-      const asAuthor = await seedUser(t, { subject: "ccl-author", org: { id: "org_acme" } });
+      const asAuthor = await seedUser(t, {
+        subject: "ccl-author",
+        org: { id: "org_acme", role: "admin" },
+      });
       const asTeammate = await seedUser(t, {
         subject: "ccl-teammate",
         org: { id: "org_acme", role },
@@ -964,8 +1132,14 @@ describe("campaigns.close", () => {
 
   test("rejects another company's campaign without changing it", async () => {
     const t = convexTest(schema, modules);
-    const asOwner = await seedUser(t, { subject: "ccl-owner", org: { id: "org_acme" } });
-    const asOther = await seedUser(t, { subject: "ccl-other", org: { id: "org_other" } });
+    const asOwner = await seedUser(t, {
+      subject: "ccl-owner",
+      org: { id: "org_acme", role: "admin" },
+    });
+    const asOther = await seedUser(t, {
+      subject: "ccl-other",
+      org: { id: "org_other", role: "admin" },
+    });
     const campaignId = await asOwner.mutation(api.campaigns.create, campaignArgs());
     const before = await t.run(async (ctx) => ctx.db.get("campaigns", campaignId));
 
@@ -975,8 +1149,14 @@ describe("campaigns.close", () => {
 
   test("rejects a client-supplied company identity", async () => {
     const t = convexTest(schema, modules);
-    const asOwner = await seedUser(t, { subject: "ccl-owner", org: { id: "org_acme" } });
-    const asOther = await seedUser(t, { subject: "ccl-other", org: { id: "org_other" } });
+    const asOwner = await seedUser(t, {
+      subject: "ccl-owner",
+      org: { id: "org_acme", role: "admin" },
+    });
+    const asOther = await seedUser(t, {
+      subject: "ccl-other",
+      org: { id: "org_other", role: "admin" },
+    });
     const campaignId = await asOwner.mutation(api.campaigns.create, campaignArgs());
     const campaign = await t.run(async (ctx) => ctx.db.get("campaigns", campaignId));
     const args = { campaignId, companyId: campaign!.companyId };
@@ -989,7 +1169,10 @@ describe("campaigns.close", () => {
 
   test("rejects a signed-out caller", async () => {
     const t = convexTest(schema, modules);
-    const asOwner = await seedUser(t, { subject: "ccl-owner", org: { id: "org_acme" } });
+    const asOwner = await seedUser(t, {
+      subject: "ccl-owner",
+      org: { id: "org_acme", role: "admin" },
+    });
     const campaignId = await asOwner.mutation(api.campaigns.create, campaignArgs());
 
     await expectApiError(
@@ -1004,7 +1187,10 @@ describe("campaigns.close", () => {
 
   test("rejects a creator", async () => {
     const t = convexTest(schema, modules);
-    const asOwner = await seedUser(t, { subject: "ccl-owner", org: { id: "org_acme" } });
+    const asOwner = await seedUser(t, {
+      subject: "ccl-owner",
+      org: { id: "org_acme", role: "admin" },
+    });
     const asCreator = await seedUser(t, { subject: "ccl-creator" });
     const campaignId = await asOwner.mutation(api.campaigns.create, campaignArgs());
 
@@ -1020,8 +1206,11 @@ describe("campaigns.close", () => {
 
   test("rejects a caller claiming the owner's org without membership", async () => {
     const t = convexTest(schema, modules);
-    const asOwner = await seedUser(t, { subject: "ccl-owner", org: { id: "org_acme" } });
-    await seedUser(t, { subject: "ccl-outsider", org: { id: "org_other" } });
+    const asOwner = await seedUser(t, {
+      subject: "ccl-owner",
+      org: { id: "org_acme", role: "admin" },
+    });
+    await seedUser(t, { subject: "ccl-outsider", org: { id: "org_other", role: "admin" } });
     const campaignId = await asOwner.mutation(api.campaigns.create, campaignArgs());
     const asWrongOrg = t.withIdentity(
       workosIdentity({ subject: "ccl-outsider", org_id: "org_acme" }),
@@ -1054,7 +1243,10 @@ describe("campaigns.closeExpired", () => {
     vi.setSystemTime(1_800_000_000_000);
     const t = convexTest(schema, modules);
     try {
-      const asOwner = await seedUser(t, { subject: "ce-owner", org: { id: "org_acme" } });
+      const asOwner = await seedUser(t, {
+        subject: "ce-owner",
+        org: { id: "org_acme", role: "admin" },
+      });
       const campaignIds: Id<"campaigns">[] = [];
       for (let i = 0; i < 105; i++) {
         campaignIds.push(
@@ -1109,8 +1301,6 @@ describe("campaigns.create", () => {
   test.each([
     { role: "admin", status: "draft" },
     { role: "admin", status: "open" },
-    { role: "member", status: "draft" },
-    { role: "member", status: "open" },
   ] as const)("lets a company $role create a $status campaign", async ({ role, status }) => {
     const t = convexTest(schema, modules);
     const asMember = await seedUser(t, { subject: "cc1", org: { id: "org_acme", role } });
@@ -1131,8 +1321,8 @@ describe("campaigns.create", () => {
 
   test("derives the company from the caller's membership, not the client", async () => {
     const t = convexTest(schema, modules);
-    const asMember = await seedUser(t, { subject: "cc2", org: { id: "org_acme" } });
-    await seedUser(t, { subject: "cc3", org: { id: "org_other" } });
+    const asMember = await seedUser(t, { subject: "cc2", org: { id: "org_acme", role: "admin" } });
+    await seedUser(t, { subject: "cc3", org: { id: "org_other", role: "admin" } });
 
     // companyId/createdBy aren't in the arg validator, so a client cannot
     // supply them — this pins that the route derives them server-side.
@@ -1153,8 +1343,11 @@ describe("campaigns.create", () => {
     "rejects client-supplied %s without creating a campaign",
     async (field) => {
       const t = convexTest(schema, modules);
-      const asMember = await seedUser(t, { subject: "cc-owner", org: { id: "org_acme" } });
-      await seedUser(t, { subject: "cc-other", org: { id: "org_other" } });
+      const asMember = await seedUser(t, {
+        subject: "cc-owner",
+        org: { id: "org_acme", role: "admin" },
+      });
+      await seedUser(t, { subject: "cc-other", org: { id: "org_other", role: "admin" } });
       const otherOwner = await t.run(async (ctx) => {
         const user = await getUserByWorkosId(ctx, "cc-other");
         const company = await getCompanyByWorkosId(ctx, "org_other");
@@ -1174,7 +1367,10 @@ describe("campaigns.create", () => {
     "rejects initial status %s at the argument boundary",
     async (status) => {
       const t = convexTest(schema, modules);
-      const asMember = await seedUser(t, { subject: "cc-status", org: { id: "org_acme" } });
+      const asMember = await seedUser(t, {
+        subject: "cc-status",
+        org: { id: "org_acme", role: "admin" },
+      });
       const args = { ...campaignArgs(), status };
       // @ts-expect-error Clients can send invalid statuses despite the generated argument types.
       const result = asMember.mutation(api.campaigns.create, args);
@@ -1186,7 +1382,7 @@ describe("campaigns.create", () => {
 
   test.each([0, 30])("persists an optional campaign end time at :%i UTC", async (minute) => {
     const t = convexTest(schema, modules);
-    const asMember = await seedUser(t, { subject: "cc4", org: { id: "org_acme" } });
+    const asMember = await seedUser(t, { subject: "cc4", org: { id: "org_acme", role: "admin" } });
     const args = campaignArgs({
       endsAt: Math.floor(Date.now() / HOUR) * HOUR + 2 * HOUR + minute * 60_000,
     });
@@ -1199,7 +1395,10 @@ describe("campaigns.create", () => {
 
   test("rejects an off-grid end date without creating a campaign", async () => {
     const t = convexTest(schema, modules);
-    const asMember = await seedUser(t, { subject: "cc-end-time", org: { id: "org_acme" } });
+    const asMember = await seedUser(t, {
+      subject: "cc-end-time",
+      org: { id: "org_acme", role: "admin" },
+    });
     const args = campaignArgs({ endsAt: Math.floor(Date.now() / HOUR) * HOUR + 2 * HOUR + 1 });
 
     await expect(asMember.mutation(api.campaigns.create, args)).rejects.toMatchObject({
@@ -1211,7 +1410,7 @@ describe("campaigns.create", () => {
 
   test("rejects a fractional budget without creating a campaign", async () => {
     const t = convexTest(schema, modules);
-    const asMember = await seedUser(t, { subject: "cc6", org: { id: "org_acme" } });
+    const asMember = await seedUser(t, { subject: "cc6", org: { id: "org_acme", role: "admin" } });
     const args = campaignArgs({ budgetCents: 0.5 });
 
     await expectApiError(() => asMember.mutation(api.campaigns.create, args), "invalid_state");
@@ -1261,8 +1460,8 @@ describe("campaigns.create", () => {
 
   test("rejects a company caller acting on an org they are not a member of", async () => {
     const t = convexTest(schema, modules);
-    await seedUser(t, { subject: "cc10", org: { id: "org_acme" } });
-    await seedUser(t, { subject: "cc11", org: { id: "org_other" } });
+    await seedUser(t, { subject: "cc10", org: { id: "org_acme", role: "admin" } });
+    await seedUser(t, { subject: "cc11", org: { id: "org_other", role: "admin" } });
     const asWrongOrg = t.withIdentity(workosIdentity({ subject: "cc10", org_id: "org_other" }));
 
     await expectApiError(
@@ -1276,12 +1475,71 @@ describe("campaigns.create", () => {
 
   test("rejects a company caller whose token carries no organization", async () => {
     const t = convexTest(schema, modules);
-    await seedUser(t, { subject: "cc12", org: { id: "org_acme" } });
+    await seedUser(t, { subject: "cc12", org: { id: "org_acme", role: "admin" } });
     const asNoOrg = t.withIdentity(workosIdentity({ subject: "cc12" }));
 
     await expectApiError(
       () => asNoOrg.mutation(api.campaigns.create, campaignArgs()),
       "misconfigured",
     );
+  });
+});
+
+describe("company admin gating", () => {
+  async function seedMemberAndCampaign(t: ReturnType<typeof convexTest>) {
+    const asAdmin = await seedUser(t, {
+      subject: "gate-admin",
+      org: { id: "org_acme", role: "admin" },
+    });
+    const asMember = await seedUser(t, {
+      subject: "gate-member",
+      org: { id: "org_acme", role: "member" },
+    });
+    const campaignId = await asAdmin.mutation(api.campaigns.create, campaignArgs());
+    return { asMember, campaignId };
+  }
+
+  test("refuses a member creating a campaign", async () => {
+    const t = convexTest(schema, modules);
+    const { asMember } = await seedMemberAndCampaign(t);
+
+    await expectApiError(
+      () => asMember.mutation(api.campaigns.create, campaignArgs()),
+      "forbidden",
+      "company_admin_required",
+    );
+  });
+
+  test("refuses a member updating a campaign", async () => {
+    const t = convexTest(schema, modules);
+    const { asMember, campaignId } = await seedMemberAndCampaign(t);
+
+    await expectApiError(
+      () => asMember.mutation(api.campaigns.update, { campaignId, title: "Renamed" }),
+      "forbidden",
+      "company_admin_required",
+    );
+  });
+
+  test("refuses a member removing a campaign", async () => {
+    const t = convexTest(schema, modules);
+    const { asMember, campaignId } = await seedMemberAndCampaign(t);
+
+    await expectApiError(
+      () => asMember.mutation(api.campaigns.remove, { campaignId }),
+      "forbidden",
+      "company_admin_required",
+    );
+  });
+
+  test("still lets a member read and list campaigns", async () => {
+    const t = convexTest(schema, modules);
+    const { asMember, campaignId } = await seedMemberAndCampaign(t);
+
+    expect(await asMember.query(api.campaigns.get, { campaignId })).toMatchObject({
+      _id: campaignId,
+    });
+    const page = await asMember.query(api.campaigns.list, firstPage);
+    expect(page.page).toHaveLength(1);
   });
 });

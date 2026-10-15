@@ -1,7 +1,7 @@
 import { paginationOptsValidator, paginationResultValidator } from "convex/server";
 import { v, type Infer } from "convex/values";
 import type { Doc } from "./_generated/dataModel";
-import { companyMutation, operatorMutation, operatorQuery } from "./lib/functions";
+import { companyAdminMutation, operatorMutation, operatorQuery } from "./lib/functions";
 import { createCompany, listCompanies, requireCompany, updateCompany } from "./models/companies";
 import schema from "./schema";
 
@@ -37,7 +37,7 @@ export const get = operatorQuery({
  *
  * @throws `invalid_state` if `name` or `profilePicture` is blank.
  */
-export const update = companyMutation({
+export const update = companyAdminMutation({
   args: {
     name: v.optional(v.string()),
     profilePicture: v.optional(v.string()),

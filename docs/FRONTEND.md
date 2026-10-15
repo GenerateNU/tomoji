@@ -195,6 +195,8 @@ We should avoid manually recreating backend types on the frontend because those 
 
 The Portfolio section edits the existing single `githubLink` through `creators.update`. Save accepts an HTTPS GitHub URL (or adds HTTPS to a pasted `github.com/...` link); saving a blank field clears it. Discard leaves the saved value unchanged. Live query updates do not overwrite an unsaved draft. Older invalid links are never rendered as clickable URLs.
 
+Portfolio also shows an X account card with a disabled **Connect X** button and a coming-soon message. It does not request account data or start authorization. The existing X backend is documented in [X accounts](X_ACCOUNTS.md); connecting it to Settings is future work.
+
 The profile-picture section has a separate Save/Discard flow. Selecting a JPEG, PNG, or WebP checks its size and whether it decodes, then shows a local preview. Save requests an S3 grant, uploads the file, and completes the upload to attach it to the user. A failed completion can be retried with the same upload ID. `useProfilePicture` retrieves the private image bytes and manages Blob URL cleanup. See [S3](S3.md) for the required credentials and browser CORS configuration.
 
 Run `bun run test:e2e e2e/settings.spec.ts` for browser coverage. These tests render the real Settings components with isolated Convex/S3 responses and separately check the signed-out route redirect. They do not prove that a live deployment's S3 credentials or bucket CORS are configured.

@@ -547,6 +547,24 @@ describe("overrideDispute", () => {
     expect(await storedDisputes(t)).toEqual(before);
   });
 
+  test("refuses to override a withdrawal without changing it", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await seedAssignmentFixture(t);
+    const disputeId = await seedDispute(
+      t,
+      fixture,
+      {},
+      { ...pastRuling, resolvedBy: fixture.creatorUserId, outcome: "withdrawn" },
+    );
+    const operatorId = await seedOperatorId(t, "operator");
+    const before = await storedDisputes(t);
+
+    await expect(override(t, operatorId, disputeId)).rejects.toMatchObject({
+      data: { code: "invalid_state", reason: "dispute_withdrawn" },
+    });
+    expect(await storedDisputes(t)).toEqual(before);
+  });
+
   test("requires a reason", async () => {
     const t = convexTest(schema, modules);
     const fixture = await seedAssignmentFixture(t);

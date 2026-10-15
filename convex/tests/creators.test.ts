@@ -1,6 +1,6 @@
 /// <reference types="vite/client" />
 import { convexTest } from "convex-test";
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import { api } from "../_generated/api";
 import { getCreatorByUserId, updateCreatorProfile } from "../models/creators";
 import { getUserByWorkosId } from "../models/users";
@@ -39,7 +39,7 @@ describe("creators.me", () => {
       if (creator === null) throw new Error("expected seeded creator");
       return creator._id;
     });
-    const expected = { creatorId, email: "creator_names@example.com", ...names };
+    const expected = { creatorId, email: "creator_names@example.com", niches: [], ...names };
 
     expect(await asCreator.query(api.creators.me, {})).toEqual(expected);
     expect(await asCreator.mutation(api.creators.update, { username: "ada" })).toEqual({
@@ -89,6 +89,7 @@ describe("creators.me", () => {
       xId: "123456789",
       githubLink: "https://github.com/creator",
       phoneNumber: "+15555550123",
+      niches: [],
     });
   });
 
@@ -185,6 +186,29 @@ describe("creators.list", () => {
       "two@example.com",
     ]);
   });
+
+  test("skips duplicate-email accounts, which have no creator row, instead of throwing", async () => {
+    const t = convexTest(schema, modules);
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const asCompany = await seedUser(t, {
+      subject: "dup_list_company",
+      org: { id: "org_dup_list" },
+    });
+    await seedUser(t, {
+      subject: "dup_list_owner",
+      email: "dup-creator@example.com",
+    });
+    await seedUser(t, {
+      subject: "dup_list_claimant",
+      email: "dup-creator@example.com",
+    });
+
+    const result = await asCompany.query(api.creators.list, {
+      paginationOpts: { cursor: null, numItems: 10 },
+    });
+
+    expect(result.page.map((creator) => creator.email)).toEqual(["dup-creator@example.com"]);
+  });
 });
 
 describe("creators.get", () => {
@@ -208,6 +232,7 @@ describe("creators.get", () => {
       firstName: "Test",
       lastName: "",
       email: "target@example.com",
+      niches: [],
     });
   });
 

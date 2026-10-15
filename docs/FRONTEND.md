@@ -168,16 +168,7 @@ Category filters, deadline summaries, destination links, and the full Figma side
 Browser tests render the real inbox with a local Convex service double, not a live deployment:
 `E2E_BASE_URL=http://notifications.test bun run test:e2e e2e/notifications.spec.ts`.
 
-## 8. Teammate invitations
-
-Company admins use `/team/invites` via the signed-in header. The page uses `users.me` to gate
-admin queries, `invites.listMine` for outstanding invites, and the existing invitation/revocation
-actions. It sends one email at a time; existing-member editing and bulk invitations are deferred.
-Successful cancellation stays visible as requested until the WorkOS webhook removes the row.
-No local optimistic removal or automatic action retry is performed. Browser tests never send email:
-`E2E_BASE_URL=http://invites.test bun run test:e2e e2e/invites.spec.ts`.
-
-## 9. Naming and Types
+## 8. Naming and Types
 
 To keep the codebase consistent, we follow a few naming conventions:
 
@@ -208,7 +199,7 @@ Infer<typeof creatorOpportunity>;
 
 We should avoid manually recreating backend types on the frontend because those definitions can easily become outdated as the schema changes. Using generated and inferred types helps keep the frontend aligned with the backend without requiring us to maintain duplicate definitions.
 
-## 10. Creator settings
+## 9. Creator settings
 
 `/settings` uses the components in `features/profile/`. It waits for authentication and account synchronization before loading `creators.me`; other roles see an explanation instead of making creator-only requests.
 
@@ -222,7 +213,7 @@ The profile-picture section has a separate Save/Discard flow. Selecting a JPEG, 
 
 Run `bun run test:e2e e2e/settings.spec.ts` for browser coverage. These tests render the real Settings components with isolated Convex/S3 responses and separately check the signed-out route redirect. They do not prove that a live deployment's S3 credentials or bucket CORS are configured.
 
-## 11. Creator profile
+## 10. Creator profile
 
 `/profile` shows the signed-in creator's own name, username, picture, and GitHub link. The navigation link appears for synced creator accounts. The page waits for authentication and `users.me` before subscribing to `creators.me`; company users and operators see an explanation instead. It does not accept a creator ID or provide a public profile view.
 
@@ -231,3 +222,12 @@ Run `bun run test:e2e e2e/settings.spec.ts` for browser coverage. These tests re
 Run `bun run test:e2e e2e/profile.spec.ts` for browser coverage of the real components with isolated backend responses and the signed-out route redirect. Live S3 configuration is still required to load stored pictures from a development deployment.
 
 Run `bun run test:e2e e2e/profile-nav.spec.ts` for navigation subscription regression tests. These use the installed Convex React hooks with an isolated client, covering render stability, authentication changes, and query failures without connecting to a deployment.
+
+## 11. Teammate invitations
+
+Company admins use `/team/invites` via the signed-in header. The page uses `users.me` to gate
+admin queries, `invites.listMine` for outstanding invites, and the existing invitation/revocation
+actions. It sends one email at a time; existing-member editing and bulk invitations are deferred.
+Successful cancellation stays visible as requested until the WorkOS webhook removes the row.
+No local optimistic removal or automatic action retry is performed. Browser tests never send email:
+`E2E_BASE_URL=http://invites.test bun run test:e2e e2e/invites.spec.ts`.

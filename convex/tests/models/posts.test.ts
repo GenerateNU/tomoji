@@ -9,12 +9,14 @@ import {
   seedCreatorId,
   seedMembership,
   seedOneSubmission,
+  seedSubmission,
   type TestConvex,
 } from "../helpers";
 
 const modules = import.meta.glob("../../**/*.ts");
 
-const POST_URL = "https://x.com/driftwood_dev/status/1843000000000000001";
+const POST_ID = "1843000000000000001";
+const POST_URL = `https://x.com/driftwood_dev/status/${POST_ID}`;
 
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ["Date"] });
@@ -47,7 +49,7 @@ describe("createPost", () => {
         submissionId,
         campaignId,
         url: POST_URL,
-        postedAt: Date.now(),
+        xPostId: POST_ID,
         isVerified: false,
       },
     ]);
@@ -61,13 +63,32 @@ describe("createPost", () => {
       "https://mobile.twitter.com/driftwood_dev/status/1843000000000000001?s=20",
     ],
     ["http and spaces", "  http://x.com/driftwood_dev/status/1843000000000000001  "],
+    ["a photo link", "https://x.com/driftwood_dev/status/1843000000000000001/photo/1"],
+    ["a video link", "https://x.com/driftwood_dev/status/1843000000000000001/video/1"],
+    ["an uppercase handle", "https://x.com/Driftwood_Dev/status/1843000000000000001"],
+    ["login details", "https://user:pass@x.com/driftwood_dev/status/1843000000000000001"],
   ])("stores the canonical x.com link for %s", async (_label, url) => {
     const t = convexTest(schema, modules);
     const { fixture, submissionId } = await seedOneSubmission(t, "approved");
 
     await t.run(async (ctx) => await createPost(ctx, fixture.creatorId, { submissionId, url }));
 
-    expect((await storedPosts(t))[0]?.url).toBe(POST_URL);
+    expect((await storedPosts(t))[0]).toMatchObject({ url: POST_URL, xPostId: POST_ID });
+  });
+
+  test.each([
+    ["/i/web/status", "https://x.com/i/web/status/1843000000000000001"],
+    ["/i/status", "https://twitter.com/i/status/1843000000000000001?s=20"],
+  ])("stores a handle-less link for %s", async (_label, url) => {
+    const t = convexTest(schema, modules);
+    const { fixture, submissionId } = await seedOneSubmission(t, "approved");
+
+    await t.run(async (ctx) => await createPost(ctx, fixture.creatorId, { submissionId, url }));
+
+    expect((await storedPosts(t))[0]).toMatchObject({
+      url: `https://x.com/i/status/${POST_ID}`,
+      xPostId: POST_ID,
+    });
   });
 
   test.each([
@@ -76,7 +97,7 @@ describe("createPost", () => {
     ["a lookalike domain", "https://x.com.evil.example/driftwood_dev/status/1843000000000000001"],
     ["a profile instead of a post", "https://x.com/driftwood_dev"],
     ["a non-numeric post id", "https://x.com/driftwood_dev/status/latest"],
-    ["login details", "https://user:pass@x.com/driftwood_dev/status/1843000000000000001"],
+    ["a status link without an id", "https://x.com/driftwood_dev/status/"],
     ["a non-web scheme", "javascript:alert(1)"],
     ["text that isn't a URL", "my post"],
   ])("refuses %s without writing", async (_label, url) => {
@@ -137,6 +158,34 @@ describe("createPost", () => {
           }),
       ),
     ).rejects.toMatchObject({ data: { code: "conflict", reason: "already_posted" } });
+    expect(await storedPosts(t)).toEqual(before);
+  });
+
+  test("refuses a post another submission already uses, in any link format", async () => {
+    const t = convexTest(schema, modules);
+    const { fixture, submissionId } = await seedOneSubmission(t, "approved");
+    const otherSubmissionId = await seedSubmission(t, fixture, "changesRequested");
+    await t.run(
+      async (ctx) =>
+        await ctx.db.insert("posts", {
+          submissionId: otherSubmissionId,
+          campaignId: (await ctx.db.get("assignments", fixture.assignmentId))!.campaignId,
+          url: POST_URL,
+          xPostId: POST_ID,
+          isVerified: false,
+        }),
+    );
+    const before = await storedPosts(t);
+
+    await expect(
+      t.run(
+        async (ctx) =>
+          await createPost(ctx, fixture.creatorId, {
+            submissionId,
+            url: `https://x.com/i/web/status/${POST_ID}`,
+          }),
+      ),
+    ).rejects.toMatchObject({ data: { code: "conflict", reason: "post_already_used" } });
     expect(await storedPosts(t)).toEqual(before);
   });
 

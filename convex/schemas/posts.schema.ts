@@ -7,7 +7,12 @@ export const postsTable = defineTable({
   // by index. It can't change: an assignment never moves campaigns.
   campaignId: v.id("campaigns"),
   url: v.string(),
-  postedAt: v.number(), // Unix milliseconds.
+  // The numeric id from the link. Unique across posts, so one X post can't
+  // count for two submissions under different link formats.
+  xPostId: v.string(),
+  // When the post went live on X, entered by the operator on verification.
+  // Submission time is `_creationTime`.
+  postedAt: v.optional(v.number()), // Unix milliseconds.
   isVerified: v.boolean(),
   likes: v.optional(v.number()),
   comments: v.optional(v.number()),
@@ -16,4 +21,5 @@ export const postsTable = defineTable({
   metricsUpdatedAt: v.optional(v.number()), // Unix milliseconds.
 })
   .index("by_submissionId", ["submissionId"])
-  .index("by_campaignId", ["campaignId"]);
+  .index("by_campaignId", ["campaignId"])
+  .index("by_xPostId", ["xPostId"]);

@@ -2,6 +2,7 @@ import { NavAuth } from "@/components/nav-auth";
 import { ProfileNavLink } from "@/features/profile/components/profile-nav-link";
 import Link from "next/link";
 
+/** Keeps authenticated navigation usable as company actions expand on narrow screens. */
 export default function ProtectedLayout({ children }: LayoutProps<"/">) {
   return (
     <div className="flex flex-1 flex-col">

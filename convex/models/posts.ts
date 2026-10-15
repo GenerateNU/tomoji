@@ -1,0 +1,131 @@
+import { v, type Infer } from "convex/values";
+import type { Doc, Id } from "../_generated/dataModel";
+import type { MutationCtx, QueryCtx } from "../_generated/server";
+import { apiError } from "../lib/errors";
+import { requireAssignment, type AssignmentViewer } from "./assignments";
+
+/** The creator-supplied fields of a new post. */
+export const postCreate = v.object({
+  submissionId: v.id("submissions"),
+  url: v.string(),
+});
+export type PostCreate = Infer<typeof postCreate>;
+
+/** Who is reading or acting on posts. Access follows the assignment's. */
+export type PostViewer = AssignmentViewer;
+
+const X_HOSTS = new Set([
+  "x.com",
+  "www.x.com",
+  "mobile.x.com",
+  "twitter.com",
+  "www.twitter.com",
+  "mobile.twitter.com",
+]);
+
+// `<handle>/status/<id>`, `i/status/<id>`, or `i/web/status/<id>`, with any
+// trailing parts like `/photo/1`. A handle is 1-15 letters, digits, or
+// underscores. Post ids are numeric, which tells a post apart from other pages.
+const X_POST_PATH = /^\/(?:i(?:\/web)?|([A-Za-z0-9_]{1,15}))\/status\/(\d{1,25})(?:\/.*)?$/;
+
+/**
+ * Reads an X post link into its id and canonical URL:
+ * `https://x.com/<handle>/status/<id>`, or `https://x.com/i/status/<id>` when
+ * the link has no handle. The handle is lowercased because X handles aren't
+ * case-sensitive.
+ *
+ * @throws `invalid_state` with `url_invalid` if it isn't a link to an X post.
+ */
+function requirePostUrl(value: string): { url: string; xPostId: string } {
+  let url: URL;
+  try {
+    url = new URL(value.trim());
+  } catch {
+    throw apiError("invalid_state", { reason: "url_invalid" });
+  }
+  const match = X_POST_PATH.exec(url.pathname);
+  if (
+    (url.protocol !== "https:" && url.protocol !== "http:") ||
+    !X_HOSTS.has(url.hostname) ||
+    !match
+  ) {
+    throw apiError("invalid_state", { reason: "url_invalid" });
+  }
+  const [, handle, xPostId] = match;
+  return { url: `https://x.com/${handle?.toLowerCase() ?? "i"}/status/${xPostId}`, xPostId };
+}
+
+/**
+ * Records the live X post for the creator's approved submission. The post
+ * starts unverified; `postedAt` is set when an operator verifies it.
+ *
+ * @throws `not_found` if the submission doesn't exist or isn't the creator's.
+ * @throws `invalid_state` if the submission isn't approved, the assignment
+ * isn't active, or the URL isn't an X post link.
+ * @throws `conflict` if the submission already has a post, or another post
+ * uses the same X post.
+ */
+export async function createPost(
+  ctx: MutationCtx,
+  creatorId: Id<"creators">,
+  fields: PostCreate,
+): Promise<Id<"posts">> {
+  const submission = await ctx.db.get("submissions", fields.submissionId);
+  if (submission === null) throw apiError("not_found", { resource: "submission" });
+  const assignment = await requireAssignment(
+    ctx,
+    { role: "creator", creatorId },
+    submission.assignmentId,
+  );
+  if (submission.status !== "approved") {
+    throw apiError("invalid_state", { reason: "submission_not_approved" });
+  }
+  if (assignment.status !== "active") {
+    throw apiError("invalid_state", { reason: "assignment_not_active" });
+  }
+  const { url, xPostId } = requirePostUrl(fields.url);
+  // One post per submission, and so per assignment, since an assignment has at
+  // most one approved submission. The index is not unique, so check here.
+  const existing = await ctx.db
+    .query("posts")
+    .withIndex("by_submissionId", (q) => q.eq("submissionId", submission._id))
+    .first();
+  if (existing !== null) {
+    throw apiError("conflict", { reason: "already_posted" });
+  }
+  // The index is not unique either, so check that no other post uses this one.
+  const reused = await ctx.db
+    .query("posts")
+    .withIndex("by_xPostId", (q) => q.eq("xPostId", xPostId))
+    .first();
+  if (reused !== null) {
+    throw apiError("conflict", { reason: "post_already_used" });
+  }
+
+  return await ctx.db.insert("posts", {
+    submissionId: submission._id,
+    campaignId: assignment.campaignId,
+    url,
+    xPostId,
+    isVerified: false,
+  });
+}
+
+/**
+ * Returns a post the viewer may see: creators see their own, company users see
+ * their company's, and operators see all.
+ *
+ * @throws `not_found` if the post doesn't exist or the viewer may not see it.
+ */
+export async function requirePost(
+  ctx: QueryCtx | MutationCtx,
+  viewer: PostViewer,
+  postId: Id<"posts">,
+): Promise<Doc<"posts">> {
+  const post = await ctx.db.get("posts", postId);
+  const submission = post && (await ctx.db.get("submissions", post.submissionId));
+  if (!post || !submission) throw apiError("not_found", { resource: "post" });
+  // Throws `not_found` when the viewer can't see the post's assignment.
+  await requireAssignment(ctx, viewer, submission.assignmentId);
+  return post;
+}

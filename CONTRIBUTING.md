@@ -189,6 +189,20 @@ staff org makes you an ordinary company user instead.
 **`Module has no exported member` from `convex/_generated`** — generated types are stale.
 Make sure `just bd` is running.
 
+**Sign-in sends you to a 404, or an error saying `Couldn't sign in`** — something
+else already had port 3000, so the dev server never got it. WorkOS has exactly one
+registered redirect URI, `http://localhost:3000/auth/callback`, so any other port
+breaks every sign-in. `just fd` now fails outright instead of quietly moving to 3001.
+Free the port and start it again:
+
+```bash
+lsof -nP -iTCP:3000 -sTCP:LISTEN
+```
+
+Docker containers from other projects are the usual culprit. Note that the WorkOS
+side of the flow still succeeds, so the invite shows as accepted and the account
+exists. Sign in from `/login` rather than re-sending the invite.
+
 **"invalid redirect URI"** — `NEXT_PUBLIC_WORKOS_REDIRECT_URI` must match a Redirect URI in
 the WorkOS dashboard character for character, including the port.
 

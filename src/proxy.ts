@@ -6,7 +6,11 @@ import { redirectFor } from "@/features/auth/lib/access";
 // our /login page instead of the WorkOS-hosted one.
 export default async function proxy(request: NextRequest) {
   const { session, headers } = await authkit(request);
-  const redirect = redirectFor(request.nextUrl.pathname, Boolean(session.user));
+  const { method, nextUrl } = request;
+  const redirect = redirectFor(
+    { method, pathname: nextUrl.pathname, search: nextUrl.search },
+    Boolean(session.user),
+  );
   return handleAuthkitProxy(request, headers, redirect ? { redirect } : undefined);
 }
 

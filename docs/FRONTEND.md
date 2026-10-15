@@ -25,7 +25,7 @@ src/
     ui/                      shadcn-generated components
   hooks/                     hooks shared across features
   lib/                       plain functions - no React, usable anywhere
-  proxy.ts                   sends signed-out users to /login (rules in features/auth/lib/access.ts)
+  proxy.ts                   sends signed-out page visits to /login?next=<path>; server actions and other non-GET requests pass through and must check auth themselves (rules in features/auth/lib/access.ts)
 ```
 
 ### Where should new files go?
@@ -93,7 +93,7 @@ export function useOpportunityFeed() {
 
 We use `useMutation` for operations that modify application data.
 
-The exceptions are signing in and signing out, which use server actions defined in `app/auth/actions.ts`. The forms call them through `useAuthForm` (`features/auth/hooks/`), which checks the same field rules (`features/auth/lib/rules.ts`) in the browser before submitting. After a sign-in succeeds, the hook reloads AuthKit's client state before navigating, so Convex sees the new session.
+The exceptions are signing in and signing out, which use server actions defined in `app/auth/actions.ts`. The forms call them through `useAuthForm` (`features/auth/hooks/`), which checks the same field rules (`features/auth/lib/rules.ts`) in the browser before submitting. After a sign-in succeeds, the hook reloads AuthKit's client state before navigating, so Convex sees the new session, then navigates to `next` — the page the user was sent to log in from, validated by `safeNext` and carried through the verify-email step and Google sign-in — or home. Password-reset links always land home.
 
 ### Error handling
 

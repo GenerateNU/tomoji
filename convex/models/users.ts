@@ -60,9 +60,9 @@ export type WorkosProfile = {
   email: string;
   firstName?: string | null;
   lastName?: string | null;
-  profilePicture?: string;
 };
 
+/** Syncs WorkOS identity fields without replacing a user's S3 profile-picture reference. */
 export async function upsertUser(ctx: MutationCtx, profile: WorkosProfile): Promise<Id<"users">> {
   const existing = await getUserByWorkosId(ctx, profile.workosId);
   const firstName = requireNonBlank(
@@ -72,7 +72,6 @@ export async function upsertUser(ctx: MutationCtx, profile: WorkosProfile): Prom
   );
   const lastName =
     profile.lastName === undefined ? (existing?.lastName ?? "") : (profile.lastName ?? "");
-  const profilePicture = profile.profilePicture ?? existing?.profilePicture;
 
   if (existing === null) {
     const userId = await ctx.db.insert("users", {
@@ -82,7 +81,6 @@ export async function upsertUser(ctx: MutationCtx, profile: WorkosProfile): Prom
       email: profile.email,
       role: "creator",
       isActive: true,
-      profilePicture,
     });
     await ctx.db.insert("creators", { userId });
     return userId;
@@ -92,7 +90,6 @@ export async function upsertUser(ctx: MutationCtx, profile: WorkosProfile): Prom
     firstName,
     lastName,
     email: profile.email,
-    profilePicture,
   });
   return existing._id;
 }
@@ -161,6 +158,7 @@ export async function applyMembership(ctx: MutationCtx, event: MembershipEvent):
   }
 }
 
+/** Removes a synced membership and restores a creator profile after the final company membership. */
 export async function removeMembership(
   ctx: MutationCtx,
   event: { workosUserId: string; organizationId: string },
@@ -178,10 +176,7 @@ export async function removeMembership(
 
   if (remaining === null && user.role === "company") {
     await ctx.db.patch("users", user._id, { role: "creator" });
-    const profile = await ctx.db
-      .query("creators")
-      .withIndex("by_userId", (q) => q.eq("userId", user._id))
-      .unique();
+    const profile = await getCreatorByUserId(ctx, user._id);
     if (profile === null) {
       await ctx.db.insert("creators", { userId: user._id });
     }

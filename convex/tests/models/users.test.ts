@@ -13,11 +13,29 @@ import {
   upsertUser,
 } from "../../models/users";
 import schema from "../../schema";
-import { expectApiError, seedCreatorId, seedUser, workosIdentity } from "../helpers";
+import {
+  expectApiError,
+  seedCreatorId,
+  seedProfilePictureUpload,
+  seedUser,
+  workosIdentity,
+} from "../helpers";
 
 const modules = import.meta.glob("../../**/*.ts");
 
 describe("upsertUser", () => {
+  test("preserves the S3 picture reference when WorkOS updates the user", async () => {
+    const t = convexTest(schema, modules);
+    const { uploadId } = await seedProfilePictureUpload(t, "picture_owner", "complete");
+    const userId = await t.run(async (ctx) =>
+      upsertUser(ctx, { workosId: "picture_owner", email: "updated@example.com" }),
+    );
+
+    const user = await t.run(async (ctx) => ctx.db.get("users", userId));
+    expect(user).toMatchObject({ email: "updated@example.com", profilePictureMediaId: uploadId });
+    expect(user).not.toHaveProperty("profilePicture");
+  });
+
   test.each([undefined, null, "", "   ", "\t\n"])(
     "falls back to email and an empty last name when firstName is %j",
     async (firstName) => {

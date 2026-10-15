@@ -6,9 +6,21 @@ import { getCompanyByWorkosId } from "../../models/companies";
 import { getCompanyUser, listCompanyUsers, requireMembership } from "../../models/companyUsers";
 import { getUserByWorkosId, removeMembership } from "../../models/users";
 import schema from "../../schema";
-import { expectApiError, seedUser, type TestConvex } from "../helpers";
+import { expectApiError, seedProfilePictureUpload, seedUser, type TestConvex } from "../helpers";
 
 const modules = import.meta.glob("../../**/*.ts");
+
+test("company member profiles expose the S3 picture ID without a legacy URL", async () => {
+  const t = convexTest(schema, modules);
+  const { uploadId } = await seedProfilePictureUpload(t, "member_picture", "complete");
+  await seedUser(t, { subject: "member_picture", org: { id: "org_member_picture" } });
+  const { companyId } = await idsFor(t, "member_picture", "org_member_picture");
+
+  const members = await listPage(t, companyId);
+
+  expect(members.page[0]).toMatchObject({ profilePictureMediaId: uploadId });
+  expect(members.page[0]).not.toHaveProperty("profilePicture");
+});
 
 async function idsFor(t: TestConvex, subject: string, orgId: string) {
   return await t.run(async (ctx) => {

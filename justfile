@@ -77,7 +77,7 @@ setup:
     bun install
     @bun scripts/setup.ts
 
-# Copy the WORKOS_* values from .env.local to your Convex deployment (Convex reads them there)
+# Copy WorkOS and S3 settings from .env.local to your Convex deployment
 convex-env:
     @bun scripts/set-convex-env.ts
 

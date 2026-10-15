@@ -2,6 +2,10 @@
 
 This document covers how we structure and write Convex code. Setup instructions and common commands live in `CONTRIBUTING.md`.
 
+Shared S3 media configuration and upload guarantees are documented in [S3 media foundation](S3.md).
+
+Linked X account storage and credential handling are documented in [X accounts](X_ACCOUNTS.md).
+
 ## Layout
 
 Convex maps the **file path directly to the API path**. For example, a function exported from `convex/creators.ts` is called as `api.creators.<name>`. There is no separate router because the filename itself defines the namespace.
@@ -72,6 +76,12 @@ Use these instead of the raw `query` and `mutation` functions. It proves the cal
 
 Authorization should always happen on the server. Never accept a `userId` from the client to determine what someone is allowed to do. Derive the caller's identity from `ctx` instead.
 
+For application, assignment, and submission reads, `requireCallerViewer` in
+`lib/functions.ts` resolves the caller to the shared `ResourceViewer` ownership scope.
+`canViewResource` checks creator/company ownership; domain `require…` helpers still
+own missing-row errors and resource-specific rules. Do not apply that ownership policy
+to opportunity discovery or private media reads, which have different visibility rules.
+
 ## Errors
 
 Throw `apiError(code, detail)` from `lib/errors.ts` instead of using `new Error()`.
@@ -93,12 +103,13 @@ A route should only get its own name when it returns or does something meaningfu
 
 Model functions are imported directly, so their names should make sense on their own at the import site. This is different from routes, where the filename already provides the domain. For example, a `create` route in `campaigns.ts` would call a model function named `createCampaign`.
 
-| Prefix                            | Returns                 | Use when                                                             |
-| --------------------------------- | ----------------------- | -------------------------------------------------------------------- |
-| `get…`                            | the row, or `null`      | it is normal for the row not to exist and the caller can handle that |
-| `list…`                           | an array or page        | reading multiple rows                                                |
-| `require…`                        | the row, or throws      | the row must exist for the operation to continue (e.x. auth)         |
-| `create…` / `update…` / `remove…` | the result of the write | creating, updating, or removing a row                                |
+| Prefix                            | Returns                 | Use when                                                                              |
+| --------------------------------- | ----------------------- | ------------------------------------------------------------------------------------- |
+| `get…`                            | the row, or `null`      | it is normal for the row not to exist and the caller can handle that                  |
+| `list…`                           | an array or page        | reading multiple rows                                                                 |
+| `require…`                        | the row, or throws      | the row must exist for the operation to continue (e.x. auth)                          |
+| `create…` / `update…` / `remove…` | the result of the write | creating, updating, or removing a row                                                 |
+| `upsert…`                         | the result of the write | creating or updating a row in one operation, such as provider sync or account linking |
 
 Use the table name as the subject of the function instead of introducing a different term for the same thing. This keeps naming consistent from the schema to the model and route layers. Only add `By<Field>` when the table supports multiple lookups and the function name would otherwise be unclear. In most cases, the arguments already make it obvious what field is being matched.
 
@@ -108,6 +119,10 @@ Opportunity deadlines are Unix milliseconds on exact UTC half-hour boundaries
 (`:00` or `:30`, with zero seconds/milliseconds). Create, update, publish, and resume
 reject off-grid deadlines rather than rounding them. Deadline closure runs at those
 same boundaries through the internal cron, in bounded batches; drafts do not auto-close.
+
+Campaign end dates and offer expiries share `isHalfHourTimestamp` and `HALF_HOUR_MS`
+from `lib/validation.ts`. Callers retain their own optionality, future-time checks,
+and error reasons.
 
 ## Tests
 
@@ -119,5 +134,11 @@ tests/models/users.test.ts
 ```
 
 Shared fixtures and testing utilities should stay in `tests/helpers.ts`.
+
+Use `campaignArgs` and `submissionArgs` for shared input fixtures, with explicit
+scenario overrides. Expected submission views remain independent of production
+serializers. `expectApiError` can assert both code and reason without invoking an
+operation twice. Preserve raw inserts for invalid/legacy data and public-route calls
+when testing route behavior.
 
 Prefer testing model functions directly with `t.run()`. Use the `api.*` route path when the behavior you are testing specifically involves authorization, argument validation, or route behavior.

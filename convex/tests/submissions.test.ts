@@ -1,6 +1,5 @@
 /// <reference types="vite/client" />
 import { convexTest } from "convex-test";
-import type { FunctionArgs } from "convex/server";
 import { describe, expect, test } from "vitest";
 import { api } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
@@ -8,6 +7,8 @@ import type { ApiErrorCode } from "../lib/errors";
 import schema from "../schema";
 import {
   expectApiError,
+  submissionArgs,
+  expectedSubmissionView as fullView,
   seedAssignmentFixture,
   seedMembership,
   seedOneSubmission,
@@ -25,25 +26,8 @@ import {
 
 const modules = import.meta.glob("../**/*.ts");
 
-const draft = {
-  draftUrl: "https://drive.example.com/drafts/driftwood-first-deploy",
-  draftDescription: "60-second walkthrough: install, `driftwood init`, first deploy at 0:45.",
-};
-
-type CreateArgs = FunctionArgs<typeof api.submissions.create>;
-
-function createArgs(fixture: AssignmentFixture): CreateArgs {
-  return { assignmentId: fixture.assignmentId, ...draft };
-}
-
 function pageArgs(fixture: AssignmentFixture) {
   return { assignmentId: fixture.assignmentId, paginationOpts: { numItems: 10, cursor: null } };
-}
-
-async function fullView(t: TestConvex, submissionId: Id<"submissions">, closed = false) {
-  const stored = await storedSubmission(t, submissionId);
-  if (stored === null) throw new Error("expected a stored submission");
-  return { ...stored, closedWithoutReview: closed };
 }
 
 async function creatorView(t: TestConvex, submissionId: Id<"submissions">, closed = false) {
@@ -84,10 +68,13 @@ describe("submissions.create", () => {
     const t = convexTest(schema, modules);
     const fixture = await seedAssignmentFixture(t, { usesAiReview: true });
 
-    const id = await fixture.asCreator.mutation(api.submissions.create, createArgs(fixture));
+    const id = await fixture.asCreator.mutation(
+      api.submissions.create,
+      submissionArgs(fixture.assignmentId),
+    );
 
     expect(await storedSubmission(t, id)).toMatchObject({
-      ...createArgs(fixture),
+      ...submissionArgs(fixture.assignmentId),
       status: "pending",
       usesAiReview: true,
     });
@@ -102,7 +89,7 @@ describe("submissions.create", () => {
 
     await expect(
       fixture.asCreator.mutation(api.submissions.create, {
-        ...createArgs(fixture),
+        ...submissionArgs(fixture.assignmentId),
         [field]: value,
         // Bypasses the type check to hit the runtime validator.
       } as never),
@@ -117,7 +104,7 @@ describe("submissions.create", () => {
     const asIntruder = await seedUser(t, { subject: "sc-intruder" });
 
     await expectApiError(
-      () => asIntruder.mutation(api.submissions.create, createArgs(fixture)),
+      () => asIntruder.mutation(api.submissions.create, submissionArgs(fixture.assignmentId)),
       "not_found",
     );
 
@@ -132,7 +119,7 @@ describe("submissions.create", () => {
       const client = await caller(t, fixture);
 
       await expectApiError(
-        () => client.mutation(api.submissions.create, createArgs(fixture)),
+        () => client.mutation(api.submissions.create, submissionArgs(fixture.assignmentId)),
         code,
       );
 

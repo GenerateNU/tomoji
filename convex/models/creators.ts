@@ -4,6 +4,7 @@ import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { apiError } from "../lib/errors";
 import { requireNonBlank } from "../lib/validation";
+import { getXAccountByCreatorId } from "./xAccountLookup";
 
 export const creatorProfile = v.object({
   creatorId: v.id("creators"),
@@ -11,7 +12,7 @@ export const creatorProfile = v.object({
   firstName: v.optional(v.string()),
   lastName: v.optional(v.string()),
   email: v.string(),
-  profilePicture: v.optional(v.string()),
+  profilePictureMediaId: v.optional(v.id("mediaUploads")),
   xId: v.optional(v.string()),
   githubLink: v.optional(v.string()),
   phoneNumber: v.optional(v.string()),
@@ -19,7 +20,6 @@ export const creatorProfile = v.object({
 
 export const creatorProfileUpdate = v.object({
   username: v.optional(v.string()),
-  xId: v.optional(v.union(v.string(), v.null())),
   githubLink: v.optional(v.union(v.string(), v.null())),
   phoneNumber: v.optional(v.union(v.string(), v.null())),
 });
@@ -28,15 +28,19 @@ export type CreatorProfile = Infer<typeof creatorProfile>;
 export type CreatorProfileUpdate = Infer<typeof creatorProfileUpdate>;
 
 /** Combines matching user and creator documents into the user-facing creator profile. */
-function toCreatorProfile(user: Doc<"users">, creator: Doc<"creators">): CreatorProfile {
+function toCreatorProfile(
+  user: Doc<"users">,
+  creator: Doc<"creators">,
+  xId?: string,
+): CreatorProfile {
   return {
     creatorId: creator._id,
     username: creator.username,
     firstName: user.firstName,
     lastName: user.lastName,
     email: user.email,
-    profilePicture: user.profilePicture,
-    xId: creator.xId,
+    profilePictureMediaId: user.profilePictureMediaId,
+    xId,
     githubLink: creator.githubLink,
     phoneNumber: creator.phoneNumber,
   };
@@ -63,7 +67,8 @@ export async function requireCreatorProfile(
     throw apiError("not_found", { resource: "creator" });
   }
 
-  return toCreatorProfile(user, creator);
+  const account = await getXAccountByCreatorId(ctx, creator._id);
+  return toCreatorProfile(user, creator, account?.xUserId);
 }
 
 /** Returns one cursor-paginated page of active creator profiles. */
@@ -110,18 +115,17 @@ export async function updateCreatorProfile(
     throw apiError("not_found", { resource: "creator" });
   }
 
-  const patch: Partial<Pick<Doc<"creators">, "username" | "xId" | "githubLink" | "phoneNumber">> =
-    {};
+  const patch: Partial<Pick<Doc<"creators">, "username" | "githubLink" | "phoneNumber">> = {};
   if (updates.username !== undefined) {
     patch.username = await requireAvailableCreatorUsername(ctx, creator._id, updates.username);
   }
   // Clients use null to clear a field because Convex cannot serialize undefined.
-  if ("xId" in updates) patch.xId = updates.xId ?? undefined;
   if ("githubLink" in updates) patch.githubLink = updates.githubLink ?? undefined;
   if ("phoneNumber" in updates) patch.phoneNumber = updates.phoneNumber ?? undefined;
 
   await ctx.db.patch("creators", creator._id, patch);
-  return toCreatorProfile(user, { ...creator, ...patch });
+  const account = await getXAccountByCreatorId(ctx, creator._id);
+  return toCreatorProfile(user, { ...creator, ...patch }, account?.xUserId);
 }
 
 /** Returns a visible creator profile by creator ID or throws when it is unavailable. */
@@ -139,5 +143,6 @@ export async function requireCreatorProfileById(
     throw apiError("not_found", { resource: "creator" });
   }
 
-  return toCreatorProfile(user, creator);
+  const account = await getXAccountByCreatorId(ctx, creator._id);
+  return toCreatorProfile(user, creator, account?.xUserId);
 }

@@ -20,7 +20,7 @@ override what you may have learned about Convex from training data.
 > [!IMPORTANT]
 > Before developing or modifying backend code, you must read and follow
 > [`docs/BACKEND.md`](docs/BACKEND.md) for the repository's Convex architecture and
-> conventions.
+> conventions. For frontend code, read [`docs/FRONTEND.md`](docs/FRONTEND.md).
 
 Convex agent skills for common tasks can be installed by running
 `npx convex ai-files install`.
@@ -88,16 +88,16 @@ Complete the requested outcome and required verification. If blocked, state what
 Setup and day-to-day work are documented in [`CONTRIBUTING.md`](CONTRIBUTING.md). The
 commands that exist today:
 
-| Command           | What it does                                          |
-| ----------------- | ----------------------------------------------------- |
-| `just setup`      | Install deps, create `.env.local` from the template   |
-| `just convex-env` | Copy `WORKOS_CLIENT_ID` onto your Convex deployment   |
-| `just fd`         | Frontend dev server — http://localhost:3000           |
-| `just bd`         | Convex dev — watches `convex/`, streams function logs |
-| `just ci`         | typecheck + lint + format:check + test (what CI runs) |
-| `just test`       | Vitest once                                           |
-| `just test-e2e`   | Playwright                                            |
-| `just build`      | Production build                                      |
+| Command           | What it does                                            |
+| ----------------- | ------------------------------------------------------- |
+| `just setup`      | Install deps, create `.env.local` from the template     |
+| `just convex-env` | Copy WorkOS and S3 settings onto your Convex deployment |
+| `just fd`         | Frontend dev server — http://localhost:3000             |
+| `just bd`         | Convex dev — watches `convex/`, streams function logs   |
+| `just ci`         | typecheck + lint + format:check + test (what CI runs)   |
+| `just test`       | Vitest once                                             |
+| `just test-e2e`   | Playwright                                              |
+| `just build`      | Production build                                        |
 
 Recipes are thin wrappers over `package.json` scripts; CI runs `bun run ci`. There is no
 release command yet — nothing is deployed.

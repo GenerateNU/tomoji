@@ -6,10 +6,15 @@ import { companiesTable } from "./schemas/companies.schema";
 import { companyUsersTable } from "./schemas/companyUsers.schema";
 import { creatorsTable } from "./schemas/creators.schema";
 import { disputesTable } from "./schemas/disputes.schema";
+import { mediaUploadsTable } from "./schemas/mediaUploads.schema";
+import { notificationsTable } from "./schemas/notifications.schema";
 import { opportunitiesTable } from "./schemas/opportunities.schema";
 import { postsTable } from "./schemas/posts.schema";
 import { submissionsTable } from "./schemas/submissions.schema";
 import { usersTable } from "./schemas/users.schema";
+import { xAccountsTable } from "./schemas/xAccounts.schema";
+import { xAccountCredentialsTable } from "./schemas/xAccountCredentials.schema";
+import { xLinkAttemptsTable } from "./schemas/xLinkAttempts.schema";
 
 export default defineSchema({
   users: usersTable,
@@ -23,4 +28,9 @@ export default defineSchema({
   submissions: submissionsTable,
   posts: postsTable,
   disputes: disputesTable,
+  mediaUploads: mediaUploadsTable,
+  xAccounts: xAccountsTable,
+  xAccountCredentials: xAccountCredentialsTable,
+  xLinkAttempts: xLinkAttemptsTable,
+  notifications: notificationsTable,
 });

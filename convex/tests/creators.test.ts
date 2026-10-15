@@ -5,11 +5,27 @@ import { api } from "../_generated/api";
 import { getCreatorByUserId, updateCreatorProfile } from "../models/creators";
 import { getUserByWorkosId } from "../models/users";
 import schema from "../schema";
-import { expectApiError, seedCreatorId, seedOperator, seedUser } from "./helpers";
+import {
+  expectApiError,
+  seedCreatorId,
+  seedOperator,
+  seedProfilePictureUpload,
+  seedUser,
+  seedXAccount,
+} from "./helpers";
 
 const modules = import.meta.glob("../**/*.ts");
 
 describe("creators.me", () => {
+  test("uses only an OAuth-verified X ID and ignores manually stored legacy values", async () => {
+    const t = convexTest(schema, modules);
+    const creatorId = await seedCreatorId(t, "creator_verified_x");
+    const asCreator = await seedUser(t, { subject: "creator_verified_x" });
+    await t.run((ctx) => ctx.db.patch("creators", creatorId, { xId: "legacy_unverified" }));
+    expect(await asCreator.query(api.creators.me, {})).not.toHaveProperty("xId");
+    await seedXAccount(t, "creator_verified_x");
+    expect((await asCreator.query(api.creators.me, {})).xId).toBe("123456789");
+  });
   test.each([
     { firstName: "Ada", lastName: "" },
     { firstName: "Ada", lastName: "Lovelace" },
@@ -41,24 +57,22 @@ describe("creators.me", () => {
 
   test("returns all user-facing creator profile fields", async () => {
     const t = convexTest(schema, modules);
+    const { uploadId } = await seedProfilePictureUpload(t, "creator_me", "complete");
     const asCreator = await seedUser(t, {
       subject: "creator_me",
       email: "creator@example.com",
       firstName: "Creator",
       lastName: "Name",
     });
+    await seedXAccount(t, "creator_me");
     const creatorId = await t.run(async (ctx) => {
       const user = await getUserByWorkosId(ctx, "creator_me");
       if (user === null) throw new Error("expected seeded user");
       const creator = await getCreatorByUserId(ctx, user._id);
       if (creator === null) throw new Error("expected seeded creator");
 
-      await ctx.db.patch("users", user._id, {
-        profilePicture: "https://example.com/profile.png",
-      });
       await updateCreatorProfile(ctx, user, {
         username: "creator_name",
-        xId: "creator_x",
         githubLink: "https://github.com/creator",
         phoneNumber: "+15555550123",
       });
@@ -71,8 +85,8 @@ describe("creators.me", () => {
       firstName: "Creator",
       lastName: "Name",
       email: "creator@example.com",
-      profilePicture: "https://example.com/profile.png",
-      xId: "creator_x",
+      profilePictureMediaId: uploadId,
+      xId: "123456789",
       githubLink: "https://github.com/creator",
       phoneNumber: "+15555550123",
     });
@@ -86,6 +100,7 @@ describe("creators.me", () => {
 
     expect(profile).not.toHaveProperty("username");
     expect(profile).not.toHaveProperty("profilePicture");
+    expect(profile).not.toHaveProperty("profilePictureMediaId");
     expect(profile).not.toHaveProperty("xId");
     expect(profile).not.toHaveProperty("githubLink");
     expect(profile).not.toHaveProperty("phoneNumber");
@@ -221,6 +236,14 @@ describe("creators.get", () => {
 });
 
 describe("creators.update", () => {
+  test("rejects manual X ID editing", async () => {
+    const t = convexTest(schema, modules);
+    const asCreator = await seedUser(t, { subject: "creator_manual_x" });
+    // Deliberately bypass the client type to verify runtime argument validation.
+    await expect(
+      asCreator.mutation(api.creators.update, { xId: "forged" } as never),
+    ).rejects.toThrow();
+  });
   test("normalizes the username and allows equivalent updates by its owner", async () => {
     const t = convexTest(schema, modules);
     const asCreator = await seedUser(t, { subject: "creator_username" });
@@ -233,7 +256,7 @@ describe("creators.update", () => {
     expect((await asCreator.mutation(api.creators.update, { username: " ADA " })).username).toBe(
       "ada",
     );
-    await asCreator.mutation(api.creators.update, { xId: "ada_x" });
+    await asCreator.mutation(api.creators.update, { githubLink: "https://github.com/ada" });
     expect((await asCreator.query(api.creators.me, {})).username).toBe("ada");
   });
 
@@ -245,7 +268,8 @@ describe("creators.update", () => {
     const before = await asClaimant.query(api.creators.me, {});
 
     await expectApiError(
-      () => asClaimant.mutation(api.creators.update, { username: "ada", xId: "changed_x" }),
+      () =>
+        asClaimant.mutation(api.creators.update, { username: "ada", phoneNumber: "+15555550123" }),
       "conflict",
     );
 
@@ -260,7 +284,6 @@ describe("creators.update", () => {
     });
 
     const profile = await asCreator.mutation(api.creators.update, {
-      xId: "creator_x",
       githubLink: "https://github.com/creator",
       phoneNumber: "+15555550123",
     });
@@ -269,7 +292,6 @@ describe("creators.update", () => {
       firstName: "Test",
       lastName: "",
       email: "creator@example.com",
-      xId: "creator_x",
       githubLink: "https://github.com/creator",
       phoneNumber: "+15555550123",
     });
@@ -279,17 +301,16 @@ describe("creators.update", () => {
     const t = convexTest(schema, modules);
     const asCreator = await seedUser(t, { subject: "creator_update_partial" });
     await asCreator.mutation(api.creators.update, {
-      xId: "creator_x",
       githubLink: "https://github.com/creator",
       phoneNumber: "+15555550123",
     });
 
     const profile = await asCreator.mutation(api.creators.update, {
-      xId: "updated_creator_x",
+      username: "creator_updated",
     });
 
     expect(profile).toMatchObject({
-      xId: "updated_creator_x",
+      username: "creator_updated",
       githubLink: "https://github.com/creator",
       phoneNumber: "+15555550123",
     });
@@ -299,13 +320,11 @@ describe("creators.update", () => {
     const t = convexTest(schema, modules);
     const asCreator = await seedUser(t, { subject: "creator_update_clear" });
     await asCreator.mutation(api.creators.update, {
-      xId: "creator_x",
       githubLink: "https://github.com/creator",
       phoneNumber: "+15555550123",
     });
 
     const profile = await asCreator.mutation(api.creators.update, {
-      xId: null,
       githubLink: null,
       phoneNumber: null,
     });
@@ -319,7 +338,7 @@ describe("creators.update", () => {
     const t = convexTest(schema, modules);
 
     await expectApiError(
-      () => t.mutation(api.creators.update, { xId: "signed_out" }),
+      () => t.mutation(api.creators.update, { username: "signed_out" }),
       "not_authenticated",
     );
   });
@@ -332,7 +351,7 @@ describe("creators.update", () => {
     });
 
     await expectApiError(
-      () => asCompany.mutation(api.creators.update, { xId: "company" }),
+      () => asCompany.mutation(api.creators.update, { username: "company" }),
       "forbidden",
     );
   });
@@ -342,7 +361,7 @@ describe("creators.update", () => {
     const asOperator = await seedOperator(t, "creator_update_operator");
 
     await expectApiError(
-      () => asOperator.mutation(api.creators.update, { xId: "operator" }),
+      () => asOperator.mutation(api.creators.update, { username: "operator" }),
       "forbidden",
     );
   });

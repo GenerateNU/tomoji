@@ -79,6 +79,7 @@ describe("normalizeLegacyUser", () => {
       role: "operator" as const,
       isActive: false,
       profilePicture: "https://example.com/avatar.jpg",
+      profilePictureMediaId: "existing_media" as Id<"mediaUploads">,
     };
 
     const replacement = normalizeLegacyUser(original);
@@ -89,6 +90,7 @@ describe("normalizeLegacyUser", () => {
       role: original.role,
       isActive: original.isActive,
       profilePicture: original.profilePicture,
+      profilePictureMediaId: original.profilePictureMediaId,
       firstName: original.name,
       lastName: "",
     });

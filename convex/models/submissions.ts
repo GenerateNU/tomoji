@@ -3,9 +3,10 @@ import { v, type Infer } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { apiError } from "../lib/errors";
-import { requireNonBlank } from "../lib/validation";
+import { optionalNonBlank, requireNonBlank } from "../lib/validation";
 import { submissionShapes } from "../schemas/submissions.schema";
-import { requireAssignment, type AssignmentViewer } from "./assignments";
+import { requireAssignment, requireActiveAssignment, type AssignmentViewer } from "./assignments";
+import { creatorName, notifyCompanyUser, notifyCreator } from "./notifications";
 
 /** The creator-supplied fields of a new submission. */
 export const submissionDraft = v.object({
@@ -52,11 +53,7 @@ const MAX_LENGTH = {
 } as const;
 
 function requireText(value: string, field: keyof typeof MAX_LENGTH): string {
-  const trimmed = requireNonBlank(value, field);
-  if (trimmed.length > MAX_LENGTH[field]) {
-    throw apiError("invalid_state", { reason: `${field}_too_long` });
-  }
-  return trimmed;
+  return requireNonBlank(value, field, MAX_LENGTH[field]);
 }
 
 /** Like `requireText`, but a missing or blank value becomes `undefined`. */
@@ -64,8 +61,7 @@ function optionalText(
   value: string | undefined,
   field: keyof typeof MAX_LENGTH,
 ): string | undefined {
-  if (value === undefined || value.trim() === "") return undefined;
-  return requireText(value, field);
+  return optionalNonBlank(value, field, MAX_LENGTH[field]);
 }
 
 /** Returns the URL in its parsed form, so reviewers open exactly the link that was checked. */
@@ -181,10 +177,9 @@ function toCreatorView(
   }
 }
 
+/** Requires an active assignment before applying submission-specific deadline rules. */
 function requireSubmissionWindowOpen(assignment: Doc<"assignments">): void {
-  if (assignment.status !== "active") {
-    throw apiError("invalid_state", { reason: "assignment_not_active" });
-  }
+  requireActiveAssignment(assignment);
   // TODO(dueAt): reject after `assignment.dueAt` once assignments have it.
 }
 
@@ -221,13 +216,24 @@ export async function createSubmission(
     throw apiError("invalid_state", { reason: "already_approved" });
   }
 
-  return await ctx.db.insert("submissions", {
+  const submissionId = await ctx.db.insert("submissions", {
     assignmentId: assignment._id,
     draftUrl: requireDraftUrl(draft.draftUrl),
     draftDescription: requireText(draft.draftDescription, "draftDescription"),
     status: "pending",
     usesAiReview: assignment.usesAiReview,
   });
+  const opportunity = await ctx.db.get("opportunities", assignment.opportunityId);
+  if (opportunity !== null) {
+    // A draft after a change request is the creator's response to that review.
+    const isResubmission = latest?.status === "changesRequested";
+    await notifyCompanyUser(ctx, opportunity.createdBy, {
+      type: isResubmission ? "submissionResubmitted" : "submissionCreated",
+      title: `${await creatorName(ctx, creatorId)} ${isResubmission ? "resubmitted" : "submitted"} a draft for ${opportunity.title}`,
+      target: { kind: "submission", submissionId, assignmentId: assignment._id },
+    });
+  }
+  return submissionId;
 }
 
 /** Records a company user's review. Errors are listed on the `submissions.review` route. */
@@ -245,9 +251,7 @@ export async function reviewSubmission(
   if (submission.status !== "pending") {
     throw apiError("invalid_state", { reason: "already_reviewed" });
   }
-  if (assignment.status !== "active") {
-    throw apiError("invalid_state", { reason: "assignment_not_active" });
-  }
+  requireActiveAssignment(assignment);
   // TODO(ai-layer): reject when `submission.usesAiReview` is true.
 
   const outcome =
@@ -261,6 +265,26 @@ export async function reviewSubmission(
     reviewedAt: Date.now(),
   };
   await ctx.db.patch("submissions", submissionId, patch);
+  const opportunity = await ctx.db.get("opportunities", assignment.opportunityId);
+  if (opportunity !== null) {
+    const target = { kind: "submission" as const, submissionId, assignmentId: assignment._id };
+    await notifyCreator(
+      ctx,
+      assignment.creatorId,
+      outcome.status === "approved"
+        ? {
+            type: "submissionApproved",
+            title: `Your draft for ${opportunity.title} was approved`,
+            target,
+          }
+        : {
+            type: "submissionChangesRequested",
+            title: `Changes requested on your draft for ${opportunity.title}`,
+            body: outcome.reviewNote,
+            target,
+          },
+    );
+  }
   return { ...submission, ...patch };
 }
 

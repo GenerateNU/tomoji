@@ -16,6 +16,7 @@ const identityFields = {
   firstName: v.optional(v.string()),
   lastName: v.optional(v.string()),
   email: v.string(),
+  profilePictureMediaId: v.optional(v.id("mediaUploads")),
 };
 
 const meResult = v.union(
@@ -46,6 +47,7 @@ export const me = query({
       firstName: user.firstName,
       lastName: user.lastName,
       email: user.email,
+      profilePictureMediaId: user.profilePictureMediaId,
     };
 
     if (user.role !== "company") return { ...base, role: user.role };

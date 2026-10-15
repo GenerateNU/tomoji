@@ -1,10 +1,16 @@
-import { paginationOptsValidator, type PaginationResult } from "convex/server";
+import {
+  paginationOptsValidator,
+  paginationResultValidator,
+  type PaginationResult,
+} from "convex/server";
 import { mergedStream, stream } from "convex-helpers/server/stream";
 import { v, type Infer } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { apiError } from "../lib/errors";
+import { canViewResource, type ResourceViewer } from "../lib/authz";
 import schema from "../schema";
+import { creatorName, notifyCompanyUser, notifyCreator } from "./notifications";
 
 /**
  * Creates a creator's assignment on an open, ungated opportunity.
@@ -39,7 +45,19 @@ export async function claimAssignment(
   if (opportunity.isGated) {
     throw apiError("invalid_state", { reason: "opportunity_gated" });
   }
-  return await createAssignment(ctx, opportunity, campaign, creatorId);
+  const assignmentId = await createAssignment(ctx, opportunity, campaign, creatorId);
+  // Only claims notify here; an accepted offer is reported by `acceptApplication`.
+  await notifyCompanyUser(ctx, opportunity.createdBy, {
+    type: "assignmentClaimed",
+    title: `${await creatorName(ctx, creatorId)} joined ${opportunity.title}`,
+    target: assignmentTarget(assignmentId),
+  });
+  return assignmentId;
+}
+
+/** Links a notification to the assignment. */
+export function assignmentTarget(assignmentId: Id<"assignments">) {
+  return { kind: "assignment" as const, assignmentId };
 }
 
 /**
@@ -166,10 +184,7 @@ export function toCreatorAssignment(assignment: Doc<"assignments">): CreatorAssi
 }
 
 /** Who is reading an assignment, resolved from the caller by the route. */
-export type AssignmentViewer =
-  | { role: "operator" }
-  | { role: "creator"; creatorId: Id<"creators"> }
-  | { role: "company"; companyId: Id<"companies"> };
+export type AssignmentViewer = ResourceViewer;
 
 /**
  * Returns an assignment the viewer may see: creators see their own, company
@@ -184,21 +199,18 @@ export async function requireAssignment(
   assignmentId: Id<"assignments">,
 ): Promise<Doc<"assignments">> {
   const assignment = await ctx.db.get("assignments", assignmentId);
-  if (assignment === null || !canViewAssignment(viewer, assignment)) {
+  if (assignment === null || !canViewResource(viewer, assignment)) {
     throw apiError("not_found", { resource: "assignment" });
   }
   return assignment;
 }
 
-function canViewAssignment(viewer: AssignmentViewer, assignment: Doc<"assignments">): boolean {
-  switch (viewer.role) {
-    case "operator":
-      return true;
-    case "creator":
-      return assignment.creatorId === viewer.creatorId;
-    case "company":
-      return assignment.companyId === viewer.companyId;
+/** Requires an already-loaded assignment to be active without changing its access policy. */
+export function requireActiveAssignment(assignment: Doc<"assignments">): Doc<"assignments"> {
+  if (assignment.status !== "active") {
+    throw apiError("invalid_state", { reason: "assignment_not_active" });
   }
+  return assignment;
 }
 
 /**
@@ -252,6 +264,32 @@ export const assignmentListFilters = schema
     paginationOpts: paginationOptsValidator,
   });
 
+/** Proves access to the requested parents, even when they have no assignments. */
+async function requireAssignmentParents(
+  ctx: QueryCtx,
+  companyId: Id<"companies">,
+  options: { opportunityId?: Id<"opportunities">; campaignId?: Id<"campaigns"> },
+): Promise<void> {
+  const { opportunityId, campaignId } = options;
+  if (opportunityId !== undefined) {
+    const opportunity = await ctx.db.get("opportunities", opportunityId);
+    const campaign = opportunity && (await ctx.db.get("campaigns", opportunity.campaignId));
+    if (
+      !opportunity ||
+      !campaign ||
+      campaign.companyId !== companyId ||
+      (campaignId !== undefined && opportunity.campaignId !== campaignId)
+    ) {
+      throw apiError("not_found", { resource: "opportunity" });
+    }
+  } else if (campaignId !== undefined) {
+    const campaign = await ctx.db.get("campaigns", campaignId);
+    if (campaign === null || campaign.companyId !== companyId) {
+      throw apiError("not_found", { resource: "campaign" });
+    }
+  }
+}
+
 /**
  * Returns one page of the company's assignments, optionally filtered by
  * opportunity, campaign, and status. Results are ordered by status, then
@@ -266,18 +304,9 @@ export async function listAssignments(
   options: Infer<typeof assignmentListFilters>,
 ): Promise<PaginationResult<Doc<"assignments">>> {
   const { opportunityId, campaignId, status, paginationOpts } = options;
+  await requireAssignmentParents(ctx, companyId, options);
 
   if (opportunityId !== undefined) {
-    const opportunity = await ctx.db.get("opportunities", opportunityId);
-    const campaign = opportunity && (await ctx.db.get("campaigns", opportunity.campaignId));
-    if (
-      !opportunity ||
-      !campaign ||
-      campaign.companyId !== companyId ||
-      (campaignId !== undefined && opportunity.campaignId !== campaignId)
-    ) {
-      throw apiError("not_found", { resource: "opportunity" });
-    }
     return await ctx.db
       .query("assignments")
       .withIndex("by_opportunityId_and_status", (q) => {
@@ -289,10 +318,6 @@ export async function listAssignments(
   }
 
   if (campaignId !== undefined) {
-    const campaign = await ctx.db.get("campaigns", campaignId);
-    if (campaign === null || campaign.companyId !== companyId) {
-      throw apiError("not_found", { resource: "campaign" });
-    }
     return await ctx.db
       .query("assignments")
       .withIndex("by_campaignId_and_status", (q) => {
@@ -311,6 +336,102 @@ export async function listAssignments(
     })
     .order("desc")
     .paginate(paginationOpts);
+}
+
+export const assignmentCreatorExportOptions = assignmentListFilters.omit("status");
+export const assignmentCreatorsCsv = paginationResultValidator(v.string())
+  .omit("page")
+  .extend({ csv: v.string(), fileName: v.string() });
+
+/**
+ * Exports one sequential CSV page for exactly one company-owned parent.
+ * Stable index keys prevent status transitions from moving rows across cursors.
+ * Each page reads current profiles; the full export is not a historical snapshot.
+ */
+export async function exportAssignmentCreatorsCsv(
+  ctx: QueryCtx,
+  companyId: Id<"companies">,
+  options: Infer<typeof assignmentCreatorExportOptions>,
+): Promise<Infer<typeof assignmentCreatorsCsv>> {
+  const { opportunityId, campaignId, paginationOpts } = options;
+  if ((opportunityId === undefined) === (campaignId === undefined)) {
+    throw apiError("invalid_state", { reason: "exactly_one_export_scope_required" });
+  }
+  if (
+    !Number.isInteger(paginationOpts.numItems) ||
+    paginationOpts.numItems < 1 ||
+    paginationOpts.numItems > 100
+  ) {
+    throw apiError("invalid_state", { reason: "invalid_page_size" });
+  }
+  // Export clients follow continueCursor; reactive endCursor ranges could
+  // expand beyond the bounded page before creator profiles are hydrated.
+  if (paginationOpts.endCursor != null) {
+    throw apiError("invalid_state", { reason: "unsupported_end_cursor" });
+  }
+  await requireAssignmentParents(ctx, companyId, options);
+
+  const query =
+    opportunityId !== undefined
+      ? ctx.db
+          .query("assignments")
+          .withIndex("by_opportunityId_and_creatorId", (q) => q.eq("opportunityId", opportunityId))
+      : ctx.db
+          .query("assignments")
+          .withIndex("by_campaignId", (q) => q.eq("campaignId", campaignId!));
+  const { page, ...pagination } = await query.order("asc").paginate(paginationOpts);
+  // Fail closed if a legacy row's denormalized owner disagrees with its parent.
+  if (page.some((assignment) => assignment.companyId !== companyId)) {
+    throw apiError("not_found", { resource: "assignment" });
+  }
+
+  const rows = await Promise.all(
+    page.map(async (assignment) => {
+      const creator = await ctx.db.get("creators", assignment.creatorId);
+      const user = creator && (await ctx.db.get("users", creator.userId));
+      let name = "";
+      let email = "";
+      // Keep the assignment in the roster without exporting deleted/unavailable PII.
+      if (user !== null && user.isActive && user.role === "creator") {
+        name =
+          [user.firstName?.trim(), user.lastName?.trim()].filter(Boolean).join(" ") ||
+          user.name?.trim() ||
+          user.email;
+        email = user.email;
+      }
+      return (
+        [
+          assignment._id,
+          assignment.campaignId,
+          assignment.opportunityId,
+          assignment.status,
+          name,
+          email,
+        ]
+          .map(toCsvCell)
+          .join(",") + "\r\n"
+      );
+    }),
+  );
+  const header =
+    paginationOpts.cursor === null
+      ? "assignmentId,campaignId,opportunityId,status,name,email\r\n"
+      : "";
+  return {
+    ...pagination,
+    csv: header + rows.join(""),
+    fileName:
+      opportunityId !== undefined
+        ? `opportunity-${opportunityId}-creators.csv`
+        : `campaign-${campaignId}-creators.csv`,
+  };
+}
+
+/** Quote every cell and treat formula-like values as text when opened in spreadsheets. */
+function toCsvCell(value: string): string {
+  // https://owasp.org/www-community/attacks/CSV_Injection
+  const text = /^\s*[=+\-@＝＋－＠]|^[\t\r\n]/u.test(value) ? `'${value}` : value;
+  return `"${text.replaceAll('"', '""')}"`;
 }
 
 /** Current assignments still need work; past ones are finished either way. */
@@ -361,6 +482,14 @@ export async function acceptAssignmentTerms(
     assignmentId,
   );
   await ctx.db.patch("assignments", assignment._id, { status: "active" });
+  const opportunity = await ctx.db.get("opportunities", assignment.opportunityId);
+  if (opportunity !== null) {
+    await notifyCompanyUser(ctx, opportunity.createdBy, {
+      type: "assignmentTermsAccepted",
+      title: `${await creatorName(ctx, creatorId)} accepted terms for ${opportunity.title}`,
+      target: assignmentTarget(assignment._id),
+    });
+  }
   return { ...assignment, status: "active" };
 }
 
@@ -382,7 +511,16 @@ export async function declineAssignmentTerms(
     { role: "creator", creatorId },
     assignmentId,
   );
-  return await cancelAssignment(ctx, assignment);
+  const cancelled = await cancelAssignment(ctx, assignment);
+  const opportunity = await ctx.db.get("opportunities", assignment.opportunityId);
+  if (opportunity !== null) {
+    await notifyCompanyUser(ctx, opportunity.createdBy, {
+      type: "assignmentTermsDeclined",
+      title: `${await creatorName(ctx, creatorId)} declined terms for ${opportunity.title}`,
+      target: assignmentTarget(assignment._id),
+    });
+  }
+  return cancelled;
 }
 
 /**
@@ -403,7 +541,16 @@ export async function cancelPendingAssignment(
     { role: "company", companyId },
     assignmentId,
   );
-  return await cancelAssignment(ctx, assignment);
+  const cancelled = await cancelAssignment(ctx, assignment);
+  const opportunity = await ctx.db.get("opportunities", assignment.opportunityId);
+  if (opportunity !== null) {
+    await notifyCreator(ctx, assignment.creatorId, {
+      type: "assignmentCancelled",
+      title: `Your assignment for ${opportunity.title} was cancelled`,
+      target: assignmentTarget(assignment._id),
+    });
+  }
+  return cancelled;
 }
 
 async function requirePendingAssignment(
@@ -457,9 +604,7 @@ export async function completeAssignment(
   if (assignment === null) {
     throw apiError("not_found", { resource: "assignment" });
   }
-  if (assignment.status !== "active") {
-    throw apiError("invalid_state", { reason: "assignment_not_active" });
-  }
+  requireActiveAssignment(assignment);
   await ctx.db.patch("assignments", assignment._id, { status: "completed" });
   return { ...assignment, status: "completed" };
 }

@@ -12,7 +12,7 @@ export const usersTable = defineTable({
   email: v.string(),
   role: userRole,
   isActive: v.boolean(),
-  profilePicture: v.optional(v.string()),
+  profilePictureMediaId: v.optional(v.id("mediaUploads")),
 })
   .index("by_workosId", ["workosId"])
   .index("by_role", ["role"])

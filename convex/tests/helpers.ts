@@ -1,19 +1,136 @@
 import type { TestConvex as ConvexTest } from "convex-test";
-import type { UserIdentity, WithoutSystemFields } from "convex/server";
+import type { UserIdentity, WithoutSystemFields, FunctionArgs } from "convex/server";
 import type { Infer } from "convex/values";
 import { expect } from "vitest";
 import type { Doc, Id } from "../_generated/dataModel";
+import type { api } from "../_generated/api";
+import type { SubmissionDraft } from "../models/submissions";
 import type { ApiErrorCode } from "../lib/errors";
 import { companyContext } from "../lib/functions";
 import { getCreatorByUserId } from "../models/creators";
+import { upsertXAccount, type XAccountLink } from "../models/xAccounts";
+import { encryptXTokens } from "../lib/xTokenEncryption";
 import { createCampaign } from "../models/campaigns";
 import { createOpportunity, type OpportunityCreate } from "../models/opportunities";
-import { applyMembership, getUserByWorkosId, upsertUser } from "../models/users";
+import { finalizeMediaUpload, reserveMediaUpload } from "../models/media";
+import { applyMembership, getUserByWorkosId, requireUser, upsertUser } from "../models/users";
 import type { companyRole } from "../schemas/companyUsers.schema";
 import type schema from "../schema";
 import type { submissionStatus } from "../schemas/submissions.schema";
 
 export type TestConvex = ConvexTest<typeof schema>;
+
+/** Reads a seeded user for direct model tests. */
+export async function requireSeededUser(t: TestConvex, subject: string) {
+  return await t.run(async (ctx) => {
+    const user = await getUserByWorkosId(ctx, subject);
+    if (user === null) throw new Error("expected seeded user");
+    return user;
+  });
+}
+
+// Synthetic key material only. Never use this fixture on a deployment.
+export const X_TOKEN_TEST_CONFIG = {
+  X_TOKEN_ENCRYPTION_KEY_VERSION: "v1",
+  X_TOKEN_ENCRYPTION_KEYS: JSON.stringify({ v1: btoa("a".repeat(32)) }),
+};
+
+type TestXAccountLink = Omit<XAccountLink, "encryptedTokens"> & {
+  accessToken: string;
+  refreshToken: string;
+};
+
+/** Encrypts synthetic provider tokens for direct model tests, never live credentials. */
+export async function xAccountLinkArgs(
+  creatorId: Id<"creators">,
+  overrides: Partial<TestXAccountLink> = {},
+): Promise<XAccountLink> {
+  const { accessToken, refreshToken, ...metadata } = {
+    xUserId: "123456789",
+    username: "ada",
+    displayName: "Ada Lovelace",
+    accessToken: "test-access-token",
+    refreshToken: "test-refresh-token",
+    accessTokenExpiresAt: Date.now() + 7_200_000,
+    scopes: ["tweet.read", "users.read", "offline.access"],
+    ...overrides,
+  };
+  return {
+    ...metadata,
+    encryptedTokens: await encryptXTokens(
+      creatorId,
+      { accessToken, refreshToken },
+      X_TOKEN_TEST_CONFIG,
+    ),
+  };
+}
+
+/** Seeds a creator and a verified connection through the model, without calling X. */
+export async function seedXAccount(
+  t: TestConvex,
+  subject: string,
+  overrides: Partial<TestXAccountLink> = {},
+) {
+  const existingUser = await t.run((ctx) => getUserByWorkosId(ctx, subject));
+  const creatorId =
+    existingUser === null
+      ? await seedCreatorId(t, subject)
+      : await t.run(async (ctx) => {
+          const creator = await getCreatorByUserId(ctx, existingUser._id);
+          if (creator === null) throw new Error("expected seeded creator");
+          return creator._id;
+        });
+  const link = await xAccountLinkArgs(creatorId, overrides);
+  const account = await t.run(async (ctx) => await upsertXAccount(ctx, creatorId, link));
+  return { creatorId, account, asCreator: t.withIdentity(workosIdentity({ subject })) };
+}
+
+/** Produces a synthetic X token exchange response, never live credentials. */
+export function xTokenResponse() {
+  return Response.json({
+    access_token: "new-access",
+    refresh_token: "new-refresh",
+    token_type: "bearer",
+    expires_in: 7200,
+    scope: "tweet.read users.read offline.access",
+  });
+}
+
+/** Produces an X identity whose ID must retain string precision. */
+export function xIdentityResponse() {
+  return Response.json({
+    data: { id: "12345678901234567890", username: "ada", name: "Ada Lovelace" },
+  });
+}
+
+/** Seeds an owned picture grant, optionally completing it without contacting S3. */
+export async function seedProfilePictureUpload(
+  t: TestConvex,
+  subject: string,
+  status: "pending" | "complete" = "pending",
+) {
+  const asCreator = await seedUser(t, { subject });
+  const uploadId = await asCreator.run(async (ctx) => {
+    const { user } = await requireUser(ctx);
+    const stagingKey = "staging/profile-picture/11111111-1111-4111-8111-111111111111";
+    const uploadId = await reserveMediaUpload(ctx, user, {
+      kind: "profile-picture",
+      stagingKey,
+      contentType: "image/webp",
+      grantExpiresAt: Date.now() + 15 * 60_000,
+    });
+    if (status === "complete") {
+      await finalizeMediaUpload(ctx, user, uploadId, {
+        stagingKey,
+        permanentKey: "media/profile-picture/22222222-2222-4222-8222-222222222222",
+        contentType: "image/webp",
+        sizeBytes: 3,
+      });
+    }
+    return uploadId;
+  });
+  return { asCreator, uploadId };
+}
 
 /** Reads bounded workflow fixtures so tests can assert that opportunity transitions preserve them. */
 export async function readOpportunityHistory(t: TestConvex, opportunityId: Id<"opportunities">) {
@@ -79,9 +196,15 @@ export function workosIdentity(claims: {
   return claims as Partial<UserIdentity>;
 }
 
-/** Asserts a call fails with a specific API error code. */
-export async function expectApiError(call: () => Promise<unknown>, code: ApiErrorCode) {
-  await expect(call()).rejects.toThrow(new RegExp(`"code":"${code}"`));
+/** Asserts a call fails with the expected code and optional reason, executing it once. */
+export async function expectApiError(
+  call: () => Promise<unknown>,
+  code: ApiErrorCode,
+  reason?: string,
+) {
+  await expect(call()).rejects.toMatchObject({
+    data: { code, ...(reason === undefined ? {} : { reason }) },
+  });
 }
 
 export type SeedOptions = {
@@ -146,6 +269,16 @@ export async function seedOperator(t: TestConvex, subject: string) {
   return asOperator;
 }
 
+/** Seeds an operator and returns their user document ID. */
+export async function seedOperatorId(t: TestConvex, subject: string): Promise<Id<"users">> {
+  await seedOperator(t, subject);
+  return await t.run(async (ctx) => {
+    const user = await getUserByWorkosId(ctx, subject);
+    if (user === null) throw new Error("expected seeded operator");
+    return user._id;
+  });
+}
+
 /**
  * Seeds a member of `org_acme` and returns a client whose token claims
  * `org_other`, an org they do not belong to.
@@ -166,6 +299,23 @@ export type SeedCampaignOptions = {
   status?: Doc<"campaigns">["status"];
 };
 
+type CampaignArgs = FunctionArgs<typeof api.campaigns.create>;
+
+/** Builds client-editable campaign fields; raw fixtures add owner/state overrides separately. */
+export function campaignArgs(overrides: Partial<CampaignArgs> = {}): CampaignArgs {
+  return {
+    title: "Spring launch",
+    objective: "Introduce the new skincare range",
+    product: "Daily moisturizer",
+    audience: "Skincare enthusiasts",
+    description: "Campaign supporting the spring launch.",
+    status: "open",
+    budgetCents: 250_000,
+    startsAt: Date.now(),
+    ...overrides,
+  };
+}
+
 /** Seeds a company caller and its campaign with server-derived ownership. */
 export async function seedCampaign(t: TestConvex, options: SeedCampaignOptions) {
   const asCompany = await seedUser(t, {
@@ -177,14 +327,7 @@ export async function seedCampaign(t: TestConvex, options: SeedCampaignOptions) 
     const campaignId = await createCampaign(ctx, {
       companyId: membership.companyId,
       createdBy: membership._id,
-      title: "Spring launch",
-      objective: "Introduce the new skincare range",
-      product: "Daily moisturizer",
-      audience: "Skincare enthusiasts",
-      description: "Campaign supporting the spring launch.",
-      status: "open",
-      budgetCents: 250_000,
-      startsAt: Date.now(),
+      ...campaignArgs(),
     });
     if (options.status !== undefined) {
       await ctx.db.patch("campaigns", campaignId, { status: options.status });
@@ -295,10 +438,24 @@ export async function seedMembership(t: TestConvex, subject: string, orgId = `or
 export type AssignmentFixture = {
   assignmentId: Id<"assignments">;
   creatorId: Id<"creators">;
+  creatorUserId: Id<"users">;
   membership: Doc<"companyUsers">;
   asCreator: ReturnType<TestConvex["withIdentity"]>;
   asCompany: ReturnType<TestConvex["withIdentity"]>;
 };
+
+export const submissionDraftFields = {
+  draftUrl: "https://drive.example.com/drafts/driftwood-first-deploy",
+  draftDescription: "60-second walkthrough: install, `driftwood init`, first deploy at 0:45.",
+} satisfies Omit<SubmissionDraft, "assignmentId">;
+
+/** Builds a creator-supplied draft while allowing each test to override its scenario. */
+export function submissionArgs(
+  assignmentId: Id<"assignments">,
+  overrides: Partial<SubmissionDraft> = {},
+): SubmissionDraft {
+  return { assignmentId, ...submissionDraftFields, ...overrides };
+}
 
 // Subjects the assignment fixture seeds. Every test gets a fresh database and
 // seeds at most one assignment, so fixed names never collide.
@@ -325,11 +482,17 @@ export async function seedAssignmentFixture(
     status: assignment.status ?? "active",
   });
   const usesAiReview = assignment.usesAiReview ?? false;
-  await t.run(async (ctx) => await ctx.db.patch("assignments", assignmentId, { usesAiReview }));
+  const creatorUserId = await t.run(async (ctx) => {
+    await ctx.db.patch("assignments", assignmentId, { usesAiReview });
+    const user = await getUserByWorkosId(ctx, FIXTURE_CREATOR);
+    if (user === null) throw new Error("expected seeded creator");
+    return user._id;
+  });
 
   return {
     assignmentId,
     creatorId,
+    creatorUserId,
     membership,
     asCreator: t.withIdentity(workosIdentity({ subject: FIXTURE_CREATOR })),
     asCompany,
@@ -382,25 +545,65 @@ export async function seedOneSubmission(
   return { fixture, submissionId };
 }
 
+type OpenDispute = Extract<Doc<"disputes">, { status: "open" }>;
+type DisputeResolutionFields = Omit<
+  Extract<Doc<"disputes">, { status: "resolved" }>,
+  keyof OpenDispute
+>;
+
+/**
+ * Inserts a dispute on the fixture's assignment, bypassing the create rules.
+ * Defaults to an open dispute raised by the fixture's creator; pass
+ * `resolution` to seed it already resolved.
+ */
+export async function seedDispute(
+  t: TestConvex,
+  fixture: AssignmentFixture,
+  fields: Partial<Omit<WithoutSystemFields<OpenDispute>, "status">> = {},
+  resolution?: DisputeResolutionFields,
+): Promise<Id<"disputes">> {
+  return await t.run(async (ctx) => {
+    const assignment = await ctx.db.get("assignments", fixture.assignmentId);
+    if (assignment === null) throw new Error("expected seeded assignment");
+    const open = {
+      assignmentId: assignment._id,
+      companyId: assignment.companyId,
+      creatorId: assignment.creatorId,
+      campaignId: assignment.campaignId,
+      openedBy: fixture.creatorUserId,
+      openedByRole: "creator" as const,
+      reason: "unfairReview" as const,
+      description: "The brief allows showing the deploy log, which the review asked me to cut.",
+      ...fields,
+    };
+    return await ctx.db.insert(
+      "disputes",
+      resolution === undefined
+        ? { ...open, status: "open" }
+        : { ...open, ...resolution, status: "resolved" },
+    );
+  });
+}
+
 /** Seeds a submission an operator overrode after a dispute, with every reviewer-identity field set. */
 export async function seedOverriddenSubmission(t: TestConvex) {
   const fixture = await seedAssignmentFixture(t);
-  await seedOperator(t, FIXTURE_OPERATOR);
+  const operatorId = await seedOperatorId(t, FIXTURE_OPERATOR);
+  const disputeId = await seedDispute(
+    t,
+    fixture,
+    {},
+    {
+      resolvedBy: operatorId,
+      resolvedByRole: "operator",
+      resolvedAt: Date.now(),
+      outcome: "approved",
+      note: "The brief allows the deploy log; approved as submitted.",
+    },
+  );
 
   const submissionId = await t.run(async (ctx) => {
-    const operator = await getUserByWorkosId(ctx, FIXTURE_OPERATOR);
-    const creator = await ctx.db.get("creators", fixture.creatorId);
-    if (operator === null || creator === null) throw new Error("expected seeded users");
     const reviewedAt = Date.now();
-    const disputeId = await ctx.db.insert("disputes", {
-      assignmentId: fixture.assignmentId,
-      openedBy: creator.userId,
-      reason: "Review contradicts the brief",
-      description: "The brief allows showing the deploy log, which the review asked me to cut.",
-      isResolved: true,
-      resolvedBy: operator._id,
-      resolution: "The brief allows the deploy log; approved as submitted.",
-    });
     return await ctx.db.insert("submissions", {
       assignmentId: fixture.assignmentId,
       draftUrl: "https://drive.example.com/drafts/driftwood-cli-screencast",
@@ -408,7 +611,7 @@ export async function seedOverriddenSubmission(t: TestConvex) {
       usesAiReview: false,
       status: "approved",
       reviewerType: "operator",
-      reviewedByOperator: operator._id,
+      reviewedByOperator: operatorId,
       reviewedAt,
       overriddenReview: {
         status: "changesRequested",
@@ -439,12 +642,58 @@ export function withoutReviewerIdentity(view: object): object {
   return copy;
 }
 
+/** A notification as the recipient sees it, without IDs or timestamps. */
+export type ReceivedNotification = Pick<Doc<"notifications">, "type" | "title" | "body" | "target">;
+
+async function notificationsForUser(t: TestConvex, userId: Id<"users">) {
+  return await t.run(async (ctx) => {
+    const rows = await ctx.db
+      .query("notifications")
+      .withIndex("by_userId", (q) => q.eq("userId", userId))
+      .take(20);
+    return rows.map(({ type, title, body, target }): ReceivedNotification => ({
+      type,
+      title,
+      body,
+      target,
+    }));
+  });
+}
+
+/** Reads the notifications sent to a creator, oldest first. */
+export async function creatorNotifications(t: TestConvex, creatorId: Id<"creators">) {
+  const creator = await t.run(async (ctx) => await ctx.db.get("creators", creatorId));
+  if (creator === null) throw new Error("expected seeded creator");
+  return await notificationsForUser(t, creator.userId);
+}
+
+/** Reads the notifications sent to a company member, oldest first. */
+export async function memberNotifications(t: TestConvex, membership: Doc<"companyUsers">) {
+  return await notificationsForUser(t, membership.userId);
+}
+
 /** Reads one submission as stored, or `null` if it doesn't exist. */
 export async function storedSubmission(t: TestConvex, submissionId: Id<"submissions">) {
   return await t.run(async (ctx) => await ctx.db.get("submissions", submissionId));
 }
 
+/** Builds an independent full-view expectation from stored data, not the production projection. */
+export async function expectedSubmissionView(
+  t: TestConvex,
+  submissionId: Id<"submissions">,
+  closed = false,
+) {
+  const stored = await storedSubmission(t, submissionId);
+  if (stored === null) throw new Error("expected a stored submission");
+  return { ...stored, closedWithoutReview: closed };
+}
+
 /** Reads every submission in the test's database, oldest first. */
 export async function storedSubmissions(t: TestConvex) {
   return await t.run(async (ctx) => await ctx.db.query("submissions").collect());
+}
+
+/** Reads every dispute in the test's database, oldest first. */
+export async function storedDisputes(t: TestConvex) {
+  return await t.run(async (ctx) => await ctx.db.query("disputes").collect());
 }

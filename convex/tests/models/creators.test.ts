@@ -10,7 +10,13 @@ import {
 } from "../../models/creators";
 import { deactivateUser, getUserByWorkosId } from "../../models/users";
 import schema from "../../schema";
-import { expectApiError, seedOperator, seedUser } from "../helpers";
+import {
+  expectApiError,
+  seedOperator,
+  seedProfilePictureUpload,
+  seedUser,
+  seedXAccount,
+} from "../helpers";
 
 const modules = import.meta.glob("../../**/*.ts");
 
@@ -72,23 +78,21 @@ describe("requireCreatorProfile", () => {
 describe("listCreators", () => {
   test("returns full creator profiles", async () => {
     const t = convexTest(schema, modules);
+    const { uploadId } = await seedProfilePictureUpload(t, "model_creator_list", "complete");
     await seedUser(t, {
       subject: "model_creator_list",
       email: "creator@example.com",
       firstName: "Creator",
       lastName: "Name",
     });
+    await seedXAccount(t, "model_creator_list");
     const creatorId = await t.run(async (ctx) => {
       const user = await getUserByWorkosId(ctx, "model_creator_list");
       if (user === null) throw new Error("expected seeded user");
       const creator = await getCreatorByUserId(ctx, user._id);
       if (creator === null) throw new Error("expected seeded creator");
-      await ctx.db.patch("users", user._id, {
-        profilePicture: "https://example.com/profile.png",
-      });
       await updateCreatorProfile(ctx, user, {
         username: "creator_name",
-        xId: "creator_x",
         githubLink: "https://github.com/creator",
         phoneNumber: "+15555550123",
       });
@@ -106,8 +110,8 @@ describe("listCreators", () => {
         firstName: "Creator",
         lastName: "Name",
         email: "creator@example.com",
-        profilePicture: "https://example.com/profile.png",
-        xId: "creator_x",
+        profilePictureMediaId: uploadId,
+        xId: "123456789",
         githubLink: "https://github.com/creator",
         phoneNumber: "+15555550123",
       },
@@ -202,7 +206,7 @@ describe("updateCreatorProfile", () => {
         const claimant = await getUserByWorkosId(ctx, "username_claimant");
         if (owner === null || claimant === null) throw new Error("expected seeded users");
         await updateCreatorProfile(ctx, owner, { username: "ada" });
-        await updateCreatorProfile(ctx, claimant, { username: "grace", xId: "original_x" });
+        await updateCreatorProfile(ctx, claimant, { username: "grace", phoneNumber: "original" });
         if (!isActive) await deactivateUser(ctx, "username_owner");
         return {
           owner,
@@ -215,7 +219,7 @@ describe("updateCreatorProfile", () => {
       await expectApiError(
         () =>
           t.run(async (ctx) =>
-            updateCreatorProfile(ctx, claimant, { username: "  ADA  ", xId: "changed_x" }),
+            updateCreatorProfile(ctx, claimant, { username: "  ADA  ", phoneNumber: "changed" }),
           ),
         "conflict",
       );
@@ -262,7 +266,10 @@ describe("updateCreatorProfile", () => {
 
       await expectApiError(
         () =>
-          t.run(async (ctx) => await updateCreatorProfile(ctx, user, { username, xId: "new_x" })),
+          t.run(
+            async (ctx) =>
+              await updateCreatorProfile(ctx, user, { username, phoneNumber: "changed" }),
+          ),
         "invalid_state",
       );
 
@@ -278,16 +285,16 @@ describe("updateCreatorProfile", () => {
       const user = await getUserByWorkosId(ctx, "model_creator_update");
       if (user === null) throw new Error("expected seeded user");
       await updateCreatorProfile(ctx, user, {
-        xId: "old_x",
+        username: "original",
         githubLink: "https://github.com/original",
         phoneNumber: "+15555550123",
       });
 
-      return await updateCreatorProfile(ctx, user, { xId: "new_x" });
+      return await updateCreatorProfile(ctx, user, { username: "updated" });
     });
 
     expect(profile).toMatchObject({
-      xId: "new_x",
+      username: "updated",
       githubLink: "https://github.com/original",
       phoneNumber: "+15555550123",
     });
@@ -301,21 +308,21 @@ describe("updateCreatorProfile", () => {
       const user = await getUserByWorkosId(ctx, "model_creator_update_clear");
       if (user === null) throw new Error("expected seeded user");
       await updateCreatorProfile(ctx, user, {
-        xId: "old_x",
+        username: "unchanged",
         githubLink: "https://github.com/original",
         phoneNumber: "+15555550123",
       });
 
       return await updateCreatorProfile(ctx, user, {
-        xId: null,
+        phoneNumber: null,
         githubLink: "https://github.com/updated",
       });
     });
 
-    expect(profile).not.toHaveProperty("xId");
+    expect(profile).not.toHaveProperty("phoneNumber");
     expect(profile).toMatchObject({
+      username: "unchanged",
       githubLink: "https://github.com/updated",
-      phoneNumber: "+15555550123",
     });
   });
 
@@ -351,7 +358,7 @@ describe("updateCreatorProfile", () => {
         t.run(async (ctx) => {
           const user = await getUserByWorkosId(ctx, "model_creator_update_missing");
           if (user === null) throw new Error("expected seeded user");
-          return await updateCreatorProfile(ctx, user, { xId: "missing" });
+          return await updateCreatorProfile(ctx, user, { username: "missing" });
         }),
       "not_found",
     );
@@ -361,24 +368,22 @@ describe("updateCreatorProfile", () => {
 describe("requireCreatorProfileById", () => {
   test("returns all user-facing fields for an active creator", async () => {
     const t = convexTest(schema, modules);
+    const { uploadId } = await seedProfilePictureUpload(t, "model_creator_get", "complete");
     await seedUser(t, {
       subject: "model_creator_get",
       email: "creator@example.com",
       firstName: "Creator",
       lastName: "Name",
     });
+    await seedXAccount(t, "model_creator_get");
 
     const result = await t.run(async (ctx) => {
       const user = await getUserByWorkosId(ctx, "model_creator_get");
       if (user === null) throw new Error("expected seeded user");
       const creator = await getCreatorByUserId(ctx, user._id);
       if (creator === null) throw new Error("expected seeded creator");
-      await ctx.db.patch("users", user._id, {
-        profilePicture: "https://example.com/profile.png",
-      });
       await updateCreatorProfile(ctx, user, {
         username: "creator_name",
-        xId: "creator_x",
         githubLink: "https://github.com/creator",
         phoneNumber: "+15555550123",
       });
@@ -394,8 +399,8 @@ describe("requireCreatorProfileById", () => {
       firstName: "Creator",
       lastName: "Name",
       email: "creator@example.com",
-      profilePicture: "https://example.com/profile.png",
-      xId: "creator_x",
+      profilePictureMediaId: uploadId,
+      xId: "123456789",
       githubLink: "https://github.com/creator",
       phoneNumber: "+15555550123",
     });

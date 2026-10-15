@@ -63,7 +63,8 @@ bunx convex run --deployment dev migrations/runner:runAll
 Alternatively, use `just bd` to deploy and watch the backend, and run the migration
 command in a second terminal after deployment succeeds.
 
-`runAll` runs the user-name backfill first, then the creator-username backfill.
+`runAll` runs the user-name backfill first, then the creator-username backfill,
+then removes legacy user profile-picture URLs (see the compatibility rollout below).
 It skips completed migrations and resumes interrupted ones.
 
 Available migrations:
@@ -85,7 +86,7 @@ Available migrations:
   itself a unique constraint. This does not change signup behavior or make
   username required.
 
-Both preserve document IDs and relationships. To select one migration, use `run`
+These preserve document IDs and relationships. To select one migration, use `run`
 with its full function path:
 
 ```bash
@@ -147,6 +148,27 @@ pass these checks; tightening the schema belongs in the follow-up PR.
   means the compatibility schema is not being deployed. Check the branch and
   schema before rerunning deployment; backfills cannot run until their compatible
   code is deployed.
+
+## Remove legacy user profile-picture URLs
+
+The strict users schema no longer accepts `profilePicture`. If a deployment has
+legacy URLs, first temporarily retain `profilePicture: v.optional(v.string())`
+in `convex/schemas/users.schema.ts` while deploying this backend. The updated
+WorkOS handlers no longer write URLs, so they cannot reintroduce them during cleanup.
+Run only this migration on the selected development deployment:
+
+```bash
+bunx convex run --deployment dev migrations/runner:run \
+  '{"fn":"migrations/2026_10_07_remove_user_profile_pictures:removeUserProfilePictures"}'
+bunx convex run --deployment dev --component migrations lib:getStatus \
+  '{"names":["migrations/2026_10_07_remove_user_profile_pictures:removeUserProfilePictures"]}'
+```
+
+Wait for `isDone: true` and `state: "success"`, verify user IDs and counts are
+unchanged and URLs are gone, then restore and deploy the checked-in strict schema.
+The cleanup preserves `profilePictureMediaId`, all other user fields, and company
+logos. Repeat for each populated deployment. Production cleanup requires an
+explicitly approved production rollout, not these development commands.
 
 ## Add a migration
 

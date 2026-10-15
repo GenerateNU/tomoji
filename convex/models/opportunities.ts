@@ -3,8 +3,9 @@ import { v, type Infer } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { apiError } from "../lib/errors";
-import { requireNonBlank } from "../lib/validation";
+import { requireNonBlank, isHalfHourTimestamp } from "../lib/validation";
 import { requireMembership } from "./companyUsers";
+import { notifyCompanyUser, notifyCreator } from "./notifications";
 import schema from "../schema";
 
 export const opportunityCreate = schema
@@ -98,7 +99,7 @@ export type OpportunityUpdate = Infer<typeof opportunityUpdate>;
 
 /** Requires an exact UTC :00 or :30 deadline with zero seconds and milliseconds. */
 function validateOpportunityDeadline(deadline: number): void {
-  if (!Number.isSafeInteger(deadline) || deadline % (30 * 60 * 1000) !== 0) {
+  if (!isHalfHourTimestamp(deadline)) {
     throw apiError("invalid_state", { reason: "invalid_deadline" });
   }
 }
@@ -110,7 +111,38 @@ async function applyOpportunityClose(
 ): Promise<Doc<"opportunities">> {
   if (opportunity.status === "closed") return opportunity;
   await ctx.db.patch("opportunities", opportunity._id, { status: "closed" });
+  await notifyWaitingApplicants(ctx, opportunity);
   return { ...opportunity, status: "closed" };
+}
+
+/**
+ * Tells each creator with a pending or offered application that the
+ * opportunity closed, since neither can go further. An opportunity never has
+ * more than `maxApplications` applications, so this is bounded.
+ */
+async function notifyWaitingApplicants(
+  ctx: MutationCtx,
+  opportunity: Doc<"opportunities">,
+): Promise<void> {
+  for (const status of ["pending", "offered"] as const) {
+    const waiting = await ctx.db
+      .query("applications")
+      .withIndex("by_opportunityId_and_status", (q) =>
+        q.eq("opportunityId", opportunity._id).eq("status", status),
+      )
+      .take(opportunity.maxApplications);
+    for (const application of waiting) {
+      await notifyCreator(ctx, application.creatorId, {
+        type: "applicationOpportunityClosed",
+        title: `${opportunity.title} has closed`,
+        target: {
+          kind: "application",
+          applicationId: application._id,
+          opportunityId: opportunity._id,
+        },
+      });
+    }
+  }
 }
 
 /** Permanently closes an owned published opportunity, preserving existing commitments. */
@@ -136,7 +168,15 @@ export async function closeExpiredOpportunities(ctx: MutationCtx): Promise<boole
       .query("opportunities")
       .withIndex("by_status_and_deadline", (q) => q.eq("status", status).lte("deadline", now))
       .take(batchSize);
-    for (const opportunity of opportunities) await applyOpportunityClose(ctx, opportunity);
+    for (const opportunity of opportunities) {
+      await applyOpportunityClose(ctx, opportunity);
+      // A manual close is the company's own action; only the deadline close is news to them.
+      await notifyCompanyUser(ctx, opportunity.createdBy, {
+        type: "opportunityClosed",
+        title: `${opportunity.title} closed at its deadline`,
+        target: { kind: "opportunity", opportunityId: opportunity._id },
+      });
+    }
     hasMore ||= opportunities.length === batchSize;
   }
   return hasMore;
@@ -218,20 +258,7 @@ export async function publishOpportunity(
   membership: Doc<"companyUsers">,
   opportunityId: Id<"opportunities">,
 ): Promise<Doc<"opportunities">> {
-  const opportunity = await ctx.db.get("opportunities", opportunityId);
-  if (opportunity === null || opportunity.companyId !== membership.companyId) {
-    throw apiError("not_found", { resource: "opportunity" });
-  }
-  const campaign = await ctx.db.get("campaigns", opportunity.campaignId);
-  const company = await ctx.db.get("companies", opportunity.companyId);
-  if (
-    campaign === null ||
-    campaign.companyId !== opportunity.companyId ||
-    company === null ||
-    !company.isActive
-  ) {
-    throw apiError("not_found", { resource: "opportunity" });
-  }
+  const { opportunity, campaign } = await requireOwnedOpportunity(ctx, membership, opportunityId);
   if (opportunity.status !== "draft") {
     throw apiError("invalid_state", { reason: "opportunity_not_draft" });
   }
@@ -253,20 +280,7 @@ export async function removeOpportunity(
   membership: Doc<"companyUsers">,
   opportunityId: Id<"opportunities">,
 ): Promise<void> {
-  const opportunity = await ctx.db.get("opportunities", opportunityId);
-  if (opportunity === null || opportunity.companyId !== membership.companyId) {
-    throw apiError("not_found", { resource: "opportunity" });
-  }
-  const campaign = await ctx.db.get("campaigns", opportunity.campaignId);
-  const company = await ctx.db.get("companies", opportunity.companyId);
-  if (
-    campaign === null ||
-    campaign.companyId !== opportunity.companyId ||
-    company === null ||
-    !company.isActive
-  ) {
-    throw apiError("not_found", { resource: "opportunity" });
-  }
+  const { opportunity } = await requireOwnedOpportunity(ctx, membership, opportunityId);
   if (opportunity.status !== "draft" || opportunity.numFilledSlots !== 0) {
     throw apiError("invalid_state", { reason: "opportunity_not_removable" });
   }
@@ -292,20 +306,7 @@ export async function updateOpportunity(
   opportunityId: Id<"opportunities">,
   updates: OpportunityUpdate,
 ): Promise<Doc<"opportunities">> {
-  const opportunity = await ctx.db.get("opportunities", opportunityId);
-  if (opportunity === null || opportunity.companyId !== membership.companyId) {
-    throw apiError("not_found", { resource: "opportunity" });
-  }
-  const campaign = await ctx.db.get("campaigns", opportunity.campaignId);
-  const company = await ctx.db.get("companies", opportunity.companyId);
-  if (
-    campaign === null ||
-    campaign.companyId !== opportunity.companyId ||
-    company === null ||
-    !company.isActive
-  ) {
-    throw apiError("not_found", { resource: "opportunity" });
-  }
+  const { opportunity, campaign } = await requireOwnedOpportunity(ctx, membership, opportunityId);
   if (opportunity.status === "closed" || campaign.status === "closed") {
     throw apiError("invalid_state", { reason: "opportunity_not_editable" });
   }

@@ -1,6 +1,7 @@
 /// <reference types="vite/client" />
 import { convexTest } from "convex-test";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import type { Doc, Id } from "../../_generated/dataModel";
 import {
   closeOpportunity,
   closeExpiredOpportunities,
@@ -17,7 +18,9 @@ import {
 import { authedContext } from "../../lib/functions";
 import schema from "../../schema";
 import {
+  creatorNotifications,
   expectApiError,
+  memberNotifications,
   opportunityArgs,
   readOpportunityHistory,
   seedCampaign,
@@ -25,9 +28,61 @@ import {
   seedOpportunity,
   seedOpportunityHistory,
   seedUser,
+  type TestConvex,
 } from "../helpers";
 
 const modules = import.meta.glob("../../**/*.ts");
+
+test("company lifecycle writes reject a mismatched parent owner without changing the opportunity", async () => {
+  const t = convexTest(schema, modules);
+  const owner = await seedOpportunity(
+    t,
+    { subject: "guard_owner", orgId: "org_guard" },
+    { status: "draft" },
+  );
+  const other = await seedCampaign(t, { subject: "guard_other", orgId: "org_guard_other" });
+  await t.run((ctx) =>
+    ctx.db.patch("campaigns", owner.campaignId, { companyId: other.membership.companyId }),
+  );
+  const before = await t.run((ctx) => ctx.db.get("opportunities", owner.opportunityId));
+  const error = { data: { code: "not_found", resource: "opportunity" } };
+  await expect(
+    t.run((ctx) => publishOpportunity(ctx, owner.membership, owner.opportunityId)),
+  ).rejects.toMatchObject(error);
+  await expect(
+    t.run((ctx) => removeOpportunity(ctx, owner.membership, owner.opportunityId)),
+  ).rejects.toMatchObject(error);
+  await expect(
+    t.run((ctx) =>
+      updateOpportunity(ctx, owner.membership, owner.opportunityId, { title: "Changed" }),
+    ),
+  ).rejects.toMatchObject(error);
+  expect(await t.run((ctx) => ctx.db.get("opportunities", owner.opportunityId))).toEqual(before);
+});
+
+test("company lifecycle writes reject a missing company without changing the opportunity", async () => {
+  const t = convexTest(schema, modules);
+  const owner = await seedOpportunity(
+    t,
+    { subject: "guard_missing", orgId: "org_missing_guard" },
+    { status: "draft" },
+  );
+  await t.run((ctx) => ctx.db.delete("companies", owner.membership.companyId));
+  const before = await t.run((ctx) => ctx.db.get("opportunities", owner.opportunityId));
+  const error = { data: { code: "not_found", resource: "opportunity" } };
+  await expect(
+    t.run((ctx) => publishOpportunity(ctx, owner.membership, owner.opportunityId)),
+  ).rejects.toMatchObject(error);
+  await expect(
+    t.run((ctx) => removeOpportunity(ctx, owner.membership, owner.opportunityId)),
+  ).rejects.toMatchObject(error);
+  await expect(
+    t.run((ctx) =>
+      updateOpportunity(ctx, owner.membership, owner.opportunityId, { title: "Changed" }),
+    ),
+  ).rejects.toMatchObject(error);
+  expect(await t.run((ctx) => ctx.db.get("opportunities", owner.opportunityId))).toEqual(before);
+});
 
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ["Date"] });
@@ -2561,5 +2616,78 @@ describe("requireOpportunity", () => {
     const stored = await t.run(async (ctx) => await ctx.db.get("opportunities", opportunityId));
 
     expect(result).toEqual(stored);
+  });
+});
+
+describe("notifications", () => {
+  const title = "Moisturizer launch video";
+
+  /** Seeds pending, offered, and accepted applications and returns each creator by status. */
+  async function seedApplicants(t: TestConvex, opportunityId: Id<"opportunities">) {
+    const { applications } = await seedOpportunityHistory(t, opportunityId);
+    const byStatus = (status: Doc<"applications">["status"]) => {
+      const application = applications.find((a) => a.status === status);
+      if (application === undefined) throw new Error(`expected a ${status} application`);
+      return application;
+    };
+    return {
+      pending: byStatus("pending"),
+      offered: byStatus("offered"),
+      accepted: byStatus("accepted"),
+    };
+  }
+
+  const closedNotice = (application: Doc<"applications">) => ({
+    type: "applicationOpportunityClosed",
+    title: `${title} has closed`,
+    target: {
+      kind: "application",
+      applicationId: application._id,
+      opportunityId: application.opportunityId,
+    },
+  });
+
+  test("closing notifies creators with pending or offered applications, not the closer", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(t, { subject: "close_owner" });
+    const { pending, offered, accepted } = await seedApplicants(t, owner.opportunityId);
+
+    await t.run(async (ctx) => await closeOpportunity(ctx, owner.membership, owner.opportunityId));
+
+    expect(await creatorNotifications(t, pending.creatorId)).toEqual([closedNotice(pending)]);
+    expect(await creatorNotifications(t, offered.creatorId)).toEqual([closedNotice(offered)]);
+    expect(await creatorNotifications(t, accepted.creatorId)).toEqual([]);
+    expect(await memberNotifications(t, owner.membership)).toEqual([]);
+  });
+
+  test("closing an already closed opportunity sends nothing new", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(t, { subject: "close_owner" });
+    const { pending } = await seedApplicants(t, owner.opportunityId);
+    const close = () =>
+      t.run(async (ctx) => await closeOpportunity(ctx, owner.membership, owner.opportunityId));
+
+    await close();
+    await close();
+
+    expect(await creatorNotifications(t, pending.creatorId)).toEqual([closedNotice(pending)]);
+  });
+
+  test("closing at the deadline also notifies the member who created the opportunity", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(t, { subject: "deadline_owner" });
+    const { pending } = await seedApplicants(t, owner.opportunityId);
+    vi.advanceTimersByTime(86_400_000);
+
+    await t.run(async (ctx) => await closeExpiredOpportunities(ctx));
+
+    expect(await memberNotifications(t, owner.membership)).toEqual([
+      {
+        type: "opportunityClosed",
+        title: `${title} closed at its deadline`,
+        target: { kind: "opportunity", opportunityId: owner.opportunityId },
+      },
+    ]);
+    expect(await creatorNotifications(t, pending.creatorId)).toEqual([closedNotice(pending)]);
   });
 });

@@ -27,7 +27,7 @@ describe("companies.get", () => {
   test("lets an operator read a company without its workos id", async () => {
     const t = convexTest(schema, modules);
     const asOperator = await seedOperator(t, "g1");
-    await seedUser(t, { subject: "g2", org: { id: "org_acme", name: "Acme" } });
+    await seedUser(t, { subject: "g2", org: { id: "org_acme", name: "Acme", role: "admin" } });
     const { _id: companyId } = await companyFor(t, "org_acme");
 
     const company = await asOperator.query(api.companies.get, { companyId });
@@ -54,7 +54,7 @@ describe("companies.get", () => {
 
   test("rejects a creator", async () => {
     const t = convexTest(schema, modules);
-    await seedUser(t, { subject: "g4", org: { id: "org_acme" } });
+    await seedUser(t, { subject: "g4", org: { id: "org_acme", role: "admin" } });
     const asCreator = await seedUser(t, { subject: "g5" });
     const { _id: companyId } = await companyFor(t, "org_acme");
 
@@ -63,7 +63,7 @@ describe("companies.get", () => {
 
   test("rejects a company user, even for their own company", async () => {
     const t = convexTest(schema, modules);
-    const asMember = await seedUser(t, { subject: "g6", org: { id: "org_acme" } });
+    const asMember = await seedUser(t, { subject: "g6", org: { id: "org_acme", role: "admin" } });
     const { _id: companyId } = await companyFor(t, "org_acme");
 
     await expectApiError(() => asMember.query(api.companies.get, { companyId }), "forbidden");
@@ -71,7 +71,7 @@ describe("companies.get", () => {
 
   test("rejects a signed-out caller", async () => {
     const t = convexTest(schema, modules);
-    await seedUser(t, { subject: "g7", org: { id: "org_acme" } });
+    await seedUser(t, { subject: "g7", org: { id: "org_acme", role: "admin" } });
     const { _id: companyId } = await companyFor(t, "org_acme");
 
     await expectApiError(() => t.query(api.companies.get, { companyId }), "not_authenticated");
@@ -81,7 +81,7 @@ describe("companies.get", () => {
 describe("companies.update", () => {
   test("updates the caller's company", async () => {
     const t = convexTest(schema, modules);
-    const asMember = await seedUser(t, { subject: "u1", org: { id: "org_acme" } });
+    const asMember = await seedUser(t, { subject: "u1", org: { id: "org_acme", role: "admin" } });
 
     const result = await asMember.mutation(api.companies.update, {
       name: "Acme Rebrand",
@@ -97,11 +97,14 @@ describe("companies.update", () => {
 
   test("only updates the new company after the previous membership is removed", async () => {
     const t = convexTest(schema, modules);
-    await seedUser(t, { subject: "u2", org: { id: "org_a", name: "A" } });
+    await seedUser(t, { subject: "u2", org: { id: "org_a", name: "A", role: "admin" } });
     await t.run(async (ctx) =>
       removeMembership(ctx, { workosUserId: "u2", organizationId: "org_a" }),
     );
-    const asB = await seedUser(t, { subject: "u2", org: { id: "org_b", name: "B" } });
+    const asB = await seedUser(t, {
+      subject: "u2",
+      org: { id: "org_b", name: "B", role: "admin" },
+    });
 
     await asB.mutation(api.companies.update, { name: "B2" });
 
@@ -179,7 +182,7 @@ describe("companies.create", () => {
 
   test("rejects a company user", async () => {
     const t = convexTest(schema, modules);
-    const asMember = await seedUser(t, { subject: "c3", org: { id: "org_acme" } });
+    const asMember = await seedUser(t, { subject: "c3", org: { id: "org_acme", role: "admin" } });
 
     await expectApiError(
       () => asMember.mutation(api.companies.create, { workosId: "org_x", name: "X" }),
@@ -201,8 +204,8 @@ describe("companies.list", () => {
   test("lets an operator list every company without workos ids", async () => {
     const t = convexTest(schema, modules);
     const asOperator = await seedOperator(t, "l1");
-    await seedUser(t, { subject: "l2", org: { id: "org_a", name: "A" } });
-    await seedUser(t, { subject: "l3", org: { id: "org_b", name: "B" } });
+    await seedUser(t, { subject: "l2", org: { id: "org_a", name: "A", role: "admin" } });
+    await seedUser(t, { subject: "l3", org: { id: "org_b", name: "B", role: "admin" } });
 
     const result = await asOperator.query(api.companies.list, firstPage);
 
@@ -214,8 +217,11 @@ describe("companies.list", () => {
   test("passes the isActive filter through to the model", async () => {
     const t = convexTest(schema, modules);
     const asOperator = await seedOperator(t, "l6");
-    await seedUser(t, { subject: "l7", org: { id: "org_active", name: "Active" } });
-    await seedUser(t, { subject: "l8", org: { id: "org_inactive", name: "Inactive" } });
+    await seedUser(t, { subject: "l7", org: { id: "org_active", name: "Active", role: "admin" } });
+    await seedUser(t, {
+      subject: "l8",
+      org: { id: "org_inactive", name: "Inactive", role: "admin" },
+    });
     const { _id: inactiveId } = await companyFor(t, "org_inactive");
     await t.run(async (ctx) => await ctx.db.patch(inactiveId, { isActive: false }));
 
@@ -233,7 +239,7 @@ describe("companies.list", () => {
 
   test("rejects a company user", async () => {
     const t = convexTest(schema, modules);
-    const asMember = await seedUser(t, { subject: "l5", org: { id: "org_acme" } });
+    const asMember = await seedUser(t, { subject: "l5", org: { id: "org_acme", role: "admin" } });
 
     await expectApiError(() => asMember.query(api.companies.list, firstPage), "forbidden");
   });

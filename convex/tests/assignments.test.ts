@@ -101,7 +101,8 @@ const firstPage = { numItems: 10, cursor: null };
 
 /** Seeds an owned opportunity, a signed-in creator, and one assignment between them. */
 async function seedDeal(t: TestConvex) {
-  const owner = await seedOpportunity(t, { subject: "owner" });
+  // An admin, so the shared deal fixture can reach admin-only routes like cancel.
+  const owner = await seedOpportunity(t, { subject: "owner", role: "admin" });
   const asCreator = await seedUser(t, { subject: "creator" });
   const creatorId = await seedCreatorId(t, "creator");
   const assignmentId = await seedAssignment(t, {
@@ -157,44 +158,41 @@ describe("assignments.list", () => {
 });
 
 describe("assignments.exportCreatorsCsv", () => {
-  test.each(["member", "admin"] as const)(
-    "lets a company %s export assigned creators",
-    async (role) => {
-      const t = convexTest(schema, modules);
-      const owner = await seedOpportunity(t, { subject: "owner", role });
-      const creatorId = await seedCreatorId(t, "creator");
-      await seedUser(t, {
-        subject: "creator",
-        firstName: "Grace",
-        lastName: "Hopper",
-        email: "grace@example.com",
-      });
-      const assignmentId = await seedAssignment(t, {
-        opportunityId: owner.opportunityId,
-        creatorId,
-      });
+  test.each(["admin"] as const)("lets a company %s export assigned creators", async (role) => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(t, { subject: "owner", role });
+    const creatorId = await seedCreatorId(t, "creator");
+    await seedUser(t, {
+      subject: "creator",
+      firstName: "Grace",
+      lastName: "Hopper",
+      email: "grace@example.com",
+    });
+    const assignmentId = await seedAssignment(t, {
+      opportunityId: owner.opportunityId,
+      creatorId,
+    });
 
-      const result = await owner.asCompany.query(api.assignments.exportCreatorsCsv, {
-        opportunityId: owner.opportunityId,
-        paginationOpts: firstPage,
-      });
+    const result = await owner.asCompany.query(api.assignments.exportCreatorsCsv, {
+      opportunityId: owner.opportunityId,
+      paginationOpts: firstPage,
+    });
 
-      expect(result.csv).toBe(
-        "assignmentId,campaignId,opportunityId,status,name,email\r\n" +
-          `"${assignmentId}","${owner.campaignId}","${owner.opportunityId}","termsPending","Grace Hopper","grace@example.com"\r\n`,
-      );
-      expect(result.fileName).toBe(`opportunity-${owner.opportunityId}-creators.csv`);
-      expect(result.isDone).toBe(true);
-      expect(typeof result.continueCursor).toBe("string");
-      expect(result).not.toHaveProperty("page");
-    },
-  );
+    expect(result.csv).toBe(
+      "assignmentId,campaignId,opportunityId,status,name,email\r\n" +
+        `"${assignmentId}","${owner.campaignId}","${owner.opportunityId}","termsPending","Grace Hopper","grace@example.com"\r\n`,
+    );
+    expect(result.fileName).toBe(`opportunity-${owner.opportunityId}-creators.csv`);
+    expect(result.isDone).toBe(true);
+    expect(typeof result.continueCursor).toBe("string");
+    expect(result).not.toHaveProperty("page");
+  });
 
   test.each(["opportunityId", "campaignId"] as const)(
     "returns a header-only export for an owned empty %s",
     async (scope) => {
       const t = convexTest(schema, modules);
-      const owner = await seedOpportunity(t, { subject: "owner" });
+      const owner = await seedOpportunity(t, { subject: "owner", role: "admin" });
 
       const result = await owner.asCompany.query(api.assignments.exportCreatorsCsv, {
         [scope]: owner[scope],
@@ -305,8 +303,12 @@ describe("assignments.exportCreatorsCsv", () => {
     "conceals another company's %s with or without assignments",
     async (scope) => {
       const t = convexTest(schema, modules);
-      const owner = await seedOpportunity(t, { subject: "owner" });
-      const other = await seedOpportunity(t, { subject: "other", orgId: "org_other" });
+      const owner = await seedOpportunity(t, { subject: "owner", role: "admin" });
+      const other = await seedOpportunity(t, {
+        subject: "other",
+        orgId: "org_other",
+        role: "admin",
+      });
       const args = { [scope]: owner[scope], paginationOpts: firstPage };
 
       await expectApiError(
@@ -328,7 +330,7 @@ describe("assignments.exportCreatorsCsv", () => {
     "returns not_found for a missing %s",
     async (scope) => {
       const t = convexTest(schema, modules);
-      const owner = await seedOpportunity(t, { subject: "owner" });
+      const owner = await seedOpportunity(t, { subject: "owner", role: "admin" });
       await t.run(async (ctx) => {
         if (scope === "opportunityId") {
           await ctx.db.delete("opportunities", owner.opportunityId);
@@ -350,7 +352,7 @@ describe("assignments.exportCreatorsCsv", () => {
 
   test("requires exactly one opportunity or campaign", async () => {
     const t = convexTest(schema, modules);
-    const owner = await seedOpportunity(t, { subject: "owner" });
+    const owner = await seedOpportunity(t, { subject: "owner", role: "admin" });
 
     for (const scope of [
       {},
@@ -371,7 +373,7 @@ describe("assignments.exportCreatorsCsv", () => {
     "rejects an invalid export page size of %s",
     async (numItems) => {
       const t = convexTest(schema, modules);
-      const owner = await seedOpportunity(t, { subject: "owner" });
+      const owner = await seedOpportunity(t, { subject: "owner", role: "admin" });
 
       await expectApiError(
         () =>
@@ -386,7 +388,7 @@ describe("assignments.exportCreatorsCsv", () => {
 
   test("rejects an endCursor so export pages cannot bypass the page-size bound", async () => {
     const t = convexTest(schema, modules);
-    const owner = await seedOpportunity(t, { subject: "owner" });
+    const owner = await seedOpportunity(t, { subject: "owner", role: "admin" });
 
     await expectApiError(
       () =>
@@ -562,7 +564,7 @@ describe("assignments.get", () => {
     const t = convexTest(schema, modules);
     const { assignmentId } = await seedDeal(t);
     const asOtherCreator = await seedUser(t, { subject: "other_creator" });
-    const other = await seedOpportunity(t, { subject: "other", orgId: "org_other" });
+    const other = await seedOpportunity(t, { subject: "other", orgId: "org_other", role: "admin" });
 
     for (const caller of [asOtherCreator, other.asCompany]) {
       await expectApiError(() => caller.query(api.assignments.get, { assignmentId }), "not_found");
@@ -667,7 +669,7 @@ describe("assignments.declineTerms", () => {
 });
 
 describe("assignments.cancel", () => {
-  test("lets a company member cancel a termsPending assignment", async () => {
+  test("lets a company admin cancel a termsPending assignment", async () => {
     const t = convexTest(schema, modules);
     const { owner, assignmentId } = await seedDeal(t);
     await owner.asCompany.mutation(api.assignments.markProductAccessDelivered, {
@@ -695,7 +697,7 @@ describe("assignments.cancel", () => {
   test("conceals another company's assignment", async () => {
     const t = convexTest(schema, modules);
     const { assignmentId } = await seedDeal(t);
-    const other = await seedOpportunity(t, { subject: "other", orgId: "org_other" });
+    const other = await seedOpportunity(t, { subject: "other", orgId: "org_other", role: "admin" });
     await expectApiError(
       () => other.asCompany.mutation(api.assignments.cancel, { assignmentId }),
       "not_found",
@@ -815,7 +817,7 @@ describe("assignments.markProductAccessDelivered", () => {
   test("conceals a foreign assignment and leaves the entire batch unchanged", async () => {
     const t = convexTest(schema, modules);
     const { owner, creatorId, assignmentId } = await seedDeal(t);
-    const other = await seedOpportunity(t, { subject: "other", orgId: "org_other" });
+    const other = await seedOpportunity(t, { subject: "other", orgId: "org_other", role: "admin" });
     const foreignId = await seedAssignment(t, { opportunityId: other.opportunityId, creatorId });
     const assignmentIds = [assignmentId, foreignId];
     const before = await t.run(async (ctx) =>
@@ -855,7 +857,10 @@ describe("assignments.markProductAccessDelivered", () => {
         productAccessDeliveredBy: owner.membership._id,
       });
     }
-    const asTeammate = await seedUser(t, { subject: "retry-teammate", org: { id: "org_acme" } });
+    const asTeammate = await seedUser(t, {
+      subject: "retry-teammate",
+      org: { id: "org_acme", role: "admin" },
+    });
     vi.setSystemTime(Date.now() + 60_000);
 
     const retried = await asTeammate.mutation(api.assignments.markProductAccessDelivered, {

@@ -8,7 +8,7 @@ import tailwindcss from "@tailwindcss/postcss";
 // here is exposed by Next.js or changes the application's authentication.
 const outputDirectory = process.argv[2];
 const result = await build({
-  entrypoints: [resolve("e2e/fixtures/settings-entry.tsx")],
+  entrypoints: [resolve(process.argv[3] ?? "e2e/fixtures/settings-entry.tsx")],
   outdir: outputDirectory,
   target: "browser",
   define: { "process.env": JSON.stringify({ NODE_ENV: "development" }) },

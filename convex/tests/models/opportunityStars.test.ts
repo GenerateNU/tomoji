@@ -246,6 +246,134 @@ describe("withStarredFlags", () => {
   });
 });
 
+describe("listStarredOpportunities filters", () => {
+  /** Stars every opportunity, oldest first, so the last seeded is listed first. */
+  async function starAll(t: TestConvex, ids: Id<"opportunities">[]) {
+    for (const id of ids) await star(t, "creator", id);
+  }
+
+  test("keeps only starred briefs in the niche, accepting its label", async () => {
+    const t = convexTest(schema, modules);
+    const creatorId = await seedCreatorId(t, "creator");
+    const match = await seedOpportunity(t, { subject: "owner" }, { niches: ["ai-agents"] });
+    const other = await seedOpportunity(t, { subject: "owner" }, { niches: ["game-dev"] });
+    const untagged = await seedOpportunity(t, { subject: "owner" });
+    await starAll(
+      t,
+      [match, other, untagged].map(({ opportunityId }) => opportunityId),
+    );
+
+    const result = await t.run(
+      async (ctx) =>
+        await listStarredOpportunities(ctx, creatorId, {
+          niche: "AI Agents",
+          paginationOpts: firstPage,
+        }),
+    );
+
+    expect(result.page.map((brief) => brief._id)).toEqual([match.opportunityId]);
+  });
+
+  test("access gated keeps only gated starred briefs", async () => {
+    const t = convexTest(schema, modules);
+    const creatorId = await seedCreatorId(t, "creator");
+    const gated = await seedOpportunity(t, { subject: "owner" }, { isGated: true });
+    const open = await seedOpportunity(t, { subject: "owner" }, { isGated: false });
+    await star(t, "creator", gated.opportunityId);
+    await star(t, "creator", open.opportunityId);
+
+    const result = await t.run(
+      async (ctx) =>
+        await listStarredOpportunities(ctx, creatorId, {
+          access: "gated",
+          paginationOpts: firstPage,
+        }),
+    );
+
+    expect(result.page.map((brief) => brief._id)).toEqual([gated.opportunityId]);
+  });
+
+  test("access open leaves out gated and full starred briefs", async () => {
+    const t = convexTest(schema, modules);
+    const creatorId = await seedCreatorId(t, "creator");
+    const open = await seedOpportunity(t, { subject: "owner" }, { isGated: false });
+    const full = await seedOpportunity(t, { subject: "owner" }, { isGated: false });
+    const gated = await seedOpportunity(t, { subject: "owner" }, { isGated: true });
+    await star(t, "creator", open.opportunityId);
+    await star(t, "creator", full.opportunityId);
+    await star(t, "creator", gated.opportunityId);
+    await t.run(async (ctx) => {
+      const opportunity = await ctx.db.get("opportunities", full.opportunityId);
+      if (opportunity === null) throw new Error("expected seeded opportunity");
+      await ctx.db.patch("opportunities", full.opportunityId, {
+        numFilledSlots: opportunity.maxSlots,
+      });
+    });
+
+    const result = await t.run(
+      async (ctx) =>
+        await listStarredOpportunities(ctx, creatorId, {
+          access: "open",
+          paginationOpts: firstPage,
+        }),
+    );
+
+    expect(result.page.map((brief) => brief._id)).toEqual([open.opportunityId]);
+  });
+
+  test("refuses an unknown niche even when the creator has no stars", async () => {
+    const t = convexTest(schema, modules);
+    const creatorId = await seedCreatorId(t, "creator");
+
+    await expect(
+      t.run(
+        async (ctx) =>
+          await listStarredOpportunities(ctx, creatorId, {
+            niche: "crypto",
+            paginationOpts: firstPage,
+          }),
+      ),
+    ).rejects.toMatchObject({
+      data: { code: "invalid_state", reason: "invalid_niche" },
+    });
+  });
+
+  test("a read cap with a niche filter still reaches the match and finishes", async () => {
+    const t = convexTest(schema, modules);
+    const creatorId = await seedCreatorId(t, "creator");
+    const match = await seedOpportunity(t, { subject: "owner" }, { niches: ["llms"] });
+    await star(t, "creator", match.opportunityId);
+    // The three newest stars are off-niche, so they are read before the match.
+    for (let i = 0; i < 3; i++) {
+      const { opportunityId } = await seedOpportunity(
+        t,
+        { subject: "owner" },
+        { niches: ["game-dev"] },
+      );
+      await star(t, "creator", opportunityId);
+    }
+
+    const seen: Id<"opportunities">[] = [];
+    let cursor: string | null = null;
+    let isDone = false;
+    for (let pages = 0; pages < 10 && !isDone; pages++) {
+      const result = await t.run(
+        async (ctx) =>
+          await listStarredOpportunities(ctx, creatorId, {
+            niche: "llms",
+            paginationOpts: { numItems: 2, cursor, maximumRowsRead: 2 },
+          }),
+      );
+      seen.push(...result.page.map((brief) => brief._id));
+      cursor = result.continueCursor;
+      isDone = result.isDone;
+    }
+
+    expect(seen).toEqual([match.opportunityId]);
+    expect(isDone).toBe(true);
+  });
+});
+
 describe("feeds fill pages past hidden opportunities", () => {
   test("the starred list skips hidden stars instead of returning a short page", async () => {
     const t = convexTest(schema, modules);

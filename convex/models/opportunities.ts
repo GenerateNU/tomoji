@@ -1,5 +1,5 @@
 import { paginationOptsValidator, type PaginationResult } from "convex/server";
-import { v, type Infer } from "convex/values";
+import { v, type Infer, type ObjectType } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { stream } from "convex-helpers/server/stream";
@@ -377,9 +377,38 @@ export const opportunityList = schema
     paginationOpts: paginationOptsValidator,
   });
 
+export const opportunityAccess = v.union(v.literal("gated"), v.literal("open"));
+
+/** Filters shared by the creator feeds (discover and starred). */
+export const opportunityFeedFilters = {
+  niche: v.optional(v.string()),
+  access: v.optional(opportunityAccess),
+};
+export type OpportunityFeedFilters = ObjectType<typeof opportunityFeedFilters>;
+
 export const opportunityDiscover = opportunityList
   .pick("paginationOpts")
-  .extend({ niche: v.optional(v.string()) });
+  .extend(opportunityFeedFilters);
+
+/**
+ * Builds the predicate the creator feeds use to keep briefs: `niche` must be
+ * one of the brief's niches, and `access` "gated" means an application is
+ * required while "open" means no application and a spot still free.
+ *
+ * @throws `invalid_state` with `invalid_niche` if the niche isn't on the list.
+ */
+export function feedFilterFor({
+  niche,
+  access,
+}: OpportunityFeedFilters): (brief: CreatorOpportunity) => boolean {
+  const requiredNiche = niche === undefined ? undefined : requireNiche(niche);
+  return (brief) =>
+    (requiredNiche === undefined || brief.niches.includes(requiredNiche)) &&
+    (access === undefined ||
+      (access === "gated"
+        ? brief.isGated
+        : !brief.isGated && brief.numFilledSlots < brief.maxSlots));
+}
 
 /**
  * Returns the creator-facing brief if creators may see the opportunity: it's
@@ -407,8 +436,8 @@ export async function discoverOpportunities(
   ctx: QueryCtx,
   options: Infer<typeof opportunityDiscover>,
 ): Promise<PaginationResult<CreatorOpportunity>> {
-  const niche = options.niche === undefined ? undefined : requireNiche(options.niche);
-  // Filter inside the stream so hidden or off-niche opportunities don't leave
+  const matches = feedFilterFor(options);
+  // Filter inside the stream so hidden or filtered-out opportunities don't leave
   // pages short or empty. Convex can't index inside arrays, so niche matching
   // happens here rather than in the index.
   return await stream(ctx.db, schema)
@@ -416,7 +445,7 @@ export async function discoverOpportunities(
     .withIndex("by_status_and_deadline", (q) => q.eq("status", "open"))
     .map(async (opportunity) => {
       const brief = await getVisibleCreatorOpportunity(ctx, opportunity);
-      return brief !== null && (niche === undefined || brief.niches.includes(niche)) ? brief : null;
+      return brief !== null && matches(brief) ? brief : null;
     })
     .paginate(withRowsReadCap(options.paginationOpts));
 }

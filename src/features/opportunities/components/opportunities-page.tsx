@@ -1,7 +1,7 @@
 "use client";
 
-import { api } from "@convex/_generated/api";
-import { useConvexAuth, useQuery } from "convex/react";
+import { SignedOutNotice } from "@/features/auth/components/signed-out-notice";
+import { useMe } from "@/features/users/hooks/use-me";
 import { CreatorFeed } from "./creator-feed";
 
 /**
@@ -9,9 +9,7 @@ import { CreatorFeed } from "./creator-feed";
  * discovery feed; the company view is a separate ticket.
  */
 export function OpportunitiesPage() {
-  const { isAuthenticated } = useConvexAuth();
-  // users.me requires an identity, so wait until Convex has the token.
-  const me = useQuery(api.users.me, isAuthenticated ? {} : "skip");
+  const me = useMe();
 
   if (me === undefined) {
     return (
@@ -23,6 +21,7 @@ export function OpportunitiesPage() {
       </>
     );
   }
+  if (me === null) return <SignedOutNotice next="/opportunities" />;
   if (!me.synced) {
     return (
       <p role="status" className="p-10 text-sm text-muted-foreground">

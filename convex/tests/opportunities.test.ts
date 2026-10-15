@@ -824,6 +824,18 @@ describe("opportunities.discover", () => {
     expect(result.isDone).toBe(true);
   });
 
+  test("rejects an access filter that isn't gated or open", async () => {
+    const t = convexTest(schema, modules);
+    const asCreator = await seedUser(t, { subject: "discover_creator" });
+
+    const result = asCreator.query(api.opportunities.discover, {
+      paginationOpts: { numItems: 10, cursor: null },
+      access: "full" as never,
+    });
+
+    await expect(result).rejects.toThrow("Validator error");
+  });
+
   test("rejects a signed-out caller", async () => {
     const t = convexTest(schema, modules);
     await expectApiError(
@@ -1378,6 +1390,62 @@ describe("opportunities.star / unstar / listStarred", () => {
     });
 
     expect(detail).not.toHaveProperty("isStarred");
+  });
+
+  test("listStarred returns only starred briefs matching niche and access", async () => {
+    const t = convexTest(schema, modules);
+    const match = await seedOpportunity(
+      t,
+      { subject: "star_owner" },
+      { isGated: true, niches: ["llms"] },
+    );
+    const wrongNiche = await seedOpportunity(
+      t,
+      { subject: "star_owner" },
+      { isGated: true, niches: ["game-dev"] },
+    );
+    const wrongAccess = await seedOpportunity(
+      t,
+      { subject: "star_owner" },
+      { isGated: false, niches: ["llms"] },
+    );
+    const unstarred = await seedOpportunity(
+      t,
+      { subject: "star_owner" },
+      { isGated: true, niches: ["llms"] },
+    );
+    const asCreator = await seedUser(t, { subject: "star_creator" });
+    for (const { opportunityId } of [match, wrongNiche, wrongAccess]) {
+      await asCreator.mutation(api.opportunities.star, { opportunityId });
+    }
+
+    const byNiche = await asCreator.query(api.opportunities.listStarred, {
+      paginationOpts: firstPage,
+      niche: "llms",
+    });
+    const byBoth = await asCreator.query(api.opportunities.listStarred, {
+      paginationOpts: firstPage,
+      niche: "llms",
+      access: "gated",
+    });
+
+    expect(byNiche.page.map((brief) => brief._id).sort()).toEqual(
+      [match.opportunityId, wrongAccess.opportunityId].sort(),
+    );
+    expect(byBoth.page.map((brief) => brief._id)).toEqual([match.opportunityId]);
+    expect(byBoth.page.map((brief) => brief._id)).not.toContain(unstarred.opportunityId);
+  });
+
+  test("listStarred rejects an access filter that isn't gated or open", async () => {
+    const t = convexTest(schema, modules);
+    const asCreator = await seedUser(t, { subject: "star_creator" });
+
+    const result = asCreator.query(api.opportunities.listStarred, {
+      paginationOpts: firstPage,
+      access: "full" as never,
+    });
+
+    await expect(result).rejects.toThrow("Validator error");
   });
 
   test("rejects company users and operators", async () => {

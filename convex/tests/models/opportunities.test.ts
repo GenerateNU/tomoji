@@ -7,6 +7,7 @@ import {
   closeExpiredOpportunities,
   createOpportunity,
   discoverOpportunities,
+  feedFilterFor,
   listOpportunities,
   pauseOpportunity,
   publishOpportunity,
@@ -2859,5 +2860,131 @@ describe("opportunity niches", () => {
           await discoverOpportunities(ctx, { niche: "crypto", paginationOpts: firstPage }),
       ),
     ).rejects.toMatchObject({ data: { code: "invalid_state", reason: "invalid_niche" } });
+  });
+});
+
+describe("opportunity feed filters", () => {
+  const firstPage = { numItems: 10, cursor: null };
+
+  /** Fills every slot with a raw patch, which leaves the brief ungated but full. */
+  async function fillSlots(t: TestConvex, opportunityId: Id<"opportunities">) {
+    await t.run(async (ctx) => {
+      const opportunity = await ctx.db.get("opportunities", opportunityId);
+      if (opportunity === null) throw new Error("expected seeded opportunity");
+      await ctx.db.patch("opportunities", opportunityId, {
+        numFilledSlots: opportunity.maxSlots,
+      });
+    });
+  }
+
+  test("discover with access gated returns only gated briefs", async () => {
+    const t = convexTest(schema, modules);
+    const gated = await seedOpportunity(t, { subject: "access_owner" }, { isGated: true });
+    await seedOpportunity(t, { subject: "access_owner" }, { isGated: false });
+
+    const feed = await t.run(
+      async (ctx) =>
+        await discoverOpportunities(ctx, {
+          access: "gated",
+          paginationOpts: firstPage,
+        }),
+    );
+
+    expect(feed.page.map((brief) => brief._id)).toEqual([gated.opportunityId]);
+  });
+
+  test("discover with access open returns ungated briefs that still have spots", async () => {
+    const t = convexTest(schema, modules);
+    const open = await seedOpportunity(t, { subject: "access_owner" }, { isGated: false });
+    await seedOpportunity(t, { subject: "access_owner" }, { isGated: true });
+    const full = await seedOpportunity(t, { subject: "access_owner" }, { isGated: false });
+    await fillSlots(t, full.opportunityId);
+
+    const feed = await t.run(
+      async (ctx) =>
+        await discoverOpportunities(ctx, {
+          access: "open",
+          paginationOpts: firstPage,
+        }),
+    );
+
+    expect(feed.page.map((brief) => brief._id)).toEqual([open.opportunityId]);
+  });
+
+  test("discover with niche and access keeps only briefs matching both", async () => {
+    const t = convexTest(schema, modules);
+    const both = await seedOpportunity(
+      t,
+      { subject: "access_owner" },
+      { isGated: true, niches: ["llms"] },
+    );
+    await seedOpportunity(t, { subject: "access_owner" }, { isGated: true, niches: ["game-dev"] });
+    await seedOpportunity(t, { subject: "access_owner" }, { isGated: false, niches: ["llms"] });
+
+    const feed = await t.run(
+      async (ctx) =>
+        await discoverOpportunities(ctx, {
+          niche: "llms",
+          access: "gated",
+          paginationOpts: firstPage,
+        }),
+    );
+
+    expect(feed.page.map((brief) => brief._id)).toEqual([both.opportunityId]);
+  });
+
+  test("the access filter fills the page instead of returning it short", async () => {
+    const t = convexTest(schema, modules);
+    // Three gated opportunities are read first, then one open match.
+    for (let i = 0; i < 3; i++) {
+      await seedOpportunity(t, { subject: "access_owner" }, { isGated: true });
+    }
+    const match = await seedOpportunity(t, { subject: "access_owner" }, { isGated: false });
+
+    const feed = await t.run(
+      async (ctx) =>
+        await discoverOpportunities(ctx, {
+          access: "open",
+          paginationOpts: { numItems: 2, cursor: null },
+        }),
+    );
+
+    expect(feed.page.map((brief) => brief._id)).toEqual([match.opportunityId]);
+  });
+
+  describe("feedFilterFor", () => {
+    async function seedBrief(t: TestConvex) {
+      await seedOpportunity(t, { subject: "access_owner" }, { isGated: false });
+      const feed = await t.run(
+        async (ctx) => await discoverOpportunities(ctx, { paginationOpts: firstPage }),
+      );
+      return feed.page[0];
+    }
+
+    test("open passes with one spot left and fails once every slot is filled", async () => {
+      const t = convexTest(schema, modules);
+      const brief = await seedBrief(t);
+      const isOpen = feedFilterFor({ access: "open" });
+
+      expect(isOpen({ ...brief, numFilledSlots: brief.maxSlots - 1 })).toBe(true);
+      expect(isOpen({ ...brief, numFilledSlots: brief.maxSlots })).toBe(false);
+    });
+
+    test("an empty filter passes every brief, including full and gated ones", async () => {
+      const t = convexTest(schema, modules);
+      const brief = await seedBrief(t);
+      const matchesAll = feedFilterFor({});
+
+      expect(matchesAll({ ...brief, numFilledSlots: brief.maxSlots })).toBe(true);
+      expect(matchesAll({ ...brief, isGated: true })).toBe(true);
+    });
+
+    test("refuses an unknown niche when created, before any brief is checked", () => {
+      expect(() => feedFilterFor({ niche: "crypto" })).toThrow(
+        expect.objectContaining({
+          data: expect.objectContaining({ code: "invalid_state", reason: "invalid_niche" }),
+        }),
+      );
+    });
   });
 });

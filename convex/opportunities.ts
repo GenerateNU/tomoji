@@ -105,7 +105,12 @@ export const update = companyMutation({
   },
 });
 
-/** Returns a creator's paginated discovery feed of visible open opportunity briefs. */
+/**
+ * Returns a creator's paginated discovery feed of visible open opportunity
+ * briefs, optionally filtered by `niche` and `access` ("gated" or "open").
+ *
+ * @throws `invalid_state` with `invalid_niche` if the niche isn't on the list.
+ */
 export const discover = creatorQuery({
   args: opportunityDiscover.fields,
   returns: paginationResultValidator(starredCreatorOpportunity),
@@ -144,6 +149,9 @@ export const unstar = creatorMutation({
 /**
  * Lists the calling creator's starred opportunities, most recently starred
  * first. Ones creators can no longer see (paused, closed) are left out.
+ * Optionally filtered by `niche` and `access` ("gated" or "open").
+ *
+ * @throws `invalid_state` with `invalid_niche` if the niche isn't on the list.
  */
 export const listStarred = creatorQuery({
   args: starredOpportunityList.fields,

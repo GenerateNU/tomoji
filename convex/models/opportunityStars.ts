@@ -7,7 +7,9 @@ import { withRowsReadCap } from "../lib/pagination";
 import schema from "../schema";
 import {
   creatorOpportunity,
+  feedFilterFor,
   getVisibleCreatorOpportunity,
+  opportunityFeedFilters,
   requireOpportunity,
   type CreatorOpportunity,
 } from "./opportunities";
@@ -17,7 +19,10 @@ import { requireCallerCreatorId } from "./users";
 export const starredCreatorOpportunity = creatorOpportunity.extend({ isStarred: v.boolean() });
 export type StarredCreatorOpportunity = Infer<typeof starredCreatorOpportunity>;
 
-export const starredOpportunityList = v.object({ paginationOpts: paginationOptsValidator });
+export const starredOpportunityList = v.object({
+  paginationOpts: paginationOptsValidator,
+  ...opportunityFeedFilters,
+});
 
 async function getStar(
   ctx: QueryCtx | MutationCtx,
@@ -70,14 +75,18 @@ export async function unstarOpportunity(
  * Returns one page of the creator's starred briefs, most recently starred
  * first. Opportunities creators can no longer see (paused, closed, inactive
  * company) are skipped; the star is kept and reappears if the opportunity
- * reopens.
+ * reopens. Optional `niche` and `access` filters narrow the list the same way
+ * as the discovery feed.
+ *
+ * @throws `invalid_state` with `invalid_niche` if the niche isn't on the list.
  */
 export async function listStarredOpportunities(
   ctx: QueryCtx,
   creatorId: Id<"creators">,
   options: Infer<typeof starredOpportunityList>,
 ): Promise<PaginationResult<StarredCreatorOpportunity>> {
-  // Filter inside the stream so hidden stars don't leave pages short or empty.
+  const matches = feedFilterFor(options);
+  // Filter inside the stream so hidden or filtered-out stars don't leave pages short or empty.
   return await stream(ctx.db, schema)
     .query("opportunityStars")
     .withIndex("by_creatorId", (q) => q.eq("creatorId", creatorId))
@@ -85,7 +94,7 @@ export async function listStarredOpportunities(
     .map(async (star) => {
       const opportunity = await ctx.db.get("opportunities", star.opportunityId);
       const brief = opportunity && (await getVisibleCreatorOpportunity(ctx, opportunity));
-      return brief ? { ...brief, isStarred: true } : null;
+      return brief && matches(brief) ? { ...brief, isStarred: true } : null;
     })
     .paginate(withRowsReadCap(options.paginationOpts));
 }

@@ -1,12 +1,10 @@
 "use client";
 
-import { api } from "@convex/_generated/api";
-import { useConvexAuth, useQuery } from "convex/react";
+import { SignedOutNotice } from "@/features/auth/components/signed-out-notice";
+import { useMe } from "../hooks/use-me";
 
 export function Welcome() {
-  const { isAuthenticated } = useConvexAuth();
-  // users.me requires an identity, so wait until Convex has the token.
-  const me = useQuery(api.users.me, isAuthenticated ? {} : "skip");
+  const me = useMe();
 
   if (me === undefined) {
     return (
@@ -19,6 +17,7 @@ export function Welcome() {
     );
   }
 
+  if (me === null) return <SignedOutNotice next="/" />;
   if (!me.synced) {
     return (
       <div className="flex flex-col gap-2">

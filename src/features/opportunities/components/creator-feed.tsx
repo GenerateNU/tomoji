@@ -28,15 +28,12 @@ export function CreatorFeed() {
   const [now] = useState(() => Date.now());
 
   const niches = useQuery(api.niches.list);
-  const feed = useOpportunityFeed({ niche: niche || undefined, starredOnly });
+  const feed = useOpportunityFeed({
+    niche: niche || undefined,
+    access: type === "all" ? undefined : type,
+    starredOnly,
+  });
 
-  // The starred list isn't filtered by niche on the server, and type is a
-  // flag on each item, so both narrow the loaded page here.
-  const shown = feed.results.filter(
-    (opportunity) =>
-      (type === "all" || opportunity.isGated === (type === "gated")) &&
-      (!starredOnly || niche === "" || opportunity.niches.includes(niche)),
-  );
   const loading = feed.status === "LoadingFirstPage";
 
   return (
@@ -129,16 +126,23 @@ export function CreatorFeed() {
 
         {loading ? (
           <FeedSkeleton />
-        ) : shown.length === 0 ? (
+        ) : feed.results.length === 0 && feed.status !== "Exhausted" ? (
+          <p
+            role="status"
+            className="rounded-2xl bg-muted/60 p-8 text-center text-muted-foreground"
+          >
+            Still looking for matches. Load more to keep searching.
+          </p>
+        ) : feed.results.length === 0 ? (
           <EmptyState starredOnly={starredOnly} filtered={type !== "all" || niche !== ""} />
         ) : view === "grid" ? (
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-            {shown.map((opportunity) => (
+            {feed.results.map((opportunity) => (
               <OpportunityCard key={opportunity._id} opportunity={opportunity} />
             ))}
           </div>
         ) : (
-          <OpportunityTable opportunities={shown} now={now} />
+          <OpportunityTable opportunities={feed.results} now={now} />
         )}
 
         {(feed.status === "CanLoadMore" || feed.status === "LoadingMore") && (
@@ -172,7 +176,9 @@ function FeedSkeleton() {
 
 function EmptyState({ starredOnly, filtered }: { starredOnly: boolean; filtered: boolean }) {
   const message = starredOnly
-    ? "You haven't starred any open opportunities yet. Tap the star on one to save it here."
+    ? filtered
+      ? "None of your starred opportunities match these filters. Try another niche or type."
+      : "You haven't starred any open opportunities yet. Tap the star on one to save it here."
     : filtered
       ? "No opportunities match these filters. Try another niche or type."
       : "There are no open opportunities right now. Check back soon.";

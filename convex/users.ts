@@ -4,7 +4,8 @@ import { query } from "./_generated/server";
 import { requireIdentity } from "./lib/authz";
 import { apiError } from "./lib/errors";
 import { operatorQuery } from "./lib/functions";
-import { findOrgId, toCompanyRole } from "./lib/identity";
+import { findOrgId } from "./lib/identity";
+import { requireMembership } from "./models/companyUsers";
 import { getUserByWorkosId, listUsers } from "./models/users";
 import schema from "./schema";
 import { companyRole } from "./schemas/companyUsers.schema";
@@ -57,7 +58,10 @@ export const me = query({
       throw apiError("misconfigured", { reason: "company account has no organization" });
     }
 
-    return { ...base, role: "company" as const, orgId, companyRole: toCompanyRole(identity.role) };
+    // The membership row is authoritative. The token's role claim can be stale
+    // until it refreshes, and `companyContext` already reads it from here.
+    const membership = await requireMembership(ctx, user._id, orgId);
+    return { ...base, role: "company" as const, orgId, companyRole: membership.role };
   },
 });
 

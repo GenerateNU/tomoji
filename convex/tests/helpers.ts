@@ -428,9 +428,14 @@ export async function seedGatedOpportunity(t: TestConvex, opts: SeedGatedOpportu
   return { ...seeded, companyId: seeded.membership.companyId };
 }
 
-/** Seeds a company member and returns their client and membership row. */
-export async function seedMembership(t: TestConvex, subject: string, orgId = `org_${subject}`) {
-  const asMember = await seedUser(t, { subject, org: { id: orgId } });
+/** Seeds a company user and returns their client and membership row. Defaults to a member. */
+export async function seedMembership(
+  t: TestConvex,
+  subject: string,
+  orgId = `org_${subject}`,
+  role: Infer<typeof companyRole> = "member",
+) {
+  const asMember = await seedUser(t, { subject, org: { id: orgId, role } });
   const { membership } = await asMember.run(async (ctx) => await companyContext(ctx));
   return { asMember, membership };
 }
@@ -470,10 +475,12 @@ const FIXTURE_OPERATOR = "fixture-operator";
 export async function seedAssignmentFixture(
   t: TestConvex,
   assignment: Partial<Pick<Doc<"assignments">, "status" | "usesAiReview">> = {},
+  companyRoleForFixture: Infer<typeof companyRole> = "member",
 ): Promise<AssignmentFixture> {
   const { asCompany, membership, opportunityId } = await seedOpportunity(t, {
     subject: FIXTURE_COMPANY,
     orgId: "org_fixture",
+    role: companyRoleForFixture,
   });
   const creatorId = await seedCreatorId(t, FIXTURE_CREATOR);
   const assignmentId = await seedAssignment(t, {

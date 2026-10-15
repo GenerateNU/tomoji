@@ -42,6 +42,20 @@ export async function operatorContext(ctx: Ctx) {
   return { identity, user };
 }
 
+/**
+ * A company caller who administers their company. Member-level callers are
+ * refused here so an admin-only route cannot be written without the check.
+ *
+ * @throws `forbidden` with reason `company_admin_required`.
+ */
+export async function companyAdminContext(ctx: Ctx) {
+  const context = await companyContext(ctx);
+  if (context.membership.role !== "admin") {
+    throw apiError("forbidden", { reason: "company_admin_required" });
+  }
+  return context;
+}
+
 /** Resolves ownership scope from an already-authenticated user, verifying the token's company org. */
 export async function requireCallerViewer(ctx: Ctx, user: Doc<"users">): Promise<ResourceViewer> {
   switch (user.role) {
@@ -56,11 +70,30 @@ export async function requireCallerViewer(ctx: Ctx, user: Doc<"users">): Promise
   }
 }
 
+/**
+ * Like `requireCallerViewer`, but a company caller must administer their
+ * company. Use it for actions only an admin may take on a route that also
+ * serves creators and operators, such as opening or resolving a dispute.
+ *
+ * @throws `forbidden` with reason `company_admin_required`.
+ */
+export async function requireCallerAdminViewer(
+  ctx: Ctx,
+  user: Doc<"users">,
+): Promise<ResourceViewer> {
+  if (user.role !== "company") return await requireCallerViewer(ctx, user);
+  const { membership } = await companyAdminContext(ctx);
+  return { role: "company", companyId: membership.companyId };
+}
+
 export const authedQuery = customQuery(query, customCtx(authedContext));
 export const authedMutation = customMutation(mutation, customCtx(authedContext));
 
 export const companyQuery = customQuery(query, customCtx(companyContext));
 export const companyMutation = customMutation(mutation, customCtx(companyContext));
+
+export const companyAdminQuery = customQuery(query, customCtx(companyAdminContext));
+export const companyAdminMutation = customMutation(mutation, customCtx(companyAdminContext));
 
 export const creatorQuery = customQuery(query, customCtx(creatorContext));
 export const creatorMutation = customMutation(mutation, customCtx(creatorContext));

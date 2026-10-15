@@ -4,7 +4,9 @@ import { internalMutation } from "./_generated/server";
 import {
   authedQuery,
   requireCallerViewer,
+  companyAdminMutation,
   companyMutation,
+  companyAdminQuery,
   companyQuery,
   creatorMutation,
   creatorQuery,
@@ -83,7 +85,7 @@ export const list = companyQuery({
  * @throws `invalid_state` unless exactly one parent is supplied and numItems is
  * an integer from 1–100, or when a non-null endCursor is supplied.
  */
-export const exportCreatorsCsv = companyQuery({
+export const exportCreatorsCsv = companyAdminQuery({
   args: assignmentCreatorExportOptions.fields,
   returns: assignmentCreatorsCsv,
   handler: async (ctx, args) => {
@@ -166,7 +168,7 @@ export const declineTerms = creatorMutation({
  * company.
  * @throws `invalid_state` if the assignment is not termsPending.
  */
-export const cancel = companyMutation({
+export const cancel = companyAdminMutation({
   args: { assignmentId: v.id("assignments") },
   returns: assignment,
   handler: async (ctx, args) => {

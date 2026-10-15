@@ -2,6 +2,7 @@
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
 import {
+  companyAdminContext,
   companyContext,
   creatorContext,
   operatorContext,
@@ -232,5 +233,34 @@ describe("operatorContext", () => {
       () => as.run(async (ctx) => await operatorContext(ctx)),
       "account_deactivated",
     );
+  });
+});
+
+describe("companyAdminContext", () => {
+  test("allows a company admin", async () => {
+    const t = convexTest(schema, modules);
+    const as = await seedUser(t, { subject: "ad1", org: { id: "org_acme", role: "admin" } });
+
+    const result = await as.run(async (ctx) => await companyAdminContext(ctx));
+
+    expect(result.membership.role).toBe("admin");
+  });
+
+  test("refuses a company member", async () => {
+    const t = convexTest(schema, modules);
+    const as = await seedUser(t, { subject: "ad2", org: { id: "org_acme", role: "member" } });
+
+    await expectApiError(
+      () => as.run(async (ctx) => await companyAdminContext(ctx)),
+      "forbidden",
+      "company_admin_required",
+    );
+  });
+
+  test("refuses a creator before checking any membership", async () => {
+    const t = convexTest(schema, modules);
+    const as = await seedUser(t, { subject: "ad3" });
+
+    await expectApiError(() => as.run(async (ctx) => await companyAdminContext(ctx)), "forbidden");
   });
 });

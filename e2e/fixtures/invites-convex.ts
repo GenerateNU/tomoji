@@ -117,7 +117,11 @@ export function useAction(reference: FunctionReference<"action">) {
       });
     if (fixture.fail) {
       fixture.fail = false;
-      throw new ConvexError({ code: "conflict" });
+      throw new ConvexError(
+        name === "invites:inviteTeammate"
+          ? { code: "conflict", reason: "invite_already_pending" }
+          : { code: "not_found" },
+      );
     }
     return null;
   };

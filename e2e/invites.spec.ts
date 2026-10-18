@@ -37,6 +37,7 @@ test("sends the selected role once and waits for outstanding invitations to sync
   page,
 }) => {
   await openInvites(page);
+  await page.getByRole("button", { name: "Invite New Members" }).click();
   await page.getByLabel("Email", { exact: true }).fill("  ryan@example.com  ");
   await page.getByLabel("Admin", { exact: true }).check();
   await page.evaluate(() => {
@@ -45,7 +46,7 @@ test("sends the selected role once and waits for outstanding invitations to sync
   await page.getByRole("button", { name: "Send invitation" }).click();
   await expect(page.getByRole("button", { name: "Sending" })).toBeDisabled();
   await page.evaluate(() => window.invitesFixture.release?.());
-  await expect(page.getByRole("status")).toContainText("Invitation sent");
+  await expect(page.getByText(/Invitation sent to/)).toBeVisible();
   expect(await page.evaluate(() => window.invitesFixture.calls)).toEqual([
     { name: "invites:inviteTeammate", args: { email: "ryan@example.com", role: "admin" } },
   ]);
@@ -70,6 +71,7 @@ test("confirms revocation and keeps the row until the webhook arrives", async ({
 
 test("shows a duplicate-invitation error without clearing the form", async ({ page }) => {
   await openInvites(page);
+  await page.getByRole("button", { name: "Invite New Members" }).click();
   await page.getByLabel("Email", { exact: true }).fill("not-an-email");
   await page.getByRole("button", { name: "Send invitation" }).click();
   expect(await page.evaluate(() => window.invitesFixture.calls)).toEqual([]);
@@ -81,7 +83,7 @@ test("shows a duplicate-invitation error without clearing the form", async ({ pa
   await expect(page.getByRole("alert")).toContainText("pending invitation");
   await expect(page.getByLabel("Email", { exact: true })).toHaveValue("ryan@example.com");
   await page.getByRole("button", { name: "Send invitation" }).click();
-  await expect(page.getByRole("status")).toContainText("Invitation sent");
+  await expect(page.getByText(/Invitation sent to/)).toBeVisible();
 });
 
 test("a failed cancellation keeps its confirmation and allows a deliberate retry", async ({
@@ -94,7 +96,7 @@ test("a failed cancellation keeps its confirmation and allows a deliberate retry
     window.invitesFixture.fail = true;
   });
   await row.getByRole("button", { name: "Confirm cancellation" }).click();
-  await expect(page.getByRole("alert")).toContainText("invitation changed");
+  await expect(page.getByRole("alert")).toContainText("no longer available");
   await expect(row.getByRole("button", { name: "Confirm cancellation" })).toBeEnabled();
   await row.getByRole("button", { name: "Confirm cancellation" }).click();
   await expect(row.getByText("Cancellation requested")).toBeVisible();
@@ -125,6 +127,7 @@ test("waits for authentication and paginates the pending list", async ({ page })
 
 test("captures the responsive invitation page", async ({ page }) => {
   await openInvites(page);
+  await page.getByRole("button", { name: "Invite New Members" }).click();
   await page.getByLabel("Email", { exact: true }).fill("new-teammate@example.com");
   await page.screenshot({ path: test.info().outputPath("invites-desktop.png"), fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });

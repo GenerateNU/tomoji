@@ -1,9 +1,9 @@
 import type { Metadata } from "next";
-import { CompanyInvites } from "@/features/invites/components/company-invites";
+import { CompanyMembers } from "@/features/team/components/company-members";
 
-export const metadata: Metadata = { title: "Team invitations · Tomoji" };
+export const metadata: Metadata = { title: "Workspace members · Tomoji" };
 
-/** The company-admin invitation management route. */
+/** Workspace directory with the existing company-admin invitation flow. */
 export default function TeamInvitesPage() {
-  return <CompanyInvites />;
+  return <CompanyMembers />;
 }

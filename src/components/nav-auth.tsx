@@ -6,7 +6,7 @@ import { signOutAction } from "@/app/auth/actions";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { Skeleton } from "@/components/ui/skeleton";
-import { InvitesLink } from "@/features/invites/components/invites-link";
+import { TeamLink } from "@/features/team/components/team-link";
 
 /** Shows account actions, the inbox, and company-admin invitation navigation. */
 export function NavAuth() {
@@ -29,7 +29,7 @@ export function NavAuth() {
         >
           Notifications
         </Link>
-        <InvitesLink />
+        <TeamLink />
         <span className="hidden text-sm text-zinc-600 sm:inline dark:text-zinc-400">
           {user.email}
         </span>

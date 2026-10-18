@@ -1,6 +1,6 @@
 import { CompanyMembers } from "@/features/team/components/company-members";
 
-/** Workspace directory; invitation management is added separately. */
+/** Workspace directory and company-admin invitation management. */
 export default function TeamInvitesPage() {
   return <CompanyMembers />;
 }

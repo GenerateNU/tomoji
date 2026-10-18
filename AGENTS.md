@@ -112,6 +112,7 @@ Follow the repository workflow in `CONTRIBUTING.md`:
   `chore: upgrade convex to 1.46`, or `test: cover requireIdentity deny case`.
 - Branch from `main` and keep each pull request small and focused.
 - Run `just ci` before pushing. CI must pass before merge.
+- For frontend PRs, capture and inspect desktop and mobile screenshots of the affected UI and attach them to the PR. Clearly label fixture-based previews rather than presenting them as live integration verification.
 
 ## Maintenance and references
 

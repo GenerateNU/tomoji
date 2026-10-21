@@ -13,8 +13,8 @@ vi.mock("@workos-inc/authkit-nextjs", () => ({
   handleAuth: () => authkitCallback,
 }));
 
-const { GET: start } = await import("./google/route");
-const { GET: callback } = await import("./callback/route");
+const { GET: start } = await import("@/app/auth/google/route");
+const { GET: callback } = await import("@/app/auth/callback/route");
 
 const userManagement = {
   getAuthorizationUrlWithPKCE: vi.fn(),

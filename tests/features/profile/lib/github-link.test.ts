@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseGithubLink } from "./github-link";
+import { parseGithubLink } from "@/features/profile/lib/github-link";
 
 describe("GitHub profile links", () => {
   it("trims a pasted link and supplies HTTPS when omitted", () => {

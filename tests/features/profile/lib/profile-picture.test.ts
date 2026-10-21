@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Id } from "@convex/_generated/dataModel";
-import { createProfilePictureUpload, validateProfilePicture } from "./profile-picture";
+import {
+  createProfilePictureUpload,
+  validateProfilePicture,
+} from "@/features/profile/lib/profile-picture";
 
 const uploadId = "upload-1" as Id<"mediaUploads">;
 const file = new File(["image bytes"], "profile.png", { type: "image/png" });

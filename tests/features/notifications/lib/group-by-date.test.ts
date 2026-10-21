@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import type { Doc } from "@convex/_generated/dataModel";
-import { groupByDate } from "./group-by-date";
+import { groupByDate } from "@/features/notifications/lib/group-by-date";
 
 const notification = (date: Date) => ({ _creationTime: date.getTime() }) as Doc<"notifications">;
 

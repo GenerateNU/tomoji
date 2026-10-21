@@ -34,9 +34,19 @@ export default defineConfig({
           },
         },
         test: {
-          name: "unit",
+          name: "frontend",
           environment: "node",
-          include: ["tests/**/*.test.ts", "tests/**/*.test.tsx", "scripts/tests/**/*.test.ts"],
+          include: ["tests/**/*.test.ts", "tests/**/*.test.tsx"],
+        },
+      },
+      {
+        // Setup scripts. Their own project so `--project frontend` means only
+        // the frontend: a path filter cannot separate them, because
+        // `scripts/tests/` matches any filter containing "tests".
+        test: {
+          name: "scripts",
+          environment: "node",
+          include: ["scripts/tests/**/*.test.ts"],
         },
       },
     ],

@@ -11,9 +11,11 @@ import { creatorName, notifyCompanyUser, notifyCreator } from "./notifications";
 /** The creator-supplied fields of a new submission. */
 export const submissionDraft = v.object({
   assignmentId: v.id("assignments"),
+  deliverableId: v.id("deliverables"),
   draftUrl: v.string(),
   draftDescription: v.string(),
 });
+
 export type SubmissionDraft = Infer<typeof submissionDraft>;
 
 /** A review decision. A change request needs a note; an approval's is optional. */
@@ -148,6 +150,7 @@ function toCreatorView(
     _id: submission._id,
     _creationTime: submission._creationTime,
     assignmentId: submission.assignmentId,
+    deliverableId: submission.deliverableId,
     draftUrl: submission.draftUrl,
     draftDescription: submission.draftDescription,
     usesAiReview: submission.usesAiReview,
@@ -218,6 +221,8 @@ export async function createSubmission(
 
   const submissionId = await ctx.db.insert("submissions", {
     assignmentId: assignment._id,
+    // TODO(deliverables): check it belongs to the assignment's opportunity (next slice).
+    deliverableId: draft.deliverableId,
     draftUrl: requireDraftUrl(draft.draftUrl),
     draftDescription: requireText(draft.draftDescription, "draftDescription"),
     status: "pending",

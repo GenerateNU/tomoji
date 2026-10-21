@@ -68,13 +68,10 @@ describe("submissions.create", () => {
     const t = convexTest(schema, modules);
     const fixture = await seedAssignmentFixture(t, { usesAiReview: true });
 
-    const id = await fixture.asCreator.mutation(
-      api.submissions.create,
-      submissionArgs(fixture.assignmentId),
-    );
+    const id = await fixture.asCreator.mutation(api.submissions.create, submissionArgs(fixture));
 
     expect(await storedSubmission(t, id)).toMatchObject({
-      ...submissionArgs(fixture.assignmentId),
+      ...submissionArgs(fixture),
       status: "pending",
       usesAiReview: true,
     });
@@ -89,7 +86,7 @@ describe("submissions.create", () => {
 
     await expect(
       fixture.asCreator.mutation(api.submissions.create, {
-        ...submissionArgs(fixture.assignmentId),
+        ...submissionArgs(fixture),
         [field]: value,
         // Bypasses the type check to hit the runtime validator.
       } as never),
@@ -104,7 +101,7 @@ describe("submissions.create", () => {
     const asIntruder = await seedUser(t, { subject: "sc-intruder" });
 
     await expectApiError(
-      () => asIntruder.mutation(api.submissions.create, submissionArgs(fixture.assignmentId)),
+      () => asIntruder.mutation(api.submissions.create, submissionArgs(fixture)),
       "not_found",
     );
 
@@ -119,7 +116,7 @@ describe("submissions.create", () => {
       const client = await caller(t, fixture);
 
       await expectApiError(
-        () => client.mutation(api.submissions.create, submissionArgs(fixture.assignmentId)),
+        () => client.mutation(api.submissions.create, submissionArgs(fixture)),
         code,
       );
 

@@ -88,19 +88,19 @@ Complete the requested outcome and required verification. If blocked, state what
 Setup and day-to-day work are documented in [`CONTRIBUTING.md`](CONTRIBUTING.md). The
 commands that exist today:
 
-| Command           | What it does                                            |
-| ----------------- | ------------------------------------------------------- |
-| `just setup`      | Install deps, create `.env.local` from the template     |
-| `just convex-env` | Copy WorkOS and S3 settings onto your Convex deployment |
-| `just fd`         | Frontend dev server — http://localhost:3000             |
-| `just bd`         | Convex dev — watches `convex/`, streams function logs   |
-| `just ci`         | typecheck + lint + format:check + test (what CI runs)   |
-| `just test`       | Vitest once                                             |
-| `just test-frontend` | Frontend unit tests only                             |
-| `just test-backend`  | Convex backend tests only                            |
-| `just test-e2e`   | Playwright (not run in CI)                              |
-| `just ci-full`    | `just ci`, then the Playwright tests                    |
-| `just build`      | Production build                                        |
+| Command              | What it does                                            |
+| -------------------- | ------------------------------------------------------- |
+| `just setup`         | Install deps, create `.env.local` from the template     |
+| `just convex-env`    | Copy WorkOS and S3 settings onto your Convex deployment |
+| `just fd`            | Frontend dev server — http://localhost:3000             |
+| `just bd`            | Convex dev — watches `convex/`, streams function logs   |
+| `just ci`            | typecheck + lint + format:check + test (what CI runs)   |
+| `just test`          | Vitest once                                             |
+| `just test-frontend` | Frontend unit tests only                                |
+| `just test-backend`  | Convex backend tests only                               |
+| `just test-e2e`      | Playwright (not run in CI)                              |
+| `just ci-full`       | `just ci`, then the Playwright tests                    |
+| `just build`         | Production build                                        |
 
 Recipes are thin wrappers over `package.json` scripts; CI runs `bun run ci`. There is no
 release command yet — nothing is deployed.

@@ -23,13 +23,20 @@ export default defineConfig({
         },
       },
       {
-        // Everything else: pure units, helpers, stage-machine logic.
-        // Mirrors the `@/*` path in tsconfig.json so app code imports resolve.
-        resolve: { alias: { "@/": new URL("./src/", import.meta.url).pathname } },
+        // Everything else: pure units, helpers, stage-machine logic. Tests live
+        // in tests/, mirroring the source path, so they reach their subject
+        // through the same aliases tsconfig.json defines rather than by
+        // climbing out of the folder with ../../.
+        resolve: {
+          alias: {
+            "@/": new URL("./src/", import.meta.url).pathname,
+            "@convex/": new URL("./convex/", import.meta.url).pathname,
+          },
+        },
         test: {
           name: "unit",
           environment: "node",
-          include: ["src/**/*.test.ts", "src/**/*.test.tsx", "scripts/tests/**/*.test.ts"],
+          include: ["tests/**/*.test.ts", "tests/**/*.test.tsx", "scripts/tests/**/*.test.ts"],
         },
       },
     ],

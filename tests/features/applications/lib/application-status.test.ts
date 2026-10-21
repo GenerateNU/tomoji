@@ -3,7 +3,7 @@ import {
   APPLICATION_STATUS_LABELS,
   APPLICATION_STATUS_OPTIONS,
   type ApplicationStatus,
-} from "./application-status";
+} from "@/features/applications/lib/application-status";
 
 describe("application status labels", () => {
   test("calls a pending application 'In review', as in the design", () => {

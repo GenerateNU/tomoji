@@ -1,5 +1,9 @@
 import { describe, expect, test } from "vitest";
-import { applicationExpiresAt, formatCompensation, formatRelativeTime } from "./format";
+import {
+  applicationExpiresAt,
+  formatCompensation,
+  formatRelativeTime,
+} from "@/features/applications/lib/format";
 
 const NOW = Date.UTC(2026, 9, 15, 12);
 const DAY = 24 * 60 * 60 * 1000;

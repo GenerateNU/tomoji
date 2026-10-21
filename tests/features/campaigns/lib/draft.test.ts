@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { parseCampaignDraft } from "./draft";
+import { parseCampaignDraft } from "@/features/campaigns/lib/draft";
 
 /** Browser form input, not a second definition of the backend campaign schema. */
 function form() {

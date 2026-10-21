@@ -5,7 +5,7 @@ import {
   formatMoney,
   formatPostedAgo,
   formatSpotsLeft,
-} from "./format";
+} from "@/features/opportunities/lib/format";
 
 describe("formatMoney", () => {
   test.each([

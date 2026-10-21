@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { FIRST_PAGE, nextPage, previousPage } from "./cursor-pages";
+import { FIRST_PAGE, nextPage, previousPage } from "@/features/applications/lib/cursor-pages";
 
 describe("cursor pages", () => {
   test("starts on page 1 with no cursor", () => {

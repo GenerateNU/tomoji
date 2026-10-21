@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { redirectFor, safeNext, withNext } from "./access";
+import { redirectFor, safeNext, withNext } from "@/features/auth/lib/access";
 
 function request(method: string, path: string) {
   const url = new URL(path, "http://x");

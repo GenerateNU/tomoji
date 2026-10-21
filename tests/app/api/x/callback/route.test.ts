@@ -1,8 +1,8 @@
 import { afterEach, expect, test, vi } from "vitest";
 import { withAuth } from "@workos-inc/authkit-nextjs";
 import { fetchAction } from "convex/nextjs";
-import { GET } from "./route";
-import { apiError } from "../../../../../convex/lib/errors";
+import { GET } from "@/app/api/x/callback/route";
+import { apiError } from "@convex/lib/errors";
 
 vi.mock("@workos-inc/authkit-nextjs", () => ({ withAuth: vi.fn() }));
 vi.mock("convex/nextjs", () => ({ fetchAction: vi.fn() }));

@@ -27,17 +27,42 @@ src/
   hooks/                     hooks shared across features
   lib/                       plain functions - no React, usable anywhere
   proxy.ts                   sends signed-out page visits to /login?next=<path>; server actions and other non-GET requests pass through and must check auth themselves (rules in features/auth/lib/access.ts)
+tests/                       unit tests, mirroring the src/ path of what they cover
+e2e/                         Playwright browser tests
+  fixtures/                  per-spec entry points and stubbed backend responses
 ```
+
+### Tests
+
+Unit tests live in `tests/`, not beside the code they cover. `src/` holds only
+code that ships. A test for `src/features/auth/lib/access.ts` goes at
+`tests/features/auth/lib/access.test.ts`, so the path tells you what it covers,
+and it reaches its subject through the `@/` alias rather than a relative import.
+
+The two folders are different kinds of test, not two places for the same kind:
+
+|            | `tests/`                | `e2e/`                       |
+| ---------- | ----------------------- | ---------------------------- |
+| Runner     | Vitest (`just test`)    | Playwright (`just test-e2e`) |
+| Runs in    | Node, no DOM            | a real browser               |
+| Covers     | one function's behavior | a rendered page someone uses |
+| Part of CI | yes                     | no                           |
+
+`e2e/` stays at the top level because Playwright is configured against it
+directly and CI does not run it. `convex/tests/` follows the same split on the
+backend.
 
 ### Where should new files go?
 
 When adding a new file, use these guidelines to decide where it belongs:
 
-| Question                                                                                   | Location                           |
-| ------------------------------------------------------------------------------------------ | ---------------------------------- |
-| Is it a Next.js-specific file like `page.tsx`, `layout.tsx`, or `route.ts`?                | `app/`                             |
-| Is it related to a specific Tomoji feature, such as opportunities, campaigns, or creators? | `features/<domain>/`               |
-| Is it shared or general-purpose code?                                                      | `components/`, `hooks/`, or `lib/` |
+| Question                                                                                   | Location                            |
+| ------------------------------------------------------------------------------------------ | ----------------------------------- |
+| Is it a Next.js-specific file like `page.tsx`, `layout.tsx`, or `route.ts`?                | `app/`                              |
+| Is it related to a specific Tomoji feature, such as opportunities, campaigns, or creators? | `features/<domain>/`                |
+| Is it shared or general-purpose code?                                                      | `components/`, `hooks/`, or `lib/`  |
+| Is it a unit test?                                                                         | `tests/`, mirroring the source path |
+| Is it a browser test?                                                                      | `e2e/`                              |
 
 ## 2. Routes
 

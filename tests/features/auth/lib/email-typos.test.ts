@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { suggestEmail } from "./email-typos";
+import { suggestEmail } from "@/features/auth/lib/email-typos";
 
 test("a mistyped .com ending is corrected", () => {
   expect(suggestEmail("gulnasmosh@gmail.con")).toBe("gulnasmosh@gmail.com");

@@ -8,7 +8,7 @@ import {
   UnprocessableEntityException,
 } from "@workos-inc/node";
 import { expect, test } from "vitest";
-import { classifyAuthError } from "./auth-errors";
+import { classifyAuthError } from "@/features/auth/lib/auth-errors";
 
 // Built the way @workos-inc/node builds them from API responses.
 const unprocessable = (codes: string[]) =>

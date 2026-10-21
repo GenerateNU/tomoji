@@ -30,6 +30,14 @@ format:
 test-watch:
     bun run test:watch
 
+# Frontend unit tests only — skips the Convex suites
+test-frontend:
+    bunx vitest run --project frontend
+
+# Convex backend tests only
+test-backend:
+    bunx vitest run --project convex --project convex-node
+
 # Run one test file (ex: `just test-file convex/users.test.ts`)
 test-file file:
     bunx vitest run {{ file }}

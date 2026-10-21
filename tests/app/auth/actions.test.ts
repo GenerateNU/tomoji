@@ -13,7 +13,7 @@ import {
   resetPasswordAction,
   signUpAction,
   verifyEmailAction,
-} from "./actions";
+} from "@/app/auth/actions";
 
 vi.mock("@workos-inc/authkit-nextjs", () => ({
   getWorkOS: vi.fn(),

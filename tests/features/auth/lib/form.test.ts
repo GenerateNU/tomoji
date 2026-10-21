@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { email, parseForm, required } from "./form";
+import { email, parseForm, required } from "@/features/auth/lib/form";
 
 function formData(fields: Record<string, string>) {
   const data = new FormData();

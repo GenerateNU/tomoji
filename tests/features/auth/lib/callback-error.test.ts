@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 import { beforeEach, expect, test, vi } from "vitest";
-import { authKitFailure, signInNotice } from "./callback-error";
+import { authKitFailure, signInNotice } from "@/features/auth/lib/callback-error";
 
 beforeEach(() => {
   vi.clearAllMocks();

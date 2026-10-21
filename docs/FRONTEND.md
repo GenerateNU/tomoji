@@ -2,16 +2,13 @@
 
 This document outlines how we organize and develop the Next.js frontend for Tomoji. For setup instructions and commands, see `CONTRIBUTING.md`. Backend conventions are covered in [Backend](BACKEND.md).
 
-## 1. Folders
+## Folders
 
 ```text
 src/
   app/                       Next.js routes and layouts
     layout.tsx               fonts and providers
-    signup/, login/,         sign-in pages, no nav bar
-    forgot-password/,
-    reset-password/,
-    verify-email/
+    signup/, login/, etc     sign-in pages, no nav bar
     (protected)/
       layout.tsx             nav bar
       page.tsx               home (/) — where sign-in lands
@@ -26,24 +23,28 @@ src/
     ui/                      shadcn-generated components
   hooks/                     hooks shared across features
   lib/                       plain functions - no React, usable anywhere
-  proxy.ts                   sends signed-out page visits to /login?next=<path>; server actions and other non-GET requests pass through and must check auth themselves (rules in features/auth/lib/access.ts)
+tests/                       unit tests, mirroring the src/ path of what they cover
+e2e/                         Playwright browser tests
+  fixtures/                  per-spec entry points and stubbed backend responses
 ```
 
 ### Where should new files go?
 
 When adding a new file, use these guidelines to decide where it belongs:
 
-| Question                                                                                   | Location                           |
-| ------------------------------------------------------------------------------------------ | ---------------------------------- |
-| Is it a Next.js-specific file like `page.tsx`, `layout.tsx`, or `route.ts`?                | `app/`                             |
-| Is it related to a specific Tomoji feature, such as opportunities, campaigns, or creators? | `features/<domain>/`               |
-| Is it shared or general-purpose code?                                                      | `components/`, `hooks/`, or `lib/` |
+| Question                                                                                   | Location                            |
+| ------------------------------------------------------------------------------------------ | ----------------------------------- |
+| Is it a Next.js-specific file like `page.tsx`, `layout.tsx`, or `route.ts`?                | `app/`                              |
+| Is it related to a specific Tomoji feature, such as opportunities, campaigns, or creators? | `features/<domain>/`                |
+| Is it shared or general-purpose code?                                                      | `components/`, `hooks/`, or `lib/`  |
+| Is it a unit test?                                                                         | `tests/`, mirroring the source path |
+| Is it a browser test?                                                                      | `e2e/`                              |
 
-## 2. Routes
+## Routes
 
 Our routes should describe the resource being accessed rather than the role of the person accessing it, so keep URLs independent of user roles. For example, `/opportunities` serves as the discovery feed for creators and the company's opportunity list for company users. The page determines which component to render based on the current user.
 
-## 3. Component Design
+## Component Design
 
 We want components to be reusable, consistent, and easy to maintain. These conventions should help us avoid unnecessary duplication while keeping the frontend flexible as designs evolve.
 
@@ -55,7 +56,7 @@ We want components to be reusable, consistent, and easy to maintain. These conve
 | Build responsive layouts                  | Use flexbox, grid, and relative widths rather than relying on fixed pixel dimensions. This will allow us to make components responsive across different screen sizes.                                                                              |
 | Let parent components manage spacing      | Reusable components generally shouldn't define their own outer margins. Their parent components have a better understanding of the surrounding layout and can handle spacing accordingly.                                                          |
 
-## 4. Reading Data
+## Reading Data
 
 We use Convex directly within our components to retrieve data.
 
@@ -88,7 +89,7 @@ export function useOpportunityFeed() {
 }
 ```
 
-## 5. Writing Data
+## Writing Data
 
 We use `useMutation` for operations that modify application data.
 
@@ -118,7 +119,7 @@ Use `errorCode(error)` when a failure needs more than a message — putting the 
 
 Sign-in errors come from WorkOS, not Convex, so `features/auth/lib/auth-errors.ts` plays the same role for them: it maps each WorkOS error to a field message, a form message, or the email-verification step.
 
-## 6. User Experience
+## User Experience
 
 We should account for all the states a user might encounter when interacting with the application.
 
@@ -158,7 +159,7 @@ We should avoid showing users actions they don't have permission to perform, but
 
 **The backend is responsible for enforcing permissions.** Frontend checks are there to improve the user experience and prevent users from attempting actions that would ultimately fail.
 
-## 7. Notifications inbox
+## Notifications inbox
 
 `/notifications` uses the existing authenticated notification APIs with cursor pagination.
 Read actions use reactive query updates. Mark-all includes unloaded pages and can finish in
@@ -168,7 +169,7 @@ Category filters, deadline summaries, destination links, and the full Figma side
 Browser tests render the real inbox with a local Convex service double, not a live deployment:
 `E2E_BASE_URL=http://notifications.test bun run test:e2e e2e/notifications.spec.ts`.
 
-## 8. Naming and Types
+## Naming and Types
 
 To keep the codebase consistent, we follow a few naming conventions:
 
@@ -198,47 +199,3 @@ Infer<typeof creatorOpportunity>;
 ```
 
 We should avoid manually recreating backend types on the frontend because those definitions can easily become outdated as the schema changes. Using generated and inferred types helps keep the frontend aligned with the backend without requiring us to maintain duplicate definitions.
-
-## 9. Creator settings
-
-`/settings` uses the components in `features/profile/`. It waits for authentication and account synchronization before loading `creators.me`; other roles see an explanation instead of making creator-only requests.
-
-Basic details displays the creator's first name, last name, and email as read-only account information synced from WorkOS. Username and optional phone number are edited through `creators.update`. Changed usernames are trimmed and lowercased, and the backend enforces uniqueness. An unset username can remain unset when editing the phone number; an existing username cannot be cleared. Saving a blank phone number clears it with `null`. Each edit starts with a snapshot of the saved values and sends only changed fields, so live updates do not overwrite drafts and untouched fields are not written back. Discard returns to the latest saved values. Errors preserve the draft for correction or retry.
-
-The Portfolio section edits the existing single `githubLink` through `creators.update`. Save accepts an HTTPS GitHub URL (or adds HTTPS to a pasted `github.com/...` link); saving a blank field clears it. Discard leaves the saved value unchanged. Live query updates do not overwrite an unsaved draft. Older invalid links are never rendered as clickable URLs.
-
-Portfolio also shows an X account card with a disabled **Connect X** button and a coming-soon message. It does not request account data or start authorization. The existing X backend is documented in [X accounts](X_ACCOUNTS.md); connecting it to Settings is future work.
-
-The profile-picture section has a separate Save/Discard flow. Selecting a JPEG, PNG, or WebP checks its size and whether it decodes, then shows a local preview. Save requests an S3 grant, uploads the file, and completes the upload to attach it to the user. A failed completion can be retried with the same upload ID. `useProfilePicture` retrieves the private image bytes and manages Blob URL cleanup. See [S3](S3.md) for the required credentials and browser CORS configuration.
-
-Run `bun run test:e2e e2e/settings.spec.ts` for browser coverage. These tests render the real Settings components with isolated Convex/S3 responses and separately check the signed-out route redirect. They do not prove that a live deployment's S3 credentials or bucket CORS are configured.
-
-## 10. Creator profile
-
-`/profile` shows the signed-in creator's own name, username, picture, and GitHub link. The navigation link appears for synced creator accounts. The page waits for authentication and `users.me` before subscribing to `creators.me`; company users and operators see an explanation instead. It does not accept a creator ID or provide a public profile view.
-
-**Edit profile** links to `/settings`. Profile content updates through the existing reactive queries and has no write operations. Email and phone remain in Settings; an email stored as a legacy name fallback is not displayed as the profile name. Unset fields have empty states. GitHub links use the same URL validation as Settings, and private pictures use `useProfilePicture`, including loading, retry, and Blob URL cleanup. Query failures use the shared protected-route error boundary.
-
-Run `bun run test:e2e e2e/profile.spec.ts` for browser coverage of the real components with isolated backend responses and the signed-out route redirect. Live S3 configuration is still required to load stored pictures from a development deployment.
-
-Run `bun run test:e2e e2e/profile-nav.spec.ts` for navigation subscription regression tests. These use the installed Convex React hooks with an isolated client, covering render stability, authentication changes, and query failures without connecting to a deployment.
-
-## 11. Teammate invitations
-
-Company admins use `/team/invites` via the signed-in header. The page uses `users.me` to gate
-admin queries, `invites.listMine` for outstanding invites, and the existing invitation/revocation
-actions. It sends one email at a time; existing-member editing and bulk invitations are deferred.
-Successful cancellation stays visible as requested until the WorkOS webhook removes the row.
-No local optimistic removal or automatic action retry is performed. Browser tests never send email:
-`E2E_BASE_URL=http://invites.test bun run test:e2e e2e/invites.spec.ts`.
-
-## 12. Company campaigns
-
-`/campaigns` lists the signed-in company's campaigns using `campaigns.list`. Status filters
-use the backend's draft/open/paused/closed states and reset cursor pagination. Budgets display
-USD cents as dollars; dates use the viewer's timezone. The home page links company users here.
-Company admins can save a complete draft at `/campaigns/new`; dates are explicitly entered in UTC,
-end dates use :00/:30, and money converts to integer cents without rounding. Creation never publishes.
-Lifecycle actions, analytics, and the full Figma sidebar are separate work.
-Browser verification uses isolated service responses, with no live writes:
-`E2E_BASE_URL=http://campaigns.test bun run test:e2e e2e/campaigns.spec.ts`.

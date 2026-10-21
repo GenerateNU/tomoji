@@ -44,8 +44,7 @@ async function submit(
   creatorId: Id<"creators"> = fixture.creatorId,
 ) {
   return await t.run(
-    async (ctx) =>
-      await createSubmission(ctx, creatorId, submissionArgs(fixture.assignmentId, overrides)),
+    async (ctx) => await createSubmission(ctx, creatorId, submissionArgs(fixture, overrides)),
   );
 }
 
@@ -94,6 +93,7 @@ describe("createSubmission", () => {
 
       expect(await storedSubmission(t, id)).toMatchObject({
         assignmentId: fixture.assignmentId,
+        deliverableId: fixture.deliverableId,
         ...draft,
         status: "pending",
         usesAiReview,
@@ -503,6 +503,7 @@ describe("toSubmissionView", () => {
     _id: "submissions|1" as Id<"submissions">,
     _creationTime: 1,
     assignmentId: "assignments|1" as Id<"assignments">,
+    deliverableId: "deliverables|1" as Id<"deliverables">,
     ...draft,
     usesAiReview: false,
   };

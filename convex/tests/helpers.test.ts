@@ -82,9 +82,14 @@ test("shared campaign seeding uses the campaign argument defaults", async () => 
 
 test("submission arguments are fresh and preserve explicit scenario overrides", async () => {
   const t = convexTest(schema, modules);
-  const { assignmentId } = await seedAssignmentFixture(t);
-  const args = submissionArgs(assignmentId, { draftUrl: "invalid-url" });
+  const fixture = await seedAssignmentFixture(t);
+  const { assignmentId, deliverableId } = fixture;
+  const args = submissionArgs(fixture, { draftUrl: "invalid-url" });
   expect(args.draftUrl).toBe("invalid-url");
   args.draftDescription = "changed by this test";
-  expect(submissionArgs(assignmentId)).toEqual({ assignmentId, ...submissionDraftFields });
+  expect(submissionArgs(fixture)).toEqual({
+    assignmentId,
+    deliverableId,
+    ...submissionDraftFields,
+  });
 });

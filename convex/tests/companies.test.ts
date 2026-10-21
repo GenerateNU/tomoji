@@ -86,12 +86,16 @@ describe("companies.update", () => {
     const result = await asMember.mutation(api.companies.update, {
       name: "Acme Rebrand",
       profilePicture: "https://example.com/logo.png",
+      website: "https://acme.com",
+      description: "Developer tools.",
     });
 
     expect(result).toBeNull();
     expect(await companyFor(t, "org_acme")).toMatchObject({
       name: "Acme Rebrand",
       profilePicture: "https://example.com/logo.png",
+      website: "https://acme.com",
+      description: "Developer tools.",
     });
   });
 

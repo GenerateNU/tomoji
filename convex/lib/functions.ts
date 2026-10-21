@@ -1,12 +1,18 @@
-import { customCtx, customMutation, customQuery } from "convex-helpers/server/customFunctions";
+import {
+  customAction,
+  customCtx,
+  customMutation,
+  customQuery,
+} from "convex-helpers/server/customFunctions";
 import { v } from "convex/values";
-import { mutation, query } from "../_generated/server";
+import { action, mutation, query } from "../_generated/server";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { requireRole, requireUser, requireCallerCreatorId } from "../models/users";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { ResourceViewer } from "./authz";
 import { apiError } from "./errors";
 import { requireMembership } from "../models/companyUsers";
+import { internal } from "../_generated/api";
 
 /**
  * Function builders that enforce the caller's account type before the handler
@@ -168,3 +174,27 @@ export const creatorMutation = customMutation(mutation, customCtx(creatorContext
 
 export const operatorQuery = customQuery(query, customCtx(operatorContext));
 export const operatorMutation = customMutation(mutation, customCtx(operatorContext));
+
+/**
+ * Actions have no `ctx.db`, so they cannot check a role themselves. These
+ * builders run the check through an internal query first, then hand the
+ * handler the same caller the query resolved.
+ */
+export const operatorAction = customAction(
+  action,
+  // Annotated because this file and the generated api reference each other.
+  customCtx(async (ctx): Promise<{ user: Doc<"users"> }> => {
+    return { user: await ctx.runQuery(internal.authorize.operator, {}) };
+  }),
+);
+
+export const companyAdminAction = customAction(
+  action,
+  customCtx(
+    async (
+      ctx,
+    ): Promise<{ user: Doc<"users">; membership: Doc<"companyUsers">; orgId: string }> => {
+      return await ctx.runQuery(internal.authorize.companyAdmin, {});
+    },
+  ),
+);

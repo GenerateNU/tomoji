@@ -110,15 +110,19 @@ async function list(t: TestConvex, viewer: AssignmentViewer, filters: Partial<Di
 }
 
 async function insertPost(t: TestConvex, submissionId: Id<"submissions">) {
-  return await t.run(
-    async (ctx) =>
-      await ctx.db.insert("posts", {
-        submissionId,
-        url: "https://www.tiktok.com/@julia/video/1",
-        postedAt: Date.now(),
-        isVerified: true,
-      }),
-  );
+  return await t.run(async (ctx) => {
+    const submission = await ctx.db.get("submissions", submissionId);
+    const assignment = submission && (await ctx.db.get("assignments", submission.assignmentId));
+    if (assignment === null) throw new Error("expected seeded assignment");
+    return await ctx.db.insert("posts", {
+      submissionId,
+      campaignId: assignment.campaignId,
+      url: "https://x.com/julia/status/1",
+      xPostId: "1",
+      postedAt: Date.now(),
+      isVerified: true,
+    });
+  });
 }
 
 /** The creator's result from an earlier day, for seeding disputes that are already resolved. */

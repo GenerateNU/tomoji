@@ -7,7 +7,12 @@ import { apiError } from "../lib/errors";
 import { withRowsReadCap } from "../lib/pagination";
 import { requireNonBlank, isHalfHourTimestamp } from "../lib/validation";
 import { requireMembership } from "./companyUsers";
-import { deliverableCreate, hasDeliverables, insertDeliverables } from "./deliverableDrafts";
+import {
+  deliverableCreate,
+  hasDeliverables,
+  insertDeliverables,
+  listOpportunityDeliverables,
+} from "./deliverableDrafts";
 import { notifyCompanyUser, notifyCreator } from "./notifications";
 import { requireNiche, requireNiches } from "./niches";
 import schema from "../schema";
@@ -308,6 +313,10 @@ export async function removeOpportunity(
     .take(1);
   if (applications.length > 0 || assignments.length > 0) {
     throw apiError("invalid_state", { reason: "opportunity_has_workflow_history" });
+  }
+  // Deliverables are part of the brief, not workflow history, so they go with it.
+  for (const deliverable of await listOpportunityDeliverables(ctx, opportunityId)) {
+    await ctx.db.delete("deliverables", deliverable._id);
   }
   await ctx.db.delete("opportunities", opportunityId);
 }

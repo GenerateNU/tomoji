@@ -19,6 +19,7 @@ import { authedContext } from "../../lib/functions";
 import schema from "../../schema";
 import {
   creatorNotifications,
+  deliverableArgs,
   expectApiError,
   memberNotifications,
   opportunityArgs,
@@ -903,6 +904,17 @@ describe("publishOpportunity", () => {
 });
 
 describe("removeOpportunity", () => {
+  test("deletes the draft's deliverables with it", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(
+      t,
+      { subject: "remove_with_deliverables" },
+      { status: "draft", deliverables: [deliverableArgs(), deliverableArgs({ title: "Thread" })] },
+    );
+    await t.run(async (ctx) => await removeOpportunity(ctx, owner.membership, owner.opportunityId));
+    expect(await t.run(async (ctx) => await ctx.db.query("deliverables").collect())).toEqual([]);
+  });
+
   test("conceals a draft whose company is inactive", async () => {
     const t = convexTest(schema, modules);
     const owner = await seedOpportunity(t, { subject: "remove_owner" }, { status: "draft" });

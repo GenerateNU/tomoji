@@ -11,6 +11,8 @@ import type { FeedView } from "../lib/types";
 import { FilterSelect } from "./filter-select";
 import { OpportunityCard } from "./opportunity-card";
 import { OpportunityTable } from "./opportunity-table";
+import { FeedSkeleton } from "./feed-skeleton";
+import { NoOpportunities } from "./no-opportunities";
 
 type TypeFilter = "all" | "gated" | "open";
 
@@ -140,7 +142,7 @@ export function CreatorFeed() {
         {loading ? (
           <FeedSkeleton />
         ) : shown.length === 0 ? (
-          <EmptyState starredOnly={starredOnly} filtered={type !== "all" || niche !== ""} />
+          <NoOpportunities starredOnly={starredOnly} filtered={type !== "all" || niche !== ""} />
         ) : view === "grid" ? (
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
             {shown.map((opportunity) => (
@@ -172,27 +174,4 @@ export function CreatorFeed() {
       )}
     </div>
   );
-}
-
-function FeedSkeleton() {
-  return (
-    <div
-      className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3"
-      aria-busy="true"
-      aria-label="Loading opportunities"
-    >
-      {Array.from({ length: 6 }, (_, index) => (
-        <div key={index} className="h-[322px] animate-pulse rounded-2xl bg-muted/60" />
-      ))}
-    </div>
-  );
-}
-
-function EmptyState({ starredOnly, filtered }: { starredOnly: boolean; filtered: boolean }) {
-  const message = starredOnly
-    ? "You haven't starred any open opportunities yet. Tap the star on one to save it here."
-    : filtered
-      ? "No opportunities match these filters. Try another niche or type."
-      : "There are no open opportunities right now. Check back soon.";
-  return <p className="rounded-2xl bg-muted/60 p-8 text-center text-muted-foreground">{message}</p>;
 }

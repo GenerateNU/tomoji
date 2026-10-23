@@ -1,5 +1,7 @@
 import type { Doc } from "@convex/_generated/dataModel";
 
+export { formatCompensation } from "@/lib/money";
+
 const MINUTE = 60 * 1000;
 const HOUR = 60 * MINUTE;
 const DAY = 24 * HOUR;
@@ -24,32 +26,6 @@ export function formatRelativeTime(timestamp: number, now: number): string {
             ? ["month", MONTH]
             : ["year", YEAR];
   return relative.format(Math.trunc(diff / size), unit);
-}
-
-/** Dollars from integer cents, without ".00" for whole amounts. */
-function formatCents(cents: number): string {
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-    minimumFractionDigits: cents % 100 === 0 ? 0 : 2,
-  }).format(cents / 100);
-}
-
-type Terms = Pick<Doc<"opportunities">, "fixedFeeCents" | "cpmRateCents" | "paymentCapCents">;
-
-/**
- * Pay as a short summary, e.g. "$100 + $5 CPM (up to $250)". CPM is per 1,000
- * eligible views and the cap limits the total payout.
- */
-export function formatCompensation(terms: Terms): string {
-  const parts: string[] = [];
-  if (terms.fixedFeeCents > 0) parts.push(formatCents(terms.fixedFeeCents));
-  if (terms.cpmRateCents > 0) parts.push(`${formatCents(terms.cpmRateCents)} CPM`);
-  if (parts.length === 0) return "—";
-  const summary = parts.join(" + ");
-  return terms.cpmRateCents > 0 && terms.paymentCapCents > 0
-    ? `${summary} (up to ${formatCents(terms.paymentCapCents)})`
-    : summary;
 }
 
 /**

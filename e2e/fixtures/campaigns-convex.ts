@@ -58,7 +58,9 @@ export function useConvexAuth() {
     },
     () => version,
   );
-  return { isAuthenticated: fixture.mode !== "auth" };
+  // `auth` is authentication in progress, not signed out. The real hook
+  // reports that as isLoading, and useMe relies on the difference.
+  return { isAuthenticated: fixture.mode !== "auth", isLoading: fixture.mode === "auth" };
 }
 
 /** Uses the real public identity shape, including the unsynced window. */

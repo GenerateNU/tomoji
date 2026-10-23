@@ -1,9 +1,5 @@
 import { describe, expect, test } from "vitest";
-import {
-  applicationExpiresAt,
-  formatCompensation,
-  formatRelativeTime,
-} from "@/features/applications/lib/format";
+import { applicationExpiresAt, formatRelativeTime } from "@/features/applications/lib/format";
 
 const NOW = Date.UTC(2026, 9, 15, 12);
 const DAY = 24 * 60 * 60 * 1000;
@@ -28,38 +24,6 @@ describe("formatRelativeTime", () => {
 
   test("switches to months past a month", () => {
     expect(formatRelativeTime(NOW - 65 * DAY, NOW)).toBe("2 months ago");
-  });
-});
-
-describe("formatCompensation", () => {
-  const terms = { fixedFeeCents: 0, cpmRateCents: 0, paymentCapCents: 0 };
-
-  test("shows a whole-dollar fixed fee without cents", () => {
-    expect(formatCompensation({ ...terms, fixedFeeCents: 50_000 })).toBe("$500");
-  });
-
-  test("keeps cents when they aren't zero", () => {
-    expect(formatCompensation({ ...terms, fixedFeeCents: 1_050 })).toBe("$10.50");
-  });
-
-  test("shows CPM with its payment cap", () => {
-    expect(formatCompensation({ ...terms, cpmRateCents: 500, paymentCapCents: 25_000 })).toBe(
-      "$5 CPM (up to $250)",
-    );
-  });
-
-  test("combines a fixed fee and CPM", () => {
-    expect(
-      formatCompensation({ fixedFeeCents: 10_000, cpmRateCents: 500, paymentCapCents: 25_000 }),
-    ).toBe("$100 + $5 CPM (up to $250)");
-  });
-
-  test("leaves out a zero cap", () => {
-    expect(formatCompensation({ ...terms, cpmRateCents: 500 })).toBe("$5 CPM");
-  });
-
-  test("shows a dash when there's no pay", () => {
-    expect(formatCompensation(terms)).toBe("—");
   });
 });
 

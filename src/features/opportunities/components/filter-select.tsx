@@ -1,4 +1,5 @@
 import { useId } from "react";
+import { Label } from "@/components/ui/label";
 
 /** A labeled native select styled like the design's dropdowns. */
 export function FilterSelect({
@@ -15,9 +16,9 @@ export function FilterSelect({
   const id = useId();
   return (
     <div className="flex min-w-[155px] flex-col gap-3">
-      <label htmlFor={id} className="text-lg font-medium">
+      <Label htmlFor={id} className="text-lg">
         {label}
-      </label>
+      </Label>
       <div className="relative">
         <select
           id={id}

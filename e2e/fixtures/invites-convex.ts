@@ -39,8 +39,8 @@ export const fixture = {
   },
 };
 
-/** Notifies the UI about synthetic service responses only, with no WorkOS or Convex requests. */
-export function useConvexAuth() {
+/** The real client subscribes per query, so every hook here must too. */
+function useFixtureStore() {
   useSyncExternalStore(
     (listener) => {
       listeners.add(listener);
@@ -50,7 +50,14 @@ export function useConvexAuth() {
     },
     () => version,
   );
-  return { isAuthenticated: fixture.mode !== "auth" };
+}
+
+/** Notifies the UI about synthetic service responses only, with no WorkOS or Convex requests. */
+export function useConvexAuth() {
+  useFixtureStore();
+  // `auth` is authentication in progress, not signed out. The real hook
+  // reports that as isLoading, and useMe relies on the difference.
+  return { isAuthenticated: fixture.mode !== "auth", isLoading: fixture.mode === "auth" };
 }
 
 /** Mirrors the generated identity response for each permission state. */
@@ -58,6 +65,7 @@ export function useQuery(
   reference: FunctionReference<"query">,
   args: unknown,
 ): FunctionReturnType<typeof api.users.me> | undefined {
+  useFixtureStore();
   if (getFunctionName(reference) !== "users:me") throw new Error("Unexpected query");
   if (args === "skip") return undefined;
   if (fixture.mode === "unsynced") return { synced: false };
@@ -81,6 +89,7 @@ export function useQuery(
 
 /** Supplies a paginated outstanding list whose rows change only when the webhook is simulated. */
 export function usePaginatedQuery(reference: FunctionReference<"query">, args: unknown) {
+  useFixtureStore();
   const [limit, setLimit] = useState(2);
   const name = getFunctionName(reference);
   if (name !== "invites:listMine") throw new Error("Unexpected list query");

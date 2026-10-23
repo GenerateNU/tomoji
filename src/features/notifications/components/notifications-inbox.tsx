@@ -8,6 +8,7 @@ import type { Id } from "@convex/_generated/dataModel";
 import { Button } from "@/components/ui/button";
 import { errorMessage } from "@/lib/errors";
 import { groupByDate } from "../lib/group-by-date";
+import { Skeleton } from "@/components/ui/skeleton";
 
 const PAGE_SIZE = 20;
 
@@ -80,7 +81,7 @@ export function NotificationsInbox() {
       {loading ? (
         <div className="space-y-8 py-10">
           {[0, 1, 2].map((key) => (
-            <div key={key} aria-hidden className="h-16 animate-pulse rounded-lg bg-muted" />
+            <Skeleton key={key} className="h-16 rounded-lg" />
           ))}
         </div>
       ) : results.length === 0 ? (

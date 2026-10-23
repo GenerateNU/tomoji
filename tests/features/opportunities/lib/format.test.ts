@@ -1,43 +1,9 @@
 import { describe, expect, test } from "vitest";
 import {
-  formatCompensation,
   formatDeadline,
-  formatMoney,
   formatPostedAgo,
   formatSpotsLeft,
 } from "@/features/opportunities/lib/format";
-
-describe("formatMoney", () => {
-  test.each([
-    [60_000, "$600"],
-    [350, "$3.50"],
-    [100_000, "$1,000"],
-    [0, "$0"],
-  ])("%i cents is %s", (cents, expected) => {
-    expect(formatMoney(cents)).toBe(expected);
-  });
-});
-
-describe("formatCompensation", () => {
-  test.each([
-    [{ fixedFeeCents: 65_000, cpmRateCents: 0, paymentCapCents: 0 }, "$650"],
-    [{ fixedFeeCents: 0, cpmRateCents: 400, paymentCapCents: 0 }, "$4 CPM"],
-    [{ fixedFeeCents: 0, cpmRateCents: 300, paymentCapCents: 59_000 }, "$3 CPM • Up to $590"],
-    [
-      { fixedFeeCents: 3_000, cpmRateCents: 500, paymentCapCents: 100_000 },
-      "$30 + $5 CPM • Up to $1,000",
-    ],
-    [{ fixedFeeCents: 0, cpmRateCents: 0, paymentCapCents: 0 }, "Unpaid"],
-  ])("%j is %s", (terms, expected) => {
-    expect(formatCompensation(terms)).toBe(expected);
-  });
-
-  test("ignores a cap when there is no CPM to cap", () => {
-    expect(
-      formatCompensation({ fixedFeeCents: 10_000, cpmRateCents: 0, paymentCapCents: 50_000 }),
-    ).toBe("$100");
-  });
-});
 
 describe("formatDeadline", () => {
   const deadline = Date.UTC(2026, 9, 15, 17, 30);

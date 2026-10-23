@@ -1,26 +1,27 @@
 "use client";
 
-import { api } from "@convex/_generated/api";
-import { useConvexAuth, useQuery } from "convex/react";
 import Link from "next/link";
 import { buttonVariants } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
+import { SignedOutNotice } from "@/features/auth/components/signed-out-notice";
+import { useMe } from "../hooks/use-me";
 
 /** Shows the synced identity and each role's entry points without requesting role data. */
 export function Welcome() {
-  const { isAuthenticated } = useConvexAuth();
-  // users.me requires an identity, so wait until Convex has the token.
-  const me = useQuery(api.users.me, isAuthenticated ? {} : "skip");
+  // Not RequireAccount: this is the home page and it serves every role.
+  const me = useMe();
 
   if (me === undefined) {
     return (
       <>
-        <div aria-hidden className="h-8 w-56 animate-pulse rounded-md bg-muted" />
+        <Skeleton className="h-8 w-56" />
         <span className="sr-only" role="status">
           Loading…
         </span>
       </>
     );
   }
+  if (me === null) return <SignedOutNotice next="/" />;
 
   if (!me.synced) {
     return (

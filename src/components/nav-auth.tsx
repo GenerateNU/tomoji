@@ -3,6 +3,7 @@
 import { useAuth } from "@workos-inc/authkit-nextjs/components";
 import Link from "next/link";
 import { signOutAction } from "@/app/auth/actions";
+import { Skeleton } from "@/components/ui/skeleton";
 import { InvitesLink } from "@/features/invites/components/invites-link";
 
 /** Shows account actions, the inbox, and company-admin invitation navigation. */
@@ -12,7 +13,7 @@ export function NavAuth() {
   if (loading) {
     return (
       <div className="flex items-center gap-4">
-        <div className="h-10 w-20 animate-pulse rounded-full bg-zinc-200 dark:bg-zinc-800" />
+        <Skeleton className="h-10 w-20 rounded-full" />
       </div>
     );
   }

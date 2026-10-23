@@ -1,13 +1,11 @@
 "use client";
 
 import Link from "next/link";
-import { useConvexAuth, useQuery } from "convex/react";
-import { api } from "@convex/_generated/api";
+import { useMe } from "@/features/users/hooks/use-me";
 
 /** Keeps the invitation entry point hidden until the authoritative company role is available. */
 export function InvitesLink() {
-  const { isAuthenticated } = useConvexAuth();
-  const me = useQuery(api.users.me, isAuthenticated ? {} : "skip");
+  const me = useMe();
   if (!me?.synced || me.role !== "company" || me.companyRole !== "admin") return null;
   return (
     <Link

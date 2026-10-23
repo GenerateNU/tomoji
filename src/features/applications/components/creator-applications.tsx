@@ -2,13 +2,14 @@
 
 import { api } from "@convex/_generated/api";
 import { useState } from "react";
-import { Button } from "@/components/ui/button";
 import { useStableQuery } from "@/hooks/use-stable-query";
-import { APPLICATION_STATUS_LABELS, type ApplicationStatus } from "../lib/application-status";
+import { type ApplicationStatus } from "../lib/application-status";
 import { FIRST_PAGE, nextPage, previousPage } from "../lib/cursor-pages";
 import { ApplicationRow } from "./application-row";
 import { ApplicationStatusFilter } from "./application-status-filter";
 import { ApplicationsPagination, type PageSize } from "./applications-pagination";
+import { NoApplications } from "./no-applications";
+import { SkeletonRow } from "./skeleton-row";
 
 // Fixed widths from the Figma (column + 20px gap) so columns don't shift as
 // filters change which rows are shown. Status is wider than the design's 112px
@@ -61,7 +62,7 @@ export function CreatorApplications() {
         </h2>
 
         {result !== undefined && result.page.length === 0 ? (
-          <EmptyState
+          <NoApplications
             status={status}
             onShowAll={() => changeStatus(null)}
             onBack={pages.index > 0 ? () => setPages(previousPage) : undefined}
@@ -121,67 +122,5 @@ export function CreatorApplications() {
         onPageSizeChange={changePageSize}
       />
     </div>
-  );
-}
-
-function EmptyState({
-  status,
-  onShowAll,
-  onBack,
-}: {
-  status: ApplicationStatus | null;
-  onShowAll: () => void;
-  onBack?: () => void;
-}) {
-  if (onBack !== undefined) {
-    return (
-      <div className="flex flex-col items-start gap-3">
-        <p className="text-muted-foreground">There are no more applications.</p>
-        <Button variant="outline" onClick={onBack}>
-          Previous page
-        </Button>
-      </div>
-    );
-  }
-  if (status !== null) {
-    return (
-      <div className="flex flex-col items-start gap-3">
-        <p className="text-muted-foreground">
-          You have no applications marked &ldquo;{APPLICATION_STATUS_LABELS[status]}&rdquo;.
-        </p>
-        <Button variant="outline" onClick={onShowAll}>
-          Show all statuses
-        </Button>
-      </div>
-    );
-  }
-  return (
-    <div className="flex flex-col gap-1">
-      <p className="font-medium">You haven&apos;t applied to anything yet.</p>
-      <p className="text-muted-foreground">
-        When you apply to an opportunity, you can follow its status here.
-      </p>
-    </div>
-  );
-}
-
-function SkeletonRow() {
-  return (
-    <tr aria-hidden>
-      <td className="py-2.5 pr-5">
-        <div className="flex items-center gap-4">
-          <div className="size-13 shrink-0 animate-pulse rounded-2xl bg-muted" />
-          <div className="flex flex-col gap-2">
-            <div className="h-5 w-40 animate-pulse rounded bg-muted" />
-            <div className="h-4 w-24 animate-pulse rounded bg-muted" />
-          </div>
-        </div>
-      </td>
-      {Array.from({ length: 4 }, (_, i) => (
-        <td key={i} className="py-2.5 pr-5 last:pr-0">
-          <div className="h-5 w-20 animate-pulse rounded bg-muted" />
-        </td>
-      ))}
-    </tr>
   );
 }

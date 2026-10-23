@@ -5,7 +5,7 @@ import { useAuthForm } from "../hooks/use-auth-form";
 import type { FormState } from "../lib/form";
 import { withNext } from "../lib/access";
 import { logInRules, type LogInField } from "../lib/rules";
-// import { OrDivider } from "./auth-layout";
+// import { OrDivider } from "./or-divider";
 import { FormAlert } from "./form-alert";
 import { FormField } from "./form-field";
 // import { GoogleButton } from "./google-button";

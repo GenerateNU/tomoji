@@ -159,16 +159,6 @@ We should avoid showing users actions they don't have permission to perform, but
 
 **The backend is responsible for enforcing permissions.** Frontend checks are there to improve the user experience and prevent users from attempting actions that would ultimately fail.
 
-## Notifications inbox
-
-`/notifications` uses the existing authenticated notification APIs with cursor pagination.
-Read actions use reactive query updates. Mark-all includes unloaded pages and can finish in
-server-side batches. Dates use the viewer's local calendar. Query failures use the protected error boundary.
-
-Category filters, deadline summaries, destination links, and the full Figma sidebar are deferred.
-Browser tests render the real inbox with a local Convex service double, not a live deployment:
-`E2E_BASE_URL=http://notifications.test bun run test:e2e e2e/notifications.spec.ts`.
-
 ## Naming and Types
 
 To keep the codebase consistent, we follow a few naming conventions:

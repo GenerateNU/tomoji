@@ -2,16 +2,13 @@
 
 This document outlines how we organize and develop the Next.js frontend for Tomoji. For setup instructions and commands, see `CONTRIBUTING.md`. Backend conventions are covered in [Backend](BACKEND.md).
 
-## 1. Folders
+## Folders
 
 ```text
 src/
   app/                       Next.js routes and layouts
     layout.tsx               fonts and providers
-    signup/, login/,         sign-in pages, no nav bar
-    forgot-password/,
-    reset-password/,
-    verify-email/
+    signup/, login/, etc     sign-in pages, no nav bar
     (protected)/
       layout.tsx             nav bar
       page.tsx               home (/) — where sign-in lands
@@ -26,24 +23,28 @@ src/
     ui/                      shadcn-generated components
   hooks/                     hooks shared across features
   lib/                       plain functions - no React, usable anywhere
-  proxy.ts                   sends signed-out page visits to /login?next=<path>; server actions and other non-GET requests pass through and must check auth themselves (rules in features/auth/lib/access.ts)
+tests/                       unit tests, mirroring the src/ path of what they cover
+e2e/                         Playwright browser tests
+  fixtures/                  per-spec entry points and stubbed backend responses
 ```
 
 ### Where should new files go?
 
 When adding a new file, use these guidelines to decide where it belongs:
 
-| Question                                                                                   | Location                           |
-| ------------------------------------------------------------------------------------------ | ---------------------------------- |
-| Is it a Next.js-specific file like `page.tsx`, `layout.tsx`, or `route.ts`?                | `app/`                             |
-| Is it related to a specific Tomoji feature, such as opportunities, campaigns, or creators? | `features/<domain>/`               |
-| Is it shared or general-purpose code?                                                      | `components/`, `hooks/`, or `lib/` |
+| Question                                                                                   | Location                            |
+| ------------------------------------------------------------------------------------------ | ----------------------------------- |
+| Is it a Next.js-specific file like `page.tsx`, `layout.tsx`, or `route.ts`?                | `app/`                              |
+| Is it related to a specific Tomoji feature, such as opportunities, campaigns, or creators? | `features/<domain>/`                |
+| Is it shared or general-purpose code?                                                      | `components/`, `hooks/`, or `lib/`  |
+| Is it a unit test?                                                                         | `tests/`, mirroring the source path |
+| Is it a browser test?                                                                      | `e2e/`                              |
 
-## 2. Routes
+## Routes
 
 Our routes should describe the resource being accessed rather than the role of the person accessing it, so keep URLs independent of user roles. For example, `/opportunities` serves as the discovery feed for creators and the company's opportunity list for company users. The page determines which component to render based on the current user.
 
-## 3. Component Design
+## Component Design
 
 We want components to be reusable, consistent, and easy to maintain. These conventions should help us avoid unnecessary duplication while keeping the frontend flexible as designs evolve.
 
@@ -55,7 +56,7 @@ We want components to be reusable, consistent, and easy to maintain. These conve
 | Build responsive layouts                  | Use flexbox, grid, and relative widths rather than relying on fixed pixel dimensions. This will allow us to make components responsive across different screen sizes.                                                                              |
 | Let parent components manage spacing      | Reusable components generally shouldn't define their own outer margins. Their parent components have a better understanding of the surrounding layout and can handle spacing accordingly.                                                          |
 
-## 4. Reading Data
+## Reading Data
 
 We use Convex directly within our components to retrieve data.
 
@@ -88,7 +89,7 @@ export function useOpportunityFeed() {
 }
 ```
 
-## 5. Writing Data
+## Writing Data
 
 We use `useMutation` for operations that modify application data.
 
@@ -118,7 +119,7 @@ Use `errorCode(error)` when a failure needs more than a message — putting the 
 
 Sign-in errors come from WorkOS, not Convex, so `features/auth/lib/auth-errors.ts` plays the same role for them: it maps each WorkOS error to a field message, a form message, or the email-verification step.
 
-## 6. User Experience
+## User Experience
 
 We should account for all the states a user might encounter when interacting with the application.
 
@@ -158,7 +159,7 @@ We should avoid showing users actions they don't have permission to perform, but
 
 **The backend is responsible for enforcing permissions.** Frontend checks are there to improve the user experience and prevent users from attempting actions that would ultimately fail.
 
-## 7. Naming and Types
+## Naming and Types
 
 To keep the codebase consistent, we follow a few naming conventions:
 

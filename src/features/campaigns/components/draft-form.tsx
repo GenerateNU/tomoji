@@ -6,6 +6,7 @@ import { useMutation } from "convex/react";
 import { api } from "@convex/_generated/api";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { FormField } from "@/features/auth/components/form-field";
 import { errorMessage } from "@/lib/errors";
 import { briefFields, parseCampaignDraft } from "../lib/draft";
@@ -81,12 +82,12 @@ export function DraftForm() {
               name === "description" ? (
                 <div key={name} className="grid gap-2 sm:col-span-2">
                   <Label htmlFor="campaign-description">{label}</Label>
-                  <textarea
+                  <Textarea
                     id="campaign-description"
                     name={name}
                     required
                     rows={4}
-                    className="w-full rounded-lg border bg-background p-3 text-base focus-visible:outline-2 focus-visible:outline-offset-2"
+                    className="bg-background"
                   />
                 </div>
               ) : (

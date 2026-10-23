@@ -3,6 +3,8 @@
 import { useAuth } from "@workos-inc/authkit-nextjs/components";
 import Link from "next/link";
 import { signOutAction } from "@/app/auth/actions";
+import { Button, buttonVariants } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 import { Skeleton } from "@/components/ui/skeleton";
 import { InvitesLink } from "@/features/invites/components/invites-link";
 
@@ -32,22 +34,16 @@ export function NavAuth() {
           {user.email}
         </span>
         <form action={signOutAction}>
-          <button
-            type="submit"
-            className="flex h-10 items-center justify-center rounded-full border border-solid border-black/[.08] px-4 text-sm font-medium transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a]"
-          >
+          <Button type="submit" variant="outline" className="h-10 rounded-full px-4">
             Sign out
-          </button>
+          </Button>
         </form>
       </div>
     );
   }
 
   return (
-    <Link
-      href="/login"
-      className="flex h-10 items-center justify-center rounded-full bg-foreground px-5 text-sm font-medium text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc]"
-    >
+    <Link href="/login" className={cn(buttonVariants(), "h-10 rounded-full px-5")}>
       Sign in
     </Link>
   );

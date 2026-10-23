@@ -10,6 +10,7 @@ import { Button, buttonVariants } from "@/components/ui/button";
 import { EmptyState } from "@/components/empty-state";
 import { formatMoney } from "@/lib/money";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Label } from "@/components/ui/label";
 
 const statuses: Record<Doc<"campaigns">["status"], string> = {
   draft: "Draft",
@@ -45,9 +46,7 @@ export function CompanyCampaigns() {
         )}
       </header>
       <div className="flex items-center gap-3 border-b pb-5">
-        <label htmlFor="campaign-status" className="text-sm font-medium">
-          Status
-        </label>
+        <Label htmlFor="campaign-status">Status</Label>
         <select
           id="campaign-status"
           value={status}

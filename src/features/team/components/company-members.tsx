@@ -1,6 +1,7 @@
 "use client";
 
 import Image from "next/image";
+import { notFound } from "next/navigation";
 import { usePaginatedQuery } from "convex/react";
 import { api } from "@convex/_generated/api";
 import { Button } from "@/components/ui/button";
@@ -28,11 +29,7 @@ export function CompanyMembers() {
     );
   }
   if (me?.synced && !allowed) {
-    return (
-      <p role="alert" className="px-6 py-10">
-        Only company members can view this workspace directory.
-      </p>
-    );
+    notFound();
   }
 
   const loading = !me || status === "LoadingFirstPage";

@@ -89,8 +89,9 @@ flow rather than replaying the callback. An unpersisted grant may still exist on
 The callback redirects to `/?x_link=connected|failed|denied|sign_in_required|already_linked`, with
 `Cache-Control: no-store` and `Referrer-Policy: no-referrer`. No provider payload,
 code, state, or token appears in that redirect. Signed-out callbacks require a new
-linking attempt after signing in. TODO for FE: provide the connect/disconnect buttons
-and result messages, and use `me` as the source of truth after returning.
+linking attempt after signing in. Settings currently shows only a disabled **Connect X**
+placeholder; it is not wired to this backend. Future connection controls should provide
+result messages and use `me` as the source of truth after returning.
 `already_linked` identifies only the specific account-ownership conflict, without
 exposing the other creator's identity. Other errors stay generic.
 

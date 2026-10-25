@@ -24,7 +24,7 @@ export default defineConfig({
       },
       {
         // Everything else: pure units, helpers, stage-machine logic. Tests live
-        // in tests/, mirroring the source path, so they reach their subject
+        // in src/tests/, mirroring the source path, so they reach their subject
         // through the same aliases tsconfig.json defines rather than by
         // climbing out of the folder with ../../.
         resolve: {
@@ -36,7 +36,7 @@ export default defineConfig({
         test: {
           name: "frontend",
           environment: "node",
-          include: ["tests/**/*.test.ts", "tests/**/*.test.tsx"],
+          include: ["src/tests/**/*.test.ts", "src/tests/**/*.test.tsx"],
         },
       },
       {

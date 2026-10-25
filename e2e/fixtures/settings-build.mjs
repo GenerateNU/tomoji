@@ -4,8 +4,9 @@ import { build } from "bun";
 import postcss from "postcss";
 import tailwindcss from "@tailwindcss/postcss";
 
-// Bundle the real client components with a test-only Convex adapter. Nothing
-// here is exposed by Next.js or changes the application's authentication.
+// Bundle the real client components with a test-only Convex adapter and a
+// plain-<img> stand-in for next/image. Nothing here is exposed by Next.js or
+// changes the application's authentication.
 const outputDirectory = process.argv[2];
 const result = await build({
   entrypoints: [resolve(process.argv[3] ?? "e2e/fixtures/settings-entry.tsx")],
@@ -18,6 +19,9 @@ const result = await build({
       setup(builder) {
         builder.onResolve({ filter: /^convex\/react$/ }, () => ({
           path: resolve("e2e/fixtures/settings-convex.ts"),
+        }));
+        builder.onResolve({ filter: /^next\/image$/ }, () => ({
+          path: resolve("e2e/fixtures/next-image.tsx"),
         }));
       },
     },

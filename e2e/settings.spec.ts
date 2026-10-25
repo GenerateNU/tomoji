@@ -330,7 +330,8 @@ const picture = {
   ),
 };
 
-test("choosing and discarding a picture only changes its local preview", async ({ page }) => {
+// Profile picture uploads are off for now; re-enable with UPLOADS_ENABLED in profile-picture-section.tsx.
+test.skip("choosing and discarding a picture only changes its local preview", async ({ page }) => {
   await openSettings(page);
   await page.getByLabel("Choose profile picture").setInputFiles(picture);
   await expect(page.getByAltText("New profile picture preview")).toBeVisible();
@@ -343,7 +344,8 @@ test("choosing and discarding a picture only changes its local preview", async (
   expect(await page.evaluate(() => window.settingsFixture.calls)).toEqual([]);
 });
 
-test("saving a picture posts its signed fields before completion; completion retries reuse that upload", async ({
+// Profile picture uploads are off for now; re-enable with UPLOADS_ENABLED in profile-picture-section.tsx.
+test.skip("saving a picture posts its signed fields before completion; completion retries reuse that upload", async ({
   page,
 }) => {
   let postBody = "";
@@ -380,7 +382,18 @@ test("saving a picture posts its signed fields before completion; completion ret
   ]);
 });
 
-test("unsupported and unreadable pictures are rejected without contacting S3", async ({ page }) => {
+test("picture uploads are marked as coming soon and cannot be chosen", async ({ page }) => {
+  await openSettings(page);
+  const section = page.getByRole("region", { name: "Profile picture" });
+  await expect(section.getByText("Profile picture uploads are coming soon.")).toBeVisible();
+  await expect(section.getByRole("button", { name: "Choose picture" })).toBeDisabled();
+  await expect(page.getByLabel("Choose profile picture")).toBeDisabled();
+});
+
+// Profile picture uploads are off for now; re-enable with UPLOADS_ENABLED in profile-picture-section.tsx.
+test.skip("unsupported and unreadable pictures are rejected without contacting S3", async ({
+  page,
+}) => {
   await openSettings(page);
   const fileInput = page.getByLabel("Choose profile picture");
   await fileInput.setInputFiles({
@@ -411,8 +424,6 @@ test("settings forms fit a narrow viewport and remain keyboard accessible", asyn
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
     true,
   );
-  await page.getByLabel("Choose profile picture").setInputFiles(picture);
-  await expect(page.getByAltText("New profile picture preview")).toBeVisible();
   await page.screenshot({
     path: testInfo.outputPath("settings-mobile.png"),
     fullPage: true,

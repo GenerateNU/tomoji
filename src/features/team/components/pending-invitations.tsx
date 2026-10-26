@@ -2,6 +2,7 @@
 
 import { useRef, useState } from "react";
 import { useAction, usePaginatedQuery } from "convex/react";
+import { toast } from "sonner";
 import { api } from "@convex/_generated/api";
 import type { Id } from "@convex/_generated/dataModel";
 import { Button } from "@/components/ui/button";
@@ -20,7 +21,6 @@ export function PendingInvitations() {
   const [pending, setPending] = useState<Id<"invites"> | null>(null);
   const [requested, setRequested] = useState(() => new Set<Id<"invites">>());
   const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState("");
   const inFlight = useRef(false);
 
   /** Records an acknowledged cancellation without optimistically deleting its row. */
@@ -29,12 +29,11 @@ export function PendingInvitations() {
     inFlight.current = true;
     setPending(inviteId);
     setError(null);
-    setNotice("");
     try {
       await revoke({ inviteId });
       setRequested((previous) => new Set(previous).add(inviteId));
       setConfirm(null);
-      setNotice("Cancellation requested. The invitation will disappear after WorkOS confirms.");
+      toast.success("Cancellation requested.");
     } catch (error) {
       setError(invitationError(error, "cancel"));
     } finally {
@@ -46,9 +45,6 @@ export function PendingInvitations() {
   return (
     <section aria-label="Pending invitations" className="space-y-4">
       <h2 className="text-xl font-semibold">Pending invitations</h2>
-      <p role="status" className="text-sm text-muted-foreground">
-        {notice}
-      </p>
       <FormAlert message={error} />
       {status === "LoadingFirstPage" ? (
         <p role="status">Loading pending invitations…</p>

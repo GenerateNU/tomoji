@@ -10,6 +10,7 @@ import {
   DialogClose,
 } from "@/components/ui/dialog";
 import { useAction } from "convex/react";
+import { toast } from "sonner";
 import type { FunctionArgs } from "convex/server";
 import { api } from "@convex/_generated/api";
 import { Button } from "@/components/ui/button";
@@ -28,7 +29,6 @@ export function InviteTeammate() {
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [fieldError, setFieldError] = useState<string | null>(null);
-  const [notice, setNotice] = useState("");
   const inFlight = useRef(false);
   const emailInput = useRef<HTMLInputElement>(null);
 
@@ -45,12 +45,9 @@ export function InviteTeammate() {
     inFlight.current = true;
     setPending(true);
     setError(null);
-    setNotice("");
     try {
       await invite({ email: address.trim(), role });
-      setNotice(
-        `Invitation sent to ${address.trim()}. The pending list will update after WorkOS syncs.`,
-      );
+      toast.success(`Invitation sent to ${address.trim()}.`);
       setAddress("");
       setRole("member");
       setOpen(false);
@@ -132,9 +129,6 @@ export function InviteTeammate() {
           </form>
         </DialogContent>
       </Dialog>
-      <p role="status" className="break-words text-sm text-muted-foreground">
-        {notice}
-      </p>
     </div>
   );
 }

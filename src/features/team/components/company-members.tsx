@@ -20,7 +20,7 @@ export function CompanyMembers() {
     { initialNumItems: 20 },
   );
 
-  if (me === null) return <SignedOutNotice next="/team/invites" />;
+  if (me === null) return <SignedOutNotice next="/team" />;
   if (me && !me.synced) {
     return (
       <p role="status" className="px-6 py-10">

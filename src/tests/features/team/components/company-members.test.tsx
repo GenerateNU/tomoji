@@ -5,6 +5,7 @@ import { useConvexAuth, usePaginatedQuery, useQuery } from "convex/react";
 import type { FunctionReturnType } from "convex/server";
 import type { Id } from "@convex/_generated/dataModel";
 import type { api } from "@convex/_generated/api";
+import { TeamLink } from "@/features/team/components/team-link";
 import { CompanyMembers } from "@/features/team/components/company-members";
 
 vi.mock("convex/react", () => ({
@@ -118,9 +119,15 @@ test("offers sign-in rather than loading forever after the session ends", () => 
   vi.mocked(useQuery).mockReturnValue(undefined);
   const html = renderToStaticMarkup(<CompanyMembers />);
   expect(html).toContain("sign in");
-  expect(html).toContain("/login?next=%2Fteam%2Finvites");
+  expect(html).toContain('href="/login?next=%2Fteam"');
   expect(notFound).not.toHaveBeenCalled();
   expect(usePaginatedQuery).toHaveBeenCalledWith("companyUsers:list", "skip", {
     initialNumItems: 20,
   });
+});
+
+test("links company members to the team directory", () => {
+  const html = renderToStaticMarkup(<TeamLink />);
+  expect(html).toContain('href="/team"');
+  expect(html).toContain("Workspace members");
 });

@@ -7,7 +7,7 @@ export function CompanyInvites() {
     <RequireAccount
       role="company"
       companyRole="admin"
-      next="/team/invites"
+      next="/team"
       wrongRole="Only company admins can manage teammate invitations."
       loading="Loading invitations…"
       unsynced="We’re finishing setting up your account."

@@ -9,7 +9,7 @@ export function InvitesLink() {
   if (!me?.synced || me.role !== "company" || me.companyRole !== "admin") return null;
   return (
     <Link
-      href="/team/invites"
+      href="/team"
       className="inline-flex min-h-11 items-center rounded-md text-sm underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-offset-4"
     >
       Team invites

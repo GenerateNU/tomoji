@@ -15,8 +15,8 @@ test("signed-out visitors to home land on log in", async ({ page }) => {
 });
 
 test("signed-out visitors to workspace members land on log in", async ({ page }) => {
-  await page.goto("/team/invites");
-  await expect(page).toHaveURL(/\/login\?next=%2Fteam%2Finvites$/);
+  await page.goto("/team");
+  await expect(page).toHaveURL(/\/login\?next=%2Fteam$/);
   await expect(page.getByRole("heading", { name: "Welcome back" })).toBeVisible();
 });
 

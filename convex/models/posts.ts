@@ -154,6 +154,25 @@ async function requirePostAccess(
   return { post, assignment };
 }
 
+/**
+ * The post, for an operator changing its verification. Posts freeze once the
+ * assignment ends, since payouts are settled from them; later fixes go
+ * through disputes.
+ *
+ * @throws `not_found` if the post doesn't exist.
+ * @throws `invalid_state` with `assignment_not_active` if the assignment ended.
+ */
+async function requireOperatorEditablePost(
+  ctx: MutationCtx,
+  postId: Id<"posts">,
+): Promise<Doc<"posts">> {
+  const { post, assignment } = await requirePostAccess(ctx, { role: "operator" }, postId);
+  if (assignment.status !== "active") {
+    throw apiError("invalid_state", { reason: "assignment_not_active" });
+  }
+  return post;
+}
+
 /** The creator-editable fields of a post. */
 export const postUpdate = v.object({ url: v.string() });
 export type PostUpdate = Infer<typeof postUpdate>;
@@ -210,16 +229,15 @@ export type PostVerification = Infer<typeof postVerification>;
  * is a separate ticket.
  *
  * @throws `not_found` if the post doesn't exist.
- * @throws `invalid_state` if the post is already verified, or `postedAt` isn't
- * a past Unix time in whole milliseconds.
+ * @throws `invalid_state` if the assignment isn't active, the post is already
+ * verified, or `postedAt` isn't a past Unix time in whole milliseconds.
  */
 export async function verifyPost(
   ctx: MutationCtx,
   postId: Id<"posts">,
   { postedAt }: PostVerification,
 ): Promise<Doc<"posts">> {
-  const post = await ctx.db.get("posts", postId);
-  if (post === null) throw apiError("not_found", { resource: "post" });
+  const post = await requireOperatorEditablePost(ctx, postId);
   if (post.isVerified) {
     throw apiError("invalid_state", { reason: "post_already_verified" });
   }
@@ -236,11 +254,10 @@ export async function verifyPost(
  * it was entered on verification. The creator can then fix the link.
  *
  * @throws `not_found` if the post doesn't exist.
- * @throws `invalid_state` if the post isn't verified.
+ * @throws `invalid_state` if the assignment isn't active or the post isn't verified.
  */
 export async function unverifyPost(ctx: MutationCtx, postId: Id<"posts">): Promise<Doc<"posts">> {
-  const post = await ctx.db.get("posts", postId);
-  if (post === null) throw apiError("not_found", { resource: "post" });
+  const post = await requireOperatorEditablePost(ctx, postId);
   if (!post.isVerified) {
     throw apiError("invalid_state", { reason: "post_not_verified" });
   }

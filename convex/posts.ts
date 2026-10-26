@@ -99,8 +99,8 @@ export const update = creatorMutation({
  * submission, with `postedAt` read off the post on X.
  *
  * @throws `not_found` if the post doesn't exist.
- * @throws `invalid_state` if the post is already verified, or `postedAt` isn't
- * a past Unix time in whole milliseconds.
+ * @throws `invalid_state` if the assignment isn't active, the post is already
+ * verified, or `postedAt` isn't a past Unix time in whole milliseconds.
  */
 export const verify = operatorMutation({
   args: { postId: v.id("posts"), ...postVerification.fields },
@@ -115,7 +115,7 @@ export const verify = operatorMutation({
  * approved submission. The creator can then fix the link.
  *
  * @throws `not_found` if the post doesn't exist.
- * @throws `invalid_state` if the post isn't verified.
+ * @throws `invalid_state` if the assignment isn't active or the post isn't verified.
  */
 export const unverify = operatorMutation({
   args: { postId: v.id("posts") },

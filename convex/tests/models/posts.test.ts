@@ -652,6 +652,25 @@ describe("verifyPost", () => {
     expect(await storedPosts(t)).toEqual(before);
   });
 
+  test.each(["completed", "cancelled"] as const)(
+    "refuses when the assignment is %s without writing",
+    async (status) => {
+      const t = convexTest(schema, modules);
+      const { fixture, postId } = await seedFixturePost(t);
+      await t.run(
+        async (ctx) => await ctx.db.patch("assignments", fixture.assignmentId, { status }),
+      );
+      const before = await storedPosts(t);
+
+      await expect(
+        t.run(async (ctx) => await verifyPost(ctx, postId, { postedAt: POSTED_AT })),
+      ).rejects.toMatchObject({
+        data: { code: "invalid_state", reason: "assignment_not_active" },
+      });
+      expect(await storedPosts(t)).toEqual(before);
+    },
+  );
+
   test("refuses a post that is already verified", async () => {
     const t = convexTest(schema, modules);
     const { postId } = await seedFixturePost(t);
@@ -729,6 +748,24 @@ describe("unverifyPost", () => {
     expect(stored).not.toHaveProperty("postedAt");
     await t.run(async (ctx) => await updatePost(ctx, fixture.creatorId, postId, { url: NEW_URL }));
   });
+
+  test.each(["completed", "cancelled"] as const)(
+    "refuses when the assignment is %s without writing",
+    async (status) => {
+      const t = convexTest(schema, modules);
+      const { fixture, postId } = await seedFixturePost(t);
+      await t.run(async (ctx) => await verifyPost(ctx, postId, { postedAt: POSTED_AT }));
+      await t.run(
+        async (ctx) => await ctx.db.patch("assignments", fixture.assignmentId, { status }),
+      );
+      const before = await storedPosts(t);
+
+      await expect(t.run(async (ctx) => await unverifyPost(ctx, postId))).rejects.toMatchObject({
+        data: { code: "invalid_state", reason: "assignment_not_active" },
+      });
+      expect(await storedPosts(t)).toEqual(before);
+    },
+  );
 
   test("refuses a post that isn't verified", async () => {
     const t = convexTest(schema, modules);

@@ -51,8 +51,7 @@ export type CompanyMember = Infer<typeof companyMember>;
 /**
  * Returns one page of a company's active members, joined with their user
  * profile.
- * Members whose user is deactivated are left out, as are memberships
- * whose user row is missing.
+ * Inactive memberships and deactivated or missing user records are omitted.
  */
 export async function listCompanyUsers(
   ctx: QueryCtx,
@@ -66,6 +65,8 @@ export async function listCompanyUsers(
 
   const members = await Promise.all(
     result.page.map(async (membership): Promise<CompanyMember | null> => {
+      if (!membership.isActive) return null;
+
       const user = await ctx.db.get("users", membership.userId);
       if (user === null) {
         console.error("dangling companyUsers row", {

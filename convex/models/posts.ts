@@ -171,9 +171,9 @@ async function requirePostAccess(
 }
 
 /**
- * The post, for an operator changing its verification. Posts freeze once the
- * assignment ends, since payouts are settled from them; later fixes go
- * through disputes.
+ * The post, for an operator changing its verification. Verification can only
+ * change while the assignment is active, since payouts are settled from it;
+ * later fixes go through disputes.
  *
  * @throws `not_found` if the post doesn't exist.
  * @throws `invalid_state` if the post was replaced (`post_inactive`) or the
@@ -294,7 +294,8 @@ export type PostMetrics = Infer<typeof postMetrics>;
 
 /**
  * Stores a fresh snapshot of the post's counts. Only server code calls this,
- * so creators can't inflate the numbers their payout is based on.
+ * so creators can't inflate the numbers their payout is based on. Works for
+ * any active post, including after its assignment ends.
  *
  * @throws `not_found` if the post doesn't exist.
  * @throws `invalid_state` if the post was replaced, or with `invalid_metrics`

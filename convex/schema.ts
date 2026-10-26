@@ -13,6 +13,8 @@ import { mediaUploadsTable } from "./schemas/mediaUploads.schema";
 import { notificationsTable } from "./schemas/notifications.schema";
 import { opportunitiesTable } from "./schemas/opportunities.schema";
 import { opportunityStarsTable } from "./schemas/opportunityStars.schema";
+import { opportunityNichesTable } from "./schemas/opportunityNiches.schema";
+import { opportunitySkillsTable } from "./schemas/opportunitySkills.schema";
 import { postsTable } from "./schemas/posts.schema";
 import { submissionsTable } from "./schemas/submissions.schema";
 import { usersTable } from "./schemas/users.schema";
@@ -31,6 +33,8 @@ export default defineSchema({
   invites: invitesTable,
   campaigns: campaignsTable,
   opportunities: opportunitiesTable,
+  opportunityNiches: opportunityNichesTable,
+  opportunitySkills: opportunitySkillsTable,
   opportunityStars: opportunityStarsTable,
   deliverables: deliverablesTable,
   applications: applicationsTable,

@@ -15,7 +15,13 @@ import {
   listOpportunityDeliverables,
 } from "./deliverableDrafts";
 import { notifyCompanyUser, notifyCreator } from "./notifications";
-import { requireNiche, requireNiches } from "./niches";
+import { requireNiche } from "./niches";
+import {
+  hasOpportunityNiche,
+  listOpportunityNiches,
+  updateOpportunityNiches,
+} from "./opportunityNiches";
+import { listOpportunitySkills, updateOpportunitySkills } from "./opportunitySkills";
 import schema from "../schema";
 
 export const opportunityCreate = schema
@@ -25,9 +31,28 @@ export const opportunityCreate = schema
     status: v.union(v.literal("draft"), v.literal("open")),
     // Required to create it open; a draft can get them later through `deliverables.create`.
     deliverables: v.optional(v.array(deliverableCreate)),
+    skills: v.optional(v.array(v.string())),
   });
 
 export type OpportunityCreate = Infer<typeof opportunityCreate>;
+
+export const opportunityView = schema.doc("opportunities").extend({
+  niches: v.array(v.string()),
+  skills: v.array(v.string()),
+});
+export type OpportunityView = Infer<typeof opportunityView>;
+
+/** Joins bounded selections onto an already-authorized opportunity document. */
+export async function getOpportunityView(
+  ctx: QueryCtx | MutationCtx,
+  opportunity: Doc<"opportunities">,
+): Promise<OpportunityView> {
+  const [niches, skills] = await Promise.all([
+    listOpportunityNiches(ctx, opportunity),
+    listOpportunitySkills(ctx, opportunity._id),
+  ]);
+  return { ...opportunity, niches, skills };
+}
 
 // Allowlist creator fields so new stored fields do not become public by default.
 export const creatorOpportunity = schema
@@ -53,7 +78,7 @@ export const creatorOpportunity = schema
     "disclosureRequirements",
     "usageRights",
   )
-  .extend({ companyName: v.string(), niches: v.array(v.string()) });
+  .extend({ companyName: v.string(), niches: v.array(v.string()), skills: v.array(v.string()) });
 
 export type CreatorOpportunity = Infer<typeof creatorOpportunity>;
 
@@ -61,6 +86,7 @@ export type CreatorOpportunity = Infer<typeof creatorOpportunity>;
 export function toCreatorOpportunity(
   opportunity: Doc<"opportunities">,
   company: Doc<"companies">,
+  selections: Pick<OpportunityView, "niches" | "skills">,
 ): CreatorOpportunity {
   return {
     _id: opportunity._id,
@@ -83,7 +109,8 @@ export function toCreatorOpportunity(
     disclosureRequirements: opportunity.disclosureRequirements,
     usageRights: opportunity.usageRights,
     companyName: company.name,
-    niches: opportunity.niches ?? [],
+    niches: selections.niches,
+    skills: selections.skills,
   };
 }
 
@@ -92,15 +119,16 @@ export async function getOpportunity(
   ctx: QueryCtx,
   opportunityId: Id<"opportunities">,
   caller: { user: Doc<"users">; orgId: string | null },
-): Promise<Doc<"opportunities"> | CreatorOpportunity> {
+): Promise<OpportunityView | CreatorOpportunity> {
   const opportunity = await requireOpportunity(ctx, opportunityId, caller);
-  if (caller.user.role === "company" || caller.user.role === "operator") return opportunity;
+  if (caller.user.role === "company" || caller.user.role === "operator")
+    return await getOpportunityView(ctx, opportunity);
 
   const company = await ctx.db.get("companies", opportunity.companyId);
   if (company === null) {
     throw apiError("not_found", { resource: "opportunity" });
   }
-  return toCreatorOpportunity(opportunity, company);
+  return toCreatorOpportunity(opportunity, company, await getOpportunityView(ctx, opportunity));
 }
 
 // Deliverables change through the `deliverables` routes.
@@ -336,6 +364,8 @@ export async function removeOpportunity(
   for (const deliverable of await listOpportunityDeliverables(ctx, opportunityId)) {
     await ctx.db.delete("deliverables", deliverable._id);
   }
+  await updateOpportunityNiches(ctx, opportunityId, []);
+  await updateOpportunitySkills(ctx, opportunityId, []);
   await ctx.db.delete("opportunities", opportunityId);
 }
 
@@ -345,7 +375,7 @@ export async function updateOpportunity(
   membership: Doc<"companyUsers">,
   opportunityId: Id<"opportunities">,
   updates: OpportunityUpdate,
-): Promise<Doc<"opportunities">> {
+): Promise<OpportunityView> {
   const { opportunity, campaign } = await requireEditableOpportunity(
     ctx,
     membership,
@@ -377,8 +407,6 @@ export async function updateOpportunity(
   for (const field of ["isGated", "usesAiReviewDefault"] as const) {
     if (updates[field] !== undefined) patch[field] = updates[field];
   }
-  // An empty list clears the niches; omitting the field leaves them unchanged.
-  if (updates.niches !== undefined) patch.niches = requireNiches(updates.niches);
   // Omitted fields stay unchanged; null removes the optional link, as in creator updates.
   if (updates.productAccessLink !== undefined) {
     patch.productAccessLink =
@@ -402,8 +430,16 @@ export async function updateOpportunity(
     throw apiError("invalid_state", { reason: "invalid_deadline" });
   }
 
+  const niches =
+    updates.niches === undefined
+      ? await listOpportunityNiches(ctx, opportunity)
+      : await updateOpportunityNiches(ctx, opportunityId, updates.niches);
+  const skills =
+    updates.skills === undefined
+      ? await listOpportunitySkills(ctx, opportunityId)
+      : await updateOpportunitySkills(ctx, opportunityId, updates.skills);
   await ctx.db.patch("opportunities", opportunityId, { ...patch, ...normalized });
-  return { ...updated, ...normalized };
+  return { ...updated, ...normalized, niches, skills };
 }
 
 export const opportunityList = schema
@@ -436,7 +472,9 @@ export async function getVisibleCreatorOpportunity(
     return null;
   }
   const company = await ctx.db.get("companies", opportunity.companyId);
-  return company !== null && company.isActive ? toCreatorOpportunity(opportunity, company) : null;
+  return company !== null && company.isActive
+    ? toCreatorOpportunity(opportunity, company, await getOpportunityView(ctx, opportunity))
+    : null;
 }
 
 /** Discovers open briefs across active companies without ranking or application eligibility rules. */
@@ -446,14 +484,13 @@ export async function discoverOpportunities(
 ): Promise<PaginationResult<CreatorOpportunity>> {
   const niche = options.niche === undefined ? undefined : requireNiche(options.niche);
   // Filter inside the stream so hidden or off-niche opportunities don't leave
-  // pages short or empty. Convex can't index inside arrays, so niche matching
-  // happens here rather than in the index.
+  // pages short or empty. Keep deadline ordering while checking indexed associations.
   return await stream(ctx.db, schema)
     .query("opportunities")
     .withIndex("by_status_and_deadline", (q) => q.eq("status", "open"))
     .map(async (opportunity) => {
-      const brief = await getVisibleCreatorOpportunity(ctx, opportunity);
-      return brief !== null && (niche === undefined || brief.niches.includes(niche)) ? brief : null;
+      if (niche !== undefined && !(await hasOpportunityNiche(ctx, opportunity, niche))) return null;
+      return await getVisibleCreatorOpportunity(ctx, opportunity);
     })
     .paginate(withRowsReadCap(options.paginationOpts));
 }
@@ -463,28 +500,38 @@ export async function listOpportunities(
   ctx: QueryCtx,
   companyId: Id<"companies">,
   options: Infer<typeof opportunityList>,
-): Promise<PaginationResult<Doc<"opportunities">>> {
+): Promise<PaginationResult<OpportunityView>> {
   const { campaignId, status } = options;
   if (campaignId !== undefined) {
     const campaign = await ctx.db.get("campaigns", campaignId);
     if (campaign === null || campaign.companyId !== companyId) {
       throw apiError("not_found", { resource: "campaign" });
     }
-    return await ctx.db
+    const result = await ctx.db
       .query("opportunities")
       .withIndex("by_campaignId_and_status", (q) => {
         const range = q.eq("campaignId", campaignId);
         return status === undefined ? range : range.eq("status", status);
       })
       .paginate(options.paginationOpts);
+    return {
+      ...result,
+      page: await Promise.all(
+        result.page.map((opportunity) => getOpportunityView(ctx, opportunity)),
+      ),
+    };
   }
-  return await ctx.db
+  const result = await ctx.db
     .query("opportunities")
     .withIndex("by_companyId_and_status", (q) => {
       const range = q.eq("companyId", companyId);
       return status === undefined ? range : range.eq("status", status);
     })
     .paginate(options.paginationOpts);
+  return {
+    ...result,
+    page: await Promise.all(result.page.map((opportunity) => getOpportunityView(ctx, opportunity))),
+  };
 }
 
 /** Creates a draft or open opportunity in the caller's campaign; ownership is server-derived. */
@@ -508,7 +555,7 @@ export async function createOpportunity(
   if (campaign.endsAt !== undefined && fields.deadline > campaign.endsAt) {
     throw apiError("invalid_state", { reason: "deadline_after_campaign_end" });
   }
-  const niches = fields.niches === undefined ? {} : { niches: requireNiches(fields.niches) };
+  const { niches, skills, ...storedFields } = brief;
   const productAccess =
     fields.productAccessLink === undefined
       ? {}
@@ -518,8 +565,7 @@ export async function createOpportunity(
           }),
         };
   const opportunityId = await ctx.db.insert("opportunities", {
-    ...brief,
-    ...niches,
+    ...storedFields,
     ...productAccess,
     title,
     description,
@@ -528,6 +574,8 @@ export async function createOpportunity(
     numFilledSlots: 0,
   });
   await insertDeliverables(ctx, opportunityId, membership._id, deliverables, 0);
+  if (niches !== undefined) await updateOpportunityNiches(ctx, opportunityId, niches);
+  if (skills !== undefined) await updateOpportunitySkills(ctx, opportunityId, skills);
   return opportunityId;
 }
 

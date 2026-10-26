@@ -13,11 +13,11 @@ import {
   postCreate,
   postListFilters,
   postMetrics,
-  postUpdate,
+  postReplacement,
   postVerification,
+  replacePost,
   requirePost,
   unverifyPost,
-  updatePost,
   updatePostMetrics,
   verifyPost,
 } from "./models/posts";
@@ -60,8 +60,8 @@ export const get = authedQuery({
 });
 
 /**
- * Lists posts, newest first, for exactly one of `assignmentId` or `campaignId`.
- * An assignment has at most one post. Listing by campaign is for the owning
+ * Lists active posts, newest first, for exactly one of `assignmentId` or
+ * `campaignId`. An assignment has at most one active post. Listing by campaign is for the owning
  * company and operators.
  *
  * @throws `invalid_state` unless exactly one filter is given.
@@ -77,20 +77,21 @@ export const list = authedQuery({
 });
 
 /**
- * Replaces the link on the caller's unverified post. `postedAt` and any
- * fetched metrics are cleared, since they belonged to the old link.
+ * Replaces the caller's unverified post with a new one for a new link. The old
+ * post stays as an inactive record for disputes, reachable through `get`.
  *
  * @throws `not_found` if the post doesn't exist or isn't the caller's.
- * @throws `invalid_state` if the post is verified, the assignment isn't
- * active, or the URL isn't an X post link.
- * @throws `conflict` if another post uses the same X post.
+ * @throws `invalid_state` if the post was already replaced or is verified, the
+ * assignment isn't active, or the URL isn't an X post link.
+ * @throws `conflict` if another submission used the same X post.
+ * @returns the new post.
  */
-export const update = creatorMutation({
-  args: { postId: v.id("posts"), ...postUpdate.fields },
+export const replace = creatorMutation({
+  args: { postId: v.id("posts"), ...postReplacement.fields },
   returns: schema.doc("posts"),
   handler: async (ctx, { postId, ...fields }) => {
     const creatorId = await requireCallerCreatorId(ctx, ctx.user);
-    return await updatePost(ctx, creatorId, postId, fields);
+    return await replacePost(ctx, creatorId, postId, fields);
   },
 });
 

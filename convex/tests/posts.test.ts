@@ -199,21 +199,22 @@ describe("posts.list", () => {
 
 const NEW_URL = "https://x.com/driftwood_dev/status/1843000000000000009";
 
-describe("posts.update", () => {
-  test("lets the creator replace the link", async () => {
+describe("posts.replace", () => {
+  test("lets the creator replace the link with a new active post", async () => {
     const t = convexTest(schema, modules);
     const { fixture, postId } = await seedPost(t);
 
-    const post = await fixture.asCreator.mutation(api.posts.update, { postId, url: NEW_URL });
+    const post = await fixture.asCreator.mutation(api.posts.replace, { postId, url: NEW_URL });
 
-    expect(post.url).toBe(NEW_URL);
+    expect(post).toMatchObject({ url: NEW_URL, isActive: true });
+    expect(post._id).not.toBe(postId);
   });
 
   test("rejects the owning company", async () => {
     const t = convexTest(schema, modules);
     const { fixture, postId } = await seedPost(t);
     await expectApiError(
-      () => fixture.asCompany.mutation(api.posts.update, { postId, url: NEW_URL }),
+      () => fixture.asCompany.mutation(api.posts.replace, { postId, url: NEW_URL }),
       "forbidden",
     );
   });
@@ -223,16 +224,16 @@ describe("posts.update", () => {
     const { postId } = await seedPost(t);
     const asOtherCreator = await seedUser(t, { subject: "other_creator" });
     await expectApiError(
-      () => asOtherCreator.mutation(api.posts.update, { postId, url: NEW_URL }),
+      () => asOtherCreator.mutation(api.posts.replace, { postId, url: NEW_URL }),
       "not_found",
     );
   });
 
-  test("does not let a creator verify through update", async () => {
+  test("does not let a creator verify through replace", async () => {
     const t = convexTest(schema, modules);
     const { fixture, postId } = await seedPost(t);
     const args = { postId, url: NEW_URL, isVerified: true };
-    await expect(fixture.asCreator.mutation(api.posts.update, args)).rejects.toThrow(
+    await expect(fixture.asCreator.mutation(api.posts.replace, args)).rejects.toThrow(
       "Unexpected field `isVerified`",
     );
   });

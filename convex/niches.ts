@@ -1,16 +1,14 @@
 import { v } from "convex/values";
 import { authedQuery } from "./lib/functions";
-import { NICHES, niche } from "./models/niches";
+import { listNiches, niche } from "./models/niches";
 
 /**
- * Returns the niches opportunities and creators can pick from, in display
- * order. The frontend reads the list from here rather than hard-coding it, so
- * moving niches to a table later doesn't change clients.
+ * Returns the shared niche options in display order, optionally searching names and labels.
  */
 export const list = authedQuery({
-  args: {},
+  args: { search: v.optional(v.string()) },
   returns: v.array(niche),
-  handler: async () => {
-    return [...NICHES];
+  handler: async (_ctx, args) => {
+    return listNiches(args.search);
   },
 });

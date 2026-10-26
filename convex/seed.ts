@@ -3,6 +3,7 @@ import type { Doc, Id } from "./_generated/dataModel";
 import { internalMutation, type MutationCtx } from "./_generated/server";
 import { apiError } from "./lib/errors";
 import { HALF_HOUR_MS } from "./lib/validation";
+import { updateCreatorNiches } from "./models/creatorNiches";
 
 /**
  * Demo data for every frontend flow, for a personal dev deployment.
@@ -309,8 +310,8 @@ async function seedCreatorContent(
   // The first two are open and gated/ungated, which the feed filters split on.
   const [gatedWithRoom, ungatedWithRoom, ungatedFull, closingSoon] = opportunityIds;
 
+  await updateCreatorNiches(ctx, primary._id, ["developer-tools", "ai-agents", "web-development"]);
   await ctx.db.patch("creators", primary._id, {
-    niches: ["developer-tools", "ai-agents", "web-development"],
     githubLink: primary.githubLink ?? "https://github.com/example",
   });
 

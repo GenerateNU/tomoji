@@ -18,6 +18,7 @@ let profile: Profile = {
   phoneNumber: "+1 617 555 0100",
   githubLink: "https://github.com/zahra",
   niches: [],
+  skills: [],
 };
 const calls: Call[] = [];
 const queries: Call[] = [];

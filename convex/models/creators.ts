@@ -4,7 +4,8 @@ import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { apiError } from "../lib/errors";
 import { requireNonBlank } from "../lib/validation";
-import { requireNiches } from "./niches";
+import { listCreatorNiches, updateCreatorNiches } from "./creatorNiches";
+import { listCreatorSkills, updateCreatorSkills } from "./creatorSkills";
 import { getXAccountByCreatorId } from "./xAccountLookup";
 
 export const creatorProfile = v.object({
@@ -18,14 +19,16 @@ export const creatorProfile = v.object({
   githubLink: v.optional(v.string()),
   phoneNumber: v.optional(v.string()),
   niches: v.array(v.string()),
+  skills: v.array(v.string()),
 });
 
 export const creatorProfileUpdate = v.object({
   username: v.optional(v.string()),
   githubLink: v.optional(v.union(v.string(), v.null())),
   phoneNumber: v.optional(v.union(v.string(), v.null())),
-  // Names from models/niches.ts. An empty list clears them.
+  // Catalog names: omit a selection to preserve it, or send [] to clear it.
   niches: v.optional(v.array(v.string())),
+  skills: v.optional(v.array(v.string())),
 });
 
 export type CreatorProfile = Infer<typeof creatorProfile>;
@@ -35,7 +38,7 @@ export type CreatorProfileUpdate = Infer<typeof creatorProfileUpdate>;
 function toCreatorProfile(
   user: Doc<"users">,
   creator: Doc<"creators">,
-  xId?: string,
+  details: Pick<CreatorProfile, "xId" | "niches" | "skills">,
 ): CreatorProfile {
   return {
     creatorId: creator._id,
@@ -44,11 +47,26 @@ function toCreatorProfile(
     lastName: user.lastName,
     email: user.email,
     profilePictureMediaId: user.profilePictureMediaId,
-    xId,
+    xId: details.xId,
     githubLink: creator.githubLink,
     phoneNumber: creator.phoneNumber,
-    niches: creator.niches ?? [],
+    niches: details.niches,
+    skills: details.skills,
   };
+}
+
+/** Loads the bounded associations and verified X identity for an already-authorized profile. */
+async function getCreatorProfile(
+  ctx: QueryCtx | MutationCtx,
+  user: Doc<"users">,
+  creator: Doc<"creators">,
+): Promise<CreatorProfile> {
+  const [account, niches, skills] = await Promise.all([
+    getXAccountByCreatorId(ctx, creator._id),
+    listCreatorNiches(ctx, creator),
+    listCreatorSkills(ctx, creator._id),
+  ]);
+  return toCreatorProfile(user, creator, { xId: account?.xUserId, niches, skills });
 }
 
 /** Finds the creator row associated with a user. */
@@ -92,8 +110,7 @@ export async function requireCreatorProfile(
     throw apiError("not_found", { resource: "creator" });
   }
 
-  const account = await getXAccountByCreatorId(ctx, creator._id);
-  return toCreatorProfile(user, creator, account?.xUserId);
+  return await getCreatorProfile(ctx, user, creator);
 }
 
 /** Returns one cursor-paginated page of active creator profiles. */
@@ -140,10 +157,7 @@ export async function updateCreatorProfile(
     throw apiError("not_found", { resource: "creator" });
   }
 
-  const patch: Partial<
-    Pick<Doc<"creators">, "username" | "githubLink" | "phoneNumber" | "niches">
-  > = {};
-  if (updates.niches !== undefined) patch.niches = requireNiches(updates.niches);
+  const patch: Partial<Pick<Doc<"creators">, "username" | "githubLink" | "phoneNumber">> = {};
   if (updates.username !== undefined) {
     patch.username = await requireAvailableCreatorUsername(ctx, creator._id, updates.username);
   }
@@ -151,9 +165,21 @@ export async function updateCreatorProfile(
   if ("githubLink" in updates) patch.githubLink = updates.githubLink ?? undefined;
   if ("phoneNumber" in updates) patch.phoneNumber = updates.phoneNumber ?? undefined;
 
+  const niches =
+    updates.niches === undefined
+      ? await listCreatorNiches(ctx, creator)
+      : await updateCreatorNiches(ctx, creator._id, updates.niches);
+  const skills =
+    updates.skills === undefined
+      ? await listCreatorSkills(ctx, creator._id)
+      : await updateCreatorSkills(ctx, creator._id, updates.skills);
   await ctx.db.patch("creators", creator._id, patch);
   const account = await getXAccountByCreatorId(ctx, creator._id);
-  return toCreatorProfile(user, { ...creator, ...patch }, account?.xUserId);
+  return toCreatorProfile(
+    user,
+    { ...creator, ...patch },
+    { xId: account?.xUserId, niches, skills },
+  );
 }
 
 /** Returns a visible creator profile by creator ID or throws when it is unavailable. */
@@ -171,6 +197,5 @@ export async function requireCreatorProfileById(
     throw apiError("not_found", { resource: "creator" });
   }
 
-  const account = await getXAccountByCreatorId(ctx, creator._id);
-  return toCreatorProfile(user, creator, account?.xUserId);
+  return await getCreatorProfile(ctx, user, creator);
 }

@@ -30,6 +30,8 @@ const modules = import.meta.glob("../../**/*.ts");
 const backfillUserNames = internal.migrations["2026_09_26_backfill_user_names"].backfillUserNames;
 const backfillCreatorUsernames =
   internal.migrations["2026_09_26_backfill_creator_usernames"].backfillCreatorUsernames;
+const backfillCreatorNiches =
+  internal.migrations["2026_10_25_backfill_creator_niches"].backfillCreatorNiches;
 
 afterEach(() => vi.useRealTimers());
 
@@ -86,7 +88,7 @@ describe("identity schema migrations", () => {
         role: "creator",
         isActive: true,
       });
-      await ctx.db.insert("creators", { userId });
+      await ctx.db.insert("creators", { userId, niches: ["databases"] });
     });
 
     await t.mutation(internal.migrations.runner.runAll, {});
@@ -104,10 +106,18 @@ describe("identity schema migrations", () => {
     expect(rows.creators[0]).toMatchObject({
       username: expect.stringMatching(/^creator_[0-9a-z]{12}$/),
     });
+    expect(rows.creators[0]).not.toHaveProperty("niches");
+    expect(await t.run((ctx) => ctx.db.query("creatorNiches").take(2))).toMatchObject([
+      { creatorId: rows.creators[0]._id, name: "databases" },
+    ]);
     const statuses = await t.query(components.migrations.lib.getStatus, {
-      names: [getFunctionName(backfillUserNames), getFunctionName(backfillCreatorUsernames)],
+      names: [
+        getFunctionName(backfillUserNames),
+        getFunctionName(backfillCreatorUsernames),
+        getFunctionName(backfillCreatorNiches),
+      ],
     });
-    expect(statuses).toHaveLength(2);
+    expect(statuses).toHaveLength(3);
     expect(statuses).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -118,6 +128,12 @@ describe("identity schema migrations", () => {
         }),
         expect.objectContaining({
           name: getFunctionName(backfillCreatorUsernames),
+          isDone: true,
+          state: "success",
+          processed: 1,
+        }),
+        expect.objectContaining({
+          name: getFunctionName(backfillCreatorNiches),
           isDone: true,
           state: "success",
           processed: 1,

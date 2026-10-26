@@ -20,6 +20,7 @@ import {
   seedProfilePictureUpload,
   seedUser,
   seedXAccount,
+  requireSeededUser,
 } from "../helpers";
 
 const modules = import.meta.glob("../../**/*.ts");
@@ -119,6 +120,7 @@ describe("listCreators", () => {
         githubLink: "https://github.com/creator",
         phoneNumber: "+15555550123",
         niches: [],
+        skills: [],
       },
     ]);
   });
@@ -146,6 +148,11 @@ describe("listCreators", () => {
       if (firstCreator === null || secondCreator === null) {
         throw new Error("expected seeded creators");
       }
+      await updateCreatorProfile(ctx, firstUser, { niches: ["databases"], skills: ["typescript"] });
+      await updateCreatorProfile(ctx, secondUser, {
+        niches: ["web-development"],
+        skills: ["python"],
+      });
       return [firstCreator._id, secondCreator._id] as const;
     });
 
@@ -164,7 +171,8 @@ describe("listCreators", () => {
         firstName: "Ada",
         lastName: "Lovelace",
         email: "page-one@example.com",
-        niches: [],
+        niches: ["databases"],
+        skills: ["typescript"],
       },
     ]);
     expect(firstPage.isDone).toBe(false);
@@ -174,7 +182,8 @@ describe("listCreators", () => {
         firstName: "Grace",
         lastName: "Hopper",
         email: "page-two@example.com",
-        niches: [],
+        niches: ["web-development"],
+        skills: ["python"],
       },
     ]);
     expect(secondPage.isDone).toBe(true);
@@ -411,6 +420,7 @@ describe("requireCreatorProfileById", () => {
       githubLink: "https://github.com/creator",
       phoneNumber: "+15555550123",
       niches: [],
+      skills: [],
     });
   });
 
@@ -470,6 +480,73 @@ describe("requireCreatorProfileById", () => {
 });
 
 describe("creator niches", () => {
+  test("a skill-only update preserves legacy niches until they are backfilled", async () => {
+    const t = convexTest(schema, modules);
+    const creatorId = await seedCreatorId(t, "skills_legacy_niches");
+    const user = await requireSeededUser(t, "skills_legacy_niches");
+    await t.run((ctx) => ctx.db.patch("creators", creatorId, { niches: ["llms"] }));
+    const profile = await t.run((ctx) => updateCreatorProfile(ctx, user, { skills: ["python"] }));
+    expect(profile).toMatchObject({ niches: ["llms"], skills: ["python"] });
+    expect(await t.run((ctx) => ctx.db.get("creators", creatorId))).toHaveProperty("niches", [
+      "llms",
+    ]);
+    expect(await t.run((ctx) => requireCreatorProfile(ctx, user))).toEqual(profile);
+  });
+
+  test("omitted selections survive an unrelated profile update", async () => {
+    const t = convexTest(schema, modules);
+    await seedUser(t, { subject: "selections_omitted" });
+    const user = await requireSeededUser(t, "selections_omitted");
+    await t.run((ctx) =>
+      updateCreatorProfile(ctx, user, { niches: ["databases"], skills: ["python"] }),
+    );
+    const profile = await t.run((ctx) =>
+      updateCreatorProfile(ctx, user, { githubLink: "https://github.com/example" }),
+    );
+    expect(profile).toMatchObject({ niches: ["databases"], skills: ["python"] });
+  });
+
+  test("invalid skills roll back niche changes and other profile edits together", async () => {
+    const t = convexTest(schema, modules);
+    const creatorId = await seedCreatorId(t, "selections_atomic");
+    const user = await requireSeededUser(t, "selections_atomic");
+    await t.run((ctx) =>
+      updateCreatorProfile(ctx, user, { niches: ["databases"], skills: ["python"] }),
+    );
+    const before = await t.run((ctx) => requireCreatorProfile(ctx, user));
+    await expectApiError(
+      () =>
+        t.run((ctx) =>
+          updateCreatorProfile(ctx, user, {
+            niches: ["web-development"],
+            skills: ["unknown"],
+            username: "changed",
+          }),
+        ),
+      "invalid_state",
+      "invalid_skill",
+    );
+    expect(await t.run((ctx) => requireCreatorProfile(ctx, user))).toEqual(before);
+    expect(await t.run((ctx) => ctx.db.get("creators", creatorId))).not.toHaveProperty("username");
+  });
+
+  test("stores normalized niches and skills as separate associations", async () => {
+    const t = convexTest(schema, modules);
+    const creatorId = await seedCreatorId(t, "creator_selections");
+    const profile = await t.run(async (ctx) => {
+      const creator = (await ctx.db.get("creators", creatorId))!;
+      const user = (await ctx.db.get("users", creator.userId))!;
+      return await updateCreatorProfile(ctx, user, {
+        niches: ["Database Management", "databases"],
+        skills: ["C++", "TypeScript", "C++"],
+      });
+    });
+
+    expect(profile.niches).toEqual(["databases"]);
+    expect(profile.skills).toEqual(["c-plus-plus", "typescript"]);
+    expect(await t.run((ctx) => ctx.db.get("creators", creatorId))).not.toHaveProperty("niches");
+  });
+
   test("creators set, replace, and clear their niches in their profile", async () => {
     const t = convexTest(schema, modules);
     await seedUser(t, { subject: "niche_creator" });

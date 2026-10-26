@@ -11,4 +11,5 @@ export const runAll = migrations.runner([
   internal.migrations["2026_09_26_backfill_user_names"].backfillUserNames,
   internal.migrations["2026_09_26_backfill_creator_usernames"].backfillCreatorUsernames,
   internal.migrations["2026_10_07_remove_user_profile_pictures"].removeUserProfilePictures,
+  internal.migrations["2026_10_25_backfill_creator_niches"].backfillCreatorNiches,
 ]);

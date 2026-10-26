@@ -23,7 +23,6 @@ src/
     ui/                      shadcn-generated components
   hooks/                     hooks shared across features
   lib/                       plain functions - no React, usable anywhere
-  tests/                     unit tests, mirroring the path of what they cover
 e2e/                         Playwright browser tests
   fixtures/                  per-spec entry points and stubbed backend responses
 ```
@@ -32,35 +31,19 @@ e2e/                         Playwright browser tests
 
 When adding a new file, use these guidelines to decide where it belongs:
 
-| Question                                                                                   | Location                                |
-| ------------------------------------------------------------------------------------------ | --------------------------------------- |
-| Is it a Next.js-specific file like `page.tsx`, `layout.tsx`, or `route.ts`?                | `app/`                                  |
-| Is it related to a specific Tomoji feature, such as opportunities, campaigns, or creators? | `features/<domain>/`                    |
-| Is it shared or general-purpose code?                                                      | `components/`, `hooks/`, or `lib/`      |
-| Is it a unit test?                                                                         | `src/tests/`, mirroring the source path |
-| Is it a browser test?                                                                      | `e2e/`                                  |
+| Question                                                                                   | Location                           |
+| ------------------------------------------------------------------------------------------ | ---------------------------------- |
+| Is it a Next.js-specific file like `page.tsx`, `layout.tsx`, or `route.ts`?                | `app/`                             |
+| Is it related to a specific Tomoji feature, such as opportunities, campaigns, or creators? | `features/<domain>/`               |
+| Is it shared or general-purpose code?                                                      | `components/`, `hooks/`, or `lib/` |
+| Is it a browser test?                                                                      | `e2e/`                             |
 
 ### Tests
 
-Unit tests live in `src/tests/`, not beside the code they cover. A test for
-`src/features/auth/lib/access.ts` goes at
-`src/tests/features/auth/lib/access.test.ts`, so the path says what it covers,
-and it reaches its subject through the `@/` alias rather than a relative
-import. Every area keeps its tests the same way: `convex/tests/`,
-`scripts/tests/`, `src/tests/`.
-
-`src/tests/` and `e2e/` hold different kinds of test, not two places for the
-same kind:
-
-|            | `src/tests/`                  | `e2e/`                       |
-| ---------- | ----------------------------- | ---------------------------- |
-| Runner     | Vitest (`just test-frontend`) | Playwright (`just test-e2e`) |
-| Runs in    | Node, no DOM                  | a real browser               |
-| Covers     | one function's behaviour      | a rendered page someone uses |
-| Part of CI | yes                           | no                           |
-
-`e2e/` stays at the top level because Playwright is configured against it
-directly and CI does not run it.
+Frontend behaviour is covered by Playwright browser tests in `e2e/`, run with
+`just test-e2e`. They exercise rendered pages in a real browser. `e2e/` stays
+at the top level because Playwright is configured against it directly, and CI
+does not run it.
 
 ## Routes
 

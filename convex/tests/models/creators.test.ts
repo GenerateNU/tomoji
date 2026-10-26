@@ -81,6 +81,59 @@ describe("requireCreatorProfile", () => {
 });
 
 describe("listCreators", () => {
+  test("caps default and oversized read budgets while preserving cursor pagination", async () => {
+    const t = convexTest(schema, modules);
+    for (let index = 0; index < 501; index++) {
+      await seedUser(t, { subject: `creator_budget_${index}` });
+    }
+
+    const defaultPage = await t.run((ctx) =>
+      listCreators(ctx, { paginationOpts: { cursor: null, numItems: 1000 } }),
+    );
+    expect(defaultPage.page).toHaveLength(500);
+    expect(defaultPage.isDone).toBe(false);
+
+    const firstPage = await t.run((ctx) =>
+      listCreators(ctx, {
+        paginationOpts: { cursor: null, numItems: 1000, maximumRowsRead: 10000 },
+      }),
+    );
+    expect(firstPage.page).toEqual(defaultPage.page);
+    expect(firstPage.isDone).toBe(false);
+    const secondPage = await t.run((ctx) =>
+      listCreators(ctx, {
+        paginationOpts: {
+          cursor: firstPage.continueCursor,
+          numItems: 1000,
+          maximumRowsRead: 10000,
+        },
+      }),
+    );
+    const lastUser = await requireSeededUser(t, "creator_budget_500");
+    const lastCreatorId = await t.run(
+      async (ctx) => (await getCreatorByUserId(ctx, lastUser._id))!._id,
+    );
+    expect(secondPage.page).toEqual([
+      {
+        creatorId: lastCreatorId,
+        firstName: "Test",
+        lastName: "",
+        email: "creator_budget_500@example.com",
+        niches: [],
+        skills: [],
+      },
+    ]);
+    expect(secondPage.isDone).toBe(true);
+
+    const smallPage = await t.run((ctx) =>
+      listCreators(ctx, {
+        paginationOpts: { cursor: null, numItems: 10, maximumRowsRead: 1 },
+      }),
+    );
+    expect(smallPage.page).toEqual(firstPage.page.slice(0, 1));
+    expect(smallPage.isDone).toBe(false);
+  });
+
   test("returns full creator profiles", async () => {
     const t = convexTest(schema, modules);
     const { uploadId } = await seedProfilePictureUpload(t, "model_creator_list", "complete");

@@ -3,6 +3,7 @@ import { v, type Infer } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { apiError } from "../lib/errors";
+import { DEFAULT_MAXIMUM_ROWS_READ } from "../lib/pagination";
 import { requireNonBlank } from "../lib/validation";
 import { listCreatorNiches, updateCreatorNiches } from "./creatorNiches";
 import { listCreatorSkills, updateCreatorSkills } from "./creatorSkills";
@@ -121,9 +122,15 @@ export async function listCreators(
   const users = await ctx.db
     .query("users")
     .withIndex("by_role_and_isActive", (q) => q.eq("role", "creator").eq("isActive", true))
-    .paginate(options.paginationOpts);
+    .paginate({
+      ...options.paginationOpts,
+      maximumRowsRead: Math.min(
+        options.paginationOpts.maximumRowsRead ?? DEFAULT_MAXIMUM_ROWS_READ,
+        DEFAULT_MAXIMUM_ROWS_READ,
+      ),
+    });
 
-  // Convex has no joins, so hydrate only the bounded page returned above.
+  // Bound the page before loading each creator's associated data.
   const page = await Promise.all(users.page.map((user) => requireCreatorProfile(ctx, user)));
   return { ...users, page };
 }

@@ -203,6 +203,63 @@ describe("requireMembership", () => {
 });
 
 describe("listCompanyUsers", () => {
+  test("excludes a former member after a company switch and continues past the empty page", async () => {
+    const t = convexTest(schema, modules);
+    await seedUser(t, {
+      subject: "directory_moved",
+      email: "moved@example.com",
+      org: { id: "org_directory_a" },
+    });
+    await t.run((ctx) =>
+      removeMembership(ctx, {
+        workosUserId: "directory_moved",
+        organizationId: "org_directory_a",
+      }),
+    );
+    await seedUser(t, {
+      subject: "directory_moved",
+      email: "moved@example.com",
+      org: { id: "org_directory_b" },
+    });
+    await seedUser(t, {
+      subject: "directory_remaining",
+      email: "remaining@example.com",
+      org: { id: "org_directory_a", role: "admin" },
+    });
+    await seedUser(t, {
+      subject: "directory_other",
+      org: { id: "org_directory_b" },
+    });
+    const { userId, companyId } = await idsFor(t, "directory_remaining", "org_directory_a");
+    const membership = await t.run((ctx) => getCompanyUser(ctx, userId, companyId));
+    const movedUser = await t.run((ctx) => getUserByWorkosId(ctx, "directory_moved"));
+    expect(movedUser?.isActive).toBe(true);
+    expect(await t.run((ctx) => getCompanyUser(ctx, movedUser!._id, companyId))).toMatchObject({
+      isActive: false,
+    });
+
+    const first = await listPage(t, companyId, null, 1);
+    expect(first.page).toEqual([]);
+    expect(first.isDone).toBe(false);
+    const second = await listPage(t, companyId, first.continueCursor, 1);
+    expect(second.page).toEqual([
+      {
+        membershipId: membership!._id,
+        userId,
+        role: "admin",
+        firstName: "Test",
+        lastName: "",
+        email: "remaining@example.com",
+      },
+    ]);
+    expect(second.isDone).toBe(true);
+    const otherCompany = await listPage(t, await companyIdFor(t, "org_directory_b"));
+    expect(otherCompany.page.map((member) => member.email).sort()).toEqual([
+      "directory_other@example.com",
+      "moved@example.com",
+    ]);
+  });
+
   test("returns only that company's members", async () => {
     const t = convexTest(schema, modules);
     await seedUser(t, { subject: "cu11", email: "a@acme.com", org: { id: "org_acme" } });

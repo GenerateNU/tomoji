@@ -47,11 +47,7 @@ async function hasAssignments(
   return first !== null;
 }
 
-/**
- * Loads an owned opportunity whose deliverables may still change: it isn't
- * closed and no creator has been assigned. Deliverables are what assigned
- * creators agreed to make, so they freeze at the first assignment.
- */
+/** Loads an owned opportunity whose deliverables may change: it and its campaign aren't closed. */
 async function requireEditableOpportunity(
   ctx: MutationCtx,
   membership: Doc<"companyUsers">,
@@ -61,14 +57,25 @@ async function requireEditableOpportunity(
   if (opportunity.status === "closed" || campaign.status === "closed") {
     throw apiError("invalid_state", { reason: "opportunity_not_editable" });
   }
-  if (await hasAssignments(ctx, opportunityId)) {
-    throw apiError("invalid_state", { reason: "deliverables_locked" });
-  }
   return opportunity;
 }
 
 /**
- * The deliverable and its opportunity, if they may still change. Throws
+ * Deliverables can't be added or removed once a creator has been assigned, in
+ * any status: that would change the work they agreed to, and their drafts point
+ * at these deliverables. Wording can still change, like the opportunity's brief.
+ */
+async function requireNoAssignments(
+  ctx: MutationCtx,
+  opportunityId: Id<"opportunities">,
+): Promise<void> {
+  if (await hasAssignments(ctx, opportunityId)) {
+    throw apiError("invalid_state", { reason: "opportunity_has_assignments" });
+  }
+}
+
+/**
+ * The deliverable and its opportunity, if its opportunity isn't closed. Throws
  * `not_found` for another company's deliverable, the same as a missing one.
  */
 async function requireEditableDeliverable(
@@ -93,6 +100,7 @@ export async function createDeliverable(
   fields: DeliverableCreate,
 ): Promise<Id<"deliverables">> {
   await requireEditableOpportunity(ctx, membership, opportunityId);
+  await requireNoAssignments(ctx, opportunityId);
   const existing = await listOpportunityDeliverables(ctx, opportunityId);
   const [deliverableId] = await insertDeliverables(
     ctx,
@@ -127,6 +135,7 @@ export async function removeDeliverable(
   deliverableId: Id<"deliverables">,
 ): Promise<void> {
   const { opportunity } = await requireEditableDeliverable(ctx, membership, deliverableId);
+  await requireNoAssignments(ctx, opportunity._id);
   // Publishing needs a deliverable, so a published opportunity always keeps one.
   if (opportunity.status !== "draft") {
     const remaining = await listOpportunityDeliverables(ctx, opportunity._id);
@@ -137,12 +146,7 @@ export async function removeDeliverable(
   await ctx.db.delete("deliverables", deliverableId);
 }
 
-/**
- * An opportunity's deliverables, in the order they were added. Its company and
- * operators get the stored rows. Creators get the creator view, for an
- * opportunity they can discover or one they've been assigned to, so assigned
- * creators keep seeing what to make after it pauses or closes.
- */
+/** An opportunity's deliverables as the caller may see them. Rules are listed on the `deliverables.list` route. */
 export async function listDeliverables(
   ctx: QueryCtx,
   caller: { user: Doc<"users">; orgId: string | null },

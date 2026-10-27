@@ -14,13 +14,12 @@ import schema from "./schema";
 
 /**
  * Adds a deliverable to an opportunity owned by the caller's company. Any
- * company user in that company can. Deliverables are listed in the order they
- * were added. Text is stored trimmed.
+ * company user in that company can. Text is stored trimmed.
  *
  * @throws `not_found` if the opportunity doesn't exist or isn't the company's.
  * @throws `invalid_state` if the opportunity or its campaign is closed
  * (`opportunity_not_editable`), a creator has been assigned
- * (`deliverables_locked`), it already has the most deliverables allowed
+ * (`opportunity_has_assignments`), it already has the most deliverables allowed
  * (`too_many_deliverables`), or the title or description is blank or too long
  * (`deliverableTitle_blank`, `deliverableDescription_too_long`, …).
  * @returns the new deliverable's id.
@@ -37,7 +36,8 @@ export const create = companyMutation({
  * Edits a deliverable's title or description. Omitted fields stay unchanged.
  *
  * @throws `not_found` if the deliverable doesn't exist or isn't the company's.
- * @throws `invalid_state` for the same reasons as `create`, except the limit.
+ * @throws `invalid_state` if the opportunity or its campaign is closed
+ * (`opportunity_not_editable`), or the title or description is blank or too long.
  * @returns the updated deliverable.
  */
 export const update = companyMutation({
@@ -52,8 +52,9 @@ export const update = companyMutation({
  * Deletes a deliverable. A published opportunity must keep at least one.
  *
  * @throws `not_found` if the deliverable doesn't exist or isn't the company's.
- * @throws `invalid_state` if it can't change (as in `create`), or it's the last
- * one on a published opportunity (`last_deliverable`).
+ * @throws `invalid_state` if the opportunity or its campaign is closed, or a
+ * creator has been assigned (as in `create`), or it's the last one on a
+ * published opportunity (`last_deliverable`).
  */
 export const remove = companyMutation({
   args: { deliverableId: v.id("deliverables") },

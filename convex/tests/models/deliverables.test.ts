@@ -216,7 +216,7 @@ describe("createDeliverable", () => {
 });
 
 describe("once the opportunity has an assignment", () => {
-  test("deliverables can't be added, edited, or removed, even if it was cancelled", async () => {
+  test("deliverables can't be added or removed, even if it was cancelled, but can be reworded", async () => {
     const t = convexTest(schema, modules);
     const owner = await seedOpportunity(t, { subject: "locked_owner" });
     const [deliverable] = await storedDeliverables(t, owner.opportunityId);
@@ -229,22 +229,20 @@ describe("once the opportunity has an assignment", () => {
           createDeliverable(ctx, owner.membership, owner.opportunityId, deliverableArgs()),
         ),
       "invalid_state",
-      "deliverables_locked",
-    );
-    await expectApiError(
-      () =>
-        t.run((ctx) =>
-          updateDeliverable(ctx, owner.membership, deliverable._id, { title: "Changed" }),
-        ),
-      "invalid_state",
-      "deliverables_locked",
+      "opportunity_has_assignments",
     );
     await expectApiError(
       () => t.run((ctx) => removeDeliverable(ctx, owner.membership, deliverable._id)),
       "invalid_state",
-      "deliverables_locked",
+      "opportunity_has_assignments",
     );
-    expect(await storedDeliverables(t, owner.opportunityId)).toEqual([deliverable]);
+
+    // Like the opportunity's brief, the wording can still be fixed.
+    const updated = await t.run((ctx) =>
+      updateDeliverable(ctx, owner.membership, deliverable._id, { title: "Launch reel" }),
+    );
+    expect(updated.title).toBe("Launch reel");
+    expect(await storedDeliverables(t, owner.opportunityId)).toEqual([updated]);
   });
 });
 

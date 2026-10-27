@@ -34,7 +34,7 @@ export function CreatorFeed() {
   // Read once per render so every row's "posted N days ago" agrees.
   const [now] = useState(() => Date.now());
 
-  const niches = useQuery(api.niches.list);
+  const niches = useQuery(api.niches.list, {});
   const feed = useOpportunityFeed({ niche: niche || undefined, starredOnly });
 
   // The starred list isn't filtered by niche on the server, and type is a

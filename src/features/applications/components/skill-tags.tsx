@@ -7,7 +7,7 @@ import { Tags } from "./tags";
 
 /** The opportunity's niches, shown as skills. Labels come from the niche list. */
 export function SkillTags({ niches }: { niches: string[] }) {
-  const allNiches = useQuery(api.niches.list);
+  const allNiches = useQuery(api.niches.list, {});
   const labels = new Map<string, string>(allNiches?.map((niche) => [niche.name, niche.label]));
   return (
     <Section label="Skills">

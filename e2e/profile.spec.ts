@@ -65,6 +65,7 @@ test("creators see their own name, country, GitHub profile, and Settings link", 
   expect(await page.evaluate(() => window.profileFixture.queries)).toEqual([
     { name: "users:me", args: {} },
     { name: "creators:me", args: {} },
+    { name: "countries:list", args: {} },
   ]);
   expect(await page.evaluate(() => window.profileFixture.calls)).toEqual([]);
 });

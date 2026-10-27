@@ -1,11 +1,15 @@
 import countries from "i18n-iso-countries";
 import english from "i18n-iso-countries/langs/en.json";
+import { v, type Infer } from "convex/values";
 import { apiError } from "../lib/errors";
 
 countries.registerLocale(english);
 
+export const country = v.object({ code: v.string(), name: v.string() });
+export type Country = Infer<typeof country>;
+
 /** Every ISO 3166-1 alpha-2 country, for the residence picker. */
-export const COUNTRIES: readonly { code: string; name: string }[] = Object.entries(
+export const COUNTRIES: readonly Country[] = Object.entries(
   countries.getNames("en", { select: "official" }),
 )
   .map(([code, name]) => ({ code, name }))

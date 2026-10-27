@@ -1,6 +1,5 @@
 import { useSyncExternalStore } from "react";
 import { getFunctionName, type FunctionReference, type FunctionReturnType } from "convex/server";
-import { ConvexError } from "convex/values";
 import type { api } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
 
@@ -21,6 +20,12 @@ let profile: Profile = {
   niches: [],
   skills: [],
 };
+// A small stand-in for the real ISO list; the picker only needs a few rows.
+const COUNTRIES = [
+  { code: "ID", name: "Indonesia" },
+  { code: "JP", name: "Japan" },
+  { code: "US", name: "United States of America" },
+];
 const calls: Call[] = [];
 const queries: Call[] = [];
 const failures = new Map<string, Error[]>();
@@ -58,11 +63,6 @@ export const fixture = {
   },
   failNext(name: string) {
     failures.set(name, [...(failures.get(name) ?? []), new Error("Simulated service failure")]);
-  },
-  rejectUsername() {
-    failures.set("creators:update", [
-      new ConvexError({ code: "conflict", reason: "username_taken" }),
-    ]);
   },
   delayNext(name: string) {
     let release!: () => void;
@@ -136,6 +136,9 @@ function queryResult(reference: FunctionReference<"query">, args: unknown) {
     }
     return session.profileLoading ? undefined : profile;
   }
+  if (name === "countries:list") {
+    return COUNTRIES;
+  }
   throw new Error(`Unexpected query: ${name}`);
 }
 
@@ -152,13 +155,20 @@ function operation(reference: FunctionReference<"mutation" | "action">) {
       if (name === "creators:update") {
         profile = {
           ...profile,
-          ...(args.username !== undefined ? { username: args.username as string } : {}),
           ...("githubLink" in args
             ? { githubLink: (args.githubLink as string | null) ?? undefined }
             : {}),
-          ...("phoneNumber" in args
-            ? { phoneNumber: (args.phoneNumber as string | null) ?? undefined }
+          ...("linkedinLink" in args
+            ? { linkedinLink: (args.linkedinLink as string | null) ?? undefined }
             : {}),
+          ...(args.additionalLinks !== undefined
+            ? { additionalLinks: args.additionalLinks as string[] }
+            : {}),
+          ...(args.dateOfBirth !== undefined ? { dateOfBirth: args.dateOfBirth as number } : {}),
+          ...("countryOfResidence" in args
+            ? { countryOfResidence: (args.countryOfResidence as string | null) ?? undefined }
+            : {}),
+          ...(args.isPrivate !== undefined ? { isPrivate: args.isPrivate as boolean } : {}),
         };
         notify();
         return profile;

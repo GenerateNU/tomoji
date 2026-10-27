@@ -17,8 +17,9 @@ export const creatorsTable = defineTable({
   countryOfResidence: v.optional(v.string()),
   bannerMediaId: v.optional(v.id("mediaUploads")),
   // Hides the creator from company-facing lists. Companies they have applied
-  // to or been assigned by can still open their profile.
-  isPrivate: v.boolean(),
+  // to or been assigned by can still open their profile. Optional so rows
+  // created before this field need no migration; read missing as "not private".
+  isPrivate: v.optional(v.boolean()),
   // Legacy selections remain readable until backfilled into creatorNiches.
   // New writes use association rows and remove this field atomically.
   niches: v.optional(v.array(v.string())),

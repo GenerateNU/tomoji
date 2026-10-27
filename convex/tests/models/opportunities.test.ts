@@ -1226,6 +1226,36 @@ describe("updateOpportunity", () => {
     );
   });
 
+  test.each([
+    ["a javascript scheme", "javascript:alert(1)"],
+    ["plain http", "http://example.com/product"],
+    ["login details that disguise the host", "https://example.com@evil.test"],
+    ["something that is not a URL", "ask the brand"],
+  ])(
+    "refuses %s as a product access link without changing the opportunity",
+    async (_label, productAccessLink) => {
+      const t = convexTest(schema, modules);
+      const owner = await seedOpportunity(t, { subject: "product_link_owner" });
+      const before = await t.run(
+        async (ctx) => await ctx.db.get("opportunities", owner.opportunityId),
+      );
+
+      await expectApiError(
+        () =>
+          t.run(
+            async (ctx) =>
+              await updateOpportunity(ctx, owner.membership, owner.opportunityId, {
+                productAccessLink,
+              }),
+          ),
+        "invalid_state",
+      );
+      expect(
+        await t.run(async (ctx) => await ctx.db.get("opportunities", owner.opportunityId)),
+      ).toEqual(before);
+    },
+  );
+
   test("updates brief, capacity, schedule, and defaults on a paused opportunity", async () => {
     const t = convexTest(schema, modules);
     const owner = await seedOpportunity(t, { subject: "update_owner" });

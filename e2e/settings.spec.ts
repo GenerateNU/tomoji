@@ -281,3 +281,171 @@ test("signed-out visitors to the actual Settings route land on log in", async ({
   await expect(page).toHaveURL(/\/login\?next=%2Fsettings$/);
   await expect(page.getByRole("heading", { name: "Welcome back" })).toBeVisible();
 });
+
+test("saving personal details stores a birthdate and country the API accepts", async ({ page }) => {
+  await openSettings(page);
+  const details = page.getByRole("region", { name: "Personal details" });
+  await details.getByRole("button", { name: "Edit personal details" }).click();
+  await page.getByLabel("Date of birth").fill("1990-01-01");
+  await page.getByLabel("Country of residence").selectOption("JP");
+  await page.getByRole("button", { name: "Save personal details" }).click();
+
+  await expect(details.getByText("January 1, 1990", { exact: true })).toBeVisible();
+  await expect(details.getByText("Japan", { exact: true })).toBeVisible();
+  await expect(page.getByText("Personal details saved.", { exact: true })).toBeVisible();
+  expect(await page.evaluate(() => window.settingsFixture.calls)).toEqual([
+    {
+      name: "creators:update",
+      // Sent as UTC midnight, which is what the API stores.
+      args: { dateOfBirth: Date.UTC(1990, 0, 1), countryOfResidence: "JP" },
+    },
+  ]);
+});
+
+test("an under-18 birthdate is refused in the browser without reaching the API", async ({
+  page,
+}) => {
+  await openSettings(page);
+  await page.getByRole("button", { name: "Edit personal details" }).click();
+  const birthdate = page.getByLabel("Date of birth");
+  const tooYoung = new Date(Date.now() - 17 * 365 * 24 * 60 * 60 * 1000);
+  await birthdate.fill(tooYoung.toISOString().slice(0, 10));
+  await page.getByRole("button", { name: "Save personal details" }).click();
+
+  await expect(page.getByRole("alert")).toContainText("at least 18");
+  await expect(birthdate).toBeFocused();
+  await expect(birthdate).toHaveAttribute("aria-invalid", "true");
+  expect(await page.evaluate(() => window.settingsFixture.calls)).toEqual([]);
+});
+
+test("a saved birthdate can be corrected but not removed", async ({ page }) => {
+  await openSettings(page);
+  await page.evaluate(() =>
+    window.settingsFixture.setProfile({ dateOfBirth: Date.UTC(1990, 0, 1) }),
+  );
+  await page.getByRole("button", { name: "Edit personal details" }).click();
+  await page.getByLabel("Date of birth").fill("");
+  await page.getByRole("button", { name: "Save personal details" }).click();
+
+  await expect(page.getByRole("alert")).toContainText("can't be removed");
+  expect(await page.evaluate(() => window.settingsFixture.calls)).toEqual([]);
+
+  await page.getByLabel("Date of birth").fill("1991-02-03");
+  await page.getByRole("button", { name: "Save personal details" }).click();
+  await expect(page.getByText("February 3, 1991", { exact: true })).toBeVisible();
+});
+
+test("saving links normalizes LinkedIn and keeps the other links in order", async ({ page }) => {
+  await openSettings(page);
+  const links = page.getByRole("region", { name: "Links" });
+  await links.getByRole("button", { name: "Edit links" }).click();
+  await page.getByLabel("LinkedIn profile URL").fill("  linkedin.com/in/zahra  ");
+  await page.getByRole("button", { name: "Add another link" }).click();
+  await page.getByLabel("Link 1", { exact: true }).fill("https://zahra.example.test/work");
+  await page.getByRole("button", { name: "Add another link" }).click();
+  await page.getByLabel("Link 2", { exact: true }).fill("https://notes.example.test");
+  await page.getByRole("button", { name: "Save links" }).click();
+
+  await expect(page.getByText("Links saved.", { exact: true })).toBeVisible();
+  expect(await page.evaluate(() => window.settingsFixture.calls)).toEqual([
+    {
+      name: "creators:update",
+      args: {
+        linkedinLink: "https://linkedin.com/in/zahra",
+        additionalLinks: ["https://zahra.example.test/work", "https://notes.example.test/"],
+      },
+    },
+  ]);
+  await expect(links.getByRole("link", { name: /zahra\.example\.test\/work/ })).toBeVisible();
+});
+
+test("an invalid other link marks its own row and blocks the save", async ({ page }) => {
+  await openSettings(page);
+  await page.getByRole("button", { name: "Edit links" }).click();
+  await page.getByRole("button", { name: "Add another link" }).click();
+  await page.getByLabel("Link 1", { exact: true }).fill("https://fine.example.test");
+  await page.getByRole("button", { name: "Add another link" }).click();
+  await page.getByLabel("Link 2", { exact: true }).fill("http://insecure.example.test");
+  await page.getByRole("button", { name: "Save links" }).click();
+
+  await expect(page.getByRole("alert")).toContainText("secure URL");
+  await expect(page.getByLabel("Link 2", { exact: true })).toBeFocused();
+  await expect(page.getByLabel("Link 1", { exact: true })).toHaveAttribute("aria-invalid", "false");
+  expect(await page.evaluate(() => window.settingsFixture.calls)).toEqual([]);
+});
+
+test("the other-links list stops at the limit the API enforces", async ({ page }) => {
+  await openSettings(page);
+  await page.getByRole("button", { name: "Edit links" }).click();
+  const add = page.getByRole("button", { name: "Add another link" });
+  for (let index = 0; index < 3; index += 1) await add.click();
+
+  await expect(page.getByRole("group")).toContainText("3 of 3");
+  await expect(add).toHaveCount(0);
+
+  await page.getByRole("button", { name: "Remove link 2" }).click();
+  await expect(page.getByRole("group")).toContainText("2 of 3");
+  await expect(add).toBeVisible();
+});
+
+test("unsafe saved links are never rendered as clickable links", async ({ page }) => {
+  await openSettings(page);
+  for (const linkedinLink of ["javascript:alert(1)", "https://linkedin.com.evil.test/in/zahra"]) {
+    await page.evaluate(
+      (link) => window.settingsFixture.setProfile({ linkedinLink: link }),
+      linkedinLink,
+    );
+    await expect(
+      page.getByText("Your saved link needs updating. Edit it to add a valid LinkedIn URL."),
+    ).toBeVisible();
+    await expect(page.getByRole("link").filter({ hasText: linkedinLink })).toHaveCount(0);
+  }
+  await page.evaluate(() =>
+    window.settingsFixture.setProfile({ additionalLinks: ["javascript:alert(1)"] }),
+  );
+  await expect(page.getByText("No other links added yet.")).toBeVisible();
+});
+
+test("turning on a private profile is confirmed and reported to the API", async ({ page }) => {
+  await openSettings(page);
+  const visibility = page.getByRole("region", { name: "Profile visibility" });
+  const toggle = visibility.getByRole("switch", { name: "Private profile" });
+  await expect(toggle).not.toBeChecked();
+
+  await toggle.click();
+
+  await expect(toggle).toBeChecked();
+  await expect(page.getByText("Your profile is now private.", { exact: true })).toBeVisible();
+  expect(await page.evaluate(() => window.settingsFixture.calls)).toEqual([
+    { name: "creators:update", args: { isPrivate: true } },
+  ]);
+});
+
+test("a failed visibility change explains itself and leaves the setting alone", async ({
+  page,
+}) => {
+  await openSettings(page);
+  await page.evaluate(() => window.settingsFixture.failNext("creators:update"));
+  const toggle = page.getByRole("switch", { name: "Private profile" });
+
+  await toggle.click();
+
+  await expect(page.getByRole("alert")).toBeVisible();
+  await expect(toggle).not.toBeChecked();
+});
+
+test("captures the responsive creator detail forms", async ({ page }, testInfo) => {
+  await openSettings(page);
+  await page.getByRole("button", { name: "Edit personal details" }).click();
+  await page.getByRole("button", { name: "Edit links" }).click();
+  await page.getByRole("button", { name: "Add another link" }).click();
+  await page.getByLabel("Link 1", { exact: true }).fill("https://zahra.example.test/work");
+
+  await page.screenshot({ path: testInfo.outputPath("creator-forms-desktop.png"), fullPage: true });
+
+  await page.setViewportSize({ width: 375, height: 812 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
+    true,
+  );
+  await page.screenshot({ path: testInfo.outputPath("creator-forms-mobile.png"), fullPage: true });
+});

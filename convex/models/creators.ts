@@ -3,6 +3,7 @@ import { v, type Infer } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { apiError } from "../lib/errors";
+import { requireUrl } from "../lib/urls";
 import { listCreatorNiches, updateCreatorNiches } from "./creatorNiches";
 import { listCreatorSkills, updateCreatorSkills } from "./creatorSkills";
 import { MAX_NICHES } from "./niches";
@@ -69,7 +70,7 @@ function toCreatorProfile(
     additionalLinks: creator.additionalLinks ?? [],
     dateOfBirth: creator.dateOfBirth,
     countryOfResidence: creator.countryOfResidence,
-    isPrivate: creator.isPrivate,
+    isPrivate: creator.isPrivate ?? false,
     niches: details.niches,
     skills: details.skills,
   };
@@ -190,19 +191,16 @@ export function requireAdditionalLinks(links: string[]): string[] {
   if (trimmed.length > MAX_ADDITIONAL_LINKS) {
     throw apiError("invalid_state", { reason: "too_many_links", max: MAX_ADDITIONAL_LINKS });
   }
-  return trimmed.map((link) => {
-    let url: URL;
-    try {
-      url = new URL(link);
-    } catch {
-      throw apiError("invalid_state", { reason: "invalid_link" });
-    }
-    // Rendered as an href, so anything but https is refused outright.
-    if (url.protocol !== "https:" || url.username || url.password) {
-      throw apiError("invalid_state", { reason: "invalid_link" });
-    }
-    return url.href;
-  });
+  return trimmed.map((link) => requireUrl(link, { reason: "invalid_link" }));
+}
+
+/** Clearing a link is allowed; keeping an unusable one is not. */
+function optionalProfileUrl(
+  value: string | null | undefined,
+  rules: Parameters<typeof requireUrl>[1],
+): string | undefined {
+  if (value === null || value === undefined || value.trim() === "") return undefined;
+  return requireUrl(value, rules);
 }
 
 /** Updates the editable fields in a creator's own profile and returns the complete profile. */
@@ -225,8 +223,18 @@ export async function updateCreatorProfile(
   }
   if (updates.isPrivate !== undefined) patch.isPrivate = updates.isPrivate;
   // Clients use null to clear a field because Convex cannot serialize undefined.
-  if ("githubLink" in updates) patch.githubLink = updates.githubLink ?? undefined;
-  if ("linkedinLink" in updates) patch.linkedinLink = updates.linkedinLink ?? undefined;
+  if ("githubLink" in updates) {
+    patch.githubLink = optionalProfileUrl(updates.githubLink, {
+      reason: "invalid_github_link",
+      hosts: ["github.com"],
+    });
+  }
+  if ("linkedinLink" in updates) {
+    patch.linkedinLink = optionalProfileUrl(updates.linkedinLink, {
+      reason: "invalid_linkedin_link",
+      hosts: ["linkedin.com"],
+    });
+  }
   if ("countryOfResidence" in updates) {
     patch.countryOfResidence =
       updates.countryOfResidence === null || updates.countryOfResidence === undefined
@@ -269,7 +277,7 @@ export async function requireCreatorProfileById(
   // `not_found` rather than `forbidden`, so a company cannot use this route to
   // discover that a private creator exists.
   if (
-    creator.isPrivate &&
+    (creator.isPrivate ?? false) &&
     viewingCompanyId !== undefined &&
     !(await hasCompanyRelationship(ctx, creatorId, viewingCompanyId))
   ) {

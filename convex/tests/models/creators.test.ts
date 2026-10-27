@@ -590,6 +590,68 @@ describe("creator niches", () => {
     expect(profile.niches).toEqual([]);
   });
 
+  test.each([
+    ["a javascript scheme", "javascript:alert(1)"],
+    ["plain http", "http://github.com/zahra"],
+    ["a lookalike host", "https://github.com.evil.test/zahra"],
+    ["another site entirely", "https://example.test/zahra"],
+    ["login details that disguise the host", "https://github.com@evil.test"],
+  ])("refuses %s as a GitHub link without changing the profile", async (_label, githubLink) => {
+    const t = convexTest(schema, modules);
+    await seedUser(t, { subject: "github_link_creator" });
+
+    await expectApiError(
+      () =>
+        t.run(async (ctx) => {
+          const user = (await getUserByWorkosId(ctx, "github_link_creator"))!;
+          return await updateCreatorProfile(ctx, user, { githubLink });
+        }),
+      "invalid_state",
+    );
+    expect(await t.run(async (ctx) => await ctx.db.query("creators").first())).not.toHaveProperty(
+      "githubLink",
+    );
+  });
+
+  test.each([
+    ["a javascript scheme", "javascript:alert(1)"],
+    ["a lookalike host", "https://linkedin.com.evil.test/in/zahra"],
+    ["another site entirely", "https://example.test/in/zahra"],
+  ])("refuses %s as a LinkedIn link without changing the profile", async (_label, linkedinLink) => {
+    const t = convexTest(schema, modules);
+    await seedUser(t, { subject: "linkedin_link_creator" });
+
+    await expectApiError(
+      () =>
+        t.run(async (ctx) => {
+          const user = (await getUserByWorkosId(ctx, "linkedin_link_creator"))!;
+          return await updateCreatorProfile(ctx, user, { linkedinLink });
+        }),
+      "invalid_state",
+    );
+    expect(await t.run(async (ctx) => await ctx.db.query("creators").first())).not.toHaveProperty(
+      "linkedinLink",
+    );
+  });
+
+  test("accepts GitHub and LinkedIn subdomains and stores the parsed URL", async () => {
+    const t = convexTest(schema, modules);
+    await seedUser(t, { subject: "subdomain_creator" });
+
+    const profile = await t.run(async (ctx) => {
+      const user = (await getUserByWorkosId(ctx, "subdomain_creator"))!;
+      return await updateCreatorProfile(ctx, user, {
+        githubLink: "https://www.github.com/zahra",
+        linkedinLink: "  https://uk.linkedin.com/in/zahra  ",
+      });
+    });
+
+    expect(profile).toMatchObject({
+      githubLink: "https://www.github.com/zahra",
+      linkedinLink: "https://uk.linkedin.com/in/zahra",
+    });
+  });
+
   test("refuses a niche that isn't on the list without changing the profile", async () => {
     const t = convexTest(schema, modules);
     await seedUser(t, { subject: "niche_creator" });

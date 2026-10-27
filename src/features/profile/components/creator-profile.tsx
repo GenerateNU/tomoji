@@ -3,26 +3,18 @@
 import Link from "next/link";
 import { useQuery } from "convex/react";
 import { cn } from "cn";
-import { ExternalLink } from "lucide-react";
 import { api } from "@convex/_generated/api";
 import { buttonVariants } from "@/components/ui/button";
+import { useCountryName } from "../hooks/use-country-name";
 import { parseGithubLink } from "../lib/github-link";
+import { parseAdditionalLinks, parseLinkedinLink } from "../lib/links";
+import { ExternalLink } from "./external-link";
 import { ProfilePicture } from "./profile-picture";
 import { ProfileSkeleton } from "./profile-skeleton";
 
-// The profile stores an ISO 3166-1 alpha-2 code; "ID" means nothing to a reader.
-const regionNames = new Intl.DisplayNames(["en"], { type: "region" });
-
-function countryName(code: string): string {
-  try {
-    return regionNames.of(code) ?? code;
-  } catch {
-    return code;
-  }
-}
-
 export function CreatorProfile() {
   const profile = useQuery(api.creators.me, {});
+  const countryName = useCountryName(profile?.countryOfResidence);
   if (profile === undefined) return <ProfileSkeleton />;
 
   // Older accounts may use their email as a name fallback; keep it in Settings.
@@ -31,6 +23,9 @@ export function CreatorProfile() {
     .filter((part) => part && part.toLowerCase() !== profile.email.trim().toLowerCase())
     .join(" ");
   const github = parseGithubLink(profile.githubLink ?? "");
+  const linkedin = parseLinkedinLink(profile.linkedinLink ?? "");
+  // The API does not URL-validate saved links, so never render an unsafe one.
+  const otherLinks = profile.additionalLinks.filter((link) => parseAdditionalLinks([link]).ok);
 
   return (
     <div className="space-y-6">
@@ -44,10 +39,8 @@ export function CreatorProfile() {
             <h2 className="text-2xl font-semibold tracking-tight wrap-anywhere">
               {name || "Your profile"}
             </h2>
-            {profile.countryOfResidence !== undefined && (
-              <p className="text-sm text-muted-foreground">
-                {countryName(profile.countryOfResidence)}
-              </p>
+            {countryName !== undefined && (
+              <p className="text-sm text-muted-foreground">{countryName}</p>
             )}
           </div>
           <Link
@@ -66,22 +59,39 @@ export function CreatorProfile() {
           GitHub profile
         </h2>
         {github.ok && github.value ? (
-          <a
-            href={github.value}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex max-w-full items-center gap-2 rounded text-sm underline underline-offset-4 focus-visible:outline-2 focus-visible:outline-offset-4"
-          >
-            <span className="min-w-0 wrap-anywhere">{github.value}</span>
-            <ExternalLink aria-hidden className="size-4 shrink-0" />
-            <span className="sr-only"> (opens in a new tab)</span>
-          </a>
+          <ExternalLink href={github.value} />
         ) : (
           <p className="text-sm text-muted-foreground">
             {github.ok
               ? "No GitHub profile added yet."
               : "Your saved GitHub link needs updating. Edit your profile to add a valid URL."}
           </p>
+        )}
+      </section>
+      <section
+        aria-labelledby="profile-links-heading"
+        className="space-y-4 rounded-2xl bg-card p-6 sm:p-8"
+      >
+        <h2 id="profile-links-heading" className="text-xl font-semibold tracking-tight">
+          Links
+        </h2>
+        {linkedin.ok && linkedin.value ? (
+          <ExternalLink href={linkedin.value} />
+        ) : (
+          <p className="text-sm text-muted-foreground">
+            {linkedin.ok
+              ? "No LinkedIn profile added yet."
+              : "Your saved LinkedIn link needs updating. Edit your profile to add a valid URL."}
+          </p>
+        )}
+        {otherLinks.length > 0 && (
+          <ul className="space-y-2">
+            {otherLinks.map((link) => (
+              <li key={link} className="min-w-0">
+                <ExternalLink href={link} />
+              </li>
+            ))}
+          </ul>
         )}
       </section>
     </div>

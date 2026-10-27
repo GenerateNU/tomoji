@@ -1,5 +1,6 @@
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { apiError } from "../lib/errors";
+import { requireUrl } from "../lib/urls";
 import { requireNonBlank } from "../lib/validation";
 import { Doc, Id } from "../_generated/dataModel";
 import { PaginationOptions, PaginationResult } from "convex/server";
@@ -81,7 +82,11 @@ export async function updateCompany(
   if (fields.profilePicture !== undefined) {
     patch.profilePicture = requireNonBlank(fields.profilePicture, "profile_picture");
   }
-  if (fields.website !== undefined) patch.website = requireNonBlank(fields.website, "website");
+  if (fields.website !== undefined) {
+    patch.website = requireUrl(requireNonBlank(fields.website, "website"), {
+      reason: "invalid_website",
+    });
+  }
   if (fields.description !== undefined) {
     patch.description = requireNonBlank(fields.description, "description");
   }

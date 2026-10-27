@@ -4,6 +4,7 @@ import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { stream } from "convex-helpers/server/stream";
 import { apiError } from "../lib/errors";
+import { requireUrl } from "../lib/urls";
 import { withRowsReadCap } from "../lib/pagination";
 import { requireNonBlank, isHalfHourTimestamp } from "../lib/validation";
 import { requireMembership } from "./companyUsers";
@@ -379,8 +380,12 @@ export async function updateOpportunity(
   // An empty list clears the niches; omitting the field leaves them unchanged.
   if (updates.niches !== undefined) patch.niches = requireNiches(updates.niches);
   // Omitted fields stay unchanged; null removes the optional link, as in creator updates.
-  if (updates.productAccessLink !== undefined)
-    patch.productAccessLink = updates.productAccessLink ?? undefined;
+  if (updates.productAccessLink !== undefined) {
+    patch.productAccessLink =
+      updates.productAccessLink === null
+        ? undefined
+        : requireUrl(updates.productAccessLink, { reason: "invalid_product_access_link" });
+  }
   const updated = { ...opportunity, ...patch };
   const normalized = validateOpportunityFields(updated);
   if (campaign.endsAt !== undefined && updated.deadline > campaign.endsAt) {
@@ -504,9 +509,18 @@ export async function createOpportunity(
     throw apiError("invalid_state", { reason: "deadline_after_campaign_end" });
   }
   const niches = fields.niches === undefined ? {} : { niches: requireNiches(fields.niches) };
+  const productAccess =
+    fields.productAccessLink === undefined
+      ? {}
+      : {
+          productAccessLink: requireUrl(fields.productAccessLink, {
+            reason: "invalid_product_access_link",
+          }),
+        };
   const opportunityId = await ctx.db.insert("opportunities", {
     ...brief,
     ...niches,
+    ...productAccess,
     title,
     description,
     companyId: campaign.companyId,

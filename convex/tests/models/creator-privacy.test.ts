@@ -112,6 +112,20 @@ describe("private creators", () => {
     );
   });
 
+  // Rows created before isPrivate existed have no value for it.
+  test("a profile predating the field is treated as discoverable", async () => {
+    const t = convexTest(schema, modules);
+    const creatorId = await seedCreatorId(t, "legacy_creator");
+    await t.run(async (ctx) => await ctx.db.patch("creators", creatorId, { isPrivate: undefined }));
+
+    const profile = await t.run(async (ctx) => await requireCreatorProfileById(ctx, creatorId));
+
+    expect(profile.isPrivate).toBe(false);
+    expect(profile.additionalLinks).toEqual([]);
+    const { page: profiles } = await page(t);
+    expect(profiles.map((entry) => entry.creatorId)).toContain(creatorId);
+  });
+
   test("remain visible to themselves and to callers with no company", async () => {
     const t = convexTest(schema, modules);
     const hiddenId = await seedCreatorId(t, "hidden_5");

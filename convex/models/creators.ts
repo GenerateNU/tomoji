@@ -3,10 +3,11 @@ import { v, type Infer } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { apiError } from "../lib/errors";
-import { DEFAULT_MAXIMUM_ROWS_READ } from "../lib/pagination";
 import { requireNonBlank } from "../lib/validation";
 import { listCreatorNiches, updateCreatorNiches } from "./creatorNiches";
 import { listCreatorSkills, updateCreatorSkills } from "./creatorSkills";
+import { MAX_NICHES } from "./niches";
+import { SKILLS } from "./skills";
 import { getXAccountByCreatorId } from "./xAccountLookup";
 
 export const creatorProfile = v.object({
@@ -34,6 +35,10 @@ export const creatorProfileUpdate = v.object({
 
 export type CreatorProfile = Infer<typeof creatorProfile>;
 export type CreatorProfileUpdate = Infer<typeof creatorProfileUpdate>;
+
+// Each profile reads a user, creator, X account, and every selected niche/skill.
+// Reserve half the 32,000-document budget and limit parallel profile lookups to 100.
+const MAX_CREATOR_LIST_ROWS = Math.min(100, Math.floor(16_000 / (3 + MAX_NICHES + SKILLS.length)));
 
 /** Combines matching user and creator documents into the user-facing creator profile. */
 function toCreatorProfile(
@@ -125,8 +130,8 @@ export async function listCreators(
     .paginate({
       ...options.paginationOpts,
       maximumRowsRead: Math.min(
-        options.paginationOpts.maximumRowsRead ?? DEFAULT_MAXIMUM_ROWS_READ,
-        DEFAULT_MAXIMUM_ROWS_READ,
+        options.paginationOpts.maximumRowsRead ?? MAX_CREATOR_LIST_ROWS,
+        MAX_CREATOR_LIST_ROWS,
       ),
     });
 

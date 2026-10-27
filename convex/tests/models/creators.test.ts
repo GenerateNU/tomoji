@@ -11,6 +11,8 @@ import {
 } from "../../models/creators";
 import { deactivateUser, getUserByWorkosId } from "../../models/users";
 import schema from "../../schema";
+import { NICHES } from "../../models/niches";
+import { SKILLS } from "../../models/skills";
 import {
   expectApiError,
   seedAssignment,
@@ -81,16 +83,54 @@ describe("requireCreatorProfile", () => {
 });
 
 describe("listCreators", () => {
+  test("paginates fully populated profiles within Convex transaction limits", async () => {
+    const t = convexTest({ schema, modules, transactionLimits: true });
+    const niches = NICHES.slice(0, 5).map((niche) => niche.name);
+    const skills = SKILLS.map((skill) => skill.name);
+    for (let index = 0; index < 210; index++) {
+      const subject = `creator_full_${index}`;
+      await seedUser(t, { subject });
+      const user = await requireSeededUser(t, subject);
+      await t.run((ctx) => updateCreatorProfile(ctx, user, { niches, skills }));
+    }
+
+    const first = await t.run((ctx) =>
+      listCreators(ctx, {
+        paginationOpts: { cursor: null, numItems: 1000, maximumRowsRead: 10000 },
+      }),
+    );
+    expect(first.page).toHaveLength(100);
+    expect(first.isDone).toBe(false);
+    expect(first.page[0]).toMatchObject({ niches, skills });
+    const second = await t.run((ctx) =>
+      listCreators(ctx, {
+        paginationOpts: { cursor: first.continueCursor, numItems: 1000, maximumRowsRead: 10000 },
+      }),
+    );
+    expect(second.page).toHaveLength(100);
+    expect(second.isDone).toBe(false);
+    const third = await t.run((ctx) =>
+      listCreators(ctx, {
+        paginationOpts: { cursor: second.continueCursor, numItems: 1000, maximumRowsRead: 10000 },
+      }),
+    );
+    expect(third.page).toHaveLength(10);
+    expect(third.isDone).toBe(true);
+    expect([...first.page, ...second.page, ...third.page].map((profile) => profile.email)).toEqual(
+      Array.from({ length: 210 }, (_, index) => `creator_full_${index}@example.com`),
+    );
+  }, 60_000);
+
   test("caps default and oversized read budgets while preserving cursor pagination", async () => {
     const t = convexTest(schema, modules);
-    for (let index = 0; index < 501; index++) {
+    for (let index = 0; index < 101; index++) {
       await seedUser(t, { subject: `creator_budget_${index}` });
     }
 
     const defaultPage = await t.run((ctx) =>
       listCreators(ctx, { paginationOpts: { cursor: null, numItems: 1000 } }),
     );
-    expect(defaultPage.page).toHaveLength(500);
+    expect(defaultPage.page).toHaveLength(100);
     expect(defaultPage.isDone).toBe(false);
 
     const firstPage = await t.run((ctx) =>
@@ -109,7 +149,7 @@ describe("listCreators", () => {
         },
       }),
     );
-    const lastUser = await requireSeededUser(t, "creator_budget_500");
+    const lastUser = await requireSeededUser(t, "creator_budget_100");
     const lastCreatorId = await t.run(
       async (ctx) => (await getCreatorByUserId(ctx, lastUser._id))!._id,
     );
@@ -118,7 +158,7 @@ describe("listCreators", () => {
         creatorId: lastCreatorId,
         firstName: "Test",
         lastName: "",
-        email: "creator_budget_500@example.com",
+        email: "creator_budget_100@example.com",
         niches: [],
         skills: [],
       },

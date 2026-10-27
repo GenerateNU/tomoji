@@ -45,7 +45,7 @@ const openers: [string, Caller, "creator" | "company" | "operator", CreateArgs["
 describe("disputes.create", () => {
   test.each(openers)("lets %s open a dispute", async (_who, caller, role, reason) => {
     const t = convexTest(schema, modules);
-    const fixture = await seedAssignmentFixture(t);
+    const fixture = await seedAssignmentFixture(t, {}, "admin");
     const client = await caller(t, fixture);
 
     const disputeId = await client.mutation(api.disputes.create, createArgs(fixture, reason));
@@ -65,8 +65,8 @@ describe("disputes.create", () => {
 
   test("conceals another company's assignment without writing", async () => {
     const t = convexTest(schema, modules);
-    const fixture = await seedAssignmentFixture(t);
-    const { asMember } = await seedMembership(t, "outsider");
+    const fixture = await seedAssignmentFixture(t, {}, "admin");
+    const { asMember } = await seedMembership(t, "outsider", undefined, "admin");
 
     await expectApiError(
       () => asMember.mutation(api.disputes.create, createArgs(fixture, "missingDisclosure")),

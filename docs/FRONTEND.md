@@ -2,18 +2,19 @@
 
 This document outlines how we organize and develop the Next.js frontend for Tomoji. For setup instructions and commands, see `CONTRIBUTING.md`. Backend conventions are covered in [Backend](BACKEND.md).
 
-## 1. Folders
+## Folders
 
 ```text
 src/
   app/                       Next.js routes and layouts
     layout.tsx               fonts and providers
-    page.tsx                 landing — no nav bar
-    signup/                  also no nav bar
+    signup/, login/, etc     sign-in pages, no nav bar
     (protected)/
       layout.tsx             nav bar
+      page.tsx               home (/) — where sign-in lands
+      error.tsx              error boundary for signed-in pages
       <route>/               pages requiring sign-in
-    auth/                    WorkOS callback and sign-out action
+    auth/                    auth server actions, WorkOS callback, Google sign-in routes
   features/<domain>/         domain-specific functionality
     components/
     hooks/
@@ -22,7 +23,8 @@ src/
     ui/                      shadcn-generated components
   hooks/                     hooks shared across features
   lib/                       plain functions - no React, usable anywhere
-  proxy.ts                   redirects unauthenticated users
+e2e/                         Playwright browser tests
+  fixtures/                  per-spec entry points and stubbed backend responses
 ```
 
 ### Where should new files go?
@@ -34,26 +36,32 @@ When adding a new file, use these guidelines to decide where it belongs:
 | Is it a Next.js-specific file like `page.tsx`, `layout.tsx`, or `route.ts`?                | `app/`                             |
 | Is it related to a specific Tomoji feature, such as opportunities, campaigns, or creators? | `features/<domain>/`               |
 | Is it shared or general-purpose code?                                                      | `components/`, `hooks/`, or `lib/` |
+| Is it a browser test?                                                                      | `e2e/`                             |
 
-                                                                                                       |
+### Tests
 
-## 2. Routes
+Frontend behaviour is covered by Playwright browser tests in `e2e/`, run with
+`just test-e2e`. They exercise rendered pages in a real browser. `e2e/` stays
+at the top level because Playwright is configured against it directly, and CI
+does not run it.
+
+## Routes
 
 Our routes should describe the resource being accessed rather than the role of the person accessing it, so keep URLs independent of user roles. For example, `/opportunities` serves as the discovery feed for creators and the company's opportunity list for company users. The page determines which component to render based on the current user.
 
-## 3. Component Design
+## Component Design
 
 We want components to be reusable, consistent, and easy to maintain. These conventions should help us avoid unnecessary duplication while keeping the frontend flexible as designs evolve.
 
 | Principle                                 | Guidelines                                                                                                                                                                                                                                         |
 | ----------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Prefer variants over duplicate components | If two components have the same functionality and mainly differ in styling, use a `variant` prop instead of maintaining separate implementations.                                                                                                  |
-| Pass IDs instead of entire objects        | Rather than passing data through several component layers, child components can call `useQuery` directly. Convex shares subscriptions for identical queries, so multiple components requesting the same data don't create duplicate subscriptions. |     |
+| Pass IDs instead of entire objects        | Rather than passing data through several component layers, child components can call `useQuery` directly. Convex shares subscriptions for identical queries, so multiple components requesting the same data don't create duplicate subscriptions. |
 | Prefer SVGs for icons                     | Prefer SVG images for scalability and better performance. They offer crisp quality on all screen sizes and are more flexible for styling (e.g., changing colors).                                                                                  |
 | Build responsive layouts                  | Use flexbox, grid, and relative widths rather than relying on fixed pixel dimensions. This will allow us to make components responsive across different screen sizes.                                                                              |
 | Let parent components manage spacing      | Reusable components generally shouldn't define their own outer margins. Their parent components have a better understanding of the surrounding layout and can handle spacing accordingly.                                                          |
 
-## 4. Reading Data
+## Reading Data
 
 We use Convex directly within our components to retrieve data.
 
@@ -86,11 +94,11 @@ export function useOpportunityFeed() {
 }
 ```
 
-## 5. Writing Data
+## Writing Data
 
 We use `useMutation` for operations that modify application data.
 
-The exceptions are signing in and signing out, which use server actions defined in `app/auth/actions.ts`.
+The exceptions are signing in and signing out, which use server actions defined in `app/auth/actions.ts`. The forms call them through `useAuthForm` (`features/auth/hooks/`), which checks the same field rules (`features/auth/lib/rules.ts`) in the browser before submitting. After a sign-in succeeds, the hook reloads AuthKit's client state before navigating, so Convex sees the new session, then navigates to `next` — the page the user was sent to log in from, validated by `safeNext` and carried through the verify-email step and Google sign-in — or home (`/`, signed-in only). Password-reset links always land home.
 
 ### Error handling
 
@@ -114,7 +122,9 @@ setError(errorMessage(error, { conflict: "That username is taken." }));
 
 Use `errorCode(error)` when a failure needs more than a message — putting the error on a specific field, or sending the user somewhere else.
 
-## 6. User Experience
+Sign-in errors come from WorkOS, not Convex, so `features/auth/lib/auth-errors.ts` plays the same role for them: it maps each WorkOS error to a field message, a form message, or the email-verification step.
+
+## User Experience
 
 We should account for all the states a user might encounter when interacting with the application.
 
@@ -154,7 +164,7 @@ We should avoid showing users actions they don't have permission to perform, but
 
 **The backend is responsible for enforcing permissions.** Frontend checks are there to improve the user experience and prevent users from attempting actions that would ultimately fail.
 
-## 7. Naming and Types
+## Naming and Types
 
 To keep the codebase consistent, we follow a few naming conventions:
 

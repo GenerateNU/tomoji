@@ -6,6 +6,7 @@
  *   WORKOS_CLIENT_ID
  *   WORKOS_API_KEY
  *   WORKOS_WEBHOOK_SECRET
+ *   WORKOS_OPERATOR_ORG_ID
  *   S3_MEDIA_BUCKET
  *   S3_MEDIA_REGION
  *   X_CLIENT_ID / X_CLIENT_SECRET / X_REDIRECT_URI (when supplied together)
@@ -14,7 +15,13 @@ import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 
 const ENV_FILE = ".env.local";
-const KEYS = ["WORKOS_CLIENT_ID", "WORKOS_API_KEY", "S3_MEDIA_BUCKET", "S3_MEDIA_REGION"] as const;
+const KEYS = [
+  "WORKOS_CLIENT_ID",
+  "WORKOS_API_KEY",
+  "WORKOS_OPERATOR_ORG_ID",
+  "S3_MEDIA_BUCKET",
+  "S3_MEDIA_REGION",
+] as const;
 
 if (!existsSync(ENV_FILE)) {
   console.error(`${ENV_FILE} not found. Run \`just setup\` first.`);

@@ -65,12 +65,20 @@ Default to internal for anything that is not intentionally part of the public AP
 
 `lib/functions.ts` exports function builders that verify the caller's account type before the handler runs:
 
-| Builder                              | Caller must be     | Extra context           |
-| ------------------------------------ | ------------------ | ----------------------- |
-| `authedQuery` / `authedMutation`     | any signed-in user | `ctx.user`              |
-| `creatorQuery` / `creatorMutation`   | a creator          | `ctx.user`              |
-| `companyQuery` / `companyMutation`   | a company user     | `ctx.user`, `ctx.orgId` |
-| `operatorQuery` / `operatorMutation` | a Tomoji operator  | `ctx.user`              |
+| Builder                                        | Caller must be                                      | Extra context                                                          |
+| ---------------------------------------------- | --------------------------------------------------- | ---------------------------------------------------------------------- |
+| `authedQuery` / `authedMutation`               | any signed-in user                                  | `ctx.user`                                                             |
+| `creatorQuery` / `creatorMutation`             | a creator                                           | `ctx.user`                                                             |
+| `companyQuery` / `companyMutation`             | a company user                                      | `ctx.user`, `ctx.orgId`, `ctx.membership`                              |
+| `companyAdminQuery` / `companyAdminMutation`   | a company **admin**                                 | same as `companyQuery`                                                 |
+| `companyScopedQuery` / `companyScopedMutation` | a company user, or an operator naming a `companyId` | `ctx.user`, `ctx.companyId`, `ctx.membership` (`null` for an operator) |
+| `operatorQuery` / `operatorMutation`           | a Tomoji operator                                   | `ctx.user`                                                             |
+| `operatorAction`                               | a Tomoji operator                                   | `ctx.user`                                                             |
+| `companyAdminAction`                           | a company **admin**                                 | `ctx.user`, `ctx.membership`, `ctx.orgId`                              |
+
+Actions have no `ctx.db`, so the two action builders run the same check through an
+internal query in `convex/authorize.ts` first. That keeps an action from being looser
+than the query or mutation it mirrors.
 
 Use these instead of the raw `query` and `mutation` functions. It proves the caller is signed in, synced, active, and of the right account type. Note that additional access checks may be necessary to ensure that sensitive company/creator data is not leaked beyond role checks.
 
@@ -81,6 +89,36 @@ For application, assignment, and submission reads, `requireCallerViewer` in
 `canViewResource` checks creator/company ownership; domain `require…` helpers still
 own missing-row errors and resource-specific rules. Do not apply that ownership policy
 to opportunity discovery or private media reads, which have different visibility rules.
+
+## Accounts, invites, and the operator org
+
+Nobody signs themselves up. An operator sends a WorkOS invitation, and the account
+appears when it is accepted. Which WorkOS organization the invitation names decides
+what the person becomes:
+
+| Organization on the invite                  | Account                       |
+| ------------------------------------------- | ----------------------------- |
+| none                                        | creator                       |
+| `WORKOS_OPERATOR_ORG_ID`                    | Tomoji operator               |
+| any other org we have a `companies` row for | company user, admin or member |
+| an org we have never seen                   | ignored                       |
+
+That last row matters: the `companies` row has to exist before the invitation is sent,
+which is why `invites.inviteCompany` creates the organization and the company row before
+calling WorkOS. That ordering makes it the one route here that is not safe to retry — a
+second call makes a second organization. When the invite is what failed, the error carries
+the `companyId` it already created so the caller can finish with `invites.inviteCompanyUser`
+instead of starting over.
+
+The routes in `convex/invites.ts` only call WorkOS. Every write happens in the
+`invitation.*` webhook handlers in `convex/auth.ts`, so the `invites` table reflects
+what WorkOS actually did rather than what we asked it to do. Revoking, for the same
+reason, leaves the row alone and waits for `invitation.revoked`.
+
+`WORKOS_OPERATOR_ORG_ID` is a deployment setting, not a hardcoded id, because staging
+and production are separate WorkOS environments with different organizations. When it
+is unset, no org is the staff org and `isOperatorOrg` is always false, so a staff
+invite quietly creates an ordinary company instead.
 
 ## Errors
 
@@ -134,5 +172,11 @@ tests/models/users.test.ts
 ```
 
 Shared fixtures and testing utilities should stay in `tests/helpers.ts`.
+
+Use `campaignArgs` and `submissionArgs` for shared input fixtures, with explicit
+scenario overrides. Expected submission views remain independent of production
+serializers. `expectApiError` can assert both code and reason without invoking an
+operation twice. Preserve raw inserts for invalid/legacy data and public-route calls
+when testing route behavior.
 
 Prefer testing model functions directly with `t.run()`. Use the `api.*` route path when the behavior you are testing specifically involves authorization, argument validation, or route behavior.

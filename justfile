@@ -15,6 +15,9 @@ ci:
     bun run format
     bun run ci
 
+# `just ci` plus the Playwright browser tests (CI doesn't run these). Reuses `just fd` if it's running.
+ci-full: ci test-e2e
+
 # Run the test suite once
 test:
     bun run test
@@ -26,6 +29,14 @@ format:
 # Re-run tests on change
 test-watch:
     bun run test:watch
+
+# Frontend unit tests only — skips the Convex suites
+test-frontend:
+    bunx vitest run --project frontend
+
+# Convex backend tests only
+test-backend:
+    bunx vitest run --project convex --project convex-node
 
 # Run one test file (ex: `just test-file convex/users.test.ts`)
 test-file file:
@@ -80,6 +91,14 @@ setup:
 # Copy WorkOS and S3 settings from .env.local to your Convex deployment
 convex-env:
     @bun scripts/set-convex-env.ts
+
+# Fill your dev deployment with demo data for every frontend flow
+seed *EMAIL:
+    @bunx convex run seed:run '{{ if EMAIL == "" { "{}" } else { "{\"creatorEmail\":\"" + EMAIL + "\"}" } }}'
+
+# Remove everything `just seed` created, leaving accounts and companies alone
+seed-clear:
+    @bunx convex run seed:clear
 
 # Print the webhook URL to send a TL, who creates your WorkOS webhook
 webhook-url:

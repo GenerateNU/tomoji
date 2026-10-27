@@ -1,8 +1,10 @@
 import type { TestConvex as ConvexTest } from "convex-test";
-import type { UserIdentity, WithoutSystemFields } from "convex/server";
+import type { UserIdentity, WithoutSystemFields, FunctionArgs } from "convex/server";
 import type { Infer } from "convex/values";
 import { expect } from "vitest";
 import type { Doc, Id } from "../_generated/dataModel";
+import type { api } from "../_generated/api";
+import type { SubmissionDraft } from "../models/submissions";
 import type { ApiErrorCode } from "../lib/errors";
 import { companyContext } from "../lib/functions";
 import { getCreatorByUserId } from "../models/creators";
@@ -194,9 +196,15 @@ export function workosIdentity(claims: {
   return claims as Partial<UserIdentity>;
 }
 
-/** Asserts a call fails with a specific API error code. */
-export async function expectApiError(call: () => Promise<unknown>, code: ApiErrorCode) {
-  await expect(call()).rejects.toThrow(new RegExp(`"code":"${code}"`));
+/** Asserts a call fails with the expected code and optional reason, executing it once. */
+export async function expectApiError(
+  call: () => Promise<unknown>,
+  code: ApiErrorCode,
+  reason?: string,
+) {
+  await expect(call()).rejects.toMatchObject({
+    data: { code, ...(reason === undefined ? {} : { reason }) },
+  });
 }
 
 export type SeedOptions = {
@@ -291,6 +299,23 @@ export type SeedCampaignOptions = {
   status?: Doc<"campaigns">["status"];
 };
 
+type CampaignArgs = FunctionArgs<typeof api.campaigns.create>;
+
+/** Builds client-editable campaign fields; raw fixtures add owner/state overrides separately. */
+export function campaignArgs(overrides: Partial<CampaignArgs> = {}): CampaignArgs {
+  return {
+    title: "Spring launch",
+    objective: "Introduce the new skincare range",
+    product: "Daily moisturizer",
+    audience: "Skincare enthusiasts",
+    description: "Campaign supporting the spring launch.",
+    status: "open",
+    budgetCents: 250_000,
+    startsAt: Date.now(),
+    ...overrides,
+  };
+}
+
 /** Seeds a company caller and its campaign with server-derived ownership. */
 export async function seedCampaign(t: TestConvex, options: SeedCampaignOptions) {
   const asCompany = await seedUser(t, {
@@ -302,14 +327,7 @@ export async function seedCampaign(t: TestConvex, options: SeedCampaignOptions) 
     const campaignId = await createCampaign(ctx, {
       companyId: membership.companyId,
       createdBy: membership._id,
-      title: "Spring launch",
-      objective: "Introduce the new skincare range",
-      product: "Daily moisturizer",
-      audience: "Skincare enthusiasts",
-      description: "Campaign supporting the spring launch.",
-      status: "open",
-      budgetCents: 250_000,
-      startsAt: Date.now(),
+      ...campaignArgs(),
     });
     if (options.status !== undefined) {
       await ctx.db.patch("campaigns", campaignId, { status: options.status });
@@ -410,9 +428,14 @@ export async function seedGatedOpportunity(t: TestConvex, opts: SeedGatedOpportu
   return { ...seeded, companyId: seeded.membership.companyId };
 }
 
-/** Seeds a company member and returns their client and membership row. */
-export async function seedMembership(t: TestConvex, subject: string, orgId = `org_${subject}`) {
-  const asMember = await seedUser(t, { subject, org: { id: orgId } });
+/** Seeds a company user and returns their client and membership row. Defaults to a member. */
+export async function seedMembership(
+  t: TestConvex,
+  subject: string,
+  orgId = `org_${subject}`,
+  role: Infer<typeof companyRole> = "member",
+) {
+  const asMember = await seedUser(t, { subject, org: { id: orgId, role } });
   const { membership } = await asMember.run(async (ctx) => await companyContext(ctx));
   return { asMember, membership };
 }
@@ -425,6 +448,19 @@ export type AssignmentFixture = {
   asCreator: ReturnType<TestConvex["withIdentity"]>;
   asCompany: ReturnType<TestConvex["withIdentity"]>;
 };
+
+export const submissionDraftFields = {
+  draftUrl: "https://drive.example.com/drafts/driftwood-first-deploy",
+  draftDescription: "60-second walkthrough: install, `driftwood init`, first deploy at 0:45.",
+} satisfies Omit<SubmissionDraft, "assignmentId">;
+
+/** Builds a creator-supplied draft while allowing each test to override its scenario. */
+export function submissionArgs(
+  assignmentId: Id<"assignments">,
+  overrides: Partial<SubmissionDraft> = {},
+): SubmissionDraft {
+  return { assignmentId, ...submissionDraftFields, ...overrides };
+}
 
 // Subjects the assignment fixture seeds. Every test gets a fresh database and
 // seeds at most one assignment, so fixed names never collide.
@@ -439,10 +475,12 @@ const FIXTURE_OPERATOR = "fixture-operator";
 export async function seedAssignmentFixture(
   t: TestConvex,
   assignment: Partial<Pick<Doc<"assignments">, "status" | "usesAiReview">> = {},
+  companyRoleForFixture: Infer<typeof companyRole> = "member",
 ): Promise<AssignmentFixture> {
   const { asCompany, membership, opportunityId } = await seedOpportunity(t, {
     subject: FIXTURE_COMPANY,
     orgId: "org_fixture",
+    role: companyRoleForFixture,
   });
   const creatorId = await seedCreatorId(t, FIXTURE_CREATOR);
   const assignmentId = await seedAssignment(t, {
@@ -644,6 +682,17 @@ export async function memberNotifications(t: TestConvex, membership: Doc<"compan
 /** Reads one submission as stored, or `null` if it doesn't exist. */
 export async function storedSubmission(t: TestConvex, submissionId: Id<"submissions">) {
   return await t.run(async (ctx) => await ctx.db.get("submissions", submissionId));
+}
+
+/** Builds an independent full-view expectation from stored data, not the production projection. */
+export async function expectedSubmissionView(
+  t: TestConvex,
+  submissionId: Id<"submissions">,
+  closed = false,
+) {
+  const stored = await storedSubmission(t, submissionId);
+  if (stored === null) throw new Error("expected a stored submission");
+  return { ...stored, closedWithoutReview: closed };
 }
 
 /** Reads every submission in the test's database, oldest first. */

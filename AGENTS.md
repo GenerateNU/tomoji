@@ -88,16 +88,18 @@ Complete the requested outcome and required verification. If blocked, state what
 Setup and day-to-day work are documented in [`CONTRIBUTING.md`](CONTRIBUTING.md). The
 commands that exist today:
 
-| Command           | What it does                                            |
-| ----------------- | ------------------------------------------------------- |
-| `just setup`      | Install deps, create `.env.local` from the template     |
-| `just convex-env` | Copy WorkOS and S3 settings onto your Convex deployment |
-| `just fd`         | Frontend dev server — http://localhost:3000             |
-| `just bd`         | Convex dev — watches `convex/`, streams function logs   |
-| `just ci`         | typecheck + lint + format:check + test (what CI runs)   |
-| `just test`       | Vitest once                                             |
-| `just test-e2e`   | Playwright                                              |
-| `just build`      | Production build                                        |
+| Command             | What it does                                            |
+| ------------------- | ------------------------------------------------------- |
+| `just setup`        | Install deps, create `.env.local` from the template     |
+| `just convex-env`   | Copy WorkOS and S3 settings onto your Convex deployment |
+| `just fd`           | Frontend dev server — http://localhost:3000             |
+| `just bd`           | Convex dev — watches `convex/`, streams function logs   |
+| `just ci`           | typecheck + lint + format:check + test (what CI runs)   |
+| `just test`         | Vitest once                                             |
+| `just test-backend` | Convex backend tests only                               |
+| `just test-e2e`     | Playwright (not run in CI)                              |
+| `just ci-full`      | `just ci`, then the Playwright tests                    |
+| `just build`        | Production build                                        |
 
 Recipes are thin wrappers over `package.json` scripts; CI runs `bun run ci`. There is no
 release command yet — nothing is deployed.
@@ -111,6 +113,7 @@ Follow the repository workflow in `CONTRIBUTING.md`:
   `chore: upgrade convex to 1.46`, or `test: cover requireIdentity deny case`.
 - Branch from `main` and keep each pull request small and focused.
 - Run `just ci` before pushing. CI must pass before merge.
+- For frontend PRs, capture and inspect desktop and mobile screenshots of the affected UI and attach them to the PR. Clearly label fixture-based previews rather than presenting them as live integration verification.
 
 ## Maintenance and references
 

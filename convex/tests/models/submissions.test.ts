@@ -2,7 +2,6 @@
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
 import type { Doc, Id } from "../../_generated/dataModel";
-import type { ApiErrorCode } from "../../lib/errors";
 import {
   createSubmission,
   listSubmissions,
@@ -18,6 +17,9 @@ import schema from "../../schema";
 import {
   creatorNotifications,
   expectApiError,
+  submissionArgs,
+  submissionDraftFields as draft,
+  expectedSubmissionView as expectedFull,
   memberNotifications,
   seedAssignmentFixture,
   seedCreatorId,
@@ -36,13 +38,9 @@ import {
 
 const modules = import.meta.glob("../../**/*.ts");
 
-const draft = {
-  draftUrl: "https://drive.example.com/drafts/driftwood-first-deploy",
-  draftDescription: "60-second walkthrough: install, `driftwood init`, first deploy at 0:45.",
-};
-
 const firstPage = { numItems: 10, cursor: null as string | null };
 
+/** Calls the model with shared draft fields while preserving per-test owner and input overrides. */
 async function submit(
   t: TestConvex,
   fixture: AssignmentFixture,
@@ -51,16 +49,8 @@ async function submit(
 ) {
   return await t.run(
     async (ctx) =>
-      await createSubmission(ctx, creatorId, {
-        assignmentId: fixture.assignmentId,
-        ...draft,
-        ...overrides,
-      }),
+      await createSubmission(ctx, creatorId, submissionArgs(fixture.assignmentId, overrides)),
   );
-}
-
-async function expectReason(call: () => Promise<unknown>, code: ApiErrorCode, reason: string) {
-  await expect(call()).rejects.toMatchObject({ data: { code, reason } });
 }
 
 async function reviewAs(
@@ -95,12 +85,6 @@ async function listAs(
   return await t.run(
     async (ctx) => await listSubmissions(ctx, viewer, assignmentId, paginationOpts),
   );
-}
-
-async function expectedFull(t: TestConvex, submissionId: Id<"submissions">, closed = false) {
-  const stored = await storedSubmission(t, submissionId);
-  if (stored === null) throw new Error("expected a stored submission");
-  return { ...stored, closedWithoutReview: closed };
 }
 
 describe("createSubmission", () => {
@@ -157,7 +141,7 @@ describe("createSubmission", () => {
       const t = convexTest(schema, modules);
       const fixture = await seedAssignmentFixture(t, { status });
 
-      await expectReason(() => submit(t, fixture), "invalid_state", "assignment_not_active");
+      await expectApiError(() => submit(t, fixture), "invalid_state", "assignment_not_active");
 
       expect(await storedSubmissions(t)).toHaveLength(0);
     },
@@ -167,7 +151,7 @@ describe("createSubmission", () => {
     const t = convexTest(schema, modules);
     const { fixture } = await seedOneSubmission(t);
 
-    await expectReason(() => submit(t, fixture), "conflict", "submission_pending");
+    await expectApiError(() => submit(t, fixture), "conflict", "submission_pending");
 
     expect(await storedSubmissions(t)).toHaveLength(1);
   });
@@ -178,7 +162,7 @@ describe("createSubmission", () => {
     await seedSubmission(t, fixture, "changesRequested");
     await seedSubmission(t, fixture, "approved");
 
-    await expectReason(() => submit(t, fixture), "invalid_state", "already_approved");
+    await expectApiError(() => submit(t, fixture), "invalid_state", "already_approved");
 
     expect(await storedSubmissions(t)).toHaveLength(2);
   });
@@ -203,7 +187,7 @@ describe("createSubmission", () => {
     const t = convexTest(schema, modules);
     const fixture = await seedAssignmentFixture(t);
 
-    await expectReason(
+    await expectApiError(
       () => submit(t, fixture, { [field]: value } as Partial<SubmissionDraft>),
       "invalid_state",
       `${field}_blank`,
@@ -223,7 +207,11 @@ describe("createSubmission", () => {
     const t = convexTest(schema, modules);
     const fixture = await seedAssignmentFixture(t);
 
-    await expectReason(() => submit(t, fixture, { draftUrl }), "invalid_state", "draftUrl_invalid");
+    await expectApiError(
+      () => submit(t, fixture, { draftUrl }),
+      "invalid_state",
+      "draftUrl_invalid",
+    );
 
     expect(await storedSubmissions(t)).toHaveLength(0);
   });
@@ -250,7 +238,7 @@ describe("createSubmission", () => {
     // 726 characters as typed; each `"` becomes `%22`, making it 2,126.
     const draftUrl = `https://drive.example.com/${'"'.repeat(700)}`;
 
-    await expectReason(
+    await expectApiError(
       () => submit(t, fixture, { draftUrl }),
       "invalid_state",
       "draftUrl_too_long",
@@ -266,7 +254,7 @@ describe("createSubmission", () => {
     const t = convexTest(schema, modules);
     const fixture = await seedAssignmentFixture(t);
 
-    await expectReason(
+    await expectApiError(
       () => submit(t, fixture, { [field]: value } as Partial<SubmissionDraft>),
       "invalid_state",
       `${field}_too_long`,
@@ -357,7 +345,7 @@ describe("reviewSubmission", () => {
     const t = convexTest(schema, modules);
     const { fixture, submissionId: id } = await seedOneSubmission(t);
 
-    await expectReason(
+    await expectApiError(
       () => reviewAs(t, fixture.membership, id, { status: "changesRequested", reviewNote: "  \n" }),
       "invalid_state",
       "reviewNote_blank",
@@ -372,7 +360,7 @@ describe("reviewSubmission", () => {
       const t = convexTest(schema, modules);
       const { fixture, submissionId: id } = await seedOneSubmission(t);
 
-      await expectReason(
+      await expectApiError(
         () => reviewAs(t, fixture.membership, id, { status, reviewNote: "a".repeat(2001) }),
         "invalid_state",
         "reviewNote_too_long",
@@ -422,7 +410,7 @@ describe("reviewSubmission", () => {
       const { fixture, submissionId: id } = await seedOneSubmission(t, status);
       const original = await storedSubmission(t, id);
 
-      await expectReason(
+      await expectApiError(
         () => reviewAs(t, fixture.membership, id, { status: "approved" }),
         "invalid_state",
         "already_reviewed",
@@ -438,7 +426,7 @@ describe("reviewSubmission", () => {
       const t = convexTest(schema, modules);
       const { fixture, submissionId: id } = await seedOneSubmission(t, "pending", { status });
 
-      await expectReason(
+      await expectApiError(
         () => reviewAs(t, fixture.membership, id, { status: "approved" }),
         "invalid_state",
         "assignment_not_active",

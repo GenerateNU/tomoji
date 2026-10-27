@@ -62,7 +62,7 @@ export function NotificationsInbox() {
       <div className="flex flex-wrap items-center justify-between gap-4 border-b pb-8">
         <h1 className="text-3xl font-semibold tracking-tight">Notifications</h1>
         <Button
-          variant="outline"
+          variant="secondary"
           className="min-h-11"
           disabled={loading || pending !== null || allLoadedAndRead}
           onClick={() => void updateReadState("all")}
@@ -143,7 +143,7 @@ export function NotificationsInbox() {
           ))}
           {status !== "Exhausted" && (
             <Button
-              variant="outline"
+              variant="secondary"
               className="min-h-11"
               disabled={status === "LoadingMore"}
               onClick={() => loadMore(PAGE_SIZE)}

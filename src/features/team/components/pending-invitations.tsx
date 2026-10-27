@@ -67,7 +67,7 @@ export function PendingInvitations() {
                 ) : (
                   confirm !== invite._id && (
                     <Button
-                      variant="outline"
+                      variant="secondary"
                       className="min-h-11"
                       disabled={pending !== null}
                       onClick={() => {
@@ -85,7 +85,7 @@ export function PendingInvitations() {
                   <p className="break-all text-sm">Cancel the invitation for {invite.email}?</p>
                   <div className="flex flex-wrap gap-3">
                     <Button
-                      variant="destructive"
+                      tone="destructive"
                       className="min-h-11"
                       disabled={pending !== null}
                       onClick={() => void cancel(invite._id)}
@@ -93,7 +93,7 @@ export function PendingInvitations() {
                       {pending === invite._id ? "Cancelling…" : "Confirm cancellation"}
                     </Button>
                     <Button
-                      variant="outline"
+                      variant="secondary"
                       className="min-h-11"
                       disabled={pending !== null}
                       onClick={() => {
@@ -112,7 +112,7 @@ export function PendingInvitations() {
       )}
       {(status === "CanLoadMore" || status === "LoadingMore") && (
         <Button
-          variant="outline"
+          variant="secondary"
           className="min-h-11"
           disabled={status === "LoadingMore"}
           onClick={() => loadMore(20)}

@@ -122,7 +122,7 @@ export function InviteTeammate() {
             <FormAlert message={error} />
             <DialogClose
               disabled={pending}
-              render={<Button variant="outline" className="min-h-11" />}
+              render={<Button variant="secondary" className="min-h-11" />}
             >
               Cancel
             </DialogClose>

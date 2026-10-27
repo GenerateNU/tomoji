@@ -35,7 +35,7 @@ export function ProfilePicture({ mediaId }: { mediaId?: Id<"mediaUploads"> }) {
           <p role="alert" className="text-sm text-destructive">
             {picture.error}
           </p>
-          <Button variant="outline" className="min-h-11" onClick={picture.retry}>
+          <Button variant="secondary" className="min-h-11" onClick={picture.retry}>
             Retry picture
           </Button>
         </div>

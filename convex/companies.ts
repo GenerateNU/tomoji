@@ -13,8 +13,30 @@ const companyView = schema.doc("companies").omit("workosId");
  * exposed on purpose. The returns validator rejects extra fields.
  */
 function toCompanyView(company: Doc<"companies">): Infer<typeof companyView> {
-  const { _id, _creationTime, name, isActive, profilePicture, website, description } = company;
-  return { _id, _creationTime, name, isActive, profilePicture, website, description };
+  const {
+    _id,
+    _creationTime,
+    name,
+    isActive,
+    profilePictureMediaId,
+    bannerMediaId,
+    website,
+    description,
+    countryOfResidence,
+    industry,
+  } = company;
+  return {
+    _id,
+    _creationTime,
+    name,
+    isActive,
+    profilePictureMediaId,
+    bannerMediaId,
+    website,
+    description,
+    countryOfResidence,
+    industry,
+  };
 }
 
 /**
@@ -39,9 +61,10 @@ export const get = operatorQuery({
 export const update = companyAdminMutation({
   args: {
     name: v.optional(v.string()),
-    profilePicture: v.optional(v.string()),
-    website: v.optional(v.string()),
-    description: v.optional(v.string()),
+    website: v.optional(v.union(v.string(), v.null())),
+    description: v.optional(v.union(v.string(), v.null())),
+    countryOfResidence: v.optional(v.union(v.string(), v.null())),
+    industry: v.optional(v.union(v.string(), v.null())),
   },
   returns: v.null(),
   handler: async (ctx, args) => {

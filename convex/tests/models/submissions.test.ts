@@ -23,6 +23,7 @@ import {
   memberNotifications,
   seedAssignmentFixture,
   seedCreatorId,
+  seedDeliverable,
   seedMembership,
   seedOneSubmission,
   seedOpportunity,
@@ -48,23 +49,6 @@ async function submit(
   return await t.run(
     async (ctx) => await createSubmission(ctx, creatorId, submissionArgs(fixture, overrides)),
   );
-}
-
-/**
- * Adds another deliverable to the fixture's opportunity. Inserts directly,
- * since the assignment already locks deliverables against the model.
- */
-async function addDeliverable(t: TestConvex, fixture: AssignmentFixture) {
-  return await t.run(async (ctx) => {
-    const existing = await ctx.db.get("deliverables", fixture.deliverableId);
-    if (existing === null) throw new Error("expected seeded deliverable");
-    return await ctx.db.insert("deliverables", {
-      opportunityId: existing.opportunityId,
-      createdBy: existing.createdBy,
-      title: "Follow-up thread",
-      description: "Three posts on your results after two weeks.",
-    });
-  });
 }
 
 async function reviewAs(
@@ -198,8 +182,8 @@ describe("createSubmission", () => {
   test("lets a creator submit one deliverable while another is pending or approved", async () => {
     const t = convexTest(schema, modules);
     const fixture = await seedAssignmentFixture(t);
-    const secondId = await addDeliverable(t, fixture);
-    const thirdId = await addDeliverable(t, fixture);
+    const secondId = await seedDeliverable(t, fixture);
+    const thirdId = await seedDeliverable(t, fixture);
     await seedSubmission(t, fixture, "approved");
     await submit(t, fixture, { deliverableId: secondId });
 
@@ -222,7 +206,7 @@ describe("createSubmission", () => {
     const [otherDeliverable] = await t.run((ctx) =>
       listOpportunityDeliverables(ctx, other.opportunityId),
     );
-    const deleted = await addDeliverable(t, fixture);
+    const deleted = await seedDeliverable(t, fixture);
     await t.run(async (ctx) => await ctx.db.delete("deliverables", deleted));
 
     for (const deliverableId of [otherDeliverable._id, deleted]) {

@@ -535,6 +535,26 @@ export async function seedAssignmentFixture(
   };
 }
 
+/**
+ * Adds another deliverable to the fixture's opportunity. Inserts directly,
+ * since the fixture's assignment already locks deliverables against the model.
+ */
+export async function seedDeliverable(
+  t: TestConvex,
+  fixture: AssignmentFixture,
+): Promise<Id<"deliverables">> {
+  return await t.run(async (ctx) => {
+    const existing = await ctx.db.get("deliverables", fixture.deliverableId);
+    if (existing === null) throw new Error("expected seeded deliverable");
+    return await ctx.db.insert("deliverables", {
+      opportunityId: existing.opportunityId,
+      createdBy: existing.createdBy,
+      title: "Follow-up thread",
+      description: "Three posts on your results after two weeks.",
+    });
+  });
+}
+
 /** Inserts a submission in the given state, bypassing the create rules. */
 export async function seedSubmission(
   t: TestConvex,

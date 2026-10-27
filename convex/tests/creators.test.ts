@@ -17,15 +17,6 @@ import {
 const modules = import.meta.glob("../**/*.ts");
 
 describe("creators.me", () => {
-  test("uses only an OAuth-verified X ID and ignores manually stored legacy values", async () => {
-    const t = convexTest(schema, modules);
-    const creatorId = await seedCreatorId(t, "creator_verified_x");
-    const asCreator = await seedUser(t, { subject: "creator_verified_x" });
-    await t.run((ctx) => ctx.db.patch("creators", creatorId, { xId: "legacy_unverified" }));
-    expect(await asCreator.query(api.creators.me, {})).not.toHaveProperty("xId");
-    await seedXAccount(t, "creator_verified_x");
-    expect((await asCreator.query(api.creators.me, {})).xId).toBe("123456789");
-  });
   test.each([
     { firstName: "Ada", lastName: "" },
     { firstName: "Ada", lastName: "Lovelace" },
@@ -42,17 +33,18 @@ describe("creators.me", () => {
     const expected = {
       creatorId,
       email: "creator_names@example.com",
+      additionalLinks: [],
+      isPrivate: false,
       niches: [],
       skills: [],
       ...names,
     };
 
     expect(await asCreator.query(api.creators.me, {})).toEqual(expected);
-    expect(await asCreator.mutation(api.creators.update, { username: "ada" })).toEqual({
+    expect(await asCreator.mutation(api.creators.update, {})).toEqual({
       ...expected,
-      username: "ada",
     });
-    expect(await asCreator.query(api.creators.me, {})).toEqual({ ...expected, username: "ada" });
+    expect(await asCreator.query(api.creators.me, {})).toEqual({ ...expected });
   });
 
   test("rejects a signed-out caller", async () => {
@@ -78,23 +70,29 @@ describe("creators.me", () => {
       if (creator === null) throw new Error("expected seeded creator");
 
       await updateCreatorProfile(ctx, user, {
-        username: "creator_name",
         githubLink: "https://github.com/creator",
-        phoneNumber: "+15555550123",
+        linkedinLink: "https://www.linkedin.com/in/creator",
+        additionalLinks: ["https://creator.example.com/"],
+        dateOfBirth: Date.UTC(1990, 0, 1),
+        countryOfResidence: "us",
+        isPrivate: true,
       });
       return creator._id;
     });
 
     expect(await asCreator.query(api.creators.me, {})).toEqual({
       creatorId,
-      username: "creator_name",
       firstName: "Creator",
       lastName: "Name",
       email: "creator@example.com",
       profilePictureMediaId: uploadId,
       xId: "123456789",
       githubLink: "https://github.com/creator",
-      phoneNumber: "+15555550123",
+      linkedinLink: "https://www.linkedin.com/in/creator",
+      additionalLinks: ["https://creator.example.com/"],
+      dateOfBirth: Date.UTC(1990, 0, 1),
+      countryOfResidence: "US",
+      isPrivate: true,
       niches: [],
       skills: [],
     });
@@ -239,6 +237,8 @@ describe("creators.get", () => {
       firstName: "Test",
       lastName: "",
       email: "target@example.com",
+      additionalLinks: [],
+      isPrivate: false,
       niches: [],
       skills: [],
     });
@@ -294,37 +294,6 @@ describe("creators.update", () => {
       asCreator.mutation(api.creators.update, { xId: "forged" } as never),
     ).rejects.toThrow();
   });
-  test("normalizes the username and allows equivalent updates by its owner", async () => {
-    const t = convexTest(schema, modules);
-    const asCreator = await seedUser(t, { subject: "creator_username" });
-
-    const updated = await asCreator.mutation(api.creators.update, { username: "  AdA  " });
-    expect(updated.username).toBe("ada");
-    expect((await asCreator.mutation(api.creators.update, { username: "ada" })).username).toBe(
-      "ada",
-    );
-    expect((await asCreator.mutation(api.creators.update, { username: " ADA " })).username).toBe(
-      "ada",
-    );
-    await asCreator.mutation(api.creators.update, { githubLink: "https://github.com/ada" });
-    expect((await asCreator.query(api.creators.me, {})).username).toBe("ada");
-  });
-
-  test("returns conflict for a taken username without applying other profile edits", async () => {
-    const t = convexTest(schema, modules);
-    const asOwner = await seedUser(t, { subject: "route_username_owner" });
-    const asClaimant = await seedUser(t, { subject: "route_username_claimant" });
-    await asOwner.mutation(api.creators.update, { username: "ada" });
-    const before = await asClaimant.query(api.creators.me, {});
-
-    await expectApiError(
-      () =>
-        asClaimant.mutation(api.creators.update, { username: "ada", phoneNumber: "+15555550123" }),
-      "conflict",
-    );
-
-    expect(await asClaimant.query(api.creators.me, {})).toEqual(before);
-  });
 
   test("updates the authenticated creator's profile", async () => {
     const t = convexTest(schema, modules);
@@ -335,7 +304,6 @@ describe("creators.update", () => {
 
     const profile = await asCreator.mutation(api.creators.update, {
       githubLink: "https://github.com/creator",
-      phoneNumber: "+15555550123",
     });
 
     expect(profile).toMatchObject({
@@ -343,7 +311,6 @@ describe("creators.update", () => {
       lastName: "",
       email: "creator@example.com",
       githubLink: "https://github.com/creator",
-      phoneNumber: "+15555550123",
     });
   });
 
@@ -352,17 +319,12 @@ describe("creators.update", () => {
     const asCreator = await seedUser(t, { subject: "creator_update_partial" });
     await asCreator.mutation(api.creators.update, {
       githubLink: "https://github.com/creator",
-      phoneNumber: "+15555550123",
     });
 
-    const profile = await asCreator.mutation(api.creators.update, {
-      username: "creator_updated",
-    });
+    const profile = await asCreator.mutation(api.creators.update, {});
 
     expect(profile).toMatchObject({
-      username: "creator_updated",
       githubLink: "https://github.com/creator",
-      phoneNumber: "+15555550123",
     });
   });
 
@@ -371,12 +333,10 @@ describe("creators.update", () => {
     const asCreator = await seedUser(t, { subject: "creator_update_clear" });
     await asCreator.mutation(api.creators.update, {
       githubLink: "https://github.com/creator",
-      phoneNumber: "+15555550123",
     });
 
     const profile = await asCreator.mutation(api.creators.update, {
       githubLink: null,
-      phoneNumber: null,
     });
 
     expect(profile).not.toHaveProperty("xId");

@@ -179,7 +179,7 @@ describe("upsertUser", () => {
     });
   });
 
-  test("creates a creator with a profile row and no generated username", async () => {
+  test("creates a creator with a profile row", async () => {
     const t = convexTest(schema, modules);
     await seedUser(t, { subject: "u1", firstName: "Ada", lastName: "Lovelace" });
 
@@ -192,8 +192,9 @@ describe("upsertUser", () => {
       firstName: "Ada",
       lastName: "Lovelace",
     });
-    const creator = await t.run(async (ctx) => await ctx.db.query("creators").unique());
-    expect(creator).not.toHaveProperty("username");
+    expect(await t.run(async (ctx) => await ctx.db.query("creators").unique())).toMatchObject({
+      isPrivate: false,
+    });
   });
 
   test("is idempotent", async () => {
@@ -206,7 +207,7 @@ describe("upsertUser", () => {
     expect(users[0]).toMatchObject({ firstName: "Grace", lastName: "Hopper" });
   });
 
-  test("syncs separate name parts and preserves a chosen creator username", async () => {
+  test("syncs separate name parts without disturbing the creator profile", async () => {
     const t = convexTest(schema, modules);
     const result = await t.run(async (ctx) => {
       const userId = await upsertUser(ctx, {
@@ -220,7 +221,6 @@ describe("upsertUser", () => {
         .withIndex("by_userId", (q) => q.eq("userId", userId))
         .unique();
       if (before === null) throw new Error("expected seeded creator");
-      await ctx.db.patch("creators", before._id, { username: "ada" });
       await upsertUser(ctx, {
         workosId: "named_creator",
         email: "updated@example.com",
@@ -234,8 +234,7 @@ describe("upsertUser", () => {
     });
 
     expect(result.user).toMatchObject({ firstName: "Augusta Ada", lastName: "Lovelace" });
-    expect(result.before).not.toHaveProperty("username");
-    expect(result.after?.username).toBe("ada");
+    expect(result.after).toEqual(result.before);
   });
 
   test("does not overwrite a promotion to operator", async () => {
@@ -410,7 +409,7 @@ describe("upsertUser", () => {
         role: "creator",
         isActive: true,
       });
-      await ctx.db.insert("creators", { userId });
+      await ctx.db.insert("creators", { userId, isPrivate: false });
     });
 
     await t.run(async (ctx) =>

@@ -45,12 +45,12 @@ async function openProfile(page: Page, query = "") {
   }
 }
 
-test("creators see their own name, username, GitHub profile, and Settings link", async ({
+test("creators see their own name, country, GitHub profile, and Settings link", async ({
   page,
 }) => {
   await openProfile(page);
   await expect(page.getByRole("heading", { name: "Zahra Wibisana", exact: true })).toBeVisible();
-  await expect(page.getByText("@zahra", { exact: true })).toBeVisible();
+  await expect(page.getByText("Indonesia", { exact: true })).toBeVisible();
   await expect(page.getByRole("link", { name: /https:\/\/github.com\/zahra/ })).toHaveAttribute(
     "href",
     "https://github.com/zahra",
@@ -185,12 +185,12 @@ test("missing profile fields have clear empty states without exposing email fall
     window.profileFixture.setProfile({
       firstName: "zahra@example.test",
       lastName: "",
-      username: undefined,
       githubLink: undefined,
+      countryOfResidence: undefined,
     }),
   );
   await expect(page.getByRole("heading", { name: "Your profile", exact: true })).toBeVisible();
-  await expect(page.getByText("Username not added yet.")).toBeVisible();
+  await expect(page.getByText("Indonesia", { exact: true })).toHaveCount(0);
   await expect(page.getByText("No GitHub profile added yet.")).toBeVisible();
   await expect(page.getByText("No profile picture added.")).toBeVisible();
   await expect(page.getByText("zahra@example.test", { exact: true })).toHaveCount(0);
@@ -220,22 +220,22 @@ test("unsafe legacy GitHub URLs are never rendered as clickable links", async ({
   }
 });
 
-test("live updates refresh the displayed name, username, and GitHub URL", async ({ page }) => {
+test("live updates refresh the displayed name, country, and GitHub URL", async ({ page }) => {
   await openProfile(page);
   await page.evaluate(() =>
     window.profileFixture.setProfile({
       firstName: "Alex",
       lastName: "Chen",
-      username: "alex-builds",
       githubLink: "https://github.com/alex-builds",
+      countryOfResidence: "JP",
     }),
   );
   await expect(page.getByRole("heading", { name: "Alex Chen", exact: true })).toBeVisible();
-  await expect(page.getByText("@alex-builds", { exact: true })).toBeVisible();
+  await expect(page.getByText("Japan", { exact: true })).toBeVisible();
   await expect(
     page.getByRole("link", { name: /https:\/\/github.com\/alex-builds/ }),
   ).toHaveAttribute("href", "https://github.com/alex-builds");
-  await expect(page.getByText("@zahra", { exact: true })).toHaveCount(0);
+  await expect(page.getByText("Indonesia", { exact: true })).toHaveCount(0);
   expect(await page.evaluate(() => window.profileFixture.calls)).toEqual([]);
 });
 
@@ -291,7 +291,6 @@ test("creator profile fits a mobile viewport and links are keyboard accessible",
     window.profileFixture.setProfile({
       firstName: "AnExtremelyLongFirstNameForResponsiveLayout",
       lastName: "AnEquallyLongLastNameForTheCreatorProfile",
-      username: "an-extremely-long-creator-username",
       githubLink: "https://github.com/an-extremely-long-creator-username",
     }),
   );

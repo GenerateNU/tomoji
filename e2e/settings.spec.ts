@@ -42,181 +42,18 @@ async function openSettings(page: Page, query = "") {
   await expect(page.getByRole("heading", { name: "Settings", exact: true })).toBeVisible();
 }
 
-test("saving basic details normalizes the username and preserves the portfolio", async ({
-  page,
-}) => {
-  await openSettings(page);
-  await page.getByRole("button", { name: "Edit basic details" }).click();
-  await page.getByLabel("Username", { exact: true }).fill("  ZahraTech  ");
-  await page.getByLabel("Phone number (optional)").fill("  +1 617 555 0123  ");
-  await page.getByRole("button", { name: "Save basic details" }).click();
-  const details = page.getByRole("region", { name: "Basic details" });
-  await expect(details.getByText("zahratech", { exact: true })).toBeVisible();
-  await expect(details.getByText("+1 617 555 0123", { exact: true })).toBeVisible();
-  await expect(page.getByRole("link", { name: /https:\/\/github.com\/zahra/ })).toBeVisible();
-  expect(await page.evaluate(() => window.settingsFixture.calls)).toEqual([
-    {
-      name: "creators:update",
-      args: { username: "zahratech", phoneNumber: "+1 617 555 0123" },
-    },
-  ]);
-});
-
-test("basic details keep WorkOS names and email read-only", async ({ page }) => {
+test("basic details are read-only identity fields from WorkOS", async ({ page }) => {
   await openSettings(page);
   const details = page.getByRole("region", { name: "Basic details" });
   await expect(details.getByText("Zahra", { exact: true })).toBeVisible();
   await expect(details.getByText("Wibisana", { exact: true })).toBeVisible();
   await expect(details.getByText("zahra@example.test", { exact: true })).toBeVisible();
-  await details.getByRole("button", { name: "Edit basic details" }).click();
-  await expect(details.getByRole("textbox")).toHaveCount(2);
-  await expect(details.getByLabel("Username", { exact: true })).toBeFocused();
-  await expect(details.getByRole("button", { name: "Save basic details" })).toBeDisabled();
-  await expect(details.getByText("zahra@example.test", { exact: true })).toBeVisible();
-});
-
-test("a taken username preserves both fields and allows a corrected retry", async ({ page }) => {
-  await openSettings(page);
-  await page.getByRole("button", { name: "Edit basic details" }).click();
-  const username = page.getByLabel("Username", { exact: true });
-  const phone = page.getByLabel("Phone number (optional)");
-  await username.fill("taken-name");
-  await phone.fill("+1 617 555 0123");
-  await page.evaluate(() => window.settingsFixture.rejectUsername());
-  await page.getByRole("button", { name: "Save basic details" }).click();
-  await expect(page.getByRole("alert")).toHaveText("That username is taken. Choose another.");
-  await expect(username).toHaveAttribute("aria-invalid", "true");
-  await expect(username).toBeFocused();
-  await expect(username).toHaveValue("taken-name");
-  await expect(phone).toHaveValue("+1 617 555 0123");
-
-  await username.fill("available-name");
-  await page.getByRole("button", { name: "Save basic details" }).click();
-  await expect(page.getByText("Basic details saved.", { exact: true })).toBeVisible();
-  expect(await page.evaluate(() => window.settingsFixture.calls)).toEqual([
-    {
-      name: "creators:update",
-      args: { username: "taken-name", phoneNumber: "+1 617 555 0123" },
-    },
-    {
-      name: "creators:update",
-      args: { username: "available-name", phoneNumber: "+1 617 555 0123" },
-    },
-  ]);
-});
-
-test("a failed basic details save keeps the draft available for retry", async ({ page }) => {
-  await openSettings(page);
-  await page.getByRole("button", { name: "Edit basic details" }).click();
-  await page.getByLabel("Username", { exact: true }).fill("new-username");
-  await page.getByLabel("Phone number (optional)").fill("+1 617 555 0123");
-  await page.evaluate(() => window.settingsFixture.failNext("creators:update"));
-  await page.getByRole("button", { name: "Save basic details" }).click();
-  await expect(page.getByRole("alert")).toContainText("Something went wrong");
-  await expect(page.getByLabel("Username", { exact: true })).toHaveValue("new-username");
-  await expect(page.getByLabel("Phone number (optional)")).toHaveValue("+1 617 555 0123");
-  await page.getByRole("button", { name: "Save basic details" }).click();
-  await expect(page.getByText("Basic details saved.", { exact: true })).toBeVisible();
-});
-
-test("an optional phone can be cleared without choosing an unset username", async ({ page }) => {
-  await openSettings(page);
-  await page.evaluate(() => window.settingsFixture.setProfile({ username: undefined }));
-  await page.getByRole("button", { name: "Edit basic details" }).click();
-  await expect(page.getByLabel("Username", { exact: true })).toHaveValue("");
-  await page.getByLabel("Phone number (optional)").fill("   ");
-  await page.getByRole("button", { name: "Save basic details" }).click();
-  await expect(page.getByText("Basic details saved.", { exact: true })).toBeVisible();
-  expect(await page.evaluate(() => window.settingsFixture.calls)).toEqual([
-    { name: "creators:update", args: { phoneNumber: null } },
-  ]);
-  await page.getByRole("button", { name: "Edit basic details" }).click();
-  await expect(page.getByLabel("Username", { exact: true })).toHaveValue("");
-  await expect(page.getByLabel("Phone number (optional)")).toHaveValue("");
-});
-
-test("an existing username cannot be cleared", async ({ page }) => {
-  await openSettings(page);
-  await page.getByRole("button", { name: "Edit basic details" }).click();
-  const username = page.getByLabel("Username", { exact: true });
-  await username.fill("   ");
-  await page.getByRole("button", { name: "Save basic details" }).click();
-  await expect(page.getByRole("alert")).toContainText("An existing username cannot be cleared.");
-  await expect(username).toHaveAttribute("aria-invalid", "true");
-  await expect(username).toBeFocused();
+  await expect(details.getByRole("textbox")).toHaveCount(0);
+  await expect(details.getByRole("button")).toHaveCount(0);
   expect(await page.evaluate(() => window.settingsFixture.calls)).toEqual([]);
 });
 
-test("discarding basic details uses the latest profile without overwriting an unsaved draft", async ({
-  page,
-}) => {
-  await openSettings(page);
-  const details = page.getByRole("region", { name: "Basic details" });
-  await details.getByRole("button", { name: "Edit basic details" }).click();
-  await page.getByLabel("Username", { exact: true }).fill("my-draft");
-  await page.getByLabel("Phone number (optional)").fill("+1 617 555 0123");
-  await page.evaluate(() =>
-    window.settingsFixture.setProfile({
-      username: "updated-elsewhere",
-      phoneNumber: "+1 617 555 0199",
-    }),
-  );
-  await expect(page.getByLabel("Username", { exact: true })).toHaveValue("my-draft");
-  await expect(page.getByLabel("Phone number (optional)")).toHaveValue("+1 617 555 0123");
-  await page.getByRole("button", { name: "Discard basic details changes" }).click();
-  await expect(details.getByText("updated-elsewhere", { exact: true })).toBeVisible();
-  await expect(details.getByText("+1 617 555 0199", { exact: true })).toBeVisible();
-  await expect(details.getByRole("button", { name: "Edit basic details" })).toBeFocused();
-  expect(await page.evaluate(() => window.settingsFixture.calls)).toEqual([]);
-});
-
-test("saving basic details only patches fields changed since editing began", async ({ page }) => {
-  await openSettings(page);
-  const details = page.getByRole("region", { name: "Basic details" });
-  await details.getByRole("button", { name: "Edit basic details" }).click();
-  await page.getByLabel("Phone number (optional)").fill("+1 617 555 0123");
-  await page.evaluate(() => window.settingsFixture.setProfile({ username: "updated-elsewhere" }));
-  await page.getByRole("button", { name: "Save basic details" }).click();
-  await expect(details.getByText("updated-elsewhere", { exact: true })).toBeVisible();
-
-  await details.getByRole("button", { name: "Edit basic details" }).click();
-  await page.getByLabel("Username", { exact: true }).fill("my-new-name");
-  await page.evaluate(() => window.settingsFixture.setProfile({ phoneNumber: "+1 617 555 0199" }));
-  await page.getByRole("button", { name: "Save basic details" }).click();
-  await expect(details.getByText("+1 617 555 0199", { exact: true })).toBeVisible();
-  expect(await page.evaluate(() => window.settingsFixture.calls)).toEqual([
-    { name: "creators:update", args: { phoneNumber: "+1 617 555 0123" } },
-    { name: "creators:update", args: { username: "my-new-name" } },
-  ]);
-});
-
-test("pending basic details saves disable editing and prevent duplicate submissions", async ({
-  page,
-}) => {
-  await openSettings(page);
-  const details = page.getByRole("region", { name: "Basic details" });
-  await details.getByRole("button", { name: "Edit basic details" }).click();
-  await page.getByLabel("Username", { exact: true }).fill("my-new-name");
-  await page.evaluate(() => window.settingsFixture.delayNext("creators:update"));
-  await details.locator("form").evaluate((form: HTMLFormElement) => {
-    form.requestSubmit();
-    form.requestSubmit();
-  });
-  await expect(page.getByLabel("Username", { exact: true })).toBeDisabled();
-  await expect(page.getByLabel("Phone number (optional)")).toBeDisabled();
-  await expect(page.getByRole("button", { name: "Discard basic details changes" })).toBeDisabled();
-  await expect(page.getByRole("button", { name: /Saving basic details/ })).toBeDisabled();
-  expect(await page.evaluate(() => window.settingsFixture.calls)).toEqual([
-    { name: "creators:update", args: { username: "my-new-name" } },
-  ]);
-  await page.evaluate(() => window.settingsFixture.release("creators:update"));
-  await expect(page.getByText("Basic details saved.", { exact: true })).toBeVisible();
-  await expect(details.getByRole("button", { name: "Edit basic details" })).toBeFocused();
-});
-
-test("basic details fit on mobile with keyboard navigation and long identity fields", async ({
-  page,
-}, testInfo) => {
+test("basic details fit on mobile with a long email address", async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 375, height: 812 });
   await openSettings(page);
   await page.evaluate(() =>
@@ -224,12 +61,12 @@ test("basic details fit on mobile with keyboard navigation and long identity fie
       email: "a-long-email-address-for-a-creator-with-several-names@example.test",
     }),
   );
-  await page.getByRole("button", { name: "Edit basic details" }).click();
-  await expect(page.getByLabel("Username", { exact: true })).toBeFocused();
-  await page.keyboard.press("Tab");
-  await expect(page.getByLabel("Phone number (optional)")).toBeFocused();
-  await page.keyboard.press("Tab");
-  await expect(page.getByRole("button", { name: "Discard basic details changes" })).toBeFocused();
+  const details = page.getByRole("region", { name: "Basic details" });
+  await expect(
+    details.getByText("a-long-email-address-for-a-creator-with-several-names@example.test", {
+      exact: true,
+    }),
+  ).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
     true,
   );
@@ -238,7 +75,6 @@ test("basic details fit on mobile with keyboard navigation and long identity fie
     fullPage: true,
   });
 });
-
 test("discarding GitHub edits restores the saved link without a mutation", async ({ page }) => {
   await openSettings(page);
   await page.getByRole("button", { name: "Edit GitHub profile" }).click();

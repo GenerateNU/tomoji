@@ -3,32 +3,42 @@ import { v, type Infer } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { apiError } from "../lib/errors";
-import { requireNonBlank } from "../lib/validation";
 import { listCreatorNiches, updateCreatorNiches } from "./creatorNiches";
 import { listCreatorSkills, updateCreatorSkills } from "./creatorSkills";
 import { MAX_NICHES } from "./niches";
 import { SKILLS } from "./skills";
 import { getXAccountByCreatorId } from "./xAccountLookup";
+import { requireCountry } from "./countries";
+import { requireAdultBirthdate } from "../lib/birthdate";
+import { MAX_ADDITIONAL_LINKS } from "../schemas/creators.schema";
 
 export const creatorProfile = v.object({
   creatorId: v.id("creators"),
-  username: v.optional(v.string()),
   firstName: v.string(),
   lastName: v.string(),
   email: v.string(),
   profilePictureMediaId: v.optional(v.id("mediaUploads")),
   xId: v.optional(v.string()),
+  bannerMediaId: v.optional(v.id("mediaUploads")),
   githubLink: v.optional(v.string()),
-  phoneNumber: v.optional(v.string()),
+  linkedinLink: v.optional(v.string()),
+  additionalLinks: v.array(v.string()),
+  dateOfBirth: v.optional(v.number()),
+  countryOfResidence: v.optional(v.string()),
+  isPrivate: v.boolean(),
   niches: v.array(v.string()),
   skills: v.array(v.string()),
 });
 
 export const creatorProfileUpdate = v.object({
-  username: v.optional(v.string()),
   githubLink: v.optional(v.union(v.string(), v.null())),
-  phoneNumber: v.optional(v.union(v.string(), v.null())),
-  // Catalog names: omit a selection to preserve it, or send [] to clear it.
+  linkedinLink: v.optional(v.union(v.string(), v.null())),
+  // An empty list clears them, same as niches.
+  additionalLinks: v.optional(v.array(v.string())),
+  dateOfBirth: v.optional(v.number()),
+  countryOfResidence: v.optional(v.union(v.string(), v.null())),
+  isPrivate: v.optional(v.boolean()),
+  // Names from models/niches.ts. An empty list clears them.
   niches: v.optional(v.array(v.string())),
   skills: v.optional(v.array(v.string())),
 });
@@ -48,14 +58,18 @@ function toCreatorProfile(
 ): CreatorProfile {
   return {
     creatorId: creator._id,
-    username: creator.username,
     firstName: user.firstName,
     lastName: user.lastName,
     email: user.email,
     profilePictureMediaId: user.profilePictureMediaId,
     xId: details.xId,
+    bannerMediaId: creator.bannerMediaId,
     githubLink: creator.githubLink,
-    phoneNumber: creator.phoneNumber,
+    linkedinLink: creator.linkedinLink,
+    additionalLinks: creator.additionalLinks ?? [],
+    dateOfBirth: creator.dateOfBirth,
+    countryOfResidence: creator.countryOfResidence,
+    isPrivate: creator.isPrivate,
     niches: details.niches,
     skills: details.skills,
   };
@@ -137,25 +151,58 @@ export async function listCreators(
 
   // Bound the page before loading each creator's associated data.
   const page = await Promise.all(users.page.map((user) => requireCreatorProfile(ctx, user)));
-  return { ...users, page };
+  // Filtered after hydration rather than in the index, so a private creator
+  // leaves a shorter page instead of being replaced by the next one.
+  return { ...users, page: page.filter((profile) => !profile.isPrivate) };
 }
 
-/** Normalizes and checks a username in the same mutation that writes it. */
-export async function requireAvailableCreatorUsername(
-  ctx: MutationCtx,
+/**
+ * Whether a company already works with this creator. A private profile stays
+ * reachable for them, because hiding someone a company is mid-campaign with
+ * would break the review and assignment screens.
+ */
+async function hasCompanyRelationship(
+  ctx: QueryCtx | MutationCtx,
   creatorId: Id<"creators">,
-  value: string,
-): Promise<string> {
-  const username = requireNonBlank(value, "username").toLowerCase();
-  // Two matches suffice to detect another owner, including legacy duplicates.
-  const matches = await ctx.db
-    .query("creators")
-    .withIndex("by_username", (q) => q.eq("username", username))
-    .take(2);
-  if (matches.some((creator) => creator._id !== creatorId)) {
-    throw apiError("conflict", { reason: "username_taken" });
+  companyId: Id<"companies">,
+): Promise<boolean> {
+  for await (const application of ctx.db
+    .query("applications")
+    .withIndex("by_creatorId_and_status", (q) => q.eq("creatorId", creatorId))) {
+    if (application.companyId === companyId) return true;
   }
-  return username;
+  for await (const assignment of ctx.db
+    .query("assignments")
+    .withIndex("by_creatorId_and_status", (q) => q.eq("creatorId", creatorId))) {
+    if (assignment.companyId === companyId) return true;
+  }
+  return false;
+}
+
+/**
+ * Trims and checks the free-form links on a profile.
+ *
+ * @throws `invalid_state` with `too_many_links` above the cap, or
+ * `invalid_link` if one is not an https URL.
+ */
+export function requireAdditionalLinks(links: string[]): string[] {
+  const trimmed = links.map((link) => link.trim()).filter((link) => link !== "");
+  if (trimmed.length > MAX_ADDITIONAL_LINKS) {
+    throw apiError("invalid_state", { reason: "too_many_links", max: MAX_ADDITIONAL_LINKS });
+  }
+  return trimmed.map((link) => {
+    let url: URL;
+    try {
+      url = new URL(link);
+    } catch {
+      throw apiError("invalid_state", { reason: "invalid_link" });
+    }
+    // Rendered as an href, so anything but https is refused outright.
+    if (url.protocol !== "https:" || url.username || url.password) {
+      throw apiError("invalid_state", { reason: "invalid_link" });
+    }
+    return url.href;
+  });
 }
 
 /** Updates the editable fields in a creator's own profile and returns the complete profile. */
@@ -169,13 +216,23 @@ export async function updateCreatorProfile(
     throw apiError("not_found", { resource: "creator" });
   }
 
-  const patch: Partial<Pick<Doc<"creators">, "username" | "githubLink" | "phoneNumber">> = {};
-  if (updates.username !== undefined) {
-    patch.username = await requireAvailableCreatorUsername(ctx, creator._id, updates.username);
+  const patch: Partial<Doc<"creators">> = {};
+  if (updates.additionalLinks !== undefined) {
+    patch.additionalLinks = requireAdditionalLinks(updates.additionalLinks);
   }
+  if (updates.dateOfBirth !== undefined) {
+    patch.dateOfBirth = requireAdultBirthdate(updates.dateOfBirth);
+  }
+  if (updates.isPrivate !== undefined) patch.isPrivate = updates.isPrivate;
   // Clients use null to clear a field because Convex cannot serialize undefined.
   if ("githubLink" in updates) patch.githubLink = updates.githubLink ?? undefined;
-  if ("phoneNumber" in updates) patch.phoneNumber = updates.phoneNumber ?? undefined;
+  if ("linkedinLink" in updates) patch.linkedinLink = updates.linkedinLink ?? undefined;
+  if ("countryOfResidence" in updates) {
+    patch.countryOfResidence =
+      updates.countryOfResidence === null || updates.countryOfResidence === undefined
+        ? undefined
+        : requireCountry(updates.countryOfResidence);
+  }
 
   const niches =
     updates.niches === undefined
@@ -198,6 +255,7 @@ export async function updateCreatorProfile(
 export async function requireCreatorProfileById(
   ctx: QueryCtx | MutationCtx,
   creatorId: Id<"creators">,
+  viewingCompanyId?: Id<"companies">,
 ): Promise<CreatorProfile> {
   const creator = await ctx.db.get("creators", creatorId);
   if (creator === null) {
@@ -206,6 +264,15 @@ export async function requireCreatorProfileById(
 
   const user = await ctx.db.get("users", creator.userId);
   if (user === null || !user.isActive || user.role !== "creator") {
+    throw apiError("not_found", { resource: "creator" });
+  }
+  // `not_found` rather than `forbidden`, so a company cannot use this route to
+  // discover that a private creator exists.
+  if (
+    creator.isPrivate &&
+    viewingCompanyId !== undefined &&
+    !(await hasCompanyRelationship(ctx, creatorId, viewingCompanyId))
+  ) {
     throw apiError("not_found", { resource: "creator" });
   }
 

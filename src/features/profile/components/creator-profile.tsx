@@ -10,6 +10,17 @@ import { parseGithubLink } from "../lib/github-link";
 import { ProfilePicture } from "./profile-picture";
 import { ProfileSkeleton } from "./profile-skeleton";
 
+// The profile stores an ISO 3166-1 alpha-2 code; "ID" means nothing to a reader.
+const regionNames = new Intl.DisplayNames(["en"], { type: "region" });
+
+function countryName(code: string): string {
+  try {
+    return regionNames.of(code) ?? code;
+  } catch {
+    return code;
+  }
+}
+
 export function CreatorProfile() {
   const profile = useQuery(api.creators.me, {});
   if (profile === undefined) return <ProfileSkeleton />;
@@ -19,7 +30,6 @@ export function CreatorProfile() {
     .map((part) => part.trim())
     .filter((part) => part && part.toLowerCase() !== profile.email.trim().toLowerCase())
     .join(" ");
-  const username = profile.username?.trim();
   const github = parseGithubLink(profile.githubLink ?? "");
 
   return (
@@ -34,9 +44,11 @@ export function CreatorProfile() {
             <h2 className="text-2xl font-semibold tracking-tight wrap-anywhere">
               {name || "Your profile"}
             </h2>
-            <p className="text-sm text-muted-foreground wrap-anywhere">
-              {username ? `@${username}` : "Username not added yet."}
-            </p>
+            {profile.countryOfResidence !== undefined && (
+              <p className="text-sm text-muted-foreground">
+                {countryName(profile.countryOfResidence)}
+              </p>
+            )}
           </div>
           <Link
             href="/settings"

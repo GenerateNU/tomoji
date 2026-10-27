@@ -14,9 +14,10 @@ let profile: Profile = {
   firstName: "Zahra",
   lastName: "Wibisana",
   email: "zahra@example.test",
-  username: "zahra",
-  phoneNumber: "+1 617 555 0100",
   githubLink: "https://github.com/zahra",
+  countryOfResidence: "ID",
+  additionalLinks: [],
+  isPrivate: false,
   niches: [],
   skills: [],
 };

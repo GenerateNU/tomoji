@@ -247,11 +247,7 @@ describe("notifyCompanyUser", () => {
 });
 
 describe("creatorName", () => {
-  async function seedNamed(
-    t: TestConvex,
-    user: { firstName: string; lastName: string },
-    username?: string,
-  ) {
+  async function seedNamed(t: TestConvex, user: { firstName: string; lastName: string }) {
     const creatorId = await seedCreatorId(t, "creator_named");
     await t.run(async (ctx) => {
       const creator = await ctx.db.get("creators", creatorId);
@@ -260,7 +256,6 @@ describe("creatorName", () => {
         firstName: user.firstName,
         lastName: user.lastName,
       });
-      await ctx.db.patch("creators", creatorId, { username });
     });
     return await t.run(async (ctx) => await creatorName(ctx, creatorId));
   }
@@ -273,11 +268,6 @@ describe("creatorName", () => {
   test("uses the first name alone when there is no last name", async () => {
     const t = convexTest(schema, modules);
     expect(await seedNamed(t, { firstName: "John", lastName: "" })).toBe("John");
-  });
-
-  test("falls back to the username", async () => {
-    const t = convexTest(schema, modules);
-    expect(await seedNamed(t, { firstName: "", lastName: "" }, "johnsmith")).toBe("johnsmith");
   });
 
   test("says 'A creator' when nothing is set", async () => {

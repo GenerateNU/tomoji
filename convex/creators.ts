@@ -28,12 +28,17 @@ export const list = companyQuery({
   },
 });
 
-/** Returns a specific active creator profile to a company. */
+/**
+ * Returns a specific active creator profile to a company. Private creators are
+ * reachable only by a company they have applied to or been assigned by.
+ *
+ * @throws `not_found` if the creator does not exist or is private to this company.
+ */
 export const get = companyQuery({
   args: { creatorId: v.id("creators") },
   returns: creatorProfile,
   handler: async (ctx, args) => {
-    return await requireCreatorProfileById(ctx, args.creatorId);
+    return await requireCreatorProfileById(ctx, args.creatorId, ctx.membership.companyId);
   },
 });
 

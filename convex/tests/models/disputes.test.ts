@@ -119,6 +119,7 @@ async function insertPost(t: TestConvex, submissionId: Id<"submissions">) {
       campaignId: assignment.campaignId,
       url: "https://x.com/julia/status/1",
       xPostId: "1",
+      isActive: true,
       postedAt: Date.now(),
       isVerified: true,
     });

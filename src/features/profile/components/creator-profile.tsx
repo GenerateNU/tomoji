@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useQuery } from "convex/react";
-import { cn } from "cn";
+import { cn } from "@/lib/utils";
 import { ExternalLink } from "lucide-react";
 import { api } from "@convex/_generated/api";
 import { buttonVariants } from "@/components/ui/button";

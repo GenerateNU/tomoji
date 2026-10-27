@@ -11,14 +11,22 @@ export const MINIMUM_AGE = 18;
  * west of UTC, which would shift the age by a day at the boundary.
  *
  * @throws `invalid_state` with `invalid_date_of_birth` if it is not UTC
- * midnight or lies in the future, or `under_minimum_age` if the creator is
- * younger than 18 today.
+ * midnight, lies outside the range a Date can represent, or lies in the
+ * future, or `under_minimum_age` if the creator is younger than 18 today.
  */
 export function requireAdultBirthdate(dateOfBirth: number, now = Date.now()): number {
-  if (!Number.isSafeInteger(dateOfBirth) || dateOfBirth % DAY_MS !== 0 || dateOfBirth > now) {
+  const born = new Date(dateOfBirth);
+  // A safe integer can still be outside Date's range, and every comparison
+  // against the invalid Date that makes is false, so the age check below would
+  // not fire rather than fail.
+  if (
+    !Number.isSafeInteger(dateOfBirth) ||
+    Number.isNaN(born.getTime()) ||
+    dateOfBirth % DAY_MS !== 0 ||
+    dateOfBirth > now
+  ) {
     throw apiError("invalid_state", { reason: "invalid_date_of_birth" });
   }
-  const born = new Date(dateOfBirth);
   // The same calendar date, MINIMUM_AGE years later. Using UTC parts keeps
   // 29 February correct: it rolls to 1 March in a non-leap year.
   const eligibleAt = Date.UTC(

@@ -41,6 +41,23 @@ describe("requireAdultBirthdate", () => {
     );
   });
 
+  // Past Date's +/-8.64e15 range every comparison against it is false, so the
+  // age check below would not fire rather than failing.
+  test.each([
+    ["one day past the earliest Date", -8_640_086_400_000_000],
+    ["one day past the latest Date", 8_640_086_400_000_000],
+  ])("refuses a timestamp outside the Date range: %s", async (_label, dateOfBirth) => {
+    await expectApiError(
+      async () => requireAdultBirthdate(dateOfBirth, NOW),
+      "invalid_state",
+      "invalid_date_of_birth",
+    );
+  });
+
+  test("accepts the earliest timestamp Date can represent", () => {
+    expect(requireAdultBirthdate(-8_640_000_000_000_000, NOW)).toBe(-8_640_000_000_000_000);
+  });
+
   // A local-midnight timestamp is the previous day in UTC for anyone west of
   // it, which would shift the age at the boundary.
   test("refuses a timestamp that is not UTC midnight", async () => {

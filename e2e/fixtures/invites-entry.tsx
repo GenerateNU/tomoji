@@ -1,3 +1,4 @@
+import { Toaster } from "@/components/ui/sonner";
 import { createRoot } from "react-dom/client";
 import { CompanyInvites } from "@/features/invites/components/company-invites";
 import { fixture } from "./invites-convex";
@@ -8,4 +9,9 @@ declare global {
   }
 }
 window.invitesFixture = fixture;
-createRoot(document.getElementById("root")!).render(<CompanyInvites />);
+createRoot(document.getElementById("root")!).render(
+  <>
+    <CompanyInvites />
+    <Toaster />
+  </>,
+);

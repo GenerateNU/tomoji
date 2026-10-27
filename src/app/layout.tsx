@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Geist_Mono, Inter } from "next/font/google";
 import { AuthKitProvider } from "@workos-inc/authkit-nextjs/components";
 import { ConvexClientProvider } from "@/components/convex-provider";
+import { Toaster } from "@/components/ui/sonner";
 import "./globals.css";
 
 // Inter matches the Figma designs.
@@ -29,6 +30,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
         <AuthKitProvider>
           <ConvexClientProvider>{children}</ConvexClientProvider>
         </AuthKitProvider>
+        <Toaster />
       </body>
     </html>
   );

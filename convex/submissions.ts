@@ -19,14 +19,16 @@ import {
 import schema from "./schema";
 
 /**
- * Submits a draft for review on the caller's own active assignment. The URL is
- * stored in its parsed form.
+ * Submits a draft for one deliverable of the caller's own active assignment.
+ * Each deliverable is reviewed on its own: one being pending or approved doesn't
+ * block the others. The URL is stored in its parsed form.
  *
- * @throws `not_found` if the assignment doesn't exist or isn't the caller's.
- * @throws `invalid_state` if the assignment isn't active, a draft is already
- * approved, a draft field is blank or too long, or the URL isn't http(s) or
- * includes login details.
- * @throws `conflict` if a draft is already pending review.
+ * @throws `not_found` if the assignment doesn't exist or isn't the caller's, or
+ * the deliverable isn't one of the assignment's opportunity.
+ * @throws `invalid_state` if the assignment isn't active, a draft for that
+ * deliverable is already approved, a draft field is blank or too long, or the
+ * URL isn't http(s) or includes login details.
+ * @throws `conflict` if a draft for that deliverable is already pending review.
  * @returns the new submission's id.
  */
 export const create = creatorMutation({

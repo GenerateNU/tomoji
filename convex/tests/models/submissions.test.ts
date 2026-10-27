@@ -12,6 +12,7 @@ import {
   type SubmissionReview,
   type SubmissionViewer,
 } from "../../models/submissions";
+import { listOpportunityDeliverables } from "../../models/deliverableDrafts";
 import schema from "../../schema";
 import {
   creatorNotifications,
@@ -24,6 +25,7 @@ import {
   seedCreatorId,
   seedMembership,
   seedOneSubmission,
+  seedOpportunity,
   seedSubmission,
   storedSubmission,
   storedSubmissions,
@@ -46,6 +48,23 @@ async function submit(
   return await t.run(
     async (ctx) => await createSubmission(ctx, creatorId, submissionArgs(fixture, overrides)),
   );
+}
+
+/**
+ * Adds another deliverable to the fixture's opportunity. Inserts directly,
+ * since the assignment already locks deliverables against the model.
+ */
+async function addDeliverable(t: TestConvex, fixture: AssignmentFixture) {
+  return await t.run(async (ctx) => {
+    const existing = await ctx.db.get("deliverables", fixture.deliverableId);
+    if (existing === null) throw new Error("expected seeded deliverable");
+    return await ctx.db.insert("deliverables", {
+      opportunityId: existing.opportunityId,
+      createdBy: existing.createdBy,
+      title: "Follow-up thread",
+      description: "Three posts on your results after two weeks.",
+    });
+  });
 }
 
 async function reviewAs(
@@ -174,6 +193,44 @@ describe("createSubmission", () => {
       [firstId, "changesRequested"],
       [secondId, "pending"],
     ]);
+  });
+
+  test("lets a creator submit one deliverable while another is pending or approved", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await seedAssignmentFixture(t);
+    const secondId = await addDeliverable(t, fixture);
+    const thirdId = await addDeliverable(t, fixture);
+    await seedSubmission(t, fixture, "approved");
+    await submit(t, fixture, { deliverableId: secondId });
+
+    const id = await submit(t, fixture, { deliverableId: thirdId });
+
+    expect(await storedSubmission(t, id)).toMatchObject({ deliverableId: thirdId });
+    // The rules still hold per deliverable.
+    await expectApiError(
+      () => submit(t, fixture, { deliverableId: secondId }),
+      "conflict",
+      "submission_pending",
+    );
+    await expectApiError(() => submit(t, fixture), "invalid_state", "already_approved");
+  });
+
+  test("rejects a deliverable from another opportunity without writing a submission", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await seedAssignmentFixture(t);
+    const other = await seedOpportunity(t, { subject: "cs-other-company", orgId: "org_other" });
+    const [otherDeliverable] = await t.run((ctx) =>
+      listOpportunityDeliverables(ctx, other.opportunityId),
+    );
+    const deleted = await addDeliverable(t, fixture);
+    await t.run(async (ctx) => await ctx.db.delete("deliverables", deleted));
+
+    for (const deliverableId of [otherDeliverable._id, deleted]) {
+      await expect(submit(t, fixture, { deliverableId })).rejects.toMatchObject({
+        data: { code: "not_found", resource: "deliverable" },
+      });
+    }
+    expect(await storedSubmissions(t)).toHaveLength(0);
   });
 
   test.each([

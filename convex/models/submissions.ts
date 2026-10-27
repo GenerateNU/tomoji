@@ -186,14 +186,36 @@ function requireSubmissionWindowOpen(assignment: Doc<"assignments">): void {
   // TODO(dueAt): reject after `assignment.dueAt` once assignments have it.
 }
 
-/** Indexes end in `_creationTime`, so descending order reads the newest row first. */
+/**
+ * A deliverable of the assignment's opportunity. Throws `not_found` for one
+ * from another opportunity, the same as a missing one.
+ */
+async function requireAssignmentDeliverable(
+  ctx: QueryCtx | MutationCtx,
+  assignment: Doc<"assignments">,
+  deliverableId: Id<"deliverables">,
+): Promise<Doc<"deliverables">> {
+  const deliverable = await ctx.db.get("deliverables", deliverableId);
+  if (deliverable === null || deliverable.opportunityId !== assignment.opportunityId) {
+    throw apiError("not_found", { resource: "deliverable" });
+  }
+  return deliverable;
+}
+
+/**
+ * The newest draft for one deliverable of an assignment. Indexes end in
+ * `_creationTime`, so descending order reads the newest row first.
+ */
 export async function getLatestSubmission(
   ctx: QueryCtx | MutationCtx,
   assignmentId: Id<"assignments">,
+  deliverableId: Id<"deliverables">,
 ): Promise<Doc<"submissions"> | null> {
   return await ctx.db
     .query("submissions")
-    .withIndex("by_assignmentId", (q) => q.eq("assignmentId", assignmentId))
+    .withIndex("by_assignmentId_and_deliverableId", (q) =>
+      q.eq("assignmentId", assignmentId).eq("deliverableId", deliverableId),
+    )
     .order("desc")
     .first();
 }
@@ -210,8 +232,10 @@ export async function createSubmission(
     draft.assignmentId,
   );
   requireSubmissionWindowOpen(assignment);
+  const deliverable = await requireAssignmentDeliverable(ctx, assignment, draft.deliverableId);
 
-  const latest = await getLatestSubmission(ctx, assignment._id);
+  // One approved draft per deliverable; the others are still open to submit.
+  const latest = await getLatestSubmission(ctx, assignment._id, deliverable._id);
   if (latest?.status === "pending") {
     throw apiError("conflict", { reason: "submission_pending" });
   }
@@ -221,8 +245,7 @@ export async function createSubmission(
 
   const submissionId = await ctx.db.insert("submissions", {
     assignmentId: assignment._id,
-    // TODO(deliverables): check it belongs to the assignment's opportunity (next slice).
-    deliverableId: draft.deliverableId,
+    deliverableId: deliverable._id,
     draftUrl: requireDraftUrl(draft.draftUrl),
     draftDescription: requireText(draft.draftDescription, "draftDescription"),
     status: "pending",

@@ -623,7 +623,7 @@ describe("exportAssignmentCreatorsCsv", () => {
   async function setProfile(
     t: TestConvex,
     creatorId: Id<"creators">,
-    fields: Partial<Pick<Doc<"users">, "firstName" | "lastName" | "name" | "email">>,
+    fields: Partial<Pick<Doc<"users">, "firstName" | "lastName" | "email">>,
   ) {
     await t.run(async (ctx) => {
       const creator = await ctx.db.get("creators", creatorId);
@@ -713,14 +713,13 @@ describe("exportAssignmentCreatorsCsv", () => {
     );
   });
 
-  test("uses available name parts, legacy names, and finally email without inventing missing names", async () => {
+  test("uses available name parts and finally email without inventing missing names", async () => {
     const t = convexTest(schema, modules);
     const owner = await seedOpportunity(t, { subject: "owner" });
     const profiles = [
-      { firstName: " Grace ", lastName: " ", name: "Old Name", expected: "Grace" },
-      { firstName: undefined, lastName: " Hopper ", name: "Old Name", expected: "Hopper" },
-      { firstName: undefined, lastName: " ", name: " Legacy Name ", expected: "Legacy Name" },
-      { firstName: " ", lastName: undefined, name: " ", expected: "fallback_3@example.com" },
+      { firstName: " Grace ", lastName: " ", expected: "Grace" },
+      { firstName: undefined, lastName: " Hopper ", expected: "Hopper" },
+      { firstName: " ", lastName: undefined, expected: "fallback_2@example.com" },
     ];
     const expected: string[] = [];
     for (const [i, profile] of profiles.entries()) {

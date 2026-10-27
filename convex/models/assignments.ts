@@ -394,9 +394,7 @@ export async function exportAssignmentCreatorsCsv(
       // Keep the assignment in the roster without exporting deleted/unavailable PII.
       if (user !== null && user.isActive && user.role === "creator") {
         name =
-          [user.firstName?.trim(), user.lastName?.trim()].filter(Boolean).join(" ") ||
-          user.name?.trim() ||
-          user.email;
+          [user.firstName?.trim(), user.lastName?.trim()].filter(Boolean).join(" ") || user.email;
         email = user.email;
       }
       return (

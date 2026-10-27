@@ -354,7 +354,7 @@ export async function applyMembership(ctx: MutationCtx, event: MembershipEvent):
 async function makeOperator(ctx: MutationCtx, user: Doc<"users">): Promise<void> {
   const patch: Partial<Doc<"users">> = {};
   if (user.role !== "operator") patch.role = "operator";
-  if (!user.isActive) {
+  if (!user.isActive && user.deactivatedReason === "left_company") {
     patch.isActive = true;
     patch.deactivatedReason = undefined;
   }

@@ -1239,16 +1239,49 @@ describe("the Tomoji staff org", () => {
     expect(await t.run(async (ctx) => await getCompanyUserByUserId(ctx, user._id))).toBeNull();
   });
 
-  test("joining it reactivates a deactivated account", async () => {
+  test("rejoining it restores someone who had left", async () => {
     const t = convexTest(schema, modules);
     await seedUser(t, { subject: "staff3" });
-    await t.run(async (ctx) => await deactivateUser(ctx, "staff3"));
+    await joinStaffOrg(t, "staff3");
+    await t.run(
+      async (ctx) =>
+        await removeMembership(ctx, { workosUserId: "staff3", organizationId: STAFF_ORG }),
+    );
 
     await joinStaffOrg(t, "staff3");
 
     const user = await requireSeededUser(t, "staff3");
     expect(user).toMatchObject({ role: "operator", isActive: true });
     expect(user.deactivatedReason).toBeUndefined();
+  });
+
+  // Anyone with WorkOS admin can add a user to an organization, so the staff
+  // org must not be a way around a deliberate lock.
+  test("joining it does not undo an operator lock", async () => {
+    const t = convexTest(schema, modules);
+    await seedUser(t, { subject: "staff_locked" });
+    const locked = await requireSeededUser(t, "staff_locked");
+    await t.run(async (ctx) => await setUserActive(ctx, locked._id, false));
+
+    await joinStaffOrg(t, "staff_locked");
+
+    expect(await requireSeededUser(t, "staff_locked")).toMatchObject({
+      isActive: false,
+      deactivatedReason: "operator",
+    });
+  });
+
+  test("joining it does not revive an account WorkOS deleted", async () => {
+    const t = convexTest(schema, modules);
+    await seedUser(t, { subject: "staff_deleted" });
+    await t.run(async (ctx) => await deactivateUser(ctx, "staff_deleted"));
+
+    await joinStaffOrg(t, "staff_deleted");
+
+    expect(await requireSeededUser(t, "staff_deleted")).toMatchObject({
+      isActive: false,
+      deactivatedReason: "deleted",
+    });
   });
 
   test("leaving it deactivates the operator", async () => {

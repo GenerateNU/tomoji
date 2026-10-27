@@ -66,14 +66,14 @@ export async function notifyCompanyUser(
 
 /**
  * The creator's name for notification titles, so a company can tell
- * notifications about different creators apart. Falls back through the legacy
- * name and username to "A creator".
+ * notifications about different creators apart. Falls back through the
+ * username to "A creator".
  */
 export async function creatorName(ctx: QueryCtx, creatorId: Id<"creators">): Promise<string> {
   const creator = await ctx.db.get("creators", creatorId);
   const user = creator && (await ctx.db.get("users", creator.userId));
   const fullName = [user?.firstName, user?.lastName].filter(Boolean).join(" ").trim();
-  return fullName || user?.name?.trim() || creator?.username || "A creator";
+  return fullName || creator?.username || "A creator";
 }
 
 /** Lists the user's notifications newest first, optionally only read or unread ones. */

@@ -44,7 +44,9 @@ async function storedDeliverables(t: TestConvex, opportunityId: Id<"opportunitie
 describe("createOpportunity with deliverables", () => {
   test("stores the brief's deliverables, trimmed, in the order given", async () => {
     const t = convexTest(schema, modules);
-    const { membership, campaignId } = await seedCampaign(t, { subject: "brief_owner" });
+    const { membership, campaignId } = await seedCampaign(t, {
+      subject: "brief_owner",
+    });
     const opportunityId = await t.run((ctx) =>
       createOpportunity(
         ctx,
@@ -52,7 +54,10 @@ describe("createOpportunity with deliverables", () => {
         opportunityArgs(campaignId, {
           deliverables: [
             deliverableArgs({ title: "  Launch video  " }),
-            deliverableArgs({ title: "Follow-up thread", description: "Three posts on results." }),
+            deliverableArgs({
+              title: "Follow-up thread",
+              description: "Three posts on results.",
+            }),
           ],
         }),
       ),
@@ -69,7 +74,9 @@ describe("createOpportunity with deliverables", () => {
 
   test("refuses to open an opportunity without deliverables", async () => {
     const t = convexTest(schema, modules);
-    const { membership, campaignId } = await seedCampaign(t, { subject: "brief_empty" });
+    const { membership, campaignId } = await seedCampaign(t, {
+      subject: "brief_empty",
+    });
     for (const deliverables of [undefined, []]) {
       await expectApiError(
         () =>
@@ -84,12 +91,17 @@ describe("createOpportunity with deliverables", () => {
 
   test("allows a draft without deliverables", async () => {
     const t = convexTest(schema, modules);
-    const { membership, campaignId } = await seedCampaign(t, { subject: "brief_draft" });
+    const { membership, campaignId } = await seedCampaign(t, {
+      subject: "brief_draft",
+    });
     const opportunityId = await t.run((ctx) =>
       createOpportunity(
         ctx,
         membership,
-        opportunityArgs(campaignId, { status: "draft", deliverables: undefined }),
+        opportunityArgs(campaignId, {
+          status: "draft",
+          deliverables: undefined,
+        }),
       ),
     );
     expect(await storedDeliverables(t, opportunityId)).toEqual([]);
@@ -97,9 +109,14 @@ describe("createOpportunity with deliverables", () => {
 
   test("rejects a blank deliverable or too many, creating nothing", async () => {
     const t = convexTest(schema, modules);
-    const { membership, campaignId } = await seedCampaign(t, { subject: "brief_invalid" });
+    const { membership, campaignId } = await seedCampaign(t, {
+      subject: "brief_invalid",
+    });
     const cases = [
-      { deliverables: [deliverableArgs({ title: "  " })], reason: "deliverableTitle_blank" },
+      {
+        deliverables: [deliverableArgs({ title: "  " })],
+        reason: "deliverableTitle_blank",
+      },
       {
         deliverables: [deliverableArgs({ description: "x".repeat(5001) })],
         reason: "deliverableDescription_too_long",
@@ -171,8 +188,14 @@ describe("createDeliverable", () => {
 
   test("hides another company's opportunity", async () => {
     const t = convexTest(schema, modules);
-    const owner = await seedOpportunity(t, { subject: "add_victim", orgId: "org_victim" });
-    const other = await seedCampaign(t, { subject: "add_other", orgId: "org_other" });
+    const owner = await seedOpportunity(t, {
+      subject: "add_victim",
+      orgId: "org_victim",
+    });
+    const other = await seedCampaign(t, {
+      subject: "add_other",
+      orgId: "org_other",
+    });
     await expectApiError(
       () =>
         t.run((ctx) =>
@@ -202,7 +225,9 @@ describe("createDeliverable", () => {
     const owner = await seedOpportunity(
       t,
       { subject: "add_full" },
-      { deliverables: Array.from({ length: MAX_DELIVERABLES }, () => deliverableArgs()) },
+      {
+        deliverables: Array.from({ length: MAX_DELIVERABLES }, () => deliverableArgs()),
+      },
     );
     await expectApiError(
       () =>
@@ -221,7 +246,11 @@ describe("once the opportunity has an assignment", () => {
     const owner = await seedOpportunity(t, { subject: "locked_owner" });
     const [deliverable] = await storedDeliverables(t, owner.opportunityId);
     const creatorId = await seedCreatorId(t, "locked_creator");
-    await seedAssignment(t, { opportunityId: owner.opportunityId, creatorId, status: "cancelled" });
+    await seedAssignment(t, {
+      opportunityId: owner.opportunityId,
+      creatorId,
+      status: "cancelled",
+    });
 
     await expectApiError(
       () =>
@@ -239,7 +268,9 @@ describe("once the opportunity has an assignment", () => {
 
     // Like the opportunity's brief, the wording can still be fixed.
     const updated = await t.run((ctx) =>
-      updateDeliverable(ctx, owner.membership, deliverable._id, { title: "Launch reel" }),
+      updateDeliverable(ctx, owner.membership, deliverable._id, {
+        title: "Launch reel",
+      }),
     );
     expect(updated.title).toBe("Launch reel");
     expect(await storedDeliverables(t, owner.opportunityId)).toEqual([updated]);
@@ -252,7 +283,9 @@ describe("updateDeliverable", () => {
     const owner = await seedOpportunity(t, { subject: "edit_owner" });
     const [deliverable] = await storedDeliverables(t, owner.opportunityId);
     const updated = await t.run((ctx) =>
-      updateDeliverable(ctx, owner.membership, deliverable._id, { title: "  Unboxing video " }),
+      updateDeliverable(ctx, owner.membership, deliverable._id, {
+        title: "  Unboxing video ",
+      }),
     );
 
     const expected = { ...deliverable, title: "Unboxing video" };
@@ -266,7 +299,11 @@ describe("updateDeliverable", () => {
     const [deliverable] = await storedDeliverables(t, owner.opportunityId);
     await expectApiError(
       () =>
-        t.run((ctx) => updateDeliverable(ctx, owner.membership, deliverable._id, { title: "" })),
+        t.run((ctx) =>
+          updateDeliverable(ctx, owner.membership, deliverable._id, {
+            title: "",
+          }),
+        ),
       "invalid_state",
       "deliverableTitle_blank",
     );
@@ -277,19 +314,32 @@ describe("updateDeliverable", () => {
     const owner = await seedOpportunity(
       t,
       { subject: "edit_victim", orgId: "org_victim" },
-      { deliverables: [deliverableArgs(), deliverableArgs({ title: "Follow-up thread" })] },
+      {
+        deliverables: [deliverableArgs(), deliverableArgs({ title: "Follow-up thread" })],
+      },
     );
-    const other = await seedCampaign(t, { subject: "edit_other", orgId: "org_other" });
+    const other = await seedCampaign(t, {
+      subject: "edit_other",
+      orgId: "org_other",
+    });
     const [kept, deleted] = await storedDeliverables(t, owner.opportunityId);
     await t.run((ctx) => ctx.db.delete("deliverables", deleted._id));
 
     for (const deliverableId of [kept._id, deleted._id]) {
       await expect(
-        t.run((ctx) => updateDeliverable(ctx, other.membership, deliverableId, { title: "x" })),
-      ).rejects.toMatchObject({ data: { code: "not_found", resource: "deliverable" } });
+        t.run((ctx) =>
+          updateDeliverable(ctx, other.membership, deliverableId, {
+            title: "x",
+          }),
+        ),
+      ).rejects.toMatchObject({
+        data: { code: "not_found", resource: "deliverable" },
+      });
       await expect(
         t.run((ctx) => removeDeliverable(ctx, other.membership, deliverableId)),
-      ).rejects.toMatchObject({ data: { code: "not_found", resource: "deliverable" } });
+      ).rejects.toMatchObject({
+        data: { code: "not_found", resource: "deliverable" },
+      });
     }
     expect(await storedDeliverables(t, owner.opportunityId)).toEqual([kept]);
   });
@@ -301,7 +351,9 @@ describe("removeDeliverable", () => {
     const owner = await seedOpportunity(
       t,
       { subject: "remove_owner" },
-      { deliverables: [deliverableArgs(), deliverableArgs({ title: "Follow-up thread" })] },
+      {
+        deliverables: [deliverableArgs(), deliverableArgs({ title: "Follow-up thread" })],
+      },
     );
     const [first, second] = await storedDeliverables(t, owner.opportunityId);
     await t.run((ctx) => removeDeliverable(ctx, owner.membership, first._id));
@@ -325,6 +377,69 @@ describe("removeDeliverable", () => {
     const [deliverable] = await storedDeliverables(t, owner.opportunityId);
     await t.run((ctx) => removeDeliverable(ctx, owner.membership, deliverable._id));
     expect(await storedDeliverables(t, owner.opportunityId)).toEqual([]);
+  });
+});
+
+describe("an opportunity past its deadline that the cron has not closed yet", () => {
+  const DEADLINE_OFFSET_MS = 1_800_000;
+
+  async function seedExpired(subject: string, status: "draft" | "open") {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(
+      t,
+      { subject },
+      {
+        deadline: Date.now() + DEADLINE_OFFSET_MS,
+        deliverables: [deliverableArgs(), deliverableArgs({ title: "Follow-up thread" })],
+      },
+    );
+    await t.run((ctx) => ctx.db.patch("opportunities", owner.opportunityId, { status }));
+    vi.advanceTimersByTime(DEADLINE_OFFSET_MS);
+    const before = await storedDeliverables(t, owner.opportunityId);
+    return { t, owner, before };
+  }
+
+  test("rejects adding a deliverable", async () => {
+    const { t, owner, before } = await seedExpired("expired_create", "open");
+    await expectApiError(
+      () =>
+        t.run((ctx) =>
+          createDeliverable(ctx, owner.membership, owner.opportunityId, deliverableArgs()),
+        ),
+      "invalid_state",
+      "opportunity_expired",
+    );
+    expect(await storedDeliverables(t, owner.opportunityId)).toEqual(before);
+  });
+
+  test("rejects editing a deliverable", async () => {
+    const { t, owner, before } = await seedExpired("expired_update", "open");
+    await expectApiError(
+      () =>
+        t.run((ctx) =>
+          updateDeliverable(ctx, owner.membership, before[0]._id, { title: "New title" }),
+        ),
+      "invalid_state",
+      "opportunity_expired",
+    );
+    expect(await storedDeliverables(t, owner.opportunityId)).toEqual(before);
+  });
+
+  test("a draft can still gain a deliverable", async () => {
+    const { t, owner, before } = await seedExpired("expired_draft_create", "draft");
+    await t.run((ctx) =>
+      createDeliverable(
+        ctx,
+        owner.membership,
+        owner.opportunityId,
+        deliverableArgs({ title: "Story set" }),
+      ),
+    );
+    const stored = await storedDeliverables(t, owner.opportunityId);
+    expect(stored.map((row) => row.title)).toEqual([
+      ...before.map((row) => row.title),
+      "Story set",
+    ]);
   });
 });
 
@@ -365,7 +480,10 @@ describe("listDeliverables", () => {
     const owner = await seedOpportunity(t, { subject: "list_closed_owner" });
     const assignedId = await seedCreatorId(t, "list_assigned");
     await seedCreatorId(t, "list_stranger");
-    await seedAssignment(t, { opportunityId: owner.opportunityId, creatorId: assignedId });
+    await seedAssignment(t, {
+      opportunityId: owner.opportunityId,
+      creatorId: assignedId,
+    });
     await t.run((ctx) => ctx.db.patch("opportunities", owner.opportunityId, { status: "closed" }));
 
     const assigned = await requireSeededUser(t, "list_assigned");

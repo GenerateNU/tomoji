@@ -10,7 +10,7 @@ import {
   normalizeDeliverable,
   type DeliverableCreate,
 } from "./deliverableDrafts";
-import { requireOpportunity, requireOwnedOpportunity } from "./opportunities";
+import { requireEditableOpportunity, requireOpportunity } from "./opportunities";
 import { requireCallerCreatorId } from "./users";
 
 export const deliverableUpdate = deliverableCreate.partial();
@@ -47,19 +47,6 @@ async function hasAssignments(
   return first !== null;
 }
 
-/** Loads an owned opportunity whose deliverables may change: it and its campaign aren't closed. */
-async function requireEditableOpportunity(
-  ctx: MutationCtx,
-  membership: Doc<"companyUsers">,
-  opportunityId: Id<"opportunities">,
-): Promise<Doc<"opportunities">> {
-  const { opportunity, campaign } = await requireOwnedOpportunity(ctx, membership, opportunityId);
-  if (opportunity.status === "closed" || campaign.status === "closed") {
-    throw apiError("invalid_state", { reason: "opportunity_not_editable" });
-  }
-  return opportunity;
-}
-
 /**
  * Deliverables can't be added or removed once a creator has been assigned, in
  * any status: that would change the work they agreed to, and their drafts point
@@ -75,20 +62,23 @@ async function requireNoAssignments(
 }
 
 /**
- * The deliverable and its opportunity, if its opportunity isn't closed. Throws
+ * The deliverable and its opportunity, if its opportunity is editable (not closed or expired). Throws
  * `not_found` for another company's deliverable, the same as a missing one.
  */
 async function requireEditableDeliverable(
   ctx: MutationCtx,
   membership: Doc<"companyUsers">,
   deliverableId: Id<"deliverables">,
-): Promise<{ deliverable: Doc<"deliverables">; opportunity: Doc<"opportunities"> }> {
+): Promise<{
+  deliverable: Doc<"deliverables">;
+  opportunity: Doc<"opportunities">;
+}> {
   const deliverable = await ctx.db.get("deliverables", deliverableId);
   const owner = deliverable && (await ctx.db.get("opportunities", deliverable.opportunityId));
   if (!deliverable || !owner || owner.companyId !== membership.companyId) {
     throw apiError("not_found", { resource: "deliverable" });
   }
-  const opportunity = await requireEditableOpportunity(ctx, membership, owner._id);
+  const { opportunity } = await requireEditableOpportunity(ctx, membership, owner._id);
   return { deliverable, opportunity };
 }
 

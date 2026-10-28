@@ -220,6 +220,23 @@ export async function requireOwnedOpportunity(
   return { opportunity, campaign };
 }
 
+/** Loads an owned opportunity whose brief may change: neither it nor its campaign is closed, and it hasn't expired. */
+export async function requireEditableOpportunity(
+  ctx: MutationCtx,
+  membership: Doc<"companyUsers">,
+  opportunityId: Id<"opportunities">,
+): Promise<{ opportunity: Doc<"opportunities">; campaign: Doc<"campaigns"> }> {
+  const { opportunity, campaign } = await requireOwnedOpportunity(ctx, membership, opportunityId);
+  if (opportunity.status === "closed" || campaign.status === "closed") {
+    throw apiError("invalid_state", { reason: "opportunity_not_editable" });
+  }
+  // Deadline closure is permanent even during the interval before the cron materializes it.
+  if (opportunity.status !== "draft" && opportunity.deadline <= Date.now()) {
+    throw apiError("invalid_state", { reason: "opportunity_expired" });
+  }
+  return { opportunity, campaign };
+}
+
 /** Shared pause transition; callers must first authorize the scope and verify the opportunity is open. */
 export async function applyOpportunityPause(
   ctx: MutationCtx,
@@ -328,14 +345,11 @@ export async function updateOpportunity(
   opportunityId: Id<"opportunities">,
   updates: OpportunityUpdate,
 ): Promise<Doc<"opportunities">> {
-  const { opportunity, campaign } = await requireOwnedOpportunity(ctx, membership, opportunityId);
-  if (opportunity.status === "closed" || campaign.status === "closed") {
-    throw apiError("invalid_state", { reason: "opportunity_not_editable" });
-  }
-  // Deadline closure is permanent even during the interval before the cron materializes it.
-  if (opportunity.status !== "draft" && opportunity.deadline <= Date.now()) {
-    throw apiError("invalid_state", { reason: "opportunity_expired" });
-  }
+  const { opportunity, campaign } = await requireEditableOpportunity(
+    ctx,
+    membership,
+    opportunityId,
+  );
 
   const patch: Partial<OpportunityCreate> = {};
   for (const field of [

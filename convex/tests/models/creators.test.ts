@@ -11,6 +11,8 @@ import {
 } from "../../models/creators";
 import { deactivateUser, getUserByWorkosId } from "../../models/users";
 import schema from "../../schema";
+import { NICHES } from "../../models/niches";
+import { SKILLS } from "../../models/skills";
 import {
   expectApiError,
   seedAssignment,
@@ -20,6 +22,7 @@ import {
   seedProfilePictureUpload,
   seedUser,
   seedXAccount,
+  requireSeededUser,
 } from "../helpers";
 
 const modules = import.meta.glob("../../**/*.ts");
@@ -80,6 +83,97 @@ describe("requireCreatorProfile", () => {
 });
 
 describe("listCreators", () => {
+  test("paginates fully populated profiles within Convex transaction limits", async () => {
+    const t = convexTest({ schema, modules, transactionLimits: true });
+    const niches = NICHES.slice(0, 5).map((niche) => niche.name);
+    const skills = SKILLS.map((skill) => skill.name);
+    for (let index = 0; index < 210; index++) {
+      const subject = `creator_full_${index}`;
+      await seedUser(t, { subject });
+      const user = await requireSeededUser(t, subject);
+      await t.run((ctx) => updateCreatorProfile(ctx, user, { niches, skills }));
+    }
+
+    const first = await t.run((ctx) =>
+      listCreators(ctx, {
+        paginationOpts: { cursor: null, numItems: 1000, maximumRowsRead: 10000 },
+      }),
+    );
+    expect(first.page).toHaveLength(100);
+    expect(first.isDone).toBe(false);
+    expect(first.page[0]).toMatchObject({ niches, skills });
+    const second = await t.run((ctx) =>
+      listCreators(ctx, {
+        paginationOpts: { cursor: first.continueCursor, numItems: 1000, maximumRowsRead: 10000 },
+      }),
+    );
+    expect(second.page).toHaveLength(100);
+    expect(second.isDone).toBe(false);
+    const third = await t.run((ctx) =>
+      listCreators(ctx, {
+        paginationOpts: { cursor: second.continueCursor, numItems: 1000, maximumRowsRead: 10000 },
+      }),
+    );
+    expect(third.page).toHaveLength(10);
+    expect(third.isDone).toBe(true);
+    expect([...first.page, ...second.page, ...third.page].map((profile) => profile.email)).toEqual(
+      Array.from({ length: 210 }, (_, index) => `creator_full_${index}@example.com`),
+    );
+  }, 60_000);
+
+  test("caps default and oversized read budgets while preserving cursor pagination", async () => {
+    const t = convexTest(schema, modules);
+    for (let index = 0; index < 101; index++) {
+      await seedUser(t, { subject: `creator_budget_${index}` });
+    }
+
+    const defaultPage = await t.run((ctx) =>
+      listCreators(ctx, { paginationOpts: { cursor: null, numItems: 1000 } }),
+    );
+    expect(defaultPage.page).toHaveLength(100);
+    expect(defaultPage.isDone).toBe(false);
+
+    const firstPage = await t.run((ctx) =>
+      listCreators(ctx, {
+        paginationOpts: { cursor: null, numItems: 1000, maximumRowsRead: 10000 },
+      }),
+    );
+    expect(firstPage.page).toEqual(defaultPage.page);
+    expect(firstPage.isDone).toBe(false);
+    const secondPage = await t.run((ctx) =>
+      listCreators(ctx, {
+        paginationOpts: {
+          cursor: firstPage.continueCursor,
+          numItems: 1000,
+          maximumRowsRead: 10000,
+        },
+      }),
+    );
+    const lastUser = await requireSeededUser(t, "creator_budget_100");
+    const lastCreatorId = await t.run(
+      async (ctx) => (await getCreatorByUserId(ctx, lastUser._id))!._id,
+    );
+    expect(secondPage.page).toEqual([
+      {
+        creatorId: lastCreatorId,
+        firstName: "Test",
+        lastName: "",
+        email: "creator_budget_100@example.com",
+        niches: [],
+        skills: [],
+      },
+    ]);
+    expect(secondPage.isDone).toBe(true);
+
+    const smallPage = await t.run((ctx) =>
+      listCreators(ctx, {
+        paginationOpts: { cursor: null, numItems: 10, maximumRowsRead: 1 },
+      }),
+    );
+    expect(smallPage.page).toEqual(firstPage.page.slice(0, 1));
+    expect(smallPage.isDone).toBe(false);
+  });
+
   test("returns full creator profiles", async () => {
     const t = convexTest(schema, modules);
     const { uploadId } = await seedProfilePictureUpload(t, "model_creator_list", "complete");
@@ -119,6 +213,7 @@ describe("listCreators", () => {
         githubLink: "https://github.com/creator",
         phoneNumber: "+15555550123",
         niches: [],
+        skills: [],
       },
     ]);
   });
@@ -146,6 +241,11 @@ describe("listCreators", () => {
       if (firstCreator === null || secondCreator === null) {
         throw new Error("expected seeded creators");
       }
+      await updateCreatorProfile(ctx, firstUser, { niches: ["databases"], skills: ["typescript"] });
+      await updateCreatorProfile(ctx, secondUser, {
+        niches: ["web-development"],
+        skills: ["python"],
+      });
       return [firstCreator._id, secondCreator._id] as const;
     });
 
@@ -164,7 +264,8 @@ describe("listCreators", () => {
         firstName: "Ada",
         lastName: "Lovelace",
         email: "page-one@example.com",
-        niches: [],
+        niches: ["databases"],
+        skills: ["typescript"],
       },
     ]);
     expect(firstPage.isDone).toBe(false);
@@ -174,7 +275,8 @@ describe("listCreators", () => {
         firstName: "Grace",
         lastName: "Hopper",
         email: "page-two@example.com",
-        niches: [],
+        niches: ["web-development"],
+        skills: ["python"],
       },
     ]);
     expect(secondPage.isDone).toBe(true);
@@ -411,6 +513,7 @@ describe("requireCreatorProfileById", () => {
       githubLink: "https://github.com/creator",
       phoneNumber: "+15555550123",
       niches: [],
+      skills: [],
     });
   });
 
@@ -470,6 +573,73 @@ describe("requireCreatorProfileById", () => {
 });
 
 describe("creator niches", () => {
+  test("a skill-only update preserves legacy niches until they are backfilled", async () => {
+    const t = convexTest(schema, modules);
+    const creatorId = await seedCreatorId(t, "skills_legacy_niches");
+    const user = await requireSeededUser(t, "skills_legacy_niches");
+    await t.run((ctx) => ctx.db.patch("creators", creatorId, { niches: ["llms"] }));
+    const profile = await t.run((ctx) => updateCreatorProfile(ctx, user, { skills: ["python"] }));
+    expect(profile).toMatchObject({ niches: ["llms"], skills: ["python"] });
+    expect(await t.run((ctx) => ctx.db.get("creators", creatorId))).toHaveProperty("niches", [
+      "llms",
+    ]);
+    expect(await t.run((ctx) => requireCreatorProfile(ctx, user))).toEqual(profile);
+  });
+
+  test("omitted selections survive an unrelated profile update", async () => {
+    const t = convexTest(schema, modules);
+    await seedUser(t, { subject: "selections_omitted" });
+    const user = await requireSeededUser(t, "selections_omitted");
+    await t.run((ctx) =>
+      updateCreatorProfile(ctx, user, { niches: ["databases"], skills: ["python"] }),
+    );
+    const profile = await t.run((ctx) =>
+      updateCreatorProfile(ctx, user, { githubLink: "https://github.com/example" }),
+    );
+    expect(profile).toMatchObject({ niches: ["databases"], skills: ["python"] });
+  });
+
+  test("invalid skills roll back niche changes and other profile edits together", async () => {
+    const t = convexTest(schema, modules);
+    const creatorId = await seedCreatorId(t, "selections_atomic");
+    const user = await requireSeededUser(t, "selections_atomic");
+    await t.run((ctx) =>
+      updateCreatorProfile(ctx, user, { niches: ["databases"], skills: ["python"] }),
+    );
+    const before = await t.run((ctx) => requireCreatorProfile(ctx, user));
+    await expectApiError(
+      () =>
+        t.run((ctx) =>
+          updateCreatorProfile(ctx, user, {
+            niches: ["web-development"],
+            skills: ["unknown"],
+            username: "changed",
+          }),
+        ),
+      "invalid_state",
+      "invalid_skill",
+    );
+    expect(await t.run((ctx) => requireCreatorProfile(ctx, user))).toEqual(before);
+    expect(await t.run((ctx) => ctx.db.get("creators", creatorId))).not.toHaveProperty("username");
+  });
+
+  test("stores normalized niches and skills as separate associations", async () => {
+    const t = convexTest(schema, modules);
+    const creatorId = await seedCreatorId(t, "creator_selections");
+    const profile = await t.run(async (ctx) => {
+      const creator = (await ctx.db.get("creators", creatorId))!;
+      const user = (await ctx.db.get("users", creator.userId))!;
+      return await updateCreatorProfile(ctx, user, {
+        niches: ["Database Management", "databases"],
+        skills: ["C++", "TypeScript", "C++"],
+      });
+    });
+
+    expect(profile.niches).toEqual(["databases"]);
+    expect(profile.skills).toEqual(["c-plus-plus", "typescript"]);
+    expect(await t.run((ctx) => ctx.db.get("creators", creatorId))).not.toHaveProperty("niches");
+  });
+
   test("creators set, replace, and clear their niches in their profile", async () => {
     const t = convexTest(schema, modules);
     await seedUser(t, { subject: "niche_creator" });

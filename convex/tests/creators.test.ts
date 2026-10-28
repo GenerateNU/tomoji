@@ -39,7 +39,13 @@ describe("creators.me", () => {
       if (creator === null) throw new Error("expected seeded creator");
       return creator._id;
     });
-    const expected = { creatorId, email: "creator_names@example.com", niches: [], ...names };
+    const expected = {
+      creatorId,
+      email: "creator_names@example.com",
+      niches: [],
+      skills: [],
+      ...names,
+    };
 
     expect(await asCreator.query(api.creators.me, {})).toEqual(expected);
     expect(await asCreator.mutation(api.creators.update, { username: "ada" })).toEqual({
@@ -90,6 +96,7 @@ describe("creators.me", () => {
       githubLink: "https://github.com/creator",
       phoneNumber: "+15555550123",
       niches: [],
+      skills: [],
     });
   });
 
@@ -233,6 +240,7 @@ describe("creators.get", () => {
       lastName: "",
       email: "target@example.com",
       niches: [],
+      skills: [],
     });
   });
 
@@ -261,6 +269,23 @@ describe("creators.get", () => {
 });
 
 describe("creators.update", () => {
+  test("updates only the caller's selections and returns them through me and company get", async () => {
+    const t = convexTest(schema, modules);
+    const asCreator = await seedUser(t, { subject: "creator_tags" });
+    const asOther = await seedUser(t, { subject: "other_tags" });
+    const asCompany = await seedUser(t, { subject: "company_tags", org: { id: "org_tags" } });
+    const result = await asCreator.mutation(api.creators.update, {
+      niches: ["databases"],
+      skills: ["C#"],
+    });
+    expect(result).toMatchObject({ niches: ["databases"], skills: ["c-sharp"] });
+    expect(await asCreator.query(api.creators.me, {})).toEqual(result);
+    expect(await asCompany.query(api.creators.get, { creatorId: result.creatorId })).toEqual(
+      result,
+    );
+    expect(await asOther.query(api.creators.me, {})).toMatchObject({ niches: [], skills: [] });
+  });
+
   test("rejects manual X ID editing", async () => {
     const t = convexTest(schema, modules);
     const asCreator = await seedUser(t, { subject: "creator_manual_x" });
@@ -363,7 +388,7 @@ describe("creators.update", () => {
     const t = convexTest(schema, modules);
 
     await expectApiError(
-      () => t.mutation(api.creators.update, { username: "signed_out" }),
+      () => t.mutation(api.creators.update, { skills: ["python"] }),
       "not_authenticated",
     );
   });
@@ -376,7 +401,7 @@ describe("creators.update", () => {
     });
 
     await expectApiError(
-      () => asCompany.mutation(api.creators.update, { username: "company" }),
+      () => asCompany.mutation(api.creators.update, { skills: ["python"] }),
       "forbidden",
     );
   });
@@ -386,7 +411,7 @@ describe("creators.update", () => {
     const asOperator = await seedOperator(t, "creator_update_operator");
 
     await expectApiError(
-      () => asOperator.mutation(api.creators.update, { username: "operator" }),
+      () => asOperator.mutation(api.creators.update, { skills: ["python"] }),
       "forbidden",
     );
   });

@@ -9,8 +9,8 @@ export const creatorsTable = defineTable({
   xId: v.optional(v.string()),
   githubLink: v.optional(v.string()),
   phoneNumber: v.optional(v.string()),
-  // Names from the fixed list in models/niches.ts. Optional so existing rows
-  // need no migration; read missing as "no niches".
+  // Legacy selections remain readable until backfilled into creatorNiches.
+  // New writes use association rows and remove this field atomically.
   niches: v.optional(v.array(v.string())),
 })
   .index("by_userId", ["userId"])

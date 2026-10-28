@@ -6,7 +6,8 @@ import { companiesTable } from "./schemas/companies.schema";
 import { invitesTable } from "./schemas/invites.schema";
 import { companyUsersTable } from "./schemas/companyUsers.schema";
 import { creatorsTable } from "./schemas/creators.schema";
-import { deliverablesTable } from "./schemas/deliverables.schema";
+import { creatorNichesTable } from "./schemas/creatorNiches.schema";
+import { creatorSkillsTable } from "./schemas/creatorSkills.schema";
 import { disputesTable } from "./schemas/disputes.schema";
 import { mediaUploadsTable } from "./schemas/mediaUploads.schema";
 import { notificationsTable } from "./schemas/notifications.schema";
@@ -18,11 +19,14 @@ import { usersTable } from "./schemas/users.schema";
 import { xAccountsTable } from "./schemas/xAccounts.schema";
 import { xAccountCredentialsTable } from "./schemas/xAccountCredentials.schema";
 import { xLinkAttemptsTable } from "./schemas/xLinkAttempts.schema";
+import { deliverablesTable } from "./schemas/deliverables.schema";
 
 export default defineSchema({
   users: usersTable,
   companyUsers: companyUsersTable,
   creators: creatorsTable,
+  creatorNiches: creatorNichesTable,
+  creatorSkills: creatorSkillsTable,
   companies: companiesTable,
   invites: invitesTable,
   campaigns: campaignsTable,

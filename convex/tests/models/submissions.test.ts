@@ -77,11 +77,13 @@ async function getAs(t: TestConvex, viewer: SubmissionViewer, submissionId: Id<"
 async function listAs(
   t: TestConvex,
   viewer: SubmissionViewer,
-  assignmentId: Id<"assignments">,
+  fixture: AssignmentFixture,
   paginationOpts = firstPage,
+  deliverableId = fixture.deliverableId,
 ) {
   return await t.run(
-    async (ctx) => await listSubmissions(ctx, viewer, assignmentId, paginationOpts),
+    async (ctx) =>
+      await listSubmissions(ctx, viewer, fixture.assignmentId, deliverableId, paginationOpts),
   );
 }
 
@@ -495,9 +497,9 @@ describe("closedWithoutReview", () => {
   async function readAll(t: TestConvex, fixture: AssignmentFixture, id: Id<"submissions">) {
     return [
       await getAs(t, operatorViewer, id),
-      (await listAs(t, operatorViewer, fixture.assignmentId)).page[0],
+      (await listAs(t, operatorViewer, fixture)).page[0],
       await getAs(t, creatorViewer(fixture), id),
-      (await listAs(t, creatorViewer(fixture), fixture.assignmentId)).page[0],
+      (await listAs(t, creatorViewer(fixture), fixture)).page[0],
     ];
   }
 
@@ -691,7 +693,7 @@ describe("listSubmissions", () => {
     const firstId = await seedSubmission(t, fixture, "changesRequested");
     const secondId = await seedSubmission(t, fixture, "pending");
 
-    const result = await listAs(t, companyViewer(fixture), fixture.assignmentId);
+    const result = await listAs(t, companyViewer(fixture), fixture);
 
     expect(result.page.map((s) => s._id)).toEqual([secondId, firstId]);
     expect(result.isDone).toBe(true);
@@ -703,11 +705,11 @@ describe("listSubmissions", () => {
     const firstId = await seedSubmission(t, fixture, "changesRequested");
     const secondId = await seedSubmission(t, fixture, "pending");
 
-    const pageOne = await listAs(t, operatorViewer, fixture.assignmentId, {
+    const pageOne = await listAs(t, operatorViewer, fixture, {
       numItems: 1,
       cursor: null,
     });
-    const pageTwo = await listAs(t, operatorViewer, fixture.assignmentId, {
+    const pageTwo = await listAs(t, operatorViewer, fixture, {
       numItems: 1,
       cursor: pageOne.continueCursor,
     });
@@ -722,7 +724,7 @@ describe("listSubmissions", () => {
     const firstId = await seedSubmission(t, fixture, "changesRequested");
     const secondId = await seedSubmission(t, fixture, "approved");
 
-    const result = await listAs(t, creatorViewer(fixture), fixture.assignmentId);
+    const result = await listAs(t, creatorViewer(fixture), fixture);
 
     expect(result.page).toEqual([
       withoutReviewerIdentity(await expectedFull(t, secondId)),
@@ -734,7 +736,7 @@ describe("listSubmissions", () => {
     const t = convexTest(schema, modules);
     const fixture = await seedAssignmentFixture(t);
 
-    const result = await listAs(t, creatorViewer(fixture), fixture.assignmentId);
+    const result = await listAs(t, creatorViewer(fixture), fixture);
 
     expect(result.page).toEqual([]);
   });
@@ -745,7 +747,7 @@ describe("listSubmissions", () => {
     const intruderId = await seedCreatorId(t, "ls-intruder");
 
     await expectApiError(
-      () => listAs(t, { role: "creator", creatorId: intruderId }, fixture.assignmentId),
+      () => listAs(t, { role: "creator", creatorId: intruderId }, fixture),
       "not_found",
     );
   });
@@ -756,7 +758,7 @@ describe("listSubmissions", () => {
     const { membership: outsider } = await seedMembership(t, "ls-outsider");
 
     await expectApiError(
-      () => listAs(t, { role: "company", companyId: outsider.companyId }, fixture.assignmentId),
+      () => listAs(t, { role: "company", companyId: outsider.companyId }, fixture),
       "not_found",
     );
   });
@@ -766,7 +768,35 @@ describe("listSubmissions", () => {
     const fixture = await seedAssignmentFixture(t);
     await t.run(async (ctx) => await ctx.db.delete("assignments", fixture.assignmentId));
 
-    await expectApiError(() => listAs(t, operatorViewer, fixture.assignmentId), "not_found");
+    await expectApiError(() => listAs(t, operatorViewer, fixture), "not_found");
+  });
+
+  test("lists only the given deliverable's drafts, newest first", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await seedAssignmentFixture(t);
+    const otherId = await seedDeliverable(t, fixture);
+    const firstId = await seedSubmission(t, fixture, "changesRequested");
+    const otherDraftId = await seedSubmission(t, { ...fixture, deliverableId: otherId }, "pending");
+    const secondId = await seedSubmission(t, fixture, "pending");
+
+    const result = await listAs(t, companyViewer(fixture), fixture);
+    const other = await listAs(t, companyViewer(fixture), fixture, firstPage, otherId);
+
+    expect(result.page.map((s) => s._id)).toEqual([secondId, firstId]);
+    expect(other.page.map((s) => s._id)).toEqual([otherDraftId]);
+  });
+
+  test("hides a deliverable from another opportunity", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await seedAssignmentFixture(t);
+    const other = await seedOpportunity(t, { subject: "ls-other-company", orgId: "org_other" });
+    const [otherDeliverable] = await t.run((ctx) =>
+      listOpportunityDeliverables(ctx, other.opportunityId),
+    );
+
+    await expect(
+      listAs(t, operatorViewer, fixture, firstPage, otherDeliverable._id),
+    ).rejects.toMatchObject({ data: { code: "not_found", resource: "deliverable" } });
   });
 });
 

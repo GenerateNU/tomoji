@@ -90,6 +90,5 @@ export function submissionShapes<
 export const submissionsTable = defineTable(
   v.union(...submissionShapes(v.id("companyUsers"), v.id("users"), {})),
 )
-  .index("by_assignmentId", ["assignmentId"])
   .index("by_reviewedBy", ["reviewedBy"])
   .index("by_assignmentId_and_deliverableId", ["assignmentId", "deliverableId"]);

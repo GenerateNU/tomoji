@@ -182,6 +182,26 @@ order they were added, at most 20 per opportunity.
 also needs; `models/deliverables.ts` holds the route rules and depends on
 opportunities, which keeps the imports acyclic.
 
+### Submissions and posts per deliverable
+
+Every submission names the deliverable it's a draft for (`deliverableId`,
+required), which must belong to the assignment's opportunity; any other is
+`not_found` with resource `deliverable`. The submission rules apply to each
+deliverable separately:
+
+- One pending draft and one approved draft per deliverable. Approval is final for
+  that deliverable while the creator keeps submitting the others.
+- `submissions.list` always takes a `deliverableId` and returns that
+  deliverable's drafts newest first. There is no assignment-wide list; read
+  drafts through `by_assignmentId_and_deliverableId`.
+- Each approved deliverable has at most one active post. `posts.list` by
+  assignment returns every active post on it in one page, newest first, which
+  the 20-deliverable cap keeps bounded.
+
+`deliverableId` is required with no migration, since nothing is deployed yet. A
+dev deployment holding submissions from before it won't accept the schema:
+clear its `submissions`, `posts`, and `disputes` tables, then push again.
+
 ## Tests
 
 `convex/tests/` should mirror the source tree. For example:

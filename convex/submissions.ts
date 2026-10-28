@@ -79,19 +79,27 @@ export const get = authedQuery({
 });
 
 /**
- * Lists an assignment's submissions, newest first, with cursor pagination. Each
- * row is what `get` returns to the same caller.
+ * Lists the drafts for one deliverable of an assignment, newest first, with
+ * cursor pagination. Each row is what `get` returns to the same caller.
  *
- * @throws `not_found` if the assignment doesn't exist or isn't the caller's.
+ * @throws `not_found` if the assignment doesn't exist or isn't the caller's, or
+ * the deliverable isn't one of its opportunity's.
  */
 export const list = authedQuery({
   args: {
     assignmentId: v.id("assignments"),
+    deliverableId: v.id("deliverables"),
     paginationOpts: paginationOptsValidator,
   },
   returns: paginationResultValidator(submissionView),
   handler: async (ctx, args) => {
     const viewer = await requireCallerViewer(ctx, ctx.user);
-    return await listSubmissions(ctx, viewer, args.assignmentId, args.paginationOpts);
+    return await listSubmissions(
+      ctx,
+      viewer,
+      args.assignmentId,
+      args.deliverableId,
+      args.paginationOpts,
+    );
   },
 });

@@ -326,17 +326,24 @@ export async function requireSubmission(
   return toSubmissionView(viewer, submission, isClosedWithoutReview(submission, assignment));
 }
 
-/** One page of an assignment's submissions, newest first, as the viewer may see them. */
+/**
+ * One page of the drafts for one deliverable of an assignment, newest first, as
+ * the viewer may see them. Drafts are always read per deliverable.
+ */
 export async function listSubmissions(
   ctx: QueryCtx,
   viewer: SubmissionViewer,
   assignmentId: Id<"assignments">,
+  deliverableId: Id<"deliverables">,
   paginationOpts: PaginationOptions,
 ): Promise<PaginationResult<SubmissionView>> {
   const assignment = await requireAssignment(ctx, viewer, assignmentId);
+  await requireAssignmentDeliverable(ctx, assignment, deliverableId);
   const result = await ctx.db
     .query("submissions")
-    .withIndex("by_assignmentId", (q) => q.eq("assignmentId", assignmentId))
+    .withIndex("by_assignmentId_and_deliverableId", (q) =>
+      q.eq("assignmentId", assignmentId).eq("deliverableId", deliverableId),
+    )
     .order("desc")
     .paginate(paginationOpts);
   return {

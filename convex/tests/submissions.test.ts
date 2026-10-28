@@ -27,7 +27,11 @@ import {
 const modules = import.meta.glob("../**/*.ts");
 
 function pageArgs(fixture: AssignmentFixture) {
-  return { assignmentId: fixture.assignmentId, paginationOpts: { numItems: 10, cursor: null } };
+  return {
+    assignmentId: fixture.assignmentId,
+    deliverableId: fixture.deliverableId,
+    paginationOpts: { numItems: 10, cursor: null },
+  };
 }
 
 async function creatorView(t: TestConvex, submissionId: Id<"submissions">, closed = false) {

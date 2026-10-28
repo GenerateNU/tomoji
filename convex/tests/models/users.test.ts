@@ -1239,16 +1239,128 @@ describe("the Tomoji staff org", () => {
     expect(await t.run(async (ctx) => await getCompanyUserByUserId(ctx, user._id))).toBeNull();
   });
 
-  test("joining it reactivates a deactivated account", async () => {
+  test("rejoining it restores someone who had left", async () => {
     const t = convexTest(schema, modules);
     await seedUser(t, { subject: "staff3" });
-    await t.run(async (ctx) => await deactivateUser(ctx, "staff3"));
+    await joinStaffOrg(t, "staff3");
+    await t.run(
+      async (ctx) =>
+        await removeMembership(ctx, { workosUserId: "staff3", organizationId: STAFF_ORG }),
+    );
 
     await joinStaffOrg(t, "staff3");
 
     const user = await requireSeededUser(t, "staff3");
     expect(user).toMatchObject({ role: "operator", isActive: true });
     expect(user.deactivatedReason).toBeUndefined();
+  });
+
+  // Anyone with WorkOS admin can add a user to an organization, so the staff
+  // org must not be a way around a deliberate lock.
+  test("joining it does not undo an operator lock", async () => {
+    const t = convexTest(schema, modules);
+    await seedUser(t, { subject: "staff_locked" });
+    const locked = await requireSeededUser(t, "staff_locked");
+    await t.run(async (ctx) => await setUserActive(ctx, locked._id, false));
+
+    await joinStaffOrg(t, "staff_locked");
+
+    expect(await requireSeededUser(t, "staff_locked")).toMatchObject({
+      isActive: false,
+      deactivatedReason: "operator",
+    });
+  });
+
+  test("joining it does not revive an account WorkOS deleted", async () => {
+    const t = convexTest(schema, modules);
+    await seedUser(t, { subject: "staff_deleted" });
+    await t.run(async (ctx) => await deactivateUser(ctx, "staff_deleted"));
+
+    await joinStaffOrg(t, "staff_deleted");
+
+    expect(await requireSeededUser(t, "staff_deleted")).toMatchObject({
+      isActive: false,
+      deactivatedReason: "deleted",
+    });
+  });
+
+  // The company path used isActive alone to tell a serving operator from one
+  // who left, so a locked operator fell through it and lost the role.
+  test("a locked operator added to a customer company keeps the operator role", async () => {
+    const t = convexTest(schema, modules);
+    await seedUser(t, { subject: "staff_locked_company" });
+    await joinStaffOrg(t, "staff_locked_company");
+    const operator = await requireSeededUser(t, "staff_locked_company");
+    await t.run(async (ctx) => await setUserActive(ctx, operator._id, false));
+
+    await t.run(
+      async (ctx) =>
+        await applyMembership(ctx, {
+          workosUserId: "staff_locked_company",
+          organizationId: "org_customer",
+          organizationName: "Customer",
+          role: "admin",
+        }),
+    );
+
+    expect(await requireSeededUser(t, "staff_locked_company")).toMatchObject({
+      role: "operator",
+      isActive: false,
+      deactivatedReason: "operator",
+    });
+    // No membership row either: the lock must not buy a seat at a customer.
+    expect(await t.run(async (ctx) => await getCompanyUserByUserId(ctx, operator._id))).toBeNull();
+  });
+
+  test("a deleted operator added to a customer company keeps the operator role", async () => {
+    const t = convexTest(schema, modules);
+    await seedUser(t, { subject: "staff_deleted_company" });
+    await joinStaffOrg(t, "staff_deleted_company");
+    await t.run(async (ctx) => await deactivateUser(ctx, "staff_deleted_company"));
+
+    await t.run(
+      async (ctx) =>
+        await applyMembership(ctx, {
+          workosUserId: "staff_deleted_company",
+          organizationId: "org_customer_2",
+          organizationName: "Customer Two",
+          role: "admin",
+        }),
+    );
+
+    expect(await requireSeededUser(t, "staff_deleted_company")).toMatchObject({
+      role: "operator",
+      deactivatedReason: "deleted",
+    });
+  });
+
+  // Leaving the staff org is the one case that may convert them.
+  test("an operator who left the staff org may still become a company user", async () => {
+    const t = convexTest(schema, modules);
+    await seedUser(t, { subject: "staff_left_company" });
+    await joinStaffOrg(t, "staff_left_company");
+    await t.run(
+      async (ctx) =>
+        await removeMembership(ctx, {
+          workosUserId: "staff_left_company",
+          organizationId: STAFF_ORG,
+        }),
+    );
+
+    await t.run(
+      async (ctx) =>
+        await applyMembership(ctx, {
+          workosUserId: "staff_left_company",
+          organizationId: "org_customer_3",
+          organizationName: "Customer Three",
+          role: "admin",
+        }),
+    );
+
+    expect(await requireSeededUser(t, "staff_left_company")).toMatchObject({
+      role: "company",
+      isActive: true,
+    });
   });
 
   test("leaving it deactivates the operator", async () => {

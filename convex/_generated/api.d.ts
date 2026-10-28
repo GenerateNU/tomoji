@@ -35,7 +35,6 @@ import type * as lib_xTokenEncryption from "../lib/xTokenEncryption.js";
 import type * as media from "../media.js";
 import type * as mediaInternal from "../mediaInternal.js";
 import type * as migrations_2026_09_26_backfill_creator_usernames from "../migrations/2026_09_26_backfill_creator_usernames.js";
-import type * as migrations_2026_09_26_backfill_user_names from "../migrations/2026_09_26_backfill_user_names.js";
 import type * as migrations_2026_10_07_remove_user_profile_pictures from "../migrations/2026_10_07_remove_user_profile_pictures.js";
 import type * as migrations_2026_10_25_backfill_creator_niches from "../migrations/2026_10_25_backfill_creator_niches.js";
 import type * as migrations_runner from "../migrations/runner.js";
@@ -110,7 +109,6 @@ declare const fullApi: ApiFromModules<{
   media: typeof media;
   mediaInternal: typeof mediaInternal;
   "migrations/2026_09_26_backfill_creator_usernames": typeof migrations_2026_09_26_backfill_creator_usernames;
-  "migrations/2026_09_26_backfill_user_names": typeof migrations_2026_09_26_backfill_user_names;
   "migrations/2026_10_07_remove_user_profile_pictures": typeof migrations_2026_10_07_remove_user_profile_pictures;
   "migrations/2026_10_25_backfill_creator_niches": typeof migrations_2026_10_25_backfill_creator_niches;
   "migrations/runner": typeof migrations_runner;

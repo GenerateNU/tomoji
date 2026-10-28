@@ -7,8 +7,10 @@ import { getUserByWorkosId } from "../models/users";
 import schema from "../schema";
 import {
   expectApiError,
+  seedAssignment,
   seedCreatorId,
   seedOperator,
+  seedOpportunity,
   seedProfilePictureUpload,
   seedUser,
   seedXAccount,
@@ -269,6 +271,75 @@ describe("creators.get", () => {
     });
     expect(page).not.toHaveLength(0);
     for (const profile of page) expect(profile).not.toHaveProperty("dateOfBirth");
+  });
+
+  // The route derives the company from the caller's membership. The model
+  // skips the privacy check entirely when no company is passed, so a route
+  // that stopped forwarding it would expose every private creator.
+  describe("private creators", () => {
+    async function seedPrivateCreator(t: ReturnType<typeof convexTest>, subject: string) {
+      const creatorId = await seedCreatorId(t, subject);
+      await t.run(async (ctx) => await ctx.db.patch("creators", creatorId, { isPrivate: true }));
+      return creatorId;
+    }
+
+    test("are not found by a company with no relationship", async () => {
+      const t = convexTest(schema, modules);
+      const creatorId = await seedPrivateCreator(t, "route_private_target");
+      const { asCompany } = await seedOpportunity(t, { subject: "route_unrelated_owner" });
+
+      await expectApiError(() => asCompany.query(api.creators.get, { creatorId }), "not_found");
+    });
+
+    test("are returned to a company they applied to", async () => {
+      const t = convexTest(schema, modules);
+      const creatorId = await seedPrivateCreator(t, "route_applicant");
+      const { asCompany, opportunityId, membership } = await seedOpportunity(t, {
+        subject: "route_applied_owner",
+      });
+      await t.run(async (ctx) => {
+        await ctx.db.insert("applications", {
+          opportunityId,
+          creatorId,
+          companyId: membership.companyId,
+          status: "pending",
+        });
+      });
+
+      expect(await asCompany.query(api.creators.get, { creatorId })).toMatchObject({
+        creatorId,
+        isPrivate: true,
+      });
+    });
+
+    test("are returned to a company that assigned them", async () => {
+      const t = convexTest(schema, modules);
+      const creatorId = await seedPrivateCreator(t, "route_assignee");
+      const { asCompany, opportunityId } = await seedOpportunity(t, {
+        subject: "route_assigned_owner",
+      });
+      await seedAssignment(t, { opportunityId, creatorId, status: "active" });
+
+      expect(await asCompany.query(api.creators.get, { creatorId })).toMatchObject({
+        creatorId,
+        isPrivate: true,
+      });
+    });
+
+    test("are left out of the list a company browses", async () => {
+      const t = convexTest(schema, modules);
+      const hiddenId = await seedPrivateCreator(t, "route_listed_private");
+      const openId = await seedCreatorId(t, "route_listed_open");
+      const { asCompany } = await seedOpportunity(t, { subject: "route_list_owner" });
+
+      const { page } = await asCompany.query(api.creators.list, {
+        paginationOpts: { cursor: null, numItems: 20 },
+      });
+
+      const listed = page.map((profile) => profile.creatorId);
+      expect(listed).toContain(openId);
+      expect(listed).not.toContain(hiddenId);
+    });
   });
 
   test("rejects a signed-out caller", async () => {

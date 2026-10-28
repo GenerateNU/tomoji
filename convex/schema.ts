@@ -19,6 +19,7 @@ import { usersTable } from "./schemas/users.schema";
 import { xAccountsTable } from "./schemas/xAccounts.schema";
 import { xAccountCredentialsTable } from "./schemas/xAccountCredentials.schema";
 import { xLinkAttemptsTable } from "./schemas/xLinkAttempts.schema";
+import { deliverablesTable } from "./schemas/deliverables.schema";
 
 export default defineSchema({
   users: usersTable,
@@ -31,6 +32,7 @@ export default defineSchema({
   campaigns: campaignsTable,
   opportunities: opportunitiesTable,
   opportunityStars: opportunityStarsTable,
+  deliverables: deliverablesTable,
   applications: applicationsTable,
   assignments: assignmentsTable,
   submissions: submissionsTable,

@@ -162,6 +162,26 @@ Campaign end dates and offer expiries share `isHalfHourTimestamp` and `HALF_HOUR
 from `lib/validation.ts`. Callers retain their own optionality, future-time checks,
 and error reasons.
 
+## Opportunity deliverables
+
+A deliverable is one piece of content an opportunity asks every assigned creator
+to make (title and description). They are rows in `deliverables`, listed in the
+order they were added, at most 20 per opportunity.
+
+- An opportunity can't be open without one: `opportunities.create` with
+  `status: "open"` needs inline `deliverables`, `publish` refuses a draft with none,
+  and `deliverables.remove` keeps the last one of a published opportunity.
+- Once the opportunity has an assignment, in any status, its deliverables can't be
+  edited or removed, so the work a creator agreed to never changes under them and
+  their drafts keep pointing at real rows. New deliverables can still be added.
+  There is no copy on the assignment.
+- Creators see them for opportunities they can discover, and for ones they're
+  assigned to even after those pause or close.
+
+`models/deliverableDrafts.ts` holds the row rules that `models/opportunities.ts`
+also needs; `models/deliverables.ts` holds the route rules and depends on
+opportunities, which keeps the imports acyclic.
+
 ## Tests
 
 `convex/tests/` should mirror the source tree. For example:

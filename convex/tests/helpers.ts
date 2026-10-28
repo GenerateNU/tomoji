@@ -4,6 +4,7 @@ import type { Infer } from "convex/values";
 import { expect } from "vitest";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { api } from "../_generated/api";
+import type { DeliverableCreate } from "../models/deliverableDrafts";
 import type { SubmissionDraft } from "../models/submissions";
 import type { ApiErrorCode } from "../lib/errors";
 import { companyContext } from "../lib/functions";
@@ -337,7 +338,16 @@ export async function seedCampaign(t: TestConvex, options: SeedCampaignOptions) 
   return { asCompany, campaignId, membership };
 }
 
-/** A complete opportunity brief without server-owned fields. */
+/** A company-supplied deliverable. */
+export function deliverableArgs(overrides: Partial<DeliverableCreate> = {}): DeliverableCreate {
+  return {
+    title: "Launch video",
+    description: "A 30-second vertical video showing the moisturizer in your morning routine.",
+    ...overrides,
+  };
+}
+
+/** A complete opportunity brief, with one deliverable, without server-owned fields. */
 export function opportunityArgs(
   campaignId: Id<"campaigns">,
   overrides: Partial<OpportunityCreate> = {},
@@ -360,8 +370,18 @@ export function opportunityArgs(
     prohibitedClaims: "No medical claims",
     disclosureRequirements: "Disclose the paid partnership",
     usageRights: "Organic reposting for 30 days",
+    deliverables: [deliverableArgs()],
     ...overrides,
   };
+}
+
+/** The brief as stored on the opportunity; its deliverables are stored as their own rows. */
+export function withoutDeliverables(
+  args: OpportunityCreate,
+): Omit<OpportunityCreate, "deliverables"> {
+  const brief: Partial<OpportunityCreate> = { ...args };
+  delete brief.deliverables;
+  return brief as Omit<OpportunityCreate, "deliverables">;
 }
 
 /** Seeds a campaign and an opportunity through the model, bypassing route authorization. */

@@ -77,7 +77,7 @@ export const resume = companyMutation({
   },
 });
 
-/** Publishes a valid draft in an open campaign owned by the caller's company. */
+/** Publishes a draft with at least one deliverable in an open campaign the company owns. */
 export const publish = companyMutation({
   args: { opportunityId: v.id("opportunities") },
   returns: schema.doc("opportunities"),
@@ -163,7 +163,10 @@ export const list = companyQuery({
   },
 });
 
-/** Creates a draft or open opportunity in a campaign owned by the caller's company. */
+/**
+ * Creates a draft or open opportunity in a campaign owned by the caller's company, with
+ * its deliverables. An open one needs at least one (`invalid_state` `deliverables_required`).
+ */
 export const create = companyMutation({
   args: opportunityCreate.fields,
   returns: v.id("opportunities"),

@@ -36,6 +36,43 @@ describe("private creators", () => {
     expect(profiles.map((profile) => profile.creatorId)).toEqual([openId]);
   });
 
+  // Filtering after paginate() would hand back an empty page here, and a
+  // company browsing would see no creators at all.
+  test("do not consume the page a company browses", async () => {
+    const t = convexTest(schema, modules);
+    for (const subject of ["bulk_1", "bulk_2", "bulk_3"]) {
+      await makePrivate(t, await seedCreatorId(t, subject));
+    }
+    const visibleId = await seedCreatorId(t, "bulk_visible");
+
+    const result = await t.run(async (ctx) =>
+      listCreators(ctx, { paginationOpts: { cursor: null, numItems: 3 } }),
+    );
+
+    expect(result.page.map((profile) => profile.creatorId)).toEqual([visibleId]);
+  });
+
+  test("leave a full page of visible creators when they are interleaved", async () => {
+    const t = convexTest(schema, modules);
+    const visible: Id<"creators">[] = [];
+    for (let index = 0; index < 6; index += 1) {
+      const creatorId = await seedCreatorId(t, `mixed_${index}`);
+      if (index % 2 === 0) await makePrivate(t, creatorId);
+      else visible.push(creatorId);
+    }
+
+    const first = await t.run(async (ctx) =>
+      listCreators(ctx, { paginationOpts: { cursor: null, numItems: 2 } }),
+    );
+
+    expect(first.page.map((profile) => profile.creatorId)).toEqual(visible.slice(0, 2));
+    expect(first.isDone).toBe(false);
+    const second = await t.run(async (ctx) =>
+      listCreators(ctx, { paginationOpts: { cursor: first.continueCursor, numItems: 2 } }),
+    );
+    expect(second.page.map((profile) => profile.creatorId)).toEqual(visible.slice(2));
+  });
+
   test("stay hidden from a company with no relationship", async () => {
     const t = convexTest(schema, modules);
     const hiddenId = await seedCreatorId(t, "hidden_2");

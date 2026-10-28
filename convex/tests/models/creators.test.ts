@@ -283,7 +283,14 @@ describe("listCreators", () => {
         skills: ["python"],
       },
     ]);
-    expect(secondPage.isDone).toBe(true);
+    // A stream that filters before cutting the page only learns it is finished
+    // by looking past the last row, so the last page is empty rather than done.
+    expect(secondPage.isDone).toBe(false);
+    const thirdPage = await t.run(async (ctx) =>
+      listCreators(ctx, { paginationOpts: { cursor: secondPage.continueCursor, numItems: 1 } }),
+    );
+    expect(thirdPage.page).toEqual([]);
+    expect(thirdPage.isDone).toBe(true);
   });
 
   test("excludes inactive and non-creator accounts", async () => {

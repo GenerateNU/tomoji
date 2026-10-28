@@ -1,4 +1,5 @@
 import type { PaginationOptions, PaginationResult } from "convex/server";
+import { stream } from "convex-helpers/server/stream";
 import { v, type Infer } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
@@ -11,6 +12,7 @@ import { SKILLS } from "./skills";
 import { getXAccountByCreatorId } from "./xAccountLookup";
 import { requireCountry } from "./countries";
 import { requireAdultBirthdate } from "../lib/birthdate";
+import schema from "../schema";
 import { MAX_ADDITIONAL_LINKS } from "../schemas/creators.schema";
 
 /**
@@ -181,9 +183,17 @@ export async function listCreators(
   ctx: QueryCtx,
   options: { paginationOpts: PaginationOptions },
 ): Promise<PaginationResult<CreatorProfile>> {
-  const users = await ctx.db
+  // Private creators are dropped inside the stream, before the page is cut, so
+  // a run of them shortens what is scanned rather than emptying the page. Every
+  // scanned row hydrates its associations, so the scan is capped by the document
+  // budget rather than the shared default.
+  return await stream(ctx.db, schema)
     .query("users")
     .withIndex("by_role_and_isActive", (q) => q.eq("role", "creator").eq("isActive", true))
+    .map(async (user) => {
+      const profile = await getCreatorProfile(ctx, user, await requireCreatorRow(ctx, user));
+      return profile.isPrivate ? null : profile;
+    })
     .paginate({
       ...options.paginationOpts,
       maximumRowsRead: Math.min(
@@ -191,16 +201,6 @@ export async function listCreators(
         MAX_CREATOR_LIST_ROWS,
       ),
     });
-
-  // Convex has no joins, so hydrate only the bounded page returned above.
-  const page = await Promise.all(
-    users.page.map(
-      async (user) => await getCreatorProfile(ctx, user, await requireCreatorRow(ctx, user)),
-    ),
-  );
-  // Filtered after hydration rather than in the index, so a private creator
-  // leaves a shorter page instead of being replaced by the next one.
-  return { ...users, page: page.filter((profile) => !profile.isPrivate) };
 }
 
 /**

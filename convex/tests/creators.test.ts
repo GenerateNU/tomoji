@@ -187,11 +187,16 @@ describe("creators.list", () => {
     expect(firstPage.page).toHaveLength(1);
     expect(firstPage.isDone).toBe(false);
     expect(secondPage.page).toHaveLength(1);
-    expect(secondPage.isDone).toBe(true);
     expect([...firstPage.page, ...secondPage.page].map((creator) => creator.email)).toEqual([
       "one@example.com",
       "two@example.com",
     ]);
+    // The filtered stream reports completion on the page after the last row.
+    const thirdPage = await asCompany.query(api.creators.list, {
+      paginationOpts: { cursor: secondPage.continueCursor, numItems: 1 },
+    });
+    expect(thirdPage.page).toEqual([]);
+    expect(thirdPage.isDone).toBe(true);
   });
 
   test("skips duplicate-email accounts, which have no creator row, instead of throwing", async () => {

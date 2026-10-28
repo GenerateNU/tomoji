@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useQuery } from "convex/react";
-import { cn } from "cn";
+import { cn } from "@/lib/utils";
 import { ExternalLink } from "lucide-react";
 import { api } from "@convex/_generated/api";
 import { buttonVariants } from "@/components/ui/button";
@@ -40,7 +40,7 @@ export function CreatorProfile() {
           </div>
           <Link
             href="/settings"
-            className={cn(buttonVariants({ variant: "outline" }), "min-h-11 self-start px-4")}
+            className={cn(buttonVariants({ variant: "secondary" }), "min-h-11 self-start px-4")}
           >
             Edit profile
           </Link>

@@ -44,7 +44,10 @@ export function Welcome() {
           <Link href="/opportunities" className={buttonVariants({ size: "lg" })}>
             Browse opportunities
           </Link>
-          <Link href="/applications" className={buttonVariants({ size: "lg", variant: "outline" })}>
+          <Link
+            href="/applications"
+            className={buttonVariants({ size: "lg", variant: "secondary" })}
+          >
             My applications
           </Link>
         </nav>

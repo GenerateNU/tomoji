@@ -146,7 +146,7 @@ export function BasicDetailsForm({
         <Button
           type="button"
           aria-label="Discard basic details changes"
-          variant="outline"
+          variant="secondary"
           className="min-h-11"
           disabled={pending}
           onClick={onDiscard}

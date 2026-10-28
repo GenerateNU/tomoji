@@ -17,7 +17,7 @@ export function NoApplications({
     return (
       <div className="flex flex-col items-start gap-3">
         <p className="text-muted-foreground">There are no more applications.</p>
-        <Button variant="outline" onClick={onBack}>
+        <Button variant="secondary" onClick={onBack}>
           Previous page
         </Button>
       </div>
@@ -29,7 +29,7 @@ export function NoApplications({
         <p className="text-muted-foreground">
           You have no applications marked &ldquo;{APPLICATION_STATUS_LABELS[status]}&rdquo;.
         </p>
-        <Button variant="outline" onClick={onShowAll}>
+        <Button variant="secondary" onClick={onShowAll}>
           Show all statuses
         </Button>
       </div>

@@ -15,15 +15,21 @@ export const COUNTRIES: readonly Country[] = Object.entries(
   .map(([code, name]) => ({ code, name }))
   .sort((a, b) => a.name.localeCompare(b.name));
 
+// Checked against the picker's own codes, not countries.isValid, which also
+// accepts alpha-3 and numeric codes. Storing one of those leaves a value no
+// picker option matches, so the form shows a blank country and saves over it.
+const COUNTRY_CODES: ReadonlySet<string> = new Set(COUNTRIES.map((entry) => entry.code));
+
 /**
  * Returns the stored alpha-2 code. Input is matched loosely on case, so "us"
  * and "US" both mean `US`.
  *
- * @throws `invalid_state` with `invalid_country` if it is not an assigned code.
+ * @throws `invalid_state` with `invalid_country` if it is not an assigned
+ * alpha-2 code.
  */
 export function requireCountry(input: string): string {
   const code = input.trim().toUpperCase();
-  if (!countries.isValid(code)) {
+  if (!COUNTRY_CODES.has(code)) {
     throw apiError("invalid_state", { reason: "invalid_country" });
   }
   return code;

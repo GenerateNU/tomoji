@@ -542,15 +542,37 @@ export async function cancelPendingAssignment(
     assignmentId,
   );
   const cancelled = await cancelAssignment(ctx, assignment);
-  const opportunity = await ctx.db.get("opportunities", assignment.opportunityId);
-  if (opportunity !== null) {
-    await notifyCreator(ctx, assignment.creatorId, {
-      type: "assignmentCancelled",
-      title: `Your assignment for ${opportunity.title} was cancelled`,
-      target: assignmentTarget(assignment._id),
-    });
-  }
+  await notifyCreatorOfCancellation(ctx, assignment);
   return cancelled;
+}
+
+/**
+ * Cancels an active assignment, frees its slot, and tells the creator. Does no
+ * authorization: dispute resolution calls this after deciding Tomoji may.
+ *
+ * @throws `invalid_state` if the assignment is not active.
+ */
+export async function cancelActiveAssignment(
+  ctx: MutationCtx,
+  assignment: Doc<"assignments">,
+): Promise<Doc<"assignments">> {
+  requireActiveAssignment(assignment);
+  const cancelled = await cancelAssignment(ctx, assignment);
+  await notifyCreatorOfCancellation(ctx, assignment);
+  return cancelled;
+}
+
+async function notifyCreatorOfCancellation(
+  ctx: MutationCtx,
+  assignment: Doc<"assignments">,
+): Promise<void> {
+  const opportunity = await ctx.db.get("opportunities", assignment.opportunityId);
+  if (opportunity === null) return;
+  await notifyCreator(ctx, assignment.creatorId, {
+    type: "assignmentCancelled",
+    title: `Your assignment for ${opportunity.title} was cancelled`,
+    target: assignmentTarget(assignment._id),
+  });
 }
 
 async function requirePendingAssignment(

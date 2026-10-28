@@ -10,8 +10,11 @@ import {
   seedDispute,
   seedMembership,
   seedOperator,
+  seedSubmission,
   seedWrongOrgCaller,
   storedDisputes,
+  storedSubmission,
+  storedSubmissions,
   type AssignmentFixture,
   type TestConvex,
 } from "./helpers";
@@ -242,5 +245,77 @@ describe("disputes.override", () => {
       "forbidden",
     );
     expect(await storedDisputes(t)).toEqual(before);
+  });
+});
+
+describe("dispute effects through the routes", () => {
+  test("lets an operator approve the disputed draft when resolving", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await seedAssignmentFixture(t);
+    const submissionId = await seedSubmission(t, fixture, "changesRequested");
+    const disputeId = await seedDispute(t, fixture);
+    const asOperator = await seedOperator(t, "de-operator");
+
+    const view = await asOperator.mutation(api.disputes.resolve, {
+      disputeId,
+      outcome: "approved",
+      effect: { kind: "approveDraft", submissionId },
+    });
+
+    expect(view).toMatchObject({ effect: { kind: "approveDraft", submissionId } });
+    expect(await storedSubmission(t, submissionId)).toMatchObject({
+      status: "approved",
+      reviewerType: "operator",
+    });
+  });
+
+  test("lets an operator cancel the assignment when overriding", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await seedAssignmentFixture(t);
+    const disputeId = await seedDispute(
+      t,
+      fixture,
+      { reason: "productMisuse", openedBy: fixture.membership.userId, openedByRole: "company" },
+      {
+        resolvedBy: fixture.membership.userId,
+        resolvedByRole: "company",
+        resolvedAt: Date.now(),
+        outcome: "denied",
+      },
+    );
+    const asOperator = await seedOperator(t, "de-operator");
+
+    const overridden = await asOperator.mutation(api.disputes.override, {
+      disputeId,
+      outcome: "approved",
+      note: "The video shows the product used against the brief.",
+      effect: { kind: "cancelAssignment" },
+    });
+
+    expect(overridden.effect).toEqual({ kind: "cancelAssignment" });
+    const assignment = await t.run(
+      async (ctx) => await ctx.db.get("assignments", fixture.assignmentId),
+    );
+    expect(assignment?.status).toBe("cancelled");
+  });
+
+  test("refuses an effect from the opener's side without changing anything", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await seedAssignmentFixture(t);
+    const submissionId = await seedSubmission(t, fixture, "changesRequested");
+    // The creator opened it, so they may close it, just not with an effect.
+    const disputeId = await seedDispute(t, fixture);
+    const before = { disputes: await storedDisputes(t), submissions: await storedSubmissions(t) };
+
+    await expect(
+      fixture.asCreator.mutation(api.disputes.resolve, {
+        disputeId,
+        outcome: "approved",
+        effect: { kind: "approveDraft", submissionId },
+      }),
+    ).rejects.toMatchObject({ data: { code: "forbidden", reason: "effect_operator_only" } });
+    expect({ disputes: await storedDisputes(t), submissions: await storedSubmissions(t) }).toEqual(
+      before,
+    );
   });
 });

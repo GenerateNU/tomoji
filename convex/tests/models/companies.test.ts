@@ -139,7 +139,7 @@ describe("updateCompany", () => {
     );
 
     expect(await companyRow(t, companyId)).toMatchObject({
-      website: "https://acme.com",
+      website: "https://acme.com/",
       description: "Developer tools.",
     });
   });
@@ -155,7 +155,26 @@ describe("updateCompany", () => {
       () => t.run(async (ctx) => await updateCompany(ctx, companyId, { website: " " })),
       "invalid_state",
     );
-    expect((await companyRow(t, companyId))?.website).toBe("https://acme.com");
+    expect((await companyRow(t, companyId))?.website).toBe("https://acme.com/");
+  });
+
+  test.each([
+    ["a bare domain", "acme.com"],
+    ["plain http", "http://acme.com"],
+    ["a javascript scheme", "javascript:alert(1)"],
+    ["login details that disguise the host", "https://acme.com@evil.test"],
+  ])("rejects %s as a website and leaves the row unchanged", async (_label, website) => {
+    const t = convexTest(schema, modules);
+    const companyId = await insertCompany(t, "org_bad_site");
+    await t.run(
+      async (ctx) => await updateCompany(ctx, companyId, { website: "https://acme.com" }),
+    );
+
+    await expectApiError(
+      () => t.run(async (ctx) => await updateCompany(ctx, companyId, { website })),
+      "invalid_state",
+    );
+    expect((await companyRow(t, companyId))?.website).toBe("https://acme.com/");
   });
 
   test("rejects a blank description and leaves the row unchanged", async () => {

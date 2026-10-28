@@ -42,181 +42,18 @@ async function openSettings(page: Page, query = "") {
   await expect(page.getByRole("heading", { name: "Settings", exact: true })).toBeVisible();
 }
 
-test("saving basic details normalizes the username and preserves the portfolio", async ({
-  page,
-}) => {
-  await openSettings(page);
-  await page.getByRole("button", { name: "Edit basic details" }).click();
-  await page.getByLabel("Username", { exact: true }).fill("  ZahraTech  ");
-  await page.getByLabel("Phone number (optional)").fill("  +1 617 555 0123  ");
-  await page.getByRole("button", { name: "Save basic details" }).click();
-  const details = page.getByRole("region", { name: "Basic details" });
-  await expect(details.getByText("zahratech", { exact: true })).toBeVisible();
-  await expect(details.getByText("+1 617 555 0123", { exact: true })).toBeVisible();
-  await expect(page.getByRole("link", { name: /https:\/\/github.com\/zahra/ })).toBeVisible();
-  expect(await page.evaluate(() => window.settingsFixture.calls)).toEqual([
-    {
-      name: "creators:update",
-      args: { username: "zahratech", phoneNumber: "+1 617 555 0123" },
-    },
-  ]);
-});
-
-test("basic details keep WorkOS names and email read-only", async ({ page }) => {
+test("basic details are read-only identity fields from WorkOS", async ({ page }) => {
   await openSettings(page);
   const details = page.getByRole("region", { name: "Basic details" });
   await expect(details.getByText("Zahra", { exact: true })).toBeVisible();
   await expect(details.getByText("Wibisana", { exact: true })).toBeVisible();
   await expect(details.getByText("zahra@example.test", { exact: true })).toBeVisible();
-  await details.getByRole("button", { name: "Edit basic details" }).click();
-  await expect(details.getByRole("textbox")).toHaveCount(2);
-  await expect(details.getByLabel("Username", { exact: true })).toBeFocused();
-  await expect(details.getByRole("button", { name: "Save basic details" })).toBeDisabled();
-  await expect(details.getByText("zahra@example.test", { exact: true })).toBeVisible();
-});
-
-test("a taken username preserves both fields and allows a corrected retry", async ({ page }) => {
-  await openSettings(page);
-  await page.getByRole("button", { name: "Edit basic details" }).click();
-  const username = page.getByLabel("Username", { exact: true });
-  const phone = page.getByLabel("Phone number (optional)");
-  await username.fill("taken-name");
-  await phone.fill("+1 617 555 0123");
-  await page.evaluate(() => window.settingsFixture.rejectUsername());
-  await page.getByRole("button", { name: "Save basic details" }).click();
-  await expect(page.getByRole("alert")).toHaveText("That username is taken. Choose another.");
-  await expect(username).toHaveAttribute("aria-invalid", "true");
-  await expect(username).toBeFocused();
-  await expect(username).toHaveValue("taken-name");
-  await expect(phone).toHaveValue("+1 617 555 0123");
-
-  await username.fill("available-name");
-  await page.getByRole("button", { name: "Save basic details" }).click();
-  await expect(page.getByText("Basic details saved.", { exact: true })).toBeVisible();
-  expect(await page.evaluate(() => window.settingsFixture.calls)).toEqual([
-    {
-      name: "creators:update",
-      args: { username: "taken-name", phoneNumber: "+1 617 555 0123" },
-    },
-    {
-      name: "creators:update",
-      args: { username: "available-name", phoneNumber: "+1 617 555 0123" },
-    },
-  ]);
-});
-
-test("a failed basic details save keeps the draft available for retry", async ({ page }) => {
-  await openSettings(page);
-  await page.getByRole("button", { name: "Edit basic details" }).click();
-  await page.getByLabel("Username", { exact: true }).fill("new-username");
-  await page.getByLabel("Phone number (optional)").fill("+1 617 555 0123");
-  await page.evaluate(() => window.settingsFixture.failNext("creators:update"));
-  await page.getByRole("button", { name: "Save basic details" }).click();
-  await expect(page.getByRole("alert")).toContainText("Something went wrong");
-  await expect(page.getByLabel("Username", { exact: true })).toHaveValue("new-username");
-  await expect(page.getByLabel("Phone number (optional)")).toHaveValue("+1 617 555 0123");
-  await page.getByRole("button", { name: "Save basic details" }).click();
-  await expect(page.getByText("Basic details saved.", { exact: true })).toBeVisible();
-});
-
-test("an optional phone can be cleared without choosing an unset username", async ({ page }) => {
-  await openSettings(page);
-  await page.evaluate(() => window.settingsFixture.setProfile({ username: undefined }));
-  await page.getByRole("button", { name: "Edit basic details" }).click();
-  await expect(page.getByLabel("Username", { exact: true })).toHaveValue("");
-  await page.getByLabel("Phone number (optional)").fill("   ");
-  await page.getByRole("button", { name: "Save basic details" }).click();
-  await expect(page.getByText("Basic details saved.", { exact: true })).toBeVisible();
-  expect(await page.evaluate(() => window.settingsFixture.calls)).toEqual([
-    { name: "creators:update", args: { phoneNumber: null } },
-  ]);
-  await page.getByRole("button", { name: "Edit basic details" }).click();
-  await expect(page.getByLabel("Username", { exact: true })).toHaveValue("");
-  await expect(page.getByLabel("Phone number (optional)")).toHaveValue("");
-});
-
-test("an existing username cannot be cleared", async ({ page }) => {
-  await openSettings(page);
-  await page.getByRole("button", { name: "Edit basic details" }).click();
-  const username = page.getByLabel("Username", { exact: true });
-  await username.fill("   ");
-  await page.getByRole("button", { name: "Save basic details" }).click();
-  await expect(page.getByRole("alert")).toContainText("An existing username cannot be cleared.");
-  await expect(username).toHaveAttribute("aria-invalid", "true");
-  await expect(username).toBeFocused();
+  await expect(details.getByRole("textbox")).toHaveCount(0);
+  await expect(details.getByRole("button")).toHaveCount(0);
   expect(await page.evaluate(() => window.settingsFixture.calls)).toEqual([]);
 });
 
-test("discarding basic details uses the latest profile without overwriting an unsaved draft", async ({
-  page,
-}) => {
-  await openSettings(page);
-  const details = page.getByRole("region", { name: "Basic details" });
-  await details.getByRole("button", { name: "Edit basic details" }).click();
-  await page.getByLabel("Username", { exact: true }).fill("my-draft");
-  await page.getByLabel("Phone number (optional)").fill("+1 617 555 0123");
-  await page.evaluate(() =>
-    window.settingsFixture.setProfile({
-      username: "updated-elsewhere",
-      phoneNumber: "+1 617 555 0199",
-    }),
-  );
-  await expect(page.getByLabel("Username", { exact: true })).toHaveValue("my-draft");
-  await expect(page.getByLabel("Phone number (optional)")).toHaveValue("+1 617 555 0123");
-  await page.getByRole("button", { name: "Discard basic details changes" }).click();
-  await expect(details.getByText("updated-elsewhere", { exact: true })).toBeVisible();
-  await expect(details.getByText("+1 617 555 0199", { exact: true })).toBeVisible();
-  await expect(details.getByRole("button", { name: "Edit basic details" })).toBeFocused();
-  expect(await page.evaluate(() => window.settingsFixture.calls)).toEqual([]);
-});
-
-test("saving basic details only patches fields changed since editing began", async ({ page }) => {
-  await openSettings(page);
-  const details = page.getByRole("region", { name: "Basic details" });
-  await details.getByRole("button", { name: "Edit basic details" }).click();
-  await page.getByLabel("Phone number (optional)").fill("+1 617 555 0123");
-  await page.evaluate(() => window.settingsFixture.setProfile({ username: "updated-elsewhere" }));
-  await page.getByRole("button", { name: "Save basic details" }).click();
-  await expect(details.getByText("updated-elsewhere", { exact: true })).toBeVisible();
-
-  await details.getByRole("button", { name: "Edit basic details" }).click();
-  await page.getByLabel("Username", { exact: true }).fill("my-new-name");
-  await page.evaluate(() => window.settingsFixture.setProfile({ phoneNumber: "+1 617 555 0199" }));
-  await page.getByRole("button", { name: "Save basic details" }).click();
-  await expect(details.getByText("+1 617 555 0199", { exact: true })).toBeVisible();
-  expect(await page.evaluate(() => window.settingsFixture.calls)).toEqual([
-    { name: "creators:update", args: { phoneNumber: "+1 617 555 0123" } },
-    { name: "creators:update", args: { username: "my-new-name" } },
-  ]);
-});
-
-test("pending basic details saves disable editing and prevent duplicate submissions", async ({
-  page,
-}) => {
-  await openSettings(page);
-  const details = page.getByRole("region", { name: "Basic details" });
-  await details.getByRole("button", { name: "Edit basic details" }).click();
-  await page.getByLabel("Username", { exact: true }).fill("my-new-name");
-  await page.evaluate(() => window.settingsFixture.delayNext("creators:update"));
-  await details.locator("form").evaluate((form: HTMLFormElement) => {
-    form.requestSubmit();
-    form.requestSubmit();
-  });
-  await expect(page.getByLabel("Username", { exact: true })).toBeDisabled();
-  await expect(page.getByLabel("Phone number (optional)")).toBeDisabled();
-  await expect(page.getByRole("button", { name: "Discard basic details changes" })).toBeDisabled();
-  await expect(page.getByRole("button", { name: /Saving basic details/ })).toBeDisabled();
-  expect(await page.evaluate(() => window.settingsFixture.calls)).toEqual([
-    { name: "creators:update", args: { username: "my-new-name" } },
-  ]);
-  await page.evaluate(() => window.settingsFixture.release("creators:update"));
-  await expect(page.getByText("Basic details saved.", { exact: true })).toBeVisible();
-  await expect(details.getByRole("button", { name: "Edit basic details" })).toBeFocused();
-});
-
-test("basic details fit on mobile with keyboard navigation and long identity fields", async ({
-  page,
-}, testInfo) => {
+test("basic details fit on mobile with a long email address", async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 375, height: 812 });
   await openSettings(page);
   await page.evaluate(() =>
@@ -224,12 +61,12 @@ test("basic details fit on mobile with keyboard navigation and long identity fie
       email: "a-long-email-address-for-a-creator-with-several-names@example.test",
     }),
   );
-  await page.getByRole("button", { name: "Edit basic details" }).click();
-  await expect(page.getByLabel("Username", { exact: true })).toBeFocused();
-  await page.keyboard.press("Tab");
-  await expect(page.getByLabel("Phone number (optional)")).toBeFocused();
-  await page.keyboard.press("Tab");
-  await expect(page.getByRole("button", { name: "Discard basic details changes" })).toBeFocused();
+  const details = page.getByRole("region", { name: "Basic details" });
+  await expect(
+    details.getByText("a-long-email-address-for-a-creator-with-several-names@example.test", {
+      exact: true,
+    }),
+  ).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
     true,
   );
@@ -238,7 +75,6 @@ test("basic details fit on mobile with keyboard navigation and long identity fie
     fullPage: true,
   });
 });
-
 test("discarding GitHub edits restores the saved link without a mutation", async ({ page }) => {
   await openSettings(page);
   await page.getByRole("button", { name: "Edit GitHub profile" }).click();
@@ -444,4 +280,172 @@ test("signed-out visitors to the actual Settings route land on log in", async ({
   await page.goto("/settings");
   await expect(page).toHaveURL(/\/login\?next=%2Fsettings$/);
   await expect(page.getByRole("heading", { name: "Welcome back" })).toBeVisible();
+});
+
+test("saving personal details stores a birthdate and country the API accepts", async ({ page }) => {
+  await openSettings(page);
+  const details = page.getByRole("region", { name: "Personal details" });
+  await details.getByRole("button", { name: "Edit personal details" }).click();
+  await page.getByLabel("Date of birth").fill("1990-01-01");
+  await page.getByLabel("Country of residence").selectOption("JP");
+  await page.getByRole("button", { name: "Save personal details" }).click();
+
+  await expect(details.getByText("January 1, 1990", { exact: true })).toBeVisible();
+  await expect(details.getByText("Japan", { exact: true })).toBeVisible();
+  await expect(page.getByText("Personal details saved.", { exact: true })).toBeVisible();
+  expect(await page.evaluate(() => window.settingsFixture.calls)).toEqual([
+    {
+      name: "creators:update",
+      // Sent as UTC midnight, which is what the API stores.
+      args: { dateOfBirth: Date.UTC(1990, 0, 1), countryOfResidence: "JP" },
+    },
+  ]);
+});
+
+test("an under-18 birthdate is refused in the browser without reaching the API", async ({
+  page,
+}) => {
+  await openSettings(page);
+  await page.getByRole("button", { name: "Edit personal details" }).click();
+  const birthdate = page.getByLabel("Date of birth");
+  const tooYoung = new Date(Date.now() - 17 * 365 * 24 * 60 * 60 * 1000);
+  await birthdate.fill(tooYoung.toISOString().slice(0, 10));
+  await page.getByRole("button", { name: "Save personal details" }).click();
+
+  await expect(page.getByRole("alert")).toContainText("at least 18");
+  await expect(birthdate).toBeFocused();
+  await expect(birthdate).toHaveAttribute("aria-invalid", "true");
+  expect(await page.evaluate(() => window.settingsFixture.calls)).toEqual([]);
+});
+
+test("a saved birthdate can be corrected but not removed", async ({ page }) => {
+  await openSettings(page);
+  await page.evaluate(() =>
+    window.settingsFixture.setProfile({ dateOfBirth: Date.UTC(1990, 0, 1) }),
+  );
+  await page.getByRole("button", { name: "Edit personal details" }).click();
+  await page.getByLabel("Date of birth").fill("");
+  await page.getByRole("button", { name: "Save personal details" }).click();
+
+  await expect(page.getByRole("alert")).toContainText("can't be removed");
+  expect(await page.evaluate(() => window.settingsFixture.calls)).toEqual([]);
+
+  await page.getByLabel("Date of birth").fill("1991-02-03");
+  await page.getByRole("button", { name: "Save personal details" }).click();
+  await expect(page.getByText("February 3, 1991", { exact: true })).toBeVisible();
+});
+
+test("saving links normalizes LinkedIn and keeps the other links in order", async ({ page }) => {
+  await openSettings(page);
+  const links = page.getByRole("region", { name: "Links" });
+  await links.getByRole("button", { name: "Edit links" }).click();
+  await page.getByLabel("LinkedIn profile URL").fill("  linkedin.com/in/zahra  ");
+  await page.getByRole("button", { name: "Add another link" }).click();
+  await page.getByLabel("Link 1", { exact: true }).fill("https://zahra.example.test/work");
+  await page.getByRole("button", { name: "Add another link" }).click();
+  await page.getByLabel("Link 2", { exact: true }).fill("https://notes.example.test");
+  await page.getByRole("button", { name: "Save links" }).click();
+
+  await expect(page.getByText("Links saved.", { exact: true })).toBeVisible();
+  expect(await page.evaluate(() => window.settingsFixture.calls)).toEqual([
+    {
+      name: "creators:update",
+      args: {
+        linkedinLink: "https://linkedin.com/in/zahra",
+        additionalLinks: ["https://zahra.example.test/work", "https://notes.example.test/"],
+      },
+    },
+  ]);
+  await expect(links.getByRole("link", { name: /zahra\.example\.test\/work/ })).toBeVisible();
+});
+
+test("an invalid other link marks its own row and blocks the save", async ({ page }) => {
+  await openSettings(page);
+  await page.getByRole("button", { name: "Edit links" }).click();
+  await page.getByRole("button", { name: "Add another link" }).click();
+  await page.getByLabel("Link 1", { exact: true }).fill("https://fine.example.test");
+  await page.getByRole("button", { name: "Add another link" }).click();
+  await page.getByLabel("Link 2", { exact: true }).fill("http://insecure.example.test");
+  await page.getByRole("button", { name: "Save links" }).click();
+
+  await expect(page.getByRole("alert")).toContainText("secure URL");
+  await expect(page.getByLabel("Link 2", { exact: true })).toBeFocused();
+  await expect(page.getByLabel("Link 1", { exact: true })).toHaveAttribute("aria-invalid", "false");
+  expect(await page.evaluate(() => window.settingsFixture.calls)).toEqual([]);
+});
+
+test("the other-links list stops at the limit the API enforces", async ({ page }) => {
+  await openSettings(page);
+  await page.getByRole("button", { name: "Edit links" }).click();
+  const add = page.getByRole("button", { name: "Add another link" });
+  for (let index = 0; index < 3; index += 1) await add.click();
+
+  await expect(page.getByRole("group")).toContainText("3 of 3");
+  await expect(add).toHaveCount(0);
+
+  await page.getByRole("button", { name: "Remove link 2" }).click();
+  await expect(page.getByRole("group")).toContainText("2 of 3");
+  await expect(add).toBeVisible();
+});
+
+test("unsafe saved links are never rendered as clickable links", async ({ page }) => {
+  await openSettings(page);
+  for (const linkedinLink of ["javascript:alert(1)", "https://linkedin.com.evil.test/in/zahra"]) {
+    await page.evaluate(
+      (link) => window.settingsFixture.setProfile({ linkedinLink: link }),
+      linkedinLink,
+    );
+    await expect(
+      page.getByText("Your saved link needs updating. Edit it to add a valid LinkedIn URL."),
+    ).toBeVisible();
+    await expect(page.getByRole("link").filter({ hasText: linkedinLink })).toHaveCount(0);
+  }
+  await page.evaluate(() =>
+    window.settingsFixture.setProfile({ additionalLinks: ["javascript:alert(1)"] }),
+  );
+  await expect(page.getByText("No other links added yet.")).toBeVisible();
+});
+
+test("turning on a private profile is confirmed and reported to the API", async ({ page }) => {
+  await openSettings(page);
+  const visibility = page.getByRole("region", { name: "Profile visibility" });
+  const toggle = visibility.getByRole("switch", { name: "Private profile" });
+  await expect(toggle).not.toBeChecked();
+
+  await toggle.click();
+
+  await expect(toggle).toBeChecked();
+  await expect(page.getByText("Your profile is now private.", { exact: true })).toBeVisible();
+  expect(await page.evaluate(() => window.settingsFixture.calls)).toEqual([
+    { name: "creators:update", args: { isPrivate: true } },
+  ]);
+});
+
+test("a failed visibility change explains itself and leaves the setting alone", async ({
+  page,
+}) => {
+  await openSettings(page);
+  await page.evaluate(() => window.settingsFixture.failNext("creators:update"));
+  const toggle = page.getByRole("switch", { name: "Private profile" });
+
+  await toggle.click();
+
+  await expect(page.getByRole("alert")).toBeVisible();
+  await expect(toggle).not.toBeChecked();
+});
+
+test("captures the responsive creator detail forms", async ({ page }, testInfo) => {
+  await openSettings(page);
+  await page.getByRole("button", { name: "Edit personal details" }).click();
+  await page.getByRole("button", { name: "Edit links" }).click();
+  await page.getByRole("button", { name: "Add another link" }).click();
+  await page.getByLabel("Link 1", { exact: true }).fill("https://zahra.example.test/work");
+
+  await page.screenshot({ path: testInfo.outputPath("creator-forms-desktop.png"), fullPage: true });
+
+  await page.setViewportSize({ width: 375, height: 812 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
+    true,
+  );
+  await page.screenshot({ path: testInfo.outputPath("creator-forms-mobile.png"), fullPage: true });
 });

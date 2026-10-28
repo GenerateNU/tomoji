@@ -133,7 +133,7 @@ export async function upsertUser(ctx: MutationCtx, profile: WorkosProfile): Prom
       role: "creator",
       isActive: true,
     });
-    await ctx.db.insert("creators", { userId });
+    await ctx.db.insert("creators", { userId, isPrivate: false });
     return userId;
   }
 
@@ -213,7 +213,7 @@ export async function setUserActive(
     deactivatedReason: undefined,
   });
   if (user.role === "creator" && (await getCreatorByUserId(ctx, userId)) === null) {
-    await ctx.db.insert("creators", { userId });
+    await ctx.db.insert("creators", { userId, isPrivate: false });
   }
   const updated = await ctx.db.get("users", userId);
   if (updated === null) throw apiError("not_found", { resource: "user" });

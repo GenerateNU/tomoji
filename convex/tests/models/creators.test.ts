@@ -159,6 +159,8 @@ describe("listCreators", () => {
         firstName: "Test",
         lastName: "",
         email: "creator_budget_100@example.com",
+        additionalLinks: [],
+        isPrivate: false,
         niches: [],
         skills: [],
       },
@@ -190,9 +192,7 @@ describe("listCreators", () => {
       const creator = await getCreatorByUserId(ctx, user._id);
       if (creator === null) throw new Error("expected seeded creator");
       await updateCreatorProfile(ctx, user, {
-        username: "creator_name",
         githubLink: "https://github.com/creator",
-        phoneNumber: "+15555550123",
       });
       return creator._id;
     });
@@ -204,14 +204,14 @@ describe("listCreators", () => {
     expect(result.page).toEqual([
       {
         creatorId,
-        username: "creator_name",
         firstName: "Creator",
         lastName: "Name",
         email: "creator@example.com",
         profilePictureMediaId: uploadId,
         xId: "123456789",
         githubLink: "https://github.com/creator",
-        phoneNumber: "+15555550123",
+        additionalLinks: [],
+        isPrivate: false,
         niches: [],
         skills: [],
       },
@@ -264,6 +264,8 @@ describe("listCreators", () => {
         firstName: "Ada",
         lastName: "Lovelace",
         email: "page-one@example.com",
+        additionalLinks: [],
+        isPrivate: false,
         niches: ["databases"],
         skills: ["typescript"],
       },
@@ -275,11 +277,20 @@ describe("listCreators", () => {
         firstName: "Grace",
         lastName: "Hopper",
         email: "page-two@example.com",
+        additionalLinks: [],
+        isPrivate: false,
         niches: ["web-development"],
         skills: ["python"],
       },
     ]);
-    expect(secondPage.isDone).toBe(true);
+    // A stream that filters before cutting the page only learns it is finished
+    // by looking past the last row, so the last page is empty rather than done.
+    expect(secondPage.isDone).toBe(false);
+    const thirdPage = await t.run(async (ctx) =>
+      listCreators(ctx, { paginationOpts: { cursor: secondPage.continueCursor, numItems: 1 } }),
+    );
+    expect(thirdPage.page).toEqual([]);
+    expect(thirdPage.isDone).toBe(true);
   });
 
   test("excludes inactive and non-creator accounts", async () => {
@@ -304,88 +315,6 @@ describe("listCreators", () => {
 });
 
 describe("updateCreatorProfile", () => {
-  test.each([true, false])(
-    "rejects a username owned by another creator (active: %j) without changing either profile",
-    async (isActive) => {
-      const t = convexTest(schema, modules);
-      await seedUser(t, { subject: "username_owner" });
-      await seedUser(t, { subject: "username_claimant" });
-      const { owner, claimant, beforeOwner, beforeClaimant } = await t.run(async (ctx) => {
-        const owner = await getUserByWorkosId(ctx, "username_owner");
-        const claimant = await getUserByWorkosId(ctx, "username_claimant");
-        if (owner === null || claimant === null) throw new Error("expected seeded users");
-        await updateCreatorProfile(ctx, owner, { username: "ada" });
-        await updateCreatorProfile(ctx, claimant, { username: "grace", phoneNumber: "original" });
-        if (!isActive) await deactivateUser(ctx, "username_owner");
-        return {
-          owner,
-          claimant,
-          beforeOwner: await getCreatorByUserId(ctx, owner._id),
-          beforeClaimant: await getCreatorByUserId(ctx, claimant._id),
-        };
-      });
-
-      await expectApiError(
-        () =>
-          t.run(async (ctx) =>
-            updateCreatorProfile(ctx, claimant, { username: "  ADA  ", phoneNumber: "changed" }),
-          ),
-        "conflict",
-      );
-
-      expect(await t.run(async (ctx) => getCreatorByUserId(ctx, owner._id))).toEqual(beforeOwner);
-      expect(await t.run(async (ctx) => getCreatorByUserId(ctx, claimant._id))).toEqual(
-        beforeClaimant,
-      );
-    },
-  );
-
-  test("makes the old username available after its owner renames", async () => {
-    const t = convexTest(schema, modules);
-    await seedUser(t, { subject: "renaming_owner" });
-    await seedUser(t, { subject: "new_username_owner" });
-
-    const profiles = await t.run(async (ctx) => {
-      const owner = await getUserByWorkosId(ctx, "renaming_owner");
-      const claimant = await getUserByWorkosId(ctx, "new_username_owner");
-      if (owner === null || claimant === null) throw new Error("expected seeded users");
-      await updateCreatorProfile(ctx, owner, { username: "ada" });
-      await updateCreatorProfile(ctx, owner, { username: "augusta" });
-      await updateCreatorProfile(ctx, claimant, { username: "  ADA  " });
-      return {
-        owner: await getCreatorByUserId(ctx, owner._id),
-        claimant: await getCreatorByUserId(ctx, claimant._id),
-      };
-    });
-
-    expect(profiles.owner?.username).toBe("augusta");
-    expect(profiles.claimant?.username).toBe("ada");
-  });
-
-  test.each(["", "   ", "\t\n"])(
-    "rejects blank username %j without changing the profile",
-    async (username) => {
-      const t = convexTest(schema, modules);
-      await seedUser(t, { subject: "model_creator_blank_username" });
-      const user = await t.run(
-        async (ctx) => await getUserByWorkosId(ctx, "model_creator_blank_username"),
-      );
-      if (user === null) throw new Error("expected seeded user");
-      const before = await t.run(async (ctx) => await getCreatorByUserId(ctx, user._id));
-
-      await expectApiError(
-        () =>
-          t.run(
-            async (ctx) =>
-              await updateCreatorProfile(ctx, user, { username, phoneNumber: "changed" }),
-          ),
-        "invalid_state",
-      );
-
-      expect(await t.run(async (ctx) => await getCreatorByUserId(ctx, user._id))).toEqual(before);
-    },
-  );
-
   test("updates supplied fields and preserves omitted fields", async () => {
     const t = convexTest(schema, modules);
     await seedUser(t, { subject: "model_creator_update" });
@@ -394,18 +323,14 @@ describe("updateCreatorProfile", () => {
       const user = await getUserByWorkosId(ctx, "model_creator_update");
       if (user === null) throw new Error("expected seeded user");
       await updateCreatorProfile(ctx, user, {
-        username: "original",
         githubLink: "https://github.com/original",
-        phoneNumber: "+15555550123",
       });
 
-      return await updateCreatorProfile(ctx, user, { username: "updated" });
+      return await updateCreatorProfile(ctx, user, {});
     });
 
     expect(profile).toMatchObject({
-      username: "updated",
       githubLink: "https://github.com/original",
-      phoneNumber: "+15555550123",
     });
   });
 
@@ -417,20 +342,16 @@ describe("updateCreatorProfile", () => {
       const user = await getUserByWorkosId(ctx, "model_creator_update_clear");
       if (user === null) throw new Error("expected seeded user");
       await updateCreatorProfile(ctx, user, {
-        username: "unchanged",
         githubLink: "https://github.com/original",
-        phoneNumber: "+15555550123",
       });
 
       return await updateCreatorProfile(ctx, user, {
-        phoneNumber: null,
         githubLink: "https://github.com/updated",
       });
     });
 
     expect(profile).not.toHaveProperty("phoneNumber");
     expect(profile).toMatchObject({
-      username: "unchanged",
       githubLink: "https://github.com/updated",
     });
   });
@@ -467,7 +388,7 @@ describe("updateCreatorProfile", () => {
         t.run(async (ctx) => {
           const user = await getUserByWorkosId(ctx, "model_creator_update_missing");
           if (user === null) throw new Error("expected seeded user");
-          return await updateCreatorProfile(ctx, user, { username: "missing" });
+          return await updateCreatorProfile(ctx, user, {});
         }),
       "not_found",
     );
@@ -492,9 +413,7 @@ describe("requireCreatorProfileById", () => {
       const creator = await getCreatorByUserId(ctx, user._id);
       if (creator === null) throw new Error("expected seeded creator");
       await updateCreatorProfile(ctx, user, {
-        username: "creator_name",
         githubLink: "https://github.com/creator",
-        phoneNumber: "+15555550123",
       });
       return {
         creatorId: creator._id,
@@ -504,14 +423,14 @@ describe("requireCreatorProfileById", () => {
 
     expect(result.profile).toEqual({
       creatorId: result.creatorId,
-      username: "creator_name",
       firstName: "Creator",
       lastName: "Name",
       email: "creator@example.com",
       profilePictureMediaId: uploadId,
       xId: "123456789",
       githubLink: "https://github.com/creator",
-      phoneNumber: "+15555550123",
+      additionalLinks: [],
+      isPrivate: false,
       niches: [],
       skills: [],
     });
@@ -562,7 +481,7 @@ describe("requireCreatorProfileById", () => {
     const creatorId = await t.run(async (ctx) => {
       const user = await getUserByWorkosId(ctx, "model_creator_get_company");
       if (user === null) throw new Error("expected seeded user");
-      return await ctx.db.insert("creators", { userId: user._id, username: "non_creator" });
+      return await ctx.db.insert("creators", { userId: user._id, isPrivate: false });
     });
 
     await expectApiError(
@@ -613,14 +532,16 @@ describe("creator niches", () => {
           updateCreatorProfile(ctx, user, {
             niches: ["web-development"],
             skills: ["unknown"],
-            username: "changed",
+            githubLink: "https://github.com/rolled-back",
           }),
         ),
       "invalid_state",
       "invalid_skill",
     );
     expect(await t.run((ctx) => requireCreatorProfile(ctx, user))).toEqual(before);
-    expect(await t.run((ctx) => ctx.db.get("creators", creatorId))).not.toHaveProperty("username");
+    expect(await t.run((ctx) => ctx.db.get("creators", creatorId))).not.toHaveProperty(
+      "githubLink",
+    );
   });
 
   test("stores normalized niches and skills as separate associations", async () => {
@@ -650,7 +571,7 @@ describe("creator niches", () => {
         await updateCreatorProfile(ctx, user, {
           niches: ["databases", "web-development", "databases"],
         }),
-        await updateCreatorProfile(ctx, user, { username: "chef" }),
+        await updateCreatorProfile(ctx, user, {}),
         await updateCreatorProfile(ctx, user, { niches: [] }),
         await requireCreatorProfile(ctx, user),
       ];
@@ -676,6 +597,68 @@ describe("creator niches", () => {
     expect(profile.niches).toEqual([]);
   });
 
+  test.each([
+    ["a javascript scheme", "javascript:alert(1)"],
+    ["plain http", "http://github.com/zahra"],
+    ["a lookalike host", "https://github.com.evil.test/zahra"],
+    ["another site entirely", "https://example.test/zahra"],
+    ["login details that disguise the host", "https://github.com@evil.test"],
+  ])("refuses %s as a GitHub link without changing the profile", async (_label, githubLink) => {
+    const t = convexTest(schema, modules);
+    await seedUser(t, { subject: "github_link_creator" });
+
+    await expectApiError(
+      () =>
+        t.run(async (ctx) => {
+          const user = (await getUserByWorkosId(ctx, "github_link_creator"))!;
+          return await updateCreatorProfile(ctx, user, { githubLink });
+        }),
+      "invalid_state",
+    );
+    expect(await t.run(async (ctx) => await ctx.db.query("creators").first())).not.toHaveProperty(
+      "githubLink",
+    );
+  });
+
+  test.each([
+    ["a javascript scheme", "javascript:alert(1)"],
+    ["a lookalike host", "https://linkedin.com.evil.test/in/zahra"],
+    ["another site entirely", "https://example.test/in/zahra"],
+  ])("refuses %s as a LinkedIn link without changing the profile", async (_label, linkedinLink) => {
+    const t = convexTest(schema, modules);
+    await seedUser(t, { subject: "linkedin_link_creator" });
+
+    await expectApiError(
+      () =>
+        t.run(async (ctx) => {
+          const user = (await getUserByWorkosId(ctx, "linkedin_link_creator"))!;
+          return await updateCreatorProfile(ctx, user, { linkedinLink });
+        }),
+      "invalid_state",
+    );
+    expect(await t.run(async (ctx) => await ctx.db.query("creators").first())).not.toHaveProperty(
+      "linkedinLink",
+    );
+  });
+
+  test("accepts GitHub and LinkedIn subdomains and stores the parsed URL", async () => {
+    const t = convexTest(schema, modules);
+    await seedUser(t, { subject: "subdomain_creator" });
+
+    const profile = await t.run(async (ctx) => {
+      const user = (await getUserByWorkosId(ctx, "subdomain_creator"))!;
+      return await updateCreatorProfile(ctx, user, {
+        githubLink: "https://www.github.com/zahra",
+        linkedinLink: "  https://uk.linkedin.com/in/zahra  ",
+      });
+    });
+
+    expect(profile).toMatchObject({
+      githubLink: "https://www.github.com/zahra",
+      linkedinLink: "https://uk.linkedin.com/in/zahra",
+    });
+  });
+
   test("refuses a niche that isn't on the list without changing the profile", async () => {
     const t = convexTest(schema, modules);
     await seedUser(t, { subject: "niche_creator" });
@@ -683,11 +666,10 @@ describe("creator niches", () => {
     await expect(
       t.run(async (ctx) => {
         const user = (await getUserByWorkosId(ctx, "niche_creator"))!;
-        return await updateCreatorProfile(ctx, user, { niches: ["crypto"], username: "x" });
+        return await updateCreatorProfile(ctx, user, { niches: ["crypto"] });
       }),
     ).rejects.toMatchObject({ data: { code: "invalid_state", reason: "invalid_niche" } });
     const creator = await t.run(async (ctx) => await ctx.db.query("creators").first());
-    expect(creator?.username).not.toBe("x");
     expect(creator).not.toHaveProperty("niches");
   });
 });

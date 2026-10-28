@@ -3,6 +3,7 @@ import { v, type Infer } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { apiError } from "../lib/errors";
+import { requireUrl } from "../lib/urls";
 import { optionalNonBlank, requireNonBlank } from "../lib/validation";
 import { submissionShapes } from "../schemas/submissions.schema";
 import { requireAssignment, requireActiveAssignment, type AssignmentViewer } from "./assignments";
@@ -68,25 +69,13 @@ function optionalText(
 
 /** Returns the URL in its parsed form, so reviewers open exactly the link that was checked. */
 function requireDraftUrl(value: string): string {
-  const trimmed = requireText(value, "draftUrl");
-  let url: URL;
-  try {
-    url = new URL(trimmed);
-  } catch {
-    throw apiError("invalid_state", { reason: "draftUrl_invalid" });
-  }
-  if (url.protocol !== "http:" && url.protocol !== "https:") {
-    throw apiError("invalid_state", { reason: "draftUrl_invalid" });
-  }
-  // Draft links never need login details, and `drive.google.com@evil.example` goes to evil.example.
-  if (url.username !== "" || url.password !== "") {
-    throw apiError("invalid_state", { reason: "draftUrl_invalid" });
-  }
-  // Encoding can make the URL longer than what was typed, so check again.
-  if (url.href.length > MAX_LENGTH.draftUrl) {
-    throw apiError("invalid_state", { reason: "draftUrl_too_long" });
-  }
-  return url.href;
+  // Drafts live on whatever host the creator already uses, including http ones.
+  return requireUrl(requireText(value, "draftUrl"), {
+    reason: "draftUrl_invalid",
+    allowHttp: true,
+    maxLength: MAX_LENGTH.draftUrl,
+    tooLongReason: "draftUrl_too_long",
+  });
 }
 
 /**

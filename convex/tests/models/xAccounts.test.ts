@@ -289,10 +289,9 @@ describe("upsertXAccount", () => {
 });
 
 describe("getXAccount", () => {
-  test("does not treat a manually entered legacy xId as a verified connection", async () => {
+  test("returns null for a creator that has never linked an account", async () => {
     const t = convexTest(schema, modules);
-    const creatorId = await seedCreatorId(t, "x_legacy");
-    await t.run(async (ctx) => await ctx.db.patch("creators", creatorId, { xId: "123456789" }));
+    const creatorId = await seedCreatorId(t, "x_unlinked");
     expect(await t.run(async (ctx) => await getXAccount(ctx, creatorId))).toBeNull();
   });
 });

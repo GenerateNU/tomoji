@@ -94,7 +94,7 @@ describe("companies.update", () => {
     expect(await companyFor(t, "org_acme")).toMatchObject({
       name: "Acme Rebrand",
       profilePicture: "https://example.com/logo.png",
-      website: "https://acme.com",
+      website: "https://acme.com/",
       description: "Developer tools.",
     });
   });

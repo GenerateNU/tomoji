@@ -64,6 +64,21 @@ export async function notifyCompanyUser(
   if (member !== null) await createNotification(ctx, member.userId, content);
 }
 
+/** There are only a handful of operators; this keeps the read bounded. */
+const MAX_NOTIFIED_OPERATORS = 100;
+
+/** Notifies every active Tomoji operator. */
+export async function notifyOperators(
+  ctx: MutationCtx,
+  content: NotificationContent,
+): Promise<void> {
+  const operators = await ctx.db
+    .query("users")
+    .withIndex("by_role_and_isActive", (q) => q.eq("role", "operator").eq("isActive", true))
+    .take(MAX_NOTIFIED_OPERATORS);
+  for (const operator of operators) await createNotification(ctx, operator._id, content);
+}
+
 /**
  * The creator's name for notification titles, so a company can tell
  * notifications about different creators apart. Falls back through the legacy

@@ -17,7 +17,10 @@ import {
 import schema from "../../schema";
 import { companyDisputeReasons, creatorDisputeReasons } from "../../schemas/disputes.schema";
 import {
+  creatorNotifications,
   expectApiError,
+  memberNotifications,
+  notificationsForUser,
   seedAssignment,
   seedAssignmentFixture,
   seedCreatorId,
@@ -753,5 +756,194 @@ describe("listDisputes", () => {
     }));
 
     expect(page).toEqual([single]);
+  });
+});
+
+describe("notifications", () => {
+  const title = "Moisturizer launch video";
+
+  /** The fixture plus two operators, one of them inactive, so recipients can be checked. */
+  async function seedParties(t: TestConvex) {
+    const fixture = await seedAssignmentFixture(t);
+    const operatorId = await seedOperatorId(t, "operator");
+    const inactiveOperatorId = await seedOperatorId(t, "retired-operator");
+    await t.run(async (ctx) => ctx.db.patch("users", inactiveOperatorId, { isActive: false }));
+    return { fixture, operatorId, inactiveOperatorId };
+  }
+
+  test("opening notifies the company's opportunity owner and Tomoji, not the opener", async () => {
+    const t = convexTest(schema, modules);
+    const { fixture, operatorId, inactiveOperatorId } = await seedParties(t);
+
+    const disputeId = await open(t, fixture);
+
+    const opened = {
+      type: "disputeOpened",
+      title: `A dispute was opened on ${title}`,
+      target: { kind: "dispute", disputeId },
+    };
+    expect(await memberNotifications(t, fixture.membership)).toEqual([opened]);
+    expect(await notificationsForUser(t, operatorId)).toEqual([opened]);
+    expect(await creatorNotifications(t, fixture.creatorId)).toEqual([]);
+    expect(await notificationsForUser(t, inactiveOperatorId)).toEqual([]);
+  });
+
+  test("a company member opening notifies the creator and the opportunity owner", async () => {
+    const t = convexTest(schema, modules);
+    const { fixture } = await seedParties(t);
+    const teammate = await seedMembership(t, "teammate", "org_fixture");
+
+    const disputeId = await t.run(
+      async (ctx) =>
+        await createDispute(ctx, companyOf(fixture), teammate.membership.userId, {
+          assignmentId: fixture.assignmentId,
+          reason: "missingDisclosure",
+          description: "The post never mentions it's sponsored.",
+        }),
+    );
+
+    const opened = {
+      type: "disputeOpened",
+      title: `A dispute was opened on ${title}`,
+      target: { kind: "dispute", disputeId },
+    };
+    expect(await creatorNotifications(t, fixture.creatorId)).toEqual([opened]);
+    expect(await memberNotifications(t, fixture.membership)).toEqual([opened]);
+    expect(await memberNotifications(t, teammate.membership)).toEqual([]);
+  });
+
+  test("the opener closing it tells everyone else the outcome and note", async () => {
+    const t = convexTest(schema, modules);
+    const { fixture, operatorId } = await seedParties(t);
+    const disputeId = await seedDispute(t, fixture);
+
+    await resolve(t, creatorOf(fixture), fixture.creatorUserId, disputeId);
+
+    const resolved = {
+      type: "disputeResolved",
+      title: `The dispute on ${title} was approved`,
+      body: "Paid over email on Oct 9.",
+      target: { kind: "dispute", disputeId },
+    };
+    expect(await memberNotifications(t, fixture.membership)).toEqual([resolved]);
+    expect(await notificationsForUser(t, operatorId)).toEqual([resolved]);
+    expect(await creatorNotifications(t, fixture.creatorId)).toEqual([]);
+  });
+
+  test("a withdrawal is reported as withdrawn", async () => {
+    const t = convexTest(schema, modules);
+    const { fixture } = await seedParties(t);
+    const disputeId = await seedDispute(t, fixture);
+
+    await resolve(t, creatorOf(fixture), fixture.creatorUserId, disputeId, {
+      outcome: "withdrawn",
+      note: undefined,
+    });
+
+    expect(await memberNotifications(t, fixture.membership)).toEqual([
+      {
+        type: "disputeResolved",
+        title: `The dispute on ${title} was withdrawn`,
+        target: { kind: "dispute", disputeId },
+      },
+    ]);
+  });
+
+  test("notifies a company member who is both opener and opportunity owner once", async () => {
+    const t = convexTest(schema, modules);
+    const { fixture } = await seedParties(t);
+    const disputeId = await seedDispute(t, fixture, {
+      openedBy: fixture.membership.userId,
+      openedByRole: "company",
+      reason: "missingDisclosure",
+    });
+    const teammate = await seedMembership(t, "teammate", "org_fixture");
+
+    await resolve(t, companyOf(fixture), teammate.membership.userId, disputeId, {
+      outcome: "denied",
+      note: undefined,
+    });
+
+    const resolved = {
+      type: "disputeResolved",
+      title: `The dispute on ${title} was denied`,
+      target: { kind: "dispute", disputeId },
+    };
+    expect(await memberNotifications(t, fixture.membership)).toEqual([resolved]);
+    expect(await creatorNotifications(t, fixture.creatorId)).toEqual([resolved]);
+    expect(await memberNotifications(t, teammate.membership)).toEqual([]);
+  });
+
+  test("Tomoji resolving it tells both sides but no operators", async () => {
+    const t = convexTest(schema, modules);
+    const { fixture, operatorId } = await seedParties(t);
+    const otherOperatorId = await seedOperatorId(t, "other-operator");
+    const disputeId = await seedDispute(t, fixture);
+
+    await resolve(t, operator, operatorId, disputeId, { outcome: "denied" });
+
+    const ruled = {
+      type: "disputeResolved",
+      title: `Tomoji denied the dispute on ${title}`,
+      body: "Paid over email on Oct 9.",
+      target: { kind: "dispute", disputeId },
+    };
+    expect(await creatorNotifications(t, fixture.creatorId)).toEqual([ruled]);
+    expect(await memberNotifications(t, fixture.membership)).toEqual([ruled]);
+    expect(await notificationsForUser(t, operatorId)).toEqual([]);
+    expect(await notificationsForUser(t, otherOperatorId)).toEqual([]);
+  });
+
+  test("Tomoji overriding the result tells both sides the new outcome and reason", async () => {
+    const t = convexTest(schema, modules);
+    const { fixture, operatorId } = await seedParties(t);
+    const disputeId = await seedDispute(
+      t,
+      fixture,
+      {},
+      { resolvedBy: fixture.creatorUserId, ...pastRuling },
+    );
+
+    await override(t, operatorId, disputeId);
+
+    const overridden = {
+      type: "disputeOverridden",
+      title: `Tomoji changed the result of the dispute on ${title} to denied`,
+      body: "The brief required the disclosure in the first 5 seconds.",
+      target: { kind: "dispute", disputeId },
+    };
+    expect(await creatorNotifications(t, fixture.creatorId)).toEqual([overridden]);
+    expect(await memberNotifications(t, fixture.membership)).toEqual([overridden]);
+    expect(await notificationsForUser(t, operatorId)).toEqual([]);
+  });
+
+  test("sends nothing when the opportunity is missing", async () => {
+    const t = convexTest(schema, modules);
+    const { fixture, operatorId } = await seedParties(t);
+    await t.run(async (ctx) => {
+      const assignment = await ctx.db.get("assignments", fixture.assignmentId);
+      if (assignment === null) throw new Error("expected seeded assignment");
+      await ctx.db.delete("opportunities", assignment.opportunityId);
+    });
+
+    await open(t, fixture);
+
+    expect(await storedDisputes(t)).toHaveLength(1);
+    expect(await memberNotifications(t, fixture.membership)).toEqual([]);
+    expect(await notificationsForUser(t, operatorId)).toEqual([]);
+  });
+
+  test("a refused close sends nothing", async () => {
+    const t = convexTest(schema, modules);
+    const { fixture, operatorId } = await seedParties(t);
+    const disputeId = await seedDispute(t, fixture);
+
+    await expectApiError(
+      () => resolve(t, companyOf(fixture), fixture.membership.userId, disputeId),
+      "forbidden",
+    );
+
+    expect(await memberNotifications(t, fixture.membership)).toEqual([]);
+    expect(await notificationsForUser(t, operatorId)).toEqual([]);
   });
 });

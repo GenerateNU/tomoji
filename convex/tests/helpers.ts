@@ -672,7 +672,8 @@ export function withoutReviewerIdentity(view: object): object {
 /** A notification as the recipient sees it, without IDs or timestamps. */
 export type ReceivedNotification = Pick<Doc<"notifications">, "type" | "title" | "body" | "target">;
 
-async function notificationsForUser(t: TestConvex, userId: Id<"users">) {
+/** Reads the notifications sent to one user, oldest first. */
+export async function notificationsForUser(t: TestConvex, userId: Id<"users">) {
   return await t.run(async (ctx) => {
     const rows = await ctx.db
       .query("notifications")

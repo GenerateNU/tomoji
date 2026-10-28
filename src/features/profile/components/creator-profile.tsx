@@ -16,7 +16,7 @@ export function CreatorProfile() {
 
   // Older accounts may use their email as a name fallback; keep it in Settings.
   const name = [profile.firstName, profile.lastName]
-    .map((part) => part?.trim())
+    .map((part) => part.trim())
     .filter((part) => part && part.toLowerCase() !== profile.email.trim().toLowerCase())
     .join(" ");
   const username = profile.username?.trim();

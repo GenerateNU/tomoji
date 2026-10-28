@@ -73,8 +73,8 @@ export function useQuery(
     synced: true as const,
     userId: "viewer" as Id<"users">,
     email: "admin@example.com",
-    firstName: undefined,
-    lastName: undefined,
+    firstName: "Dana",
+    lastName: "Okafor",
     profilePictureMediaId: undefined,
   };
   return fixture.mode === "creator"

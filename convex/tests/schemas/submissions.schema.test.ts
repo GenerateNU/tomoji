@@ -16,6 +16,8 @@ async function rawReviewInserter(t: TestConvex) {
     async (ctx) =>
       await ctx.db.insert("users", {
         workosId: "schema-operator",
+        firstName: "Schema",
+        lastName: "Operator",
         email: "operator@example.com",
         role: "operator",
         isActive: true,

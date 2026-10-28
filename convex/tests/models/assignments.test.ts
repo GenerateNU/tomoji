@@ -718,8 +718,8 @@ describe("exportAssignmentCreatorsCsv", () => {
     const owner = await seedOpportunity(t, { subject: "owner" });
     const profiles = [
       { firstName: " Grace ", lastName: " ", expected: "Grace" },
-      { firstName: undefined, lastName: " Hopper ", expected: "Hopper" },
-      { firstName: " ", lastName: undefined, expected: "fallback_2@example.com" },
+      { firstName: "", lastName: " Hopper ", expected: "Hopper" },
+      { firstName: " ", lastName: "", expected: "fallback_2@example.com" },
     ];
     const expected: string[] = [];
     for (const [i, profile] of profiles.entries()) {

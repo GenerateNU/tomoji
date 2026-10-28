@@ -13,8 +13,8 @@ import { getXAccountByCreatorId } from "./xAccountLookup";
 export const creatorProfile = v.object({
   creatorId: v.id("creators"),
   username: v.optional(v.string()),
-  firstName: v.optional(v.string()),
-  lastName: v.optional(v.string()),
+  firstName: v.string(),
+  lastName: v.string(),
   email: v.string(),
   profilePictureMediaId: v.optional(v.id("mediaUploads")),
   xId: v.optional(v.string()),

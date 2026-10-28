@@ -40,8 +40,8 @@ export const companyMember = v.object({
   membershipId: v.id("companyUsers"),
   userId: v.id("users"),
   role: companyRole,
-  firstName: v.optional(v.string()),
-  lastName: v.optional(v.string()),
+  firstName: v.string(),
+  lastName: v.string(),
   email: v.string(),
   profilePictureMediaId: v.optional(v.id("mediaUploads")),
 });

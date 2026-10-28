@@ -249,7 +249,7 @@ describe("notifyCompanyUser", () => {
 describe("creatorName", () => {
   async function seedNamed(
     t: TestConvex,
-    user: { firstName?: string; lastName?: string },
+    user: { firstName: string; lastName: string },
     username?: string,
   ) {
     const creatorId = await seedCreatorId(t, "creator_named");
@@ -277,11 +277,11 @@ describe("creatorName", () => {
 
   test("falls back to the username", async () => {
     const t = convexTest(schema, modules);
-    expect(await seedNamed(t, {}, "johnsmith")).toBe("johnsmith");
+    expect(await seedNamed(t, { firstName: "", lastName: "" }, "johnsmith")).toBe("johnsmith");
   });
 
   test("says 'A creator' when nothing is set", async () => {
     const t = convexTest(schema, modules);
-    expect(await seedNamed(t, {})).toBe("A creator");
+    expect(await seedNamed(t, { firstName: "", lastName: "" })).toBe("A creator");
   });
 });

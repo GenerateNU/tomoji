@@ -5,6 +5,6 @@ export function memberName(
   member: Pick<CompanyMember, "firstName" | "lastName" | "email">,
 ): string {
   return (
-    [member.firstName?.trim(), member.lastName?.trim()].filter(Boolean).join(" ") || member.email
+    [member.firstName.trim(), member.lastName.trim()].filter(Boolean).join(" ") || member.email
   );
 }

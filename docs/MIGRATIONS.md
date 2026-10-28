@@ -10,18 +10,19 @@ alone does not run a migration.
 ## Before running
 
 Use your personal development deployment configured in `.env.local`
-(`CONVEX_DEPLOYMENT=dev:...`), without a deployment-key override. The current schema
-is a temporary compatibility stage: `users.name`, `firstName`, and `lastName` are
-optional so both old and migrated records are accepted. Profile response
-validators also allow missing name parts while the migration is in progress.
-User sync and the name backfill still write name parts, using the account email
-for a missing or blank first name and `""` for a missing last name. Creator
-`username` remains optional.
+(`CONVEX_DEPLOYMENT=dev:...`), without a deployment-key override.
 
-Deploy this compatible backend first, then run and verify the backfills. A future
-PR will make `firstName` and `lastName` required and remove legacy `name` after
-every affected development deployment has migrated. Schema validation remains
-enabled throughout; no record deletion is needed.
+The user-name migration is finished. `users.name` is gone, and `firstName` and
+`lastName` are required in both the schema and the profile response validators,
+so the schema no longer accepts an unmigrated user row. User sync writes both
+parts, using the account email for a missing or blank first name and `""` for a
+missing last name. Creator `username` remains optional.
+
+A deployment that still holds legacy rows will have its schema push rejected, and
+the backfill that fixed those rows has been removed. See
+[Recovering an unmigrated deployment](#recovering-an-unmigrated-deployment).
+
+Schema validation remains enabled throughout; no record deletion is needed.
 
 These steps assume only users and creators are populated and workflow tables are
 empty. Populated legacy workflow tables need a separate conversion plan.
@@ -35,10 +36,9 @@ match `creator_<userId>` for that creator, treating them as legacy generated nam
 
 ### Moving from the old migration paths
 
-Finish or cancel any running `migrations:backfillUserNames` and
-`migrations:backfillCreatorUsernames` jobs before deploying the dated files.
-Check those names with the component's `lib:getStatus` query. To cancel an old
-job, use its exact name, for example:
+Finish or cancel any running `migrations:backfillCreatorUsernames` job before
+deploying the dated files. Check that name with the component's `lib:getStatus`
+query. To cancel an old job, use its exact name:
 
 ```bash
 bunx convex run --deployment dev --component migrations lib:cancel \
@@ -48,7 +48,7 @@ bunx convex run --deployment dev --component migrations lib:cancel \
 Progress is keyed by the full exported function path. The dated paths have fresh
 progress, so their first run rescans records even if the old functions completed.
 Old status entries remain historical; they do not show completion of the new
-paths. Both transformations are safe to rerun and preserve already migrated data.
+paths. The transformation is safe to rerun and preserves already migrated data.
 
 ## Run migrations
 
@@ -63,18 +63,12 @@ bunx convex run --deployment dev migrations/runner:runAll
 Alternatively, use `just bd` to deploy and watch the backend, and run the migration
 command in a second terminal after deployment succeeds.
 
-`runAll` runs the user-name backfill first, then the creator-username backfill,
-then removes legacy user profile-picture URLs (see the compatibility rollout below).
-It skips completed migrations and resumes interrupted ones.
+`runAll` runs the creator-username backfill, removes legacy user profile-picture
+URLs (see the compatibility rollout below), then moves legacy creator niches into
+association rows. It skips completed migrations and resumes interrupted ones.
 
 Available migrations:
 
-- [2026_09_26_backfill_user_names.ts](../convex/migrations/2026_09_26_backfill_user_names.ts)
-  exports `backfillUserNames`. It preserves existing name parts, fills missing parts from
-  cached WorkOS data, and retains a whole legacy name as `firstName` only when no
-  split name parts are available. If the selected first name is missing, empty,
-  or whitespace-only, it uses the account email. It removes legacy `name` and
-  uses `""` for a missing last name.
 - [2026_09_26_backfill_creator_usernames.ts](../convex/migrations/2026_09_26_backfill_creator_usernames.ts)
   exports `backfillCreatorUsernames`. It fills missing usernames and replaces exact
   `creator_<userId>` values with `creator_` plus a random 12-character lowercase
@@ -85,13 +79,18 @@ Available migrations:
   returns `conflict` with reason `username_generation_failed`. The index is not
   itself a unique constraint. This does not change signup behavior or make
   username required.
+- [2026_10_25_backfill_creator_niches.ts](../convex/migrations/2026_10_25_backfill_creator_niches.ts)
+  exports `backfillCreatorNiches`. It moves a creator's legacy `niches` array into
+  `creatorNiches` association rows through `updateCreatorNiches`, which also
+  removes the legacy field. Creators without the field are left alone, so it is
+  safe to rerun.
 
 These preserve document IDs and relationships. To select one migration, use `run`
 with its full function path:
 
 ```bash
 bunx convex run --deployment dev migrations/runner:run \
-  '{"fn":"migrations/2026_09_26_backfill_user_names:backfillUserNames"}'
+  '{"fn":"migrations/2026_10_07_remove_user_profile_pictures:removeUserProfilePictures"}'
 ```
 
 Add `"reset": true` to deliberately rescan from the beginning, including records
@@ -120,22 +119,20 @@ The runner can return before scheduled batches finish. Check status:
 
 ```bash
 bunx convex run --deployment dev --component migrations lib:getStatus \
-  '{"names":["migrations/2026_09_26_backfill_user_names:backfillUserNames","migrations/2026_09_26_backfill_creator_usernames:backfillCreatorUsernames"]}'
+  '{"names":["migrations/2026_09_26_backfill_creator_usernames:backfillCreatorUsernames","migrations/2026_10_07_remove_user_profile_pictures:removeUserProfilePictures","migrations/2026_10_25_backfill_creator_niches:backfillCreatorNiches"]}'
 ```
 
-Wait until both entries report `isDone: true` and `state: "success"`. If a batch
+Wait until each entry reports `isDone: true` and `state: "success"`. If a batch
 fails, fix the reported cause and rerun the same command without `reset` to resume
 from saved progress.
 
-Verify that IDs, record counts, and creator-to-user links are preserved. Migrated
-users should have a nonblank `firstName`, a string `lastName` (possibly `""`), and
-no legacy `name`. Scanned creator profiles should have a username and no exact
-`creator_<userId>` value remaining. New profiles can still be created without a
-username afterward.
+Verify that IDs, record counts, and creator-to-user links are preserved. Scanned
+creator profiles should have a username, no exact `creator_<userId>` value
+remaining, and no legacy `niches` array. New profiles can still be created without
+a username afterward.
 
 Repeat deployment, migration, and verification for each teammate's personal
-development database. Keep the compatibility fields until all affected databases
-pass these checks; tightening the schema belongs in the follow-up PR.
+development database.
 
 ## Troubleshooting deployment
 
@@ -144,10 +141,10 @@ pass these checks; tightening the schema belongs in the follow-up PR.
   export the shared `migrations` instance, and dated filenames and imports must
   match the checked-in version. Changing the users schema does not fix this
   import error.
-- A validation error for legacy `users.name` or missing `firstName`/`lastName`
-  means the compatibility schema is not being deployed. Check the branch and
-  schema before rerunning deployment; backfills cannot run until their compatible
-  code is deployed.
+- A validation error for legacy `users.name`, or for a missing
+  `firstName`/`lastName`, means the deployment still holds unmigrated user rows.
+  The schema is strict now, so there is no compatible backend to deploy first. See
+  [Recovering an unmigrated deployment](#recovering-an-unmigrated-deployment).
 
 ## Remove legacy user profile-picture URLs
 
@@ -170,6 +167,38 @@ The cleanup preserves `profilePictureMediaId`, all other user fields, and compan
 logos. Repeat for each populated deployment. Production cleanup requires an
 explicitly approved production rollout, not these development commands.
 
+## Removed migrations
+
+A migration is removed once every deployment has run it and the schema it
+prepared for has landed. Removing one also removes the only supported way to fix
+a deployment that never ran it, so each removal is recorded here.
+
+- `2026_09_26_backfill_user_names.ts` exported `backfillUserNames`. It moved
+  legacy `users.name` onto `firstName` and `lastName`, preferring name parts
+  cached from WorkOS and keeping a whole legacy name as `firstName` when no parts
+  were available, since a legacy name cannot be split reliably. It used the
+  account email for a missing or blank first name and `""` for a missing last
+  name. Removed with `users.name` itself, in the change that made `firstName` and
+  `lastName` required.
+
+### Recovering an unmigrated deployment
+
+For a development deployment, wiping and reseeding is quicker than migrating. To
+keep the data, restore the deleted file from git history, register it first in
+the `runAll` list, widen `convex/schemas/users.schema.ts` to accept the legacy
+shape, deploy, run it, then restore the checked-in schema:
+
+```bash
+git log --diff-filter=D --oneline -- convex/migrations/2026_09_26_backfill_user_names.ts
+git show <commit>^:convex/migrations/2026_09_26_backfill_user_names.ts \
+  > convex/migrations/2026_09_26_backfill_user_names.ts
+```
+
+The legacy shape is `name: v.optional(v.string())` plus `firstName` and
+`lastName` as `v.optional(v.string())`. The profile response validators in
+`convex/users.ts`, `convex/models/creators.ts`, and
+`convex/models/companyUsers.ts` need the same widening to serve those rows.
+
 ## Add a migration
 
 1. Add a `YYYY_MM_DD_migration_title.ts` file in `convex/migrations/`. Use
@@ -185,3 +214,6 @@ explicitly approved production rollout, not these development commands.
 
 Keep registered filenames and export names stable once deployed, since renaming
 them creates a new progress entry and causes a rescan.
+
+To remove a migration, delete its file and test, unregister it from `runAll`, and
+add it to [Removed migrations](#removed-migrations) with what it did.

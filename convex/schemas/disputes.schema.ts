@@ -104,6 +104,7 @@ export const disputesTable = defineTable(
   v.union(...disputeShapes(v.id("users"), v.id("users"), {})),
 )
   .index("by_assignmentId", ["assignmentId"])
+  .index("by_assignmentId_and_status", ["assignmentId", "status"])
   .index("by_postId", ["postId"])
   .index("by_companyId_and_status_and_resolvedAt", ["companyId", "status", "resolvedAt"])
   .index("by_companyId_and_status_and_openedByRole_and_resolvedAt", [

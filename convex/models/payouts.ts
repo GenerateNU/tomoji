@@ -1,5 +1,5 @@
 import { paginationOptsValidator, type PaginationResult } from "convex/server";
-import type { Infer } from "convex/values";
+import { v, type Infer } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { canViewResource, type ResourceViewer } from "../lib/authz";
@@ -7,6 +7,7 @@ import { apiError } from "../lib/errors";
 import { withRowsReadCap } from "../lib/pagination";
 import { requireNonBlank } from "../lib/validation";
 import schema from "../schema";
+import { hasOpenDispute } from "./disputes";
 
 export const payoutCreate = schema
   .doc("payouts")
@@ -154,6 +155,69 @@ export async function requirePayout(
     throw apiError("not_found", { resource: "payout" });
   }
   return toPayoutView(payout);
+}
+
+/** Approves an owned payout; the route supplies a verified company-admin membership. */
+export async function approvePayout(
+  ctx: MutationCtx,
+  membership: Doc<"companyUsers">,
+  payoutId: Id<"payouts">,
+): Promise<PayoutView> {
+  const payout = await ctx.db.get("payouts", payoutId);
+  if (payout === null || payout.companyId !== membership.companyId) {
+    throw apiError("not_found", { resource: "payout" });
+  }
+  if (payout.approvalStatus === "approved") return toPayoutView(payout);
+  if (await hasOpenDispute(ctx, payout.assignmentId)) {
+    throw apiError("invalid_state", { reason: "payout_disputed" });
+  }
+  const approval = {
+    approvalStatus: "approved" as const,
+    approvalSource: "company" as const,
+    approvedBy: membership.userId,
+    approvedAt: Date.now(),
+  };
+  await ctx.db.patch("payouts", payoutId, approval);
+  return toPayoutView({ ...payout, ...approval });
+}
+
+export const payoutApprovalContinuation = v.object({ cursor: v.string(), cutoff: v.number() });
+export type PayoutApprovalContinuation = Infer<typeof payoutApprovalContinuation>;
+
+/**
+ * Checks one page of due payouts. Held rows remain pending, so the cursor must
+ * advance past them rather than repeatedly reading the first batch. A new cron
+ * sweep revisits holds using their original deadline after disputes resolve.
+ */
+export async function autoApprovePayouts(
+  ctx: MutationCtx,
+  continuation?: PayoutApprovalContinuation,
+): Promise<PayoutApprovalContinuation | null> {
+  const now = Date.now();
+  const cutoff = continuation?.cutoff ?? now;
+  if (!Number.isSafeInteger(cutoff) || cutoff < 0 || cutoff > now) {
+    throw apiError("invalid_state", { reason: "approval_cutoff_invalid" });
+  }
+  const result = await ctx.db
+    .query("payouts")
+    .withIndex("by_approvalStatus_and_approvalDueAt", (q) =>
+      q.eq("approvalStatus", "pending").lte("approvalDueAt", cutoff),
+    )
+    .paginate({
+      numItems: 50,
+      maximumRowsRead: 50,
+      cursor: continuation?.cursor ?? null,
+    });
+  for (const payout of result.page) {
+    if (await hasOpenDispute(ctx, payout.assignmentId)) continue;
+    await ctx.db.patch("payouts", payout._id, {
+      approvalStatus: "approved",
+      approvalSource: "automatic",
+      approvedAt: now,
+      approvedBy: undefined,
+    });
+  }
+  return result.isDone ? null : { cursor: result.continueCursor, cutoff };
 }
 
 export const payoutListFilters = schema

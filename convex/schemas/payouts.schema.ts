@@ -26,7 +26,7 @@ export const payoutsTable = defineTable({
   amountCents: v.number(),
   currency: v.string(),
   reviewRequestedAt: v.number(), // Unix milliseconds.
-  approvalDueAt: v.number(), // Unix milliseconds; future approval workflow enforces the deadline.
+  approvalDueAt: v.number(), // Original Unix-ms deadline, preserved through dispute holds.
   approvalStatus: payoutApprovalStatus,
   approvedAt: v.optional(v.number()),
   approvalSource: v.optional(payoutApprovalSource),

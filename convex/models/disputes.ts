@@ -72,6 +72,21 @@ const MAX_LENGTH = {
   note: 2000,
 } as const;
 
+/** Any open dispute holds the assignment's payouts, including disputes about a specific post. */
+export async function hasOpenDispute(
+  ctx: QueryCtx | MutationCtx,
+  assignmentId: Id<"assignments">,
+): Promise<boolean> {
+  return (
+    (await ctx.db
+      .query("disputes")
+      .withIndex("by_assignmentId_and_status", (q) =>
+        q.eq("assignmentId", assignmentId).eq("status", "open"),
+      )
+      .first()) !== null
+  );
+}
+
 /**
  * Opens a dispute on any assignment the caller can see, whatever its status.
  * Errors are listed on the `disputes.create` route.

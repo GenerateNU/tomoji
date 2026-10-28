@@ -1,15 +1,24 @@
 /// <reference types="vite/client" />
 import { convexTest } from "convex-test";
-import { afterEach, expect, test, vi } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import type { ResourceViewer } from "../../lib/authz";
-import { createPayout, listPayouts, requirePayout, type PayoutCreate } from "../../models/payouts";
+import {
+  approvePayout,
+  autoApprovePayouts,
+  createPayout,
+  listPayouts,
+  requirePayout,
+  type PayoutCreate,
+} from "../../models/payouts";
 import { createPost } from "../../models/posts";
+import { resolveDispute } from "../../models/disputes";
 import schema from "../../schema";
 import {
   expectApiError,
   seedAssignment,
   seedAssignmentFixture,
   seedCreatorId,
+  seedDispute,
   seedOpportunity,
   seedPayout,
   seedSubmission,
@@ -22,6 +31,198 @@ const firstPage = { numItems: 10, cursor: null };
 afterEach(() => vi.useRealTimers());
 
 const finalizedEarning = { sourceKey: "fixed-fee", amountCents: 10_000, currency: "usd" };
+
+describe("payout approval", () => {
+  test("company approval records its actor and leaves the amount, deadline, and payment status intact", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await seedAssignmentFixture(t, {}, "admin");
+    const payoutId = await seedPayout(t, fixture.assignmentId);
+    const before = (await t.run(async (ctx) => await ctx.db.get("payouts", payoutId)))!;
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const now = before.reviewRequestedAt + 1000;
+    vi.setSystemTime(now);
+
+    const approved = await t.run(
+      async (ctx) => await approvePayout(ctx, fixture.membership, payoutId),
+    );
+    expect(approved).toMatchObject({
+      _id: payoutId,
+      amountCents: before.amountCents,
+      approvalDueAt: before.approvalDueAt,
+      approvalStatus: "approved",
+      approvalSource: "company",
+      approvedAt: now,
+      paymentStatus: "notStarted",
+    });
+    expect(approved).not.toHaveProperty("sourceKey");
+    expect(approved).not.toHaveProperty("approvedBy");
+    expect(await t.run(async (ctx) => await ctx.db.get("payouts", payoutId))).toEqual({
+      ...before,
+      approvalStatus: "approved",
+      approvalSource: "company",
+      approvedAt: now,
+      approvedBy: fixture.membership.userId,
+    });
+  });
+
+  test("all open assignment disputes hold every pending payout until resolved without changing deadlines", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await seedAssignmentFixture(t, {}, "admin");
+    const firstId = await seedPayout(t, fixture.assignmentId, { approvalDueAt: Date.now() - 1000 });
+    const secondId = await seedPayout(t, fixture.assignmentId, { approvalDueAt: Date.now() - 500 });
+    const before = await t.run(async (ctx) => await ctx.db.query("payouts").take(3));
+    const disputes = [await seedDispute(t, fixture), await seedDispute(t, fixture)];
+    await expectApiError(
+      () => t.run(async (ctx) => await approvePayout(ctx, fixture.membership, firstId)),
+      "invalid_state",
+      "payout_disputed",
+    );
+    expect(await t.run(async (ctx) => await autoApprovePayouts(ctx))).toBeNull();
+    expect(await t.run(async (ctx) => await ctx.db.query("payouts").take(3))).toEqual(before);
+
+    await t.run(
+      async (ctx) =>
+        await resolveDispute(
+          ctx,
+          {
+            role: "creator",
+            creatorId: fixture.creatorId,
+          },
+          fixture.creatorUserId,
+          disputes[0],
+          { outcome: "withdrawn" },
+        ),
+    );
+    await t.run(async (ctx) => await autoApprovePayouts(ctx));
+    await expectApiError(
+      () => t.run(async (ctx) => await approvePayout(ctx, fixture.membership, secondId)),
+      "invalid_state",
+      "payout_disputed",
+    );
+    expect(await t.run(async (ctx) => await ctx.db.query("payouts").take(3))).toEqual(before);
+
+    await t.run(
+      async (ctx) =>
+        await resolveDispute(
+          ctx,
+          {
+            role: "creator",
+            creatorId: fixture.creatorId,
+          },
+          fixture.creatorUserId,
+          disputes[1],
+          { outcome: "withdrawn" },
+        ),
+    );
+    await t.run(async (ctx) => await autoApprovePayouts(ctx));
+    for (const original of before) {
+      expect(await t.run(async (ctx) => await ctx.db.get("payouts", original._id))).toMatchObject({
+        approvalStatus: "approved",
+        approvalSource: "automatic",
+        paymentStatus: "notStarted",
+        approvalDueAt: original.approvalDueAt,
+        reviewRequestedAt: original.reviewRequestedAt,
+      });
+    }
+  });
+
+  test.each([-1, 0, 1])(
+    "automatic approval respects the deadline at offset %s ms",
+    async (offset) => {
+      const t = convexTest(schema, modules);
+      const fixture = await seedAssignmentFixture(t);
+      const dueAt = Date.now() + 1000;
+      const payoutId = await seedPayout(t, fixture.assignmentId, { approvalDueAt: dueAt });
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(dueAt + offset);
+      expect(await t.run(async (ctx) => await autoApprovePayouts(ctx))).toBeNull();
+      const stored = (await t.run(async (ctx) => await ctx.db.get("payouts", payoutId)))!;
+      expect(stored.approvalStatus).toBe(offset < 0 ? "pending" : "approved");
+      expect(stored.approvalDueAt).toBe(dueAt);
+      if (offset >= 0) {
+        expect(stored.approvedAt).toBe(dueAt + offset);
+        expect(stored.approvalSource).toBe("automatic");
+      }
+      expect(stored).not.toHaveProperty("approvedBy");
+      expect(stored.paymentStatus).toBe("notStarted");
+    },
+  );
+
+  test("resolving a dispute before the original deadline does not approve early or restart the clock", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await seedAssignmentFixture(t);
+    const dueAt = Date.now() + 10_000;
+    const payoutId = await seedPayout(t, fixture.assignmentId, { approvalDueAt: dueAt });
+    const disputeId = await seedDispute(t, fixture);
+    await t.run(
+      async (ctx) =>
+        await resolveDispute(
+          ctx,
+          {
+            role: "creator",
+            creatorId: fixture.creatorId,
+          },
+          fixture.creatorUserId,
+          disputeId,
+          { outcome: "withdrawn" },
+        ),
+    );
+
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(dueAt - 1);
+    await t.run(async (ctx) => await autoApprovePayouts(ctx));
+    expect(await t.run(async (ctx) => await ctx.db.get("payouts", payoutId))).toMatchObject({
+      approvalStatus: "pending",
+      approvalDueAt: dueAt,
+    });
+    vi.setSystemTime(dueAt);
+    await t.run(async (ctx) => await autoApprovePayouts(ctx));
+    expect(await t.run(async (ctx) => await ctx.db.get("payouts", payoutId))).toMatchObject({
+      approvalStatus: "approved",
+      approvalDueAt: dueAt,
+      approvedAt: dueAt,
+    });
+  });
+
+  test.each(["company", "automatic"] as const)(
+    "the first %s approval wins across subsequent manual and automatic attempts",
+    async (source) => {
+      const t = convexTest(schema, modules);
+      const fixture = await seedAssignmentFixture(t, {}, "admin");
+      const payoutId = await seedPayout(t, fixture.assignmentId, { approvalDueAt: Date.now() - 1 });
+      await t.run(async (ctx) =>
+        source === "company"
+          ? await approvePayout(ctx, fixture.membership, payoutId)
+          : await autoApprovePayouts(ctx),
+      );
+      const original = await t.run(async (ctx) => {
+        await ctx.db.patch("payouts", payoutId, { paymentStatus: "queued" });
+        return (await ctx.db.get("payouts", payoutId))!;
+      });
+      // A later dispute must not erase approval history. Future transfers must
+      // independently check current disputes before sending money.
+      await seedDispute(t, fixture);
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(original.approvedAt! + 5000);
+      await t.run(async (ctx) => await approvePayout(ctx, fixture.membership, payoutId));
+      await t.run(async (ctx) => await autoApprovePayouts(ctx));
+      expect(await t.run(async (ctx) => await ctx.db.get("payouts", payoutId))).toEqual(original);
+      expect(original.approvalSource).toBe(source);
+    },
+  );
+
+  test.each([NaN, Infinity, -1, 1.5, Number.MAX_SAFE_INTEGER])(
+    "rejects an invalid or future sweep cutoff %s",
+    async (cutoff) => {
+      const t = convexTest(schema, modules);
+      await expectApiError(
+        () => t.run(async (ctx) => await autoApprovePayouts(ctx, { cursor: "unused", cutoff })),
+        "invalid_state",
+        "approval_cutoff_invalid",
+      );
+    },
+  );
+});
 
 test("creates a finalized payout with assignment ownership and exactly 72 hours for review", async () => {
   // An off-grid instant across the US DST change: the deadline is elapsed time.

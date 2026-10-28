@@ -36,7 +36,8 @@ export const create = companyMutation({
  *
  * @throws `not_found` if the deliverable doesn't exist or isn't the company's.
  * @throws `invalid_state` if the opportunity or its campaign is closed
- * (`opportunity_not_editable`), or the title or description is blank or too long.
+ * (`opportunity_not_editable`), a creator has been assigned
+ * (`opportunity_has_assignments`), or the title or description is blank or too long.
  * @returns the updated deliverable.
  */
 export const update = companyMutation({
@@ -52,7 +53,7 @@ export const update = companyMutation({
  *
  * @throws `not_found` if the deliverable doesn't exist or isn't the company's.
  * @throws `invalid_state` if the opportunity or its campaign is closed, or a
- * creator has been assigned (as in `create`), or it's the last one on a
+ * creator has been assigned (as in `update`), or it's the last one on a
  * published opportunity (`last_deliverable`).
  */
 export const remove = companyMutation({

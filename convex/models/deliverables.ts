@@ -48,9 +48,9 @@ async function hasAssignments(
 }
 
 /**
- * Deliverables can't be removed once a creator has been assigned, in any
- * status: their drafts point at these deliverables. New ones can still be
- * added and wording can still change, like the opportunity's brief.
+ * Deliverables can't be edited or removed once a creator has been assigned, in
+ * any status: that would change the work they agreed to, and their drafts point
+ * at these deliverables. New ones can still be added.
  */
 async function requireNoAssignments(
   ctx: MutationCtx,
@@ -109,6 +109,7 @@ export async function updateDeliverable(
   updates: DeliverableUpdate,
 ): Promise<Doc<"deliverables">> {
   const { deliverable } = await requireEditableDeliverable(ctx, membership, deliverableId);
+  await requireNoAssignments(ctx, deliverable.opportunityId);
   const patch = normalizeDeliverable({
     title: updates.title ?? deliverable.title,
     description: updates.description ?? deliverable.description,

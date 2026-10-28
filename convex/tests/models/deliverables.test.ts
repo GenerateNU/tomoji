@@ -241,7 +241,7 @@ describe("createDeliverable", () => {
 });
 
 describe("once the opportunity has an assignment", () => {
-  test("deliverables can be added and reworded but not removed, even if it was cancelled", async () => {
+  test("deliverables can be added but not edited or removed, even if it was cancelled", async () => {
     const t = convexTest(schema, modules);
     const owner = await seedOpportunity(t, { subject: "locked_owner" });
     const [deliverable] = await storedDeliverables(t, owner.opportunityId);
@@ -252,6 +252,19 @@ describe("once the opportunity has an assignment", () => {
       status: "cancelled",
     });
 
+    await expectApiError(
+      () =>
+        t.run((ctx) =>
+          updateDeliverable(ctx, owner.membership, deliverable._id, { title: "Launch reel" }),
+        ),
+      "invalid_state",
+      "opportunity_has_assignments",
+    );
+    await expectApiError(
+      () => t.run((ctx) => removeDeliverable(ctx, owner.membership, deliverable._id)),
+      "invalid_state",
+      "opportunity_has_assignments",
+    );
     const addedId = await t.run((ctx) =>
       createDeliverable(
         ctx,
@@ -260,22 +273,9 @@ describe("once the opportunity has an assignment", () => {
         deliverableArgs({ title: "Story set" }),
       ),
     );
-    await expectApiError(
-      () => t.run((ctx) => removeDeliverable(ctx, owner.membership, deliverable._id)),
-      "invalid_state",
-      "opportunity_has_assignments",
-    );
 
-    // Like the opportunity's brief, the wording can still be fixed.
-    const updated = await t.run((ctx) =>
-      updateDeliverable(ctx, owner.membership, deliverable._id, {
-        title: "Launch reel",
-      }),
-    );
-    expect(updated.title).toBe("Launch reel");
-    const stored = await storedDeliverables(t, owner.opportunityId);
-    expect(stored).toEqual([
-      updated,
+    expect(await storedDeliverables(t, owner.opportunityId)).toEqual([
+      deliverable,
       expect.objectContaining({ _id: addedId, title: "Story set" }),
     ]);
   });

@@ -572,6 +572,33 @@ export async function seedOneSubmission(
   return { fixture, submissionId };
 }
 
+/** Inserts a payout directly, copying historical ownership from its assignment. */
+export async function seedPayout(
+  t: TestConvex,
+  assignmentId: Id<"assignments">,
+  overrides: Partial<Omit<WithoutSystemFields<Doc<"payouts">>, "assignmentId">> = {},
+): Promise<Id<"payouts">> {
+  return await t.run(async (ctx) => {
+    const assignment = await ctx.db.get("assignments", assignmentId);
+    if (assignment === null) throw new Error("expected seeded assignment");
+    const reviewRequestedAt = overrides.reviewRequestedAt ?? Date.now();
+    return await ctx.db.insert("payouts", {
+      assignmentId,
+      creatorId: assignment.creatorId,
+      companyId: assignment.companyId,
+      campaignId: assignment.campaignId,
+      sourceKey: `test-earning:${crypto.randomUUID()}`,
+      amountCents: 10_000,
+      currency: "usd",
+      reviewRequestedAt,
+      approvalDueAt: reviewRequestedAt + 3 * 86_400_000,
+      approvalStatus: "pending",
+      paymentStatus: "notStarted",
+      ...overrides,
+    });
+  });
+}
+
 type OpenDispute = Extract<Doc<"disputes">, { status: "open" }>;
 type DisputeResolutionFields = Omit<
   Extract<Doc<"disputes">, { status: "resolved" }>,

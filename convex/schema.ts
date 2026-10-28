@@ -14,6 +14,7 @@ import { notificationsTable } from "./schemas/notifications.schema";
 import { opportunitiesTable } from "./schemas/opportunities.schema";
 import { opportunityStarsTable } from "./schemas/opportunityStars.schema";
 import { postsTable } from "./schemas/posts.schema";
+import { payoutsTable } from "./schemas/payouts.schema";
 import { submissionsTable } from "./schemas/submissions.schema";
 import { usersTable } from "./schemas/users.schema";
 import { xAccountsTable } from "./schemas/xAccounts.schema";
@@ -37,6 +38,7 @@ export default defineSchema({
   assignments: assignmentsTable,
   submissions: submissionsTable,
   posts: postsTable,
+  payouts: payoutsTable,
   disputes: disputesTable,
   mediaUploads: mediaUploadsTable,
   xAccounts: xAccountsTable,

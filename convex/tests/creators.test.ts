@@ -244,6 +244,33 @@ describe("creators.get", () => {
     });
   });
 
+  // A birth date is the creator's own; a company browsing for creators has no
+  // business reading it.
+  test("never discloses a creator's date of birth to a company", async () => {
+    const t = convexTest(schema, modules);
+    const asCompany = await seedUser(t, {
+      subject: "dob_company",
+      org: { id: "org_dob" },
+    });
+    await seedUser(t, { subject: "dob_target", email: "dob@example.com" });
+    const creatorId = await t.run(async (ctx) => {
+      const user = (await getUserByWorkosId(ctx, "dob_target"))!;
+      const profile = await updateCreatorProfile(ctx, user, {
+        dateOfBirth: Date.UTC(1990, 0, 1),
+      });
+      return profile.creatorId;
+    });
+
+    expect(await asCompany.query(api.creators.get, { creatorId })).not.toHaveProperty(
+      "dateOfBirth",
+    );
+    const { page } = await asCompany.query(api.creators.list, {
+      paginationOpts: { cursor: null, numItems: 10 },
+    });
+    expect(page).not.toHaveLength(0);
+    for (const profile of page) expect(profile).not.toHaveProperty("dateOfBirth");
+  });
+
   test("rejects a signed-out caller", async () => {
     const t = convexTest(schema, modules);
     const creatorId = await seedCreatorId(t, "creator_get_signed_out_target");

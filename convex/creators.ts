@@ -4,6 +4,7 @@ import { companyQuery, creatorMutation, creatorQuery } from "./lib/functions";
 import {
   creatorProfile,
   creatorProfileUpdate,
+  ownCreatorProfile,
   listCreators,
   requireCreatorProfile,
   requireCreatorProfileById,
@@ -13,7 +14,7 @@ import {
 /** Returns all user-facing fields in the authenticated creator's profile. */
 export const me = creatorQuery({
   args: {},
-  returns: creatorProfile,
+  returns: ownCreatorProfile,
   handler: async (ctx) => {
     return await requireCreatorProfile(ctx, ctx.user);
   },
@@ -45,7 +46,7 @@ export const get = companyQuery({
 /** Updates the authenticated creator's editable profile fields. */
 export const update = creatorMutation({
   args: creatorProfileUpdate.fields,
-  returns: creatorProfile,
+  returns: ownCreatorProfile,
   handler: async (ctx, args) => {
     return await updateCreatorProfile(ctx, ctx.user, args);
   },

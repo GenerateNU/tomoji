@@ -13,6 +13,11 @@ import { requireCountry } from "./countries";
 import { requireAdultBirthdate } from "../lib/birthdate";
 import { MAX_ADDITIONAL_LINKS } from "../schemas/creators.schema";
 
+/**
+ * What anyone who may see a creator gets, companies included. Private fields
+ * are added by `ownCreatorProfile` rather than stripped here, so a company
+ * route cannot leak one by forgetting to.
+ */
 export const creatorProfile = v.object({
   creatorId: v.id("creators"),
   firstName: v.string(),
@@ -24,11 +29,17 @@ export const creatorProfile = v.object({
   githubLink: v.optional(v.string()),
   linkedinLink: v.optional(v.string()),
   additionalLinks: v.array(v.string()),
-  dateOfBirth: v.optional(v.number()),
   countryOfResidence: v.optional(v.string()),
   isPrivate: v.boolean(),
   niches: v.array(v.string()),
   skills: v.array(v.string()),
+});
+
+/** The creator's own view, which adds what only they may read. */
+export const ownCreatorProfile = v.object({
+  ...creatorProfile.fields,
+  // Their age gates the account; nobody else needs the date behind it.
+  dateOfBirth: v.optional(v.number()),
 });
 
 export const creatorProfileUpdate = v.object({
@@ -45,13 +56,14 @@ export const creatorProfileUpdate = v.object({
 });
 
 export type CreatorProfile = Infer<typeof creatorProfile>;
+export type OwnCreatorProfile = Infer<typeof ownCreatorProfile>;
 export type CreatorProfileUpdate = Infer<typeof creatorProfileUpdate>;
 
 // Each profile reads a user, creator, X account, and every selected niche/skill.
 // Reserve half the 32,000-document budget and limit parallel profile lookups to 100.
 const MAX_CREATOR_LIST_ROWS = Math.min(100, Math.floor(16_000 / (3 + MAX_NICHES + SKILLS.length)));
 
-/** Combines matching user and creator documents into the user-facing creator profile. */
+/** Combines matching user and creator documents into the shared profile. */
 function toCreatorProfile(
   user: Doc<"users">,
   creator: Doc<"creators">,
@@ -68,7 +80,6 @@ function toCreatorProfile(
     githubLink: creator.githubLink,
     linkedinLink: creator.linkedinLink,
     additionalLinks: creator.additionalLinks ?? [],
-    dateOfBirth: creator.dateOfBirth,
     countryOfResidence: creator.countryOfResidence,
     isPrivate: creator.isPrivate ?? false,
     niches: details.niches,
@@ -76,18 +87,42 @@ function toCreatorProfile(
   };
 }
 
-/** Loads the bounded associations and verified X identity for an already-authorized profile. */
-async function getCreatorProfile(
-  ctx: QueryCtx | MutationCtx,
+/** The same profile plus the creator's own private fields. */
+function toOwnCreatorProfile(
   user: Doc<"users">,
   creator: Doc<"creators">,
-): Promise<CreatorProfile> {
+  details: Pick<CreatorProfile, "xId" | "niches" | "skills">,
+): OwnCreatorProfile {
+  return { ...toCreatorProfile(user, creator, details), dateOfBirth: creator.dateOfBirth };
+}
+
+/** Loads the bounded associations and verified X identity for an already-authorized profile. */
+async function creatorDetails(
+  ctx: QueryCtx | MutationCtx,
+  creator: Doc<"creators">,
+): Promise<Pick<CreatorProfile, "xId" | "niches" | "skills">> {
   const [account, niches, skills] = await Promise.all([
     getXAccountByCreatorId(ctx, creator._id),
     listCreatorNiches(ctx, creator),
     listCreatorSkills(ctx, creator._id),
   ]);
-  return toCreatorProfile(user, creator, { xId: account?.xUserId, niches, skills });
+  return { xId: account?.xUserId, niches, skills };
+}
+
+async function getCreatorProfile(
+  ctx: QueryCtx | MutationCtx,
+  user: Doc<"users">,
+  creator: Doc<"creators">,
+): Promise<CreatorProfile> {
+  return toCreatorProfile(user, creator, await creatorDetails(ctx, creator));
+}
+
+async function getOwnCreatorProfile(
+  ctx: QueryCtx | MutationCtx,
+  user: Doc<"users">,
+  creator: Doc<"creators">,
+): Promise<OwnCreatorProfile> {
+  return toOwnCreatorProfile(user, creator, await creatorDetails(ctx, creator));
 }
 
 /** Finds the creator row associated with a user. */
@@ -121,17 +156,24 @@ export async function hasCreatorActivity(
   return assignment !== null;
 }
 
-/** Returns the complete creator profile or throws when its data is missing. */
-export async function requireCreatorProfile(
+/** Loads the creator row behind a user, or reports the pair as missing. */
+async function requireCreatorRow(
   ctx: QueryCtx | MutationCtx,
   user: Doc<"users">,
-): Promise<CreatorProfile> {
+): Promise<Doc<"creators">> {
   const creator = await getCreatorByUserId(ctx, user._id);
   if (creator === null) {
     throw apiError("not_found", { resource: "creator" });
   }
+  return creator;
+}
 
-  return await getCreatorProfile(ctx, user, creator);
+/** Returns a creator's own complete profile, or throws when its data is missing. */
+export async function requireCreatorProfile(
+  ctx: QueryCtx | MutationCtx,
+  user: Doc<"users">,
+): Promise<OwnCreatorProfile> {
+  return await getOwnCreatorProfile(ctx, user, await requireCreatorRow(ctx, user));
 }
 
 /** Returns one cursor-paginated page of active creator profiles. */
@@ -150,8 +192,12 @@ export async function listCreators(
       ),
     });
 
-  // Bound the page before loading each creator's associated data.
-  const page = await Promise.all(users.page.map((user) => requireCreatorProfile(ctx, user)));
+  // Convex has no joins, so hydrate only the bounded page returned above.
+  const page = await Promise.all(
+    users.page.map(
+      async (user) => await getCreatorProfile(ctx, user, await requireCreatorRow(ctx, user)),
+    ),
+  );
   // Filtered after hydration rather than in the index, so a private creator
   // leaves a shorter page instead of being replaced by the next one.
   return { ...users, page: page.filter((profile) => !profile.isPrivate) };
@@ -208,11 +254,8 @@ export async function updateCreatorProfile(
   ctx: MutationCtx,
   user: Doc<"users">,
   updates: CreatorProfileUpdate,
-): Promise<CreatorProfile> {
-  const creator = await getCreatorByUserId(ctx, user._id);
-  if (creator === null) {
-    throw apiError("not_found", { resource: "creator" });
-  }
+): Promise<OwnCreatorProfile> {
+  const creator = await requireCreatorRow(ctx, user);
 
   const patch: Partial<Doc<"creators">> = {};
   if (updates.additionalLinks !== undefined) {
@@ -252,7 +295,7 @@ export async function updateCreatorProfile(
       : await updateCreatorSkills(ctx, creator._id, updates.skills);
   await ctx.db.patch("creators", creator._id, patch);
   const account = await getXAccountByCreatorId(ctx, creator._id);
-  return toCreatorProfile(
+  return toOwnCreatorProfile(
     user,
     { ...creator, ...patch },
     { xId: account?.xUserId, niches, skills },

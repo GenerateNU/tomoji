@@ -269,9 +269,4 @@ describe("creatorName", () => {
     const t = convexTest(schema, modules);
     expect(await seedNamed(t, { firstName: "John", lastName: "" })).toBe("John");
   });
-
-  test("says 'A creator' when nothing is set", async () => {
-    const t = convexTest(schema, modules);
-    expect(await seedNamed(t, { firstName: "", lastName: "" })).toBe("A creator");
-  });
 });

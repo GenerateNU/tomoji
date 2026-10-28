@@ -29,7 +29,7 @@ export function OpportunityBrief({
       <div className="flex flex-col gap-3">
         <div className="flex items-center gap-3">
           <DialogTitle className="text-2xl font-semibold">{opportunity.title}</DialogTitle>
-          {opportunity.isGated && <Badge variant="secondary">Application required</Badge>}
+          {opportunity.isGated && <Badge>Application required</Badge>}
         </div>
         <DialogDescription className="text-foreground">{opportunity.description}</DialogDescription>
         <p className="flex items-center gap-2 text-muted-foreground">

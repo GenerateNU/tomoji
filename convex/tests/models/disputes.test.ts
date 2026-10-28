@@ -933,6 +933,39 @@ describe("notifications", () => {
     expect(await notificationsForUser(t, operatorId)).toEqual([]);
   });
 
+  test("skips an opportunity owner who has left the company", async () => {
+    const t = convexTest(schema, modules);
+    const { fixture, operatorId } = await seedParties(t);
+    await t.run(async (ctx) =>
+      ctx.db.patch("companyUsers", fixture.membership._id, { isActive: false }),
+    );
+
+    await open(t, fixture);
+
+    expect(await memberNotifications(t, fixture.membership)).toEqual([]);
+    expect(await notificationsForUser(t, operatorId)).toHaveLength(1);
+  });
+
+  test("skips a company opener who has left the company", async () => {
+    const t = convexTest(schema, modules);
+    const { fixture, operatorId } = await seedParties(t);
+    const teammate = await seedMembership(t, "teammate", "org_fixture");
+    const disputeId = await seedDispute(t, fixture, {
+      openedBy: teammate.membership.userId,
+      openedByRole: "company",
+      reason: "missingDisclosure",
+    });
+    await t.run(async (ctx) =>
+      ctx.db.patch("companyUsers", teammate.membership._id, { isActive: false }),
+    );
+
+    await resolve(t, operator, operatorId, disputeId, { outcome: "denied" });
+
+    expect(await memberNotifications(t, teammate.membership)).toEqual([]);
+    expect(await memberNotifications(t, fixture.membership)).toHaveLength(1);
+    expect(await creatorNotifications(t, fixture.creatorId)).toHaveLength(1);
+  });
+
   test("a refused close sends nothing", async () => {
     const t = convexTest(schema, modules);
     const { fixture, operatorId } = await seedParties(t);

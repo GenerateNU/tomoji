@@ -255,12 +255,12 @@ function disputeTarget(disputeId: Id<"disputes">) {
 }
 
 /**
- * Notifies everyone on a dispute except whoever acted: the creator, the company
- * member who opened it (if one did) and the opportunity's owner, and every
- * active operator unless Tomoji acted. Someone in two of those roles gets one
- * notification. Call it from the mutation that makes the change, so a refused
- * change notifies no one. Like other notifications, none are sent if the
- * opportunity is missing.
+ * Notifies everyone on a dispute except whoever acted: the creator, the
+ * opportunity's owner and the company member who opened it (if one did), and
+ * every active operator unless Tomoji acted. Company members who have left
+ * aren't told, and an owner who also opened it gets one notification. Call it
+ * from the mutation that makes the change, so a refused change notifies no
+ * one. Like other notifications, none are sent if the opportunity is missing.
  */
 async function notifyDisputeParties(
   ctx: MutationCtx,
@@ -281,14 +281,17 @@ async function notifyDisputeParties(
     await notifyCreator(ctx, dispute.creatorId, notification);
   }
 
-  const members = new Set([opportunity.createdBy]);
+  // The opportunity's owner, plus the member who opened the dispute if that's
+  // someone else. Members who have left the company aren't told.
+  const members = [await ctx.db.get("companyUsers", opportunity.createdBy)];
   if (dispute.openedByRole === "company") {
     const opener = await getCompanyUser(ctx, dispute.openedBy, dispute.companyId);
-    if (opener !== null) members.add(opener._id);
+    if (opener !== null && opener._id !== opportunity.createdBy) members.push(opener);
   }
-  for (const memberId of members) {
-    const member = await ctx.db.get("companyUsers", memberId);
-    if (member?.userId !== actor.userId) await notifyCompanyUser(ctx, memberId, notification);
+  for (const member of members) {
+    if (member?.isActive && member.userId !== actor.userId) {
+      await notifyCompanyUser(ctx, member._id, notification);
+    }
   }
 
   if (actor.role !== "operator") await notifyOperators(ctx, notification);

@@ -274,10 +274,13 @@ export async function applyMembership(ctx: MutationCtx, event: MembershipEvent):
     return;
   }
 
-  // A serving operator belongs to no customer company: recording the membership
-  // would list Tomoji staff among a customer's own people. One who has left the
-  // staff org is deactivated, and is allowed through to become a company user.
-  if (user.role === "operator" && user.isActive) {
+  // An operator belongs to no customer company: recording the membership would
+  // list Tomoji staff among a customer's own people. Leaving the staff org is
+  // the one exit, and it is the reason that says so, not inactivity alone — a
+  // locked or deleted operator is inactive too, and letting those through would
+  // turn an organization invite into a way to drop the role and the lock with it.
+  const leftStaffOrg = !user.isActive && user.deactivatedReason === "left_company";
+  if (user.role === "operator" && !leftStaffOrg) {
     console.warn("ignoring company membership for an operator", {
       workosId: event.workosUserId,
       userId: user._id,

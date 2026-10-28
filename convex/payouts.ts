@@ -1,7 +1,27 @@
 import { paginationResultValidator } from "convex/server";
 import { v } from "convex/values";
+import { internalMutation } from "./_generated/server";
 import { authedQuery, requireCallerViewer } from "./lib/functions";
-import { listPayouts, payoutListFilters, payoutView, requirePayout } from "./models/payouts";
+import {
+  createPayout,
+  listPayouts,
+  payoutCreate,
+  payoutListFilters,
+  payoutView,
+  requirePayout,
+} from "./models/payouts";
+import schema from "./schema";
+
+/**
+ * Records a finalized earning from trusted backend code and starts a 72-hour
+ * review window. Same-source retries return the existing payout; conflicting
+ * earning details throw `conflict`. No approval or payment is scheduled here.
+ */
+export const create = internalMutation({
+  args: payoutCreate.fields,
+  returns: schema.doc("payouts"),
+  handler: async (ctx, args) => await createPayout(ctx, args),
+});
 
 /**
  * Gets one payout: creators see their own, company users see their company's,

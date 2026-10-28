@@ -423,23 +423,17 @@ describe("updateCampaign", () => {
     await t.run(async (ctx) =>
       updateCampaign(ctx, campaignId, owner.companyId, {
         title: "  Updated launch  ",
-        objective: "\tIntroduce the new range\n",
-        product: "  Night moisturizer  ",
-        audience: "  Skincare enthusiasts  ",
         description: "\nFirst paragraph.\n\nSecond paragraph.\n",
       }),
     );
 
     expect(await t.run(async (ctx) => ctx.db.get("campaigns", campaignId))).toMatchObject({
       title: "Updated launch",
-      objective: "Introduce the new range",
-      product: "Night moisturizer",
-      audience: "Skincare enthusiasts",
       description: "First paragraph.\n\nSecond paragraph.",
     });
   });
 
-  test.each(["title", "objective", "product", "audience", "description"] as const)(
+  test.each(["title", "description"] as const)(
     "rejects blank updates to %s without changing the campaign",
     async (field) => {
       const t = convexTest(schema, modules);
@@ -550,9 +544,6 @@ describe("updateCampaign", () => {
         "campaigns",
         campaignDoc(owner, {
           title: "",
-          objective: "",
-          product: "",
-          audience: "",
           description: "",
         }),
       ),
@@ -646,9 +637,6 @@ describe("publishCampaign", () => {
             startsAt: start === "past" ? 0 : Date.now() + HOUR,
             budgetCents: 0,
             title: "  Spring launch  ",
-            objective: "  Introduce the new range  ",
-            product: "  Daily moisturizer  ",
-            audience: "  Skincare enthusiasts  ",
             description: "\nFirst paragraph.\n\nSecond paragraph.\n",
           }),
         ),
@@ -718,7 +706,7 @@ describe("publishCampaign", () => {
     },
   );
 
-  test.each(["title", "objective", "product", "audience", "description"] as const)(
+  test.each(["title", "description"] as const)(
     "rejects a draft whose %s is blank without changing it",
     async (field) => {
       const t = convexTest(schema, modules);
@@ -1832,7 +1820,7 @@ describe("createCampaign", () => {
     expect(await t.run(async (ctx) => ctx.db.query("campaigns").first())).toBeNull();
   });
 
-  test.each(["title", "objective", "product", "audience", "description"] as const)(
+  test.each(["title", "description"] as const)(
     "rejects blank %s in drafts and open campaigns without writing",
     async (field) => {
       const t = convexTest(schema, modules);
@@ -1856,9 +1844,6 @@ describe("createCampaign", () => {
     const owner = await seedOwner(t, "ca-trim");
     const doc = campaignDoc(owner, {
       title: "  Spring launch  ",
-      objective: "  Introduce the new skincare range\n",
-      product: "\tDaily moisturizer  ",
-      audience: "  Gen Z skincare enthusiasts  ",
       description: "\nFirst paragraph.\n\nSecond paragraph.\n",
     });
 
@@ -1867,9 +1852,6 @@ describe("createCampaign", () => {
 
     expect(stored).toMatchObject({
       title: "Spring launch",
-      objective: "Introduce the new skincare range",
-      product: "Daily moisturizer",
-      audience: "Gen Z skincare enthusiasts",
       description: "First paragraph.\n\nSecond paragraph.",
     });
   });

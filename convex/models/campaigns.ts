@@ -10,7 +10,7 @@ import { applyOpportunityPause } from "./opportunities";
 
 export const campaignUpdate = schema
   .doc("campaigns")
-  .pick("title", "objective", "product", "audience", "description", "budgetCents", "startsAt")
+  .pick("title", "description", "budgetCents", "startsAt")
   .partial()
   .extend({ endsAt: v.optional(v.union(v.number(), v.null())) });
 
@@ -61,7 +61,7 @@ export async function updateCampaign(
   }
   const patch: Partial<Pick<Doc<"campaigns">, keyof CampaignUpdate>> = {};
 
-  for (const field of ["title", "objective", "product", "audience", "description"] as const) {
+  for (const field of ["title", "description"] as const) {
     const value = fields[field];
     if (value !== undefined) {
       patch[field] = requireNonBlank(value, `campaign_${field}`);
@@ -260,9 +260,6 @@ export async function createCampaign(
   return await ctx.db.insert("campaigns", {
     ...campaign,
     title: requireNonBlank(campaign.title, "campaign_title"),
-    objective: requireNonBlank(campaign.objective, "campaign_objective"),
-    product: requireNonBlank(campaign.product, "campaign_product"),
-    audience: requireNonBlank(campaign.audience, "campaign_audience"),
     description: requireNonBlank(campaign.description, "campaign_description"),
   });
 }
@@ -287,7 +284,7 @@ async function pauseOpenOpportunities(
 
 function validateCampaignForOpening(campaign: Doc<"campaigns">): void {
   validateCampaignBudgetAndSchedule(campaign);
-  for (const field of ["title", "objective", "product", "audience", "description"] as const) {
+  for (const field of ["title", "description"] as const) {
     requireNonBlank(campaign[field], `campaign_${field}`);
   }
   if (campaign.endsAt !== undefined && campaign.endsAt <= Date.now()) {

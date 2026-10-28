@@ -238,9 +238,6 @@ async function seedCompanyContent(
   const campaign = {
     companyId: company._id,
     createdBy: admin._id,
-    objective: "Reach developers who are evaluating us this quarter.",
-    product: "The platform's free tier and SDK.",
-    audience: "Working developers with an existing audience.",
   };
 
   // One per status, so the campaigns list has something in every filter.

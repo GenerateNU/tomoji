@@ -12,9 +12,6 @@ export const campaignsTable = defineTable({
   companyId: v.id("companies"),
   createdBy: v.id("companyUsers"),
   title: v.string(),
-  objective: v.string(),
-  product: v.string(),
-  audience: v.string(),
   description: v.string(),
   status: campaignStatus,
   // Server-managed while a campaign pause is still updating its opportunities.

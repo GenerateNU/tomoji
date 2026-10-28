@@ -462,6 +462,8 @@ export async function seedMembership(
 
 export type AssignmentFixture = {
   assignmentId: Id<"assignments">;
+  /** The seeded opportunity's only deliverable. */
+  deliverableId: Id<"deliverables">;
   creatorId: Id<"creators">;
   creatorUserId: Id<"users">;
   membership: Doc<"companyUsers">;
@@ -472,14 +474,15 @@ export type AssignmentFixture = {
 export const submissionDraftFields = {
   draftUrl: "https://drive.example.com/drafts/driftwood-first-deploy",
   draftDescription: "60-second walkthrough: install, `driftwood init`, first deploy at 0:45.",
-} satisfies Omit<SubmissionDraft, "assignmentId">;
+} satisfies Omit<SubmissionDraft, "assignmentId" | "deliverableId">;
 
 /** Builds a creator-supplied draft while allowing each test to override its scenario. */
 export function submissionArgs(
-  assignmentId: Id<"assignments">,
+  fixture: Pick<AssignmentFixture, "assignmentId" | "deliverableId">,
   overrides: Partial<SubmissionDraft> = {},
 ): SubmissionDraft {
-  return { assignmentId, ...submissionDraftFields, ...overrides };
+  const { assignmentId, deliverableId } = fixture;
+  return { assignmentId, deliverableId, ...submissionDraftFields, ...overrides };
 }
 
 // Subjects the assignment fixture seeds. Every test gets a fresh database and
@@ -509,21 +512,47 @@ export async function seedAssignmentFixture(
     status: assignment.status ?? "active",
   });
   const usesAiReview = assignment.usesAiReview ?? false;
-  const creatorUserId = await t.run(async (ctx) => {
+  const { creatorUserId, deliverableId } = await t.run(async (ctx) => {
     await ctx.db.patch("assignments", assignmentId, { usesAiReview });
     const user = await getUserByWorkosId(ctx, FIXTURE_CREATOR);
     if (user === null) throw new Error("expected seeded creator");
-    return user._id;
+    const deliverable = await ctx.db
+      .query("deliverables")
+      .withIndex("by_opportunityId", (q) => q.eq("opportunityId", opportunityId))
+      .first();
+    if (deliverable === null) throw new Error("expected seeded deliverable");
+    return { creatorUserId: user._id, deliverableId: deliverable._id };
   });
 
   return {
     assignmentId,
+    deliverableId,
     creatorId,
     creatorUserId,
     membership,
     asCreator: t.withIdentity(workosIdentity({ subject: FIXTURE_CREATOR })),
     asCompany,
   };
+}
+
+/**
+ * Adds another deliverable to the fixture's opportunity. Inserts directly,
+ * since the fixture's assignment already locks deliverables against the model.
+ */
+export async function seedDeliverable(
+  t: TestConvex,
+  fixture: AssignmentFixture,
+): Promise<Id<"deliverables">> {
+  return await t.run(async (ctx) => {
+    const existing = await ctx.db.get("deliverables", fixture.deliverableId);
+    if (existing === null) throw new Error("expected seeded deliverable");
+    return await ctx.db.insert("deliverables", {
+      opportunityId: existing.opportunityId,
+      createdBy: existing.createdBy,
+      title: "Follow-up thread",
+      description: "Three posts on your results after two weeks.",
+    });
+  });
 }
 
 /** Inserts a submission in the given state, bypassing the create rules. */
@@ -537,6 +566,7 @@ export async function seedSubmission(
     if (assignment === null) throw new Error("expected seeded assignment");
     const draft = {
       assignmentId: fixture.assignmentId,
+      deliverableId: fixture.deliverableId,
       draftUrl: "https://drive.example.com/drafts/driftwood-cli-screencast",
       draftDescription: "Screencast: installing the Driftwood CLI and running a first deploy.",
       usesAiReview: assignment.usesAiReview,
@@ -633,6 +663,7 @@ export async function seedOverriddenSubmission(t: TestConvex) {
     const reviewedAt = Date.now();
     return await ctx.db.insert("submissions", {
       assignmentId: fixture.assignmentId,
+      deliverableId: fixture.deliverableId,
       draftUrl: "https://drive.example.com/drafts/driftwood-cli-screencast",
       draftDescription: "Screencast: installing the Driftwood CLI and running a first deploy.",
       usesAiReview: false,

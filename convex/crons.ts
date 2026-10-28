@@ -13,4 +13,7 @@ crons.cron("close expired opportunities", "0,30 * * * *", internal.opportunities
 // refuses expired offers; this makes the expiry visible in status.
 crons.cron("expire application offers", "0,30 * * * *", internal.applications.expireOffers, {});
 
+// Payout review deadlines are exact elapsed times, not half-hour boundaries.
+crons.interval("approve due payouts", { minutes: 1 }, internal.payouts.autoApprove, {});
+
 export default crons;

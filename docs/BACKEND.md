@@ -239,9 +239,41 @@ the earned amount and deciding when it is final.
   still reconcile after related records have been deleted.
 
 This operation records obligations; it does not calculate fixed fees or view-based
-earnings, approve payouts, or schedule payments. Company/automatic approval and
-dispute holds are the next workflow slice. Stripe execution and bank-payout
-reconciliation remain separate integration work.
+earnings, approve payouts, or schedule payments.
+
+### Approval and dispute holds
+
+`payouts.approve({ payoutId })` lets a company admin approve their company's payout.
+The route uses `companyAdminMutation`; creators, ordinary members, and operators
+cannot approve on a company's behalf. Missing and foreign payouts return
+`not_found`. Successful approval returns the same public view as `get` and `list`.
+
+- Manual approval records `approvalStatus: "approved"`, server-time `approvedAt`,
+  `approvalSource: "company"`, and the authenticated user's ID in `approvedBy`.
+- A minute-interval cron calls `internal.payouts.autoApprove({})`. It scans pending
+  payouts with `approvalDueAt <= server time`, approving eligible rows with
+  `approvalSource: "automatic"` and no `approvedBy`. The original 72-hour deadline
+  is exact; the stored approval happens on a subsequent run, subject to job delay.
+- Each transaction scans at most 50 payouts. Cursor continuations keep the initial
+  cutoff and advance past held payouts, so a page of disputes cannot starve later
+  eligible payouts. A new cron sweep revisits any remaining pending payouts.
+- Any open dispute on the assignment blocks a new approval, including a dispute
+  about a particular post. Manual approval returns `invalid_state` with reason
+  `payout_disputed`; automatic approval skips the payout. The indexed dispute read
+  and approval write happen in the same transaction.
+- All assignment disputes must be resolved before approval can proceed. Resolution
+  never changes `reviewRequestedAt` or `approvalDueAt`; an overdue payout becomes
+  eligible on the next sweep, while a future deadline still has to be reached for
+  automatic approval. Resolution does not recalculate the payout amount.
+- Already-approved payouts are unchanged on repeated calls, preserving the first
+  approval's source, time, and actor even if another dispute is opened later.
+  Manual approval and the automatic sweep can safely race; the first approval wins.
+
+Dispute holds are derived from current dispute rows, not copied to each payout.
+Approval preserves the amount, deadline, and payment status; it does not send money.
+Stripe execution and bank-payout reconciliation remain separate integration work.
+That future payment operation must check current disputes again before transferring
+funds, including disputes opened after approval.
 
 ## Tests
 

@@ -1,14 +1,19 @@
 import { paginationResultValidator } from "convex/server";
 import { v } from "convex/values";
+import { internal } from "./_generated/api";
 import { internalMutation } from "./_generated/server";
-import { authedQuery, requireCallerViewer } from "./lib/functions";
+import { authedQuery, companyAdminMutation, requireCallerViewer } from "./lib/functions";
 import {
+  approvePayout,
+  autoApprovePayouts,
   createPayout,
   listPayouts,
+  payoutApprovalContinuation,
   payoutCreate,
   payoutListFilters,
   payoutView,
   requirePayout,
+  type PayoutApprovalContinuation,
 } from "./models/payouts";
 import schema from "./schema";
 
@@ -21,6 +26,36 @@ export const create = internalMutation({
   args: payoutCreate.fields,
   returns: schema.doc("payouts"),
   handler: async (ctx, args) => await createPayout(ctx, args),
+});
+
+/**
+ * Approves a payout belonging to the caller's company. Company admins only.
+ * An open assignment dispute blocks new approval. Repeated approval preserves
+ * the original actor and time. Approval does not start a payment.
+ *
+ * @throws `not_found` for a missing or foreign payout.
+ * @throws `invalid_state` with `payout_disputed` while an assignment dispute is open.
+ */
+export const approve = companyAdminMutation({
+  args: { payoutId: v.id("payouts") },
+  returns: payoutView,
+  handler: async (ctx, { payoutId }) => await approvePayout(ctx, ctx.membership, payoutId),
+});
+
+/**
+ * Approves overdue, undisputed payouts in bounded pages. Continuations keep the
+ * original cutoff and advance past disputed rows so they cannot stall the sweep.
+ */
+export const autoApprove = internalMutation({
+  args: { continuation: v.optional(payoutApprovalContinuation) },
+  returns: v.null(),
+  handler: async (ctx, { continuation }) => {
+    const next: PayoutApprovalContinuation | null = await autoApprovePayouts(ctx, continuation);
+    if (next !== null) {
+      await ctx.scheduler.runAfter(0, internal.payouts.autoApprove, { continuation: next });
+    }
+    return null;
+  },
 });
 
 /**

@@ -182,7 +182,7 @@ order they were added, at most 20 per opportunity.
 also needs; `models/deliverables.ts` holds the route rules and depends on
 opportunities, which keeps the imports acyclic.
 
-## Payout records and reads
+## Payout records
 
 `payouts` records individual finalized earnings payments. An assignment can have
 several payouts; a payout can optionally identify a specific post and an earning
@@ -208,11 +208,40 @@ Approval and payment status are separate. `transferred` means money reached the
 creator's payment-provider balance, not their bank. Times are Unix milliseconds;
 amounts are stored in integer currency minor units (cents for USD).
 
-This first slice exposes reads only. Payout creation, money and relationship
-validation, transactional uniqueness of `(assignmentId, sourceKey)`, the three-day
-approval workflow, and dispute holds belong to the next slice. The indexes alone
-do not enforce uniqueness. Stripe execution and bank-payout reconciliation are
-separate integration work; this schema does not send money or schedule approvals.
+### Recording finalized earnings
+
+`internal.payouts.create({ assignmentId, sourceKey, amountCents, currency, postId?,
+earningPeriod? })` records a finalized earning and returns the stored payout.
+Only trusted backend functions call it; creators, companies, and operators do not
+have a public payout-creation endpoint. The caller is responsible for calculating
+the earned amount and deciding when it is final.
+
+- Ownership comes from the assignment. An optional post must exist and link to
+  that assignment through its submission. Parent activity and assignment status
+  do not determine whether historical earnings can be recorded.
+- `amountCents` must be a positive safe integer in the currency's minor units.
+  Currency is trimmed, lowercased, and checked for three ASCII letters. This is
+  format validation; provider-supported currencies and currency-specific payout
+  limits belong to the later payment integration.
+- An optional earning period must use nonnegative integer Unix milliseconds,
+  with `startsAt < endsAt <= reviewRequestedAt`.
+- Creation sets `reviewRequestedAt` from server time, `approvalDueAt` exactly
+  72 hours later, `approvalStatus: "pending"`, and `paymentStatus: "notStarted"`.
+  The deadline is not rounded to the campaign/opportunity half-hour schedule.
+- `sourceKey` is a trimmed, nonblank key that the caller must reuse for retries
+  of the same earning event. Different earnings on one assignment use different
+  keys. The same key may be used on another assignment.
+- A single mutation reads the `(assignmentId, sourceKey)` index and inserts the
+  payout. This enforces uniqueness transactionally; the index alone is not unique.
+  Retrying with the same amount, currency, post, and period returns the existing
+  payout without changing its deadline or approval/payment progress. Changed
+  details return `conflict` with reason `payout_source_conflict`. Identical retries
+  still reconcile after related records have been deleted.
+
+This operation records obligations; it does not calculate fixed fees or view-based
+earnings, approve payouts, or schedule payments. Company/automatic approval and
+dispute holds are the next workflow slice. Stripe execution and bank-payout
+reconciliation remain separate integration work.
 
 ## Tests
 

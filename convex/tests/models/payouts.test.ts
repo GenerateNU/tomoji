@@ -1,8 +1,9 @@
 /// <reference types="vite/client" />
 import { convexTest } from "convex-test";
-import { expect, test } from "vitest";
+import { afterEach, expect, test, vi } from "vitest";
 import type { ResourceViewer } from "../../lib/authz";
-import { listPayouts, requirePayout } from "../../models/payouts";
+import { createPayout, listPayouts, requirePayout, type PayoutCreate } from "../../models/payouts";
+import { createPost } from "../../models/posts";
 import schema from "../../schema";
 import {
   expectApiError,
@@ -17,6 +18,301 @@ import {
 
 const modules = import.meta.glob("../../**/*.ts");
 const firstPage = { numItems: 10, cursor: null };
+
+afterEach(() => vi.useRealTimers());
+
+const finalizedEarning = { sourceKey: "fixed-fee", amountCents: 10_000, currency: "usd" };
+
+test("creates a finalized payout with assignment ownership and exactly 72 hours for review", async () => {
+  // An off-grid instant across the US DST change: the deadline is elapsed time.
+  vi.useFakeTimers();
+  const now = Date.parse("2026-10-31T12:17:23.456Z");
+  vi.setSystemTime(now);
+  const t = convexTest(schema, modules);
+  const fixture = await seedAssignmentFixture(t);
+  const payout = await t.run(
+    async (ctx) =>
+      await createPayout(ctx, {
+        assignmentId: fixture.assignmentId,
+        sourceKey: "fixed-fee",
+        amountCents: 10_000,
+        currency: "usd",
+      }),
+  );
+  const assignment = await t.run(
+    async (ctx) => await ctx.db.get("assignments", fixture.assignmentId),
+  );
+  expect(payout).toMatchObject({
+    assignmentId: fixture.assignmentId,
+    creatorId: fixture.creatorId,
+    companyId: fixture.membership.companyId,
+    campaignId: assignment?.campaignId,
+    sourceKey: "fixed-fee",
+    amountCents: 10_000,
+    currency: "usd",
+    reviewRequestedAt: now,
+    approvalDueAt: now + 259_200_000,
+    approvalStatus: "pending",
+    paymentStatus: "notStarted",
+  });
+  expect(await t.run(async (ctx) => await ctx.db.get("payouts", payout._id))).toEqual(payout);
+  expect(payout).not.toHaveProperty("approvedAt");
+  expect(payout).not.toHaveProperty("transferredAt");
+});
+
+test.each([0, -1, 1.5, NaN, Infinity, -Infinity, Number.MAX_SAFE_INTEGER + 1])(
+  "rejects invalid payout amount %s without writing a payout",
+  async (amountCents) => {
+    const t = convexTest(schema, modules);
+    const fixture = await seedAssignmentFixture(t);
+    await expectApiError(
+      () =>
+        t.run(
+          async (ctx) =>
+            await createPayout(ctx, {
+              ...finalizedEarning,
+              assignmentId: fixture.assignmentId,
+              amountCents,
+            }),
+        ),
+      "invalid_state",
+      "amount_invalid",
+    );
+    expect(await t.run(async (ctx) => await ctx.db.query("payouts").take(1))).toEqual([]);
+  },
+);
+
+test.each([
+  [{ sourceKey: " \n " }, "sourceKey_blank"],
+  [{ currency: "" }, "currency_invalid"],
+  [{ currency: "US" }, "currency_invalid"],
+  [{ currency: "USDD" }, "currency_invalid"],
+  [{ currency: "u$d" }, "currency_invalid"],
+  [{ earningPeriod: { startsAt: -1, endsAt: 2000 } }, "earning_period_invalid"],
+  [{ earningPeriod: { startsAt: 1000, endsAt: 1000 } }, "earning_period_invalid"],
+  [{ earningPeriod: { startsAt: 2000, endsAt: 1000 } }, "earning_period_invalid"],
+  [{ earningPeriod: { startsAt: 1.5, endsAt: 2000 } }, "earning_period_invalid"],
+  [{ earningPeriod: { startsAt: 1000, endsAt: Infinity } }, "earning_period_invalid"],
+  [{ earningPeriod: { startsAt: NaN, endsAt: 2000 } }, "earning_period_invalid"],
+  [{ earningPeriod: { startsAt: 1000, endsAt: 5001 } }, "earning_period_invalid"],
+] satisfies [Partial<PayoutCreate>, string][])(
+  "rejects invalid finalized earning input %j",
+  async (overrides, reason) => {
+    const t = convexTest(schema, modules);
+    const fixture = await seedAssignmentFixture(t);
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(5000);
+    await expectApiError(
+      () =>
+        t.run(
+          async (ctx) =>
+            await createPayout(ctx, {
+              ...finalizedEarning,
+              assignmentId: fixture.assignmentId,
+              ...overrides,
+            }),
+        ),
+      "invalid_state",
+      reason,
+    );
+    expect(await t.run(async (ctx) => await ctx.db.query("payouts").take(1))).toEqual([]);
+  },
+);
+
+test("normalizes currency and source key and returns the original payout on a later retry", async () => {
+  const t = convexTest(schema, modules);
+  const fixture = await seedAssignmentFixture(t);
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(5000);
+  const args = {
+    ...finalizedEarning,
+    assignmentId: fixture.assignmentId,
+    earningPeriod: { startsAt: 0, endsAt: 5000 },
+  };
+  const first = await t.run(
+    async (ctx) =>
+      await createPayout(ctx, {
+        ...args,
+        sourceKey: " fixed-fee ",
+        currency: " USD ",
+      }),
+  );
+  expect(first.currency).toBe("usd");
+  expect(first.sourceKey).toBe("fixed-fee");
+  vi.setSystemTime(86_405_000);
+  const retry = await t.run(async (ctx) => await createPayout(ctx, args));
+  expect(retry).toEqual(first);
+  expect(await t.run(async (ctx) => await ctx.db.query("payouts").take(2))).toEqual([first]);
+});
+
+test.each([
+  { amountCents: 20_000 },
+  { currency: "eur" },
+  { earningPeriod: undefined },
+  { earningPeriod: { startsAt: 0, endsAt: 2000 } },
+  { earningPeriod: { startsAt: 1000, endsAt: 3000 } },
+] satisfies Partial<PayoutCreate>[])(
+  "rejects conflicting retries %j without changing the payout",
+  async (overrides) => {
+    const t = convexTest(schema, modules);
+    const fixture = await seedAssignmentFixture(t);
+    const args = {
+      ...finalizedEarning,
+      assignmentId: fixture.assignmentId,
+      earningPeriod: { startsAt: 1000, endsAt: 2000 },
+    };
+    const first = await t.run(async (ctx) => await createPayout(ctx, args));
+    await expectApiError(
+      () => t.run(async (ctx) => await createPayout(ctx, { ...args, ...overrides })),
+      "conflict",
+      "payout_source_conflict",
+    );
+    expect(await t.run(async (ctx) => await ctx.db.query("payouts").take(2))).toEqual([first]);
+  },
+);
+
+test("different earnings create multiple payouts and different assignments can reuse source keys", async () => {
+  const t = convexTest(schema, modules);
+  const fixture = await seedAssignmentFixture(t);
+  const assignment = await t.run(
+    async (ctx) => await ctx.db.get("assignments", fixture.assignmentId),
+  );
+  const otherAssignmentId = await seedAssignment(t, {
+    opportunityId: assignment!.opportunityId,
+    creatorId: await seedCreatorId(t, "other-earner"),
+  });
+  const first = await t.run(
+    async (ctx) =>
+      await createPayout(ctx, {
+        ...finalizedEarning,
+        assignmentId: fixture.assignmentId,
+      }),
+  );
+  const next = await t.run(
+    async (ctx) =>
+      await createPayout(ctx, {
+        ...finalizedEarning,
+        assignmentId: fixture.assignmentId,
+        sourceKey: "view-period-1",
+      }),
+  );
+  const other = await t.run(
+    async (ctx) =>
+      await createPayout(ctx, {
+        ...finalizedEarning,
+        assignmentId: otherAssignmentId,
+      }),
+  );
+  expect(new Set([first._id, next._id, other._id]).size).toBe(3);
+});
+
+test("retries reconcile after assignment deletion without resetting approval or payment progress", async () => {
+  const t = convexTest(schema, modules);
+  const fixture = await seedAssignmentFixture(t);
+  const args = { ...finalizedEarning, assignmentId: fixture.assignmentId };
+  const first = await t.run(async (ctx) => await createPayout(ctx, args));
+  const progressed = await t.run(async (ctx) => {
+    await ctx.db.patch("payouts", first._id, {
+      approvalStatus: "approved",
+      approvedAt: Date.now(),
+      approvalSource: "company",
+      approvedBy: fixture.membership.userId,
+      paymentStatus: "transferred",
+      transferredAt: Date.now(),
+    });
+    await ctx.db.delete("assignments", fixture.assignmentId);
+    return await ctx.db.get("payouts", first._id);
+  });
+  expect(await t.run(async (ctx) => await createPayout(ctx, args))).toEqual(progressed);
+  await expectApiError(
+    () => t.run(async (ctx) => await createPayout(ctx, { ...args, sourceKey: "new-earning" })),
+    "not_found",
+  );
+  expect(await t.run(async (ctx) => await ctx.db.query("payouts").take(2))).toEqual([progressed]);
+});
+
+test.each(["missing post", "missing submission", "different assignment"] as const)(
+  "rejects an unrelated post: %s",
+  async (scenario) => {
+    const t = convexTest(schema, modules);
+    const fixture = await seedAssignmentFixture(t);
+    const submissionId = await seedSubmission(t, fixture, "approved");
+    const postId = await t.run(
+      async (ctx) =>
+        await createPost(ctx, fixture.creatorId, {
+          submissionId,
+          url: "https://x.com/creator/status/1234",
+        }),
+    );
+    let assignmentId = fixture.assignmentId;
+    if (scenario === "missing post") {
+      await t.run(async (ctx) => await ctx.db.delete("posts", postId));
+    } else if (scenario === "missing submission") {
+      await t.run(async (ctx) => await ctx.db.delete("submissions", submissionId));
+    } else {
+      const assignment = await t.run(async (ctx) => await ctx.db.get("assignments", assignmentId));
+      // The post has the same campaign, but a different assignment/creator.
+      assignmentId = await seedAssignment(t, {
+        opportunityId: assignment!.opportunityId,
+        creatorId: await seedCreatorId(t, "other-post-owner"),
+      });
+    }
+    await expectApiError(
+      () =>
+        t.run(
+          async (ctx) =>
+            await createPayout(ctx, {
+              ...finalizedEarning,
+              assignmentId,
+              postId,
+            }),
+        ),
+      scenario === "different assignment" ? "invalid_state" : "not_found",
+    );
+    expect(await t.run(async (ctx) => await ctx.db.query("payouts").take(1))).toEqual([]);
+  },
+);
+
+test("post context is immutable and identical retries work after the post disappears", async () => {
+  const t = convexTest(schema, modules);
+  const fixture = await seedAssignmentFixture(t);
+  const submissionId = await seedSubmission(t, fixture, "approved");
+  const postId = await t.run(
+    async (ctx) =>
+      await createPost(ctx, fixture.creatorId, {
+        submissionId,
+        url: "https://x.com/creator/status/1234",
+      }),
+  );
+  const args = { ...finalizedEarning, assignmentId: fixture.assignmentId, postId };
+  const first = await t.run(async (ctx) => await createPayout(ctx, args));
+  await expectApiError(
+    () => t.run(async (ctx) => await createPayout(ctx, { ...args, postId: undefined })),
+    "conflict",
+    "payout_source_conflict",
+  );
+  await t.run(async (ctx) => await ctx.db.delete("posts", postId));
+  expect(await t.run(async (ctx) => await createPayout(ctx, args))).toEqual(first);
+});
+
+test("creation still records finalized earnings for completed work after a campaign closes", async () => {
+  const t = convexTest(schema, modules);
+  const fixture = await seedAssignmentFixture(t, { status: "completed" });
+  await t.run(async (ctx) => {
+    const assignment = (await ctx.db.get("assignments", fixture.assignmentId))!;
+    await ctx.db.patch("campaigns", assignment.campaignId, { status: "closed" });
+    await ctx.db.patch("opportunities", assignment.opportunityId, { status: "closed" });
+  });
+  const payout = await t.run(
+    async (ctx) =>
+      await createPayout(ctx, {
+        ...finalizedEarning,
+        assignmentId: fixture.assignmentId,
+      }),
+  );
+  expect(payout.assignmentId).toBe(fixture.assignmentId);
+  expect(payout.approvalStatus).toBe("pending");
+});
 
 /** Two creators across two companies, including shared-creator and shared-company cases. */
 async function seedReadScenario(t: TestConvex) {

@@ -1,11 +1,100 @@
 import { paginationOptsValidator, type PaginationResult } from "convex/server";
 import type { Infer } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
-import type { QueryCtx } from "../_generated/server";
+import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { canViewResource, type ResourceViewer } from "../lib/authz";
 import { apiError } from "../lib/errors";
 import { withRowsReadCap } from "../lib/pagination";
+import { requireNonBlank } from "../lib/validation";
 import schema from "../schema";
+
+export const payoutCreate = schema
+  .doc("payouts")
+  .pick("assignmentId", "sourceKey", "amountCents", "currency", "postId", "earningPeriod");
+export type PayoutCreate = Infer<typeof payoutCreate>;
+
+const REVIEW_WINDOW_MS = 72 * 60 * 60 * 1000;
+
+/**
+ * Records a finalized earning and starts its company review window. The caller
+ * calculates eligibility and the final amount; this does not execute a payment.
+ * Identical retries return the existing payout without resetting its progress.
+ * @throws `conflict` if a source key is reused with different earning details.
+ */
+export async function createPayout(ctx: MutationCtx, args: PayoutCreate): Promise<Doc<"payouts">> {
+  const now = Date.now();
+  const sourceKey = requireNonBlank(args.sourceKey, "sourceKey");
+  const currency = args.currency.trim().toLowerCase();
+  if (!Number.isSafeInteger(args.amountCents) || args.amountCents <= 0) {
+    throw apiError("invalid_state", { reason: "amount_invalid" });
+  }
+  // Format only; the payment integration will define supported currencies.
+  if (!/^[a-z]{3}$/.test(currency)) {
+    throw apiError("invalid_state", { reason: "currency_invalid" });
+  }
+  const { earningPeriod } = args;
+  if (
+    earningPeriod !== undefined &&
+    (!Number.isSafeInteger(earningPeriod.startsAt) ||
+      !Number.isSafeInteger(earningPeriod.endsAt) ||
+      earningPeriod.startsAt < 0 ||
+      earningPeriod.endsAt <= earningPeriod.startsAt ||
+      earningPeriod.endsAt > now)
+  ) {
+    throw apiError("invalid_state", { reason: "earning_period_invalid" });
+  }
+
+  // The indexed read and insert share a transaction. Concurrent retries cannot
+  // both insert this key. Reconcile before live-parent checks to preserve retries
+  // even if an assignment or post has since been removed.
+  const existing = await ctx.db
+    .query("payouts")
+    .withIndex("by_assignmentId_and_sourceKey", (q) =>
+      q.eq("assignmentId", args.assignmentId).eq("sourceKey", sourceKey),
+    )
+    .unique();
+  if (existing !== null) {
+    if (
+      existing.amountCents !== args.amountCents ||
+      existing.currency !== currency ||
+      existing.postId !== args.postId ||
+      existing.earningPeriod?.startsAt !== earningPeriod?.startsAt ||
+      existing.earningPeriod?.endsAt !== earningPeriod?.endsAt
+    ) {
+      throw apiError("conflict", { reason: "payout_source_conflict" });
+    }
+    return existing;
+  }
+
+  const assignment = await ctx.db.get("assignments", args.assignmentId);
+  if (assignment === null) throw apiError("not_found", { resource: "assignment" });
+  if (args.postId !== undefined) {
+    const post = await ctx.db.get("posts", args.postId);
+    if (post === null) throw apiError("not_found", { resource: "post" });
+    const submission = await ctx.db.get("submissions", post.submissionId);
+    if (submission === null) throw apiError("not_found", { resource: "submission" });
+    if (submission.assignmentId !== assignment._id) {
+      throw apiError("invalid_state", { reason: "post_assignment_mismatch" });
+    }
+  }
+
+  const payoutId = await ctx.db.insert("payouts", {
+    assignmentId: assignment._id,
+    sourceKey,
+    amountCents: args.amountCents,
+    currency,
+    postId: args.postId,
+    earningPeriod,
+    creatorId: assignment.creatorId,
+    companyId: assignment.companyId,
+    campaignId: assignment.campaignId,
+    reviewRequestedAt: now,
+    approvalDueAt: now + REVIEW_WINDOW_MS,
+    approvalStatus: "pending",
+    paymentStatus: "notStarted",
+  });
+  return (await ctx.db.get("payouts", payoutId))!;
+}
 
 /** The same public view for every role; internal deduplication and actor IDs stay private. */
 export const payoutView = schema

@@ -12,6 +12,7 @@ import {
   seedOpportunity,
   seedUser,
   seedWrongOrgCaller,
+  withoutDeliverables,
   workosIdentity,
 } from "./helpers";
 
@@ -152,7 +153,7 @@ describe("opportunities.closeExpired", () => {
       for (const status of ["open", "paused"] as const) {
         for (let i = 0; i < 51; i++) {
           const id = await ctx.db.insert("opportunities", {
-            ...opportunityArgs(owner.campaignId, { deadline: Date.now() - 1 }),
+            ...withoutDeliverables(opportunityArgs(owner.campaignId, { deadline: Date.now() - 1 })),
             companyId: owner.membership.companyId,
             createdBy: owner.membership._id,
             numFilledSlots: 0,
@@ -1122,7 +1123,7 @@ describe("opportunities.create", () => {
     const stored = await t.run(async (ctx) => await ctx.db.get("opportunities", id));
 
     expect(stored).toMatchObject({
-      ...args,
+      ...withoutDeliverables(args),
       companyId: membership.companyId,
       createdBy: membership._id,
       numFilledSlots: 0,

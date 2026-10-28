@@ -19,9 +19,11 @@ import { authedContext } from "../../lib/functions";
 import schema from "../../schema";
 import {
   creatorNotifications,
+  deliverableArgs,
   expectApiError,
   memberNotifications,
   opportunityArgs,
+  withoutDeliverables,
   readOpportunityHistory,
   seedCampaign,
   seedCreatorId,
@@ -902,6 +904,17 @@ describe("publishOpportunity", () => {
 });
 
 describe("removeOpportunity", () => {
+  test("deletes the draft's deliverables with it", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(
+      t,
+      { subject: "remove_with_deliverables" },
+      { status: "draft", deliverables: [deliverableArgs(), deliverableArgs({ title: "Thread" })] },
+    );
+    await t.run(async (ctx) => await removeOpportunity(ctx, owner.membership, owner.opportunityId));
+    expect(await t.run(async (ctx) => await ctx.db.query("deliverables").collect())).toEqual([]);
+  });
+
   test("conceals a draft whose company is inactive", async () => {
     const t = convexTest(schema, modules);
     const owner = await seedOpportunity(t, { subject: "remove_owner" }, { status: "draft" });
@@ -2119,7 +2132,7 @@ describe("createOpportunity", () => {
 
     const id = await t.run(async (ctx) => await createOpportunity(ctx, membership, args));
     expect(await t.run(async (ctx) => await ctx.db.get("opportunities", id))).toMatchObject({
-      ...args,
+      ...withoutDeliverables(args),
       title: "Launch video",
       description: "Show your routine.",
     });
@@ -2134,7 +2147,9 @@ describe("createOpportunity", () => {
     const args = opportunityArgs(campaignId, { status: "draft", deadline: Date.now() - 1_800_000 });
 
     const id = await t.run(async (ctx) => await createOpportunity(ctx, membership, args));
-    expect(await t.run(async (ctx) => await ctx.db.get("opportunities", id))).toMatchObject(args);
+    expect(await t.run(async (ctx) => await ctx.db.get("opportunities", id))).toMatchObject(
+      withoutDeliverables(args),
+    );
   });
   test("stores the brief with campaign ownership and zero filled slots", async () => {
     const t = convexTest(schema, modules);
@@ -2145,7 +2160,7 @@ describe("createOpportunity", () => {
     const stored = await t.run(async (ctx) => await ctx.db.get("opportunities", id));
 
     expect(stored).toMatchObject({
-      ...args,
+      ...withoutDeliverables(args),
       companyId: membership.companyId,
       createdBy: membership._id,
       numFilledSlots: 0,
@@ -2192,7 +2207,9 @@ describe("createOpportunity", () => {
     });
 
     const id = await t.run(async (ctx) => await createOpportunity(ctx, membership, args));
-    expect(await t.run(async (ctx) => await ctx.db.get("opportunities", id))).toMatchObject(args);
+    expect(await t.run(async (ctx) => await ctx.db.get("opportunities", id))).toMatchObject(
+      withoutDeliverables(args),
+    );
   });
 
   test("rejects publishing beneath a draft campaign", async () => {
@@ -2425,7 +2442,9 @@ describe("createOpportunity", () => {
     );
 
     const id = await t.run(async (ctx) => await createOpportunity(ctx, membership, args));
-    expect(await t.run(async (ctx) => await ctx.db.get("opportunities", id))).toMatchObject(args);
+    expect(await t.run(async (ctx) => await ctx.db.get("opportunities", id))).toMatchObject(
+      withoutDeliverables(args),
+    );
   });
 
   test("rejects publishing with an elapsed deadline without writing", async () => {

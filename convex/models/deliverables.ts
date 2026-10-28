@@ -48,9 +48,9 @@ async function hasAssignments(
 }
 
 /**
- * Deliverables can't be added or removed once a creator has been assigned, in
- * any status: that would change the work they agreed to, and their drafts point
- * at these deliverables. Wording can still change, like the opportunity's brief.
+ * Deliverables can't be removed once a creator has been assigned, in any
+ * status: their drafts point at these deliverables. New ones can still be
+ * added and wording can still change, like the opportunity's brief.
  */
 async function requireNoAssignments(
   ctx: MutationCtx,
@@ -90,7 +90,6 @@ export async function createDeliverable(
   fields: DeliverableCreate,
 ): Promise<Id<"deliverables">> {
   await requireEditableOpportunity(ctx, membership, opportunityId);
-  await requireNoAssignments(ctx, opportunityId);
   const existing = await listOpportunityDeliverables(ctx, opportunityId);
   const [deliverableId] = await insertDeliverables(
     ctx,

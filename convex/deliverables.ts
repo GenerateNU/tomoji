@@ -18,8 +18,7 @@ import schema from "./schema";
  *
  * @throws `not_found` if the opportunity doesn't exist or isn't the company's.
  * @throws `invalid_state` if the opportunity or its campaign is closed
- * (`opportunity_not_editable`), a creator has been assigned
- * (`opportunity_has_assignments`), it already has the most deliverables allowed
+ * (`opportunity_not_editable`), it already has the most deliverables allowed
  * (`too_many_deliverables`), or the title or description is blank or too long
  * (`deliverableTitle_blank`, `deliverableDescription_too_long`, …).
  * @returns the new deliverable's id.

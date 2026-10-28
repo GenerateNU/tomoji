@@ -171,8 +171,9 @@ order they were added, at most 20 per opportunity.
 - An opportunity can't be open without one: `opportunities.create` with
   `status: "open"` needs inline `deliverables`, `publish` refuses a draft with none,
   and `deliverables.remove` keeps the last one of a published opportunity.
-- They freeze at the opportunity's first assignment, in any status, so the work a
-  creator agreed to never changes under them. There is no copy on the assignment.
+- Once the opportunity has an assignment, in any status, deliverables can be added
+  and reworded but not removed, since creators' drafts point at them. There is no
+  copy on the assignment, so assigned creators see the current wording.
 - Creators see them for opportunities they can discover, and for ones they're
   assigned to even after those pause or close.
 

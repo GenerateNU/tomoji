@@ -32,8 +32,7 @@ export const opportunitiesTable = defineTable({
   disclosureRequirements: v.string(),
   usageRights: v.string(),
   productAccessLink: v.optional(v.string()),
-  // Names from the fixed list in models/niches.ts. Optional so existing rows
-  // need no migration; read missing as "no niches".
+  // Legacy selections remain readable until backfilled into opportunityNiches.
   niches: v.optional(v.array(v.string())),
 })
   .index("by_companyId_and_status", ["companyId", "status"])

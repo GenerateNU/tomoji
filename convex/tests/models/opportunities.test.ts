@@ -25,6 +25,7 @@ import {
   opportunityArgs,
   withoutDeliverables,
   readOpportunityHistory,
+  readOpportunitySelections,
   seedCampaign,
   seedCreatorId,
   seedOpportunity,
@@ -217,7 +218,7 @@ describe("closeExpiredOpportunities", () => {
     expect(await t.run(async (ctx) => await closeExpiredOpportunities(ctx))).toBe(false);
     expect(
       await t.run(async (ctx) => await ctx.db.get("opportunities", owner.opportunityId)),
-    ).toEqual(updated);
+    ).toEqual({ ...updated, niches: undefined, skills: undefined });
   });
 
   test("closes expired open and paused opportunities but preserves drafts and future deadlines", async () => {
@@ -1291,10 +1292,16 @@ describe("updateOpportunity", () => {
       async (ctx) => await updateOpportunity(ctx, owner.membership, owner.opportunityId, updates),
     );
 
-    expect(result).toEqual({ ...before, ...updates, description: "Show the evening routine." });
+    expect(result).toEqual({
+      ...before,
+      ...updates,
+      niches: [],
+      skills: [],
+      description: "Show the evening routine.",
+    });
     expect(
       await t.run(async (ctx) => await ctx.db.get("opportunities", owner.opportunityId)),
-    ).toEqual(result);
+    ).toEqual({ ...result, niches: undefined, skills: undefined });
   });
 
   test("accepts an empty patch without changing the document", async () => {
@@ -1308,7 +1315,7 @@ describe("updateOpportunity", () => {
       async (ctx) => await updateOpportunity(ctx, owner.membership, owner.opportunityId, {}),
     );
 
-    expect(result).toEqual(before);
+    expect(result).toEqual({ ...before, niches: [], skills: [] });
     expect(
       await t.run(async (ctx) => await ctx.db.get("opportunities", owner.opportunityId)),
     ).toEqual(before);
@@ -1366,6 +1373,8 @@ describe("updateOpportunity", () => {
           cpmRateCents: 1_000,
           paymentCapCents: 50_000,
           usesAiReviewDefault: false,
+          niches: ["databases"],
+          skills: ["typescript"],
         }),
     );
 
@@ -1621,10 +1630,16 @@ describe("updateOpportunity", () => {
         }),
     );
 
-    expect(result).toEqual({ ...before, title: "Evening routine", fixedFeeCents: 0 });
+    expect(result).toEqual({
+      ...before,
+      title: "Evening routine",
+      fixedFeeCents: 0,
+      niches: [],
+      skills: [],
+    });
     expect(
       await t.run(async (ctx) => await ctx.db.get("opportunities", owner.opportunityId)),
-    ).toEqual(result);
+    ).toEqual({ ...result, niches: undefined, skills: undefined });
   });
 });
 
@@ -1895,7 +1910,11 @@ describe("listOpportunities", () => {
     );
 
     expect(result.page).toEqual([
-      await t.run(async (ctx) => await ctx.db.get("opportunities", owner.opportunityId)),
+      {
+        ...(await t.run(async (ctx) => await ctx.db.get("opportunities", owner.opportunityId))),
+        niches: [],
+        skills: [],
+      },
     ]);
     expect(result.isDone).toBe(true);
   });
@@ -1948,7 +1967,11 @@ describe("listOpportunities", () => {
     );
 
     expect(result.page).toEqual([
-      await t.run(async (ctx) => await ctx.db.get("opportunities", owner.opportunityId)),
+      {
+        ...(await t.run(async (ctx) => await ctx.db.get("opportunities", owner.opportunityId))),
+        niches: [],
+        skills: [],
+      },
     ]);
   });
 
@@ -1961,6 +1984,8 @@ describe("listOpportunities", () => {
       { subject: "list_second" },
       {
         title: "Evening routine video",
+        niches: ["databases"],
+        skills: ["typescript"],
         productAccessLink: "https://example.com/product",
       },
     );
@@ -1971,7 +1996,11 @@ describe("listOpportunities", () => {
         }),
     );
     expect(firstPage.page).toEqual([
-      await t.run(async (ctx) => await ctx.db.get("opportunities", owner.opportunityId)),
+      {
+        ...(await t.run(async (ctx) => await ctx.db.get("opportunities", owner.opportunityId))),
+        niches: [],
+        skills: [],
+      },
     ]);
     expect(firstPage.isDone).toBe(false);
 
@@ -1982,7 +2011,11 @@ describe("listOpportunities", () => {
         }),
     );
     expect(secondPage.page).toEqual([
-      await t.run(async (ctx) => await ctx.db.get("opportunities", second.opportunityId)),
+      {
+        ...(await t.run(async (ctx) => await ctx.db.get("opportunities", second.opportunityId))),
+        niches: ["databases"],
+        skills: ["typescript"],
+      },
     ]);
     expect(secondPage.isDone).toBe(true);
   });
@@ -2016,7 +2049,11 @@ describe("listOpportunities", () => {
         }),
     );
     expect(firstPage.page).toEqual([
-      await t.run(async (ctx) => await ctx.db.get("opportunities", owner.opportunityId)),
+      {
+        ...(await t.run(async (ctx) => await ctx.db.get("opportunities", owner.opportunityId))),
+        niches: [],
+        skills: [],
+      },
     ]);
     expect(firstPage.isDone).toBe(false);
 
@@ -2028,7 +2065,11 @@ describe("listOpportunities", () => {
         }),
     );
     expect(secondPage.page).toEqual([
-      await t.run(async (ctx) => await ctx.db.get("opportunities", secondId)),
+      {
+        ...(await t.run(async (ctx) => await ctx.db.get("opportunities", secondId))),
+        niches: [],
+        skills: [],
+      },
     ]);
     expect(secondPage.isDone).toBe(true);
   });
@@ -2743,6 +2784,137 @@ describe("notifications", () => {
   });
 });
 
+describe("opportunity associations", () => {
+  test("invalid skills on create leave no opportunity or association rows behind", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedCampaign(t, { subject: "invalid_creation_tags" });
+    await expectApiError(
+      () =>
+        t.run((ctx) =>
+          createOpportunity(
+            ctx,
+            owner.membership,
+            opportunityArgs(owner.campaignId, { niches: ["databases"], skills: ["unknown"] }),
+          ),
+        ),
+      "invalid_state",
+      "invalid_skill",
+    );
+    expect(await t.run((ctx) => ctx.db.query("opportunities").take(10))).toEqual([]);
+    expect(await t.run((ctx) => ctx.db.query("opportunityNiches").take(10))).toEqual([]);
+    expect(await t.run((ctx) => ctx.db.query("opportunitySkills").take(10))).toEqual([]);
+  });
+
+  test("selection updates normalize, deduplicate, preserve omitted fields, and clear independently", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(
+      t,
+      { subject: "tags_owner" },
+      { niches: ["databases"], skills: ["python"] },
+    );
+    const replaced = await t.run((ctx) =>
+      updateOpportunity(ctx, owner.membership, owner.opportunityId, {
+        niches: ["Web Development", "web-development"],
+        skills: ["C#", "TypeScript", "C#"],
+      }),
+    );
+    expect(replaced).toMatchObject({
+      niches: ["web-development"],
+      skills: ["c-sharp", "typescript"],
+    });
+    const cleared = await t.run((ctx) =>
+      updateOpportunity(ctx, owner.membership, owner.opportunityId, { skills: [] }),
+    );
+    expect(cleared).toMatchObject({ niches: ["web-development"], skills: [] });
+    expect(await t.run((ctx) => ctx.db.query("opportunityNiches").take(10))).toHaveLength(1);
+    expect(await t.run((ctx) => ctx.db.query("opportunitySkills").take(10))).toEqual([]);
+  });
+
+  test("invalid skills roll back niche and opportunity changes together", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(
+      t,
+      { subject: "tags_atomic" },
+      { niches: ["databases"], skills: ["python"] },
+    );
+    const before = await readOpportunitySelections(t, owner.opportunityId);
+    await expectApiError(
+      () =>
+        t.run((ctx) =>
+          updateOpportunity(ctx, owner.membership, owner.opportunityId, {
+            niches: ["web-development"],
+            skills: ["unknown"],
+            title: "Changed",
+          }),
+        ),
+      "invalid_state",
+      "invalid_skill",
+    );
+    expect(await readOpportunitySelections(t, owner.opportunityId)).toEqual(before);
+  });
+
+  test("removing a draft removes its associations without affecting another opportunity", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(
+      t,
+      { subject: "tags_remove" },
+      { status: "draft", niches: ["llms"], skills: ["python"] },
+    );
+    const other = await seedOpportunity(
+      t,
+      { subject: "tags_sibling" },
+      { niches: ["databases"], skills: ["typescript"] },
+    );
+    await t.run((ctx) => removeOpportunity(ctx, owner.membership, owner.opportunityId));
+    expect(await t.run((ctx) => ctx.db.get("opportunities", owner.opportunityId))).toBeNull();
+    expect(await t.run((ctx) => ctx.db.query("opportunityNiches").take(10))).toMatchObject([
+      { opportunityId: other.opportunityId, name: "databases" },
+    ]);
+    expect(await t.run((ctx) => ctx.db.query("opportunitySkills").take(10))).toMatchObject([
+      { opportunityId: other.opportunityId, name: "typescript" },
+    ]);
+  });
+
+  test("filtered discovery paginates mixed legacy and association rows while hiding paused campaigns", async () => {
+    const t = convexTest(schema, modules);
+    await seedOpportunity(t, { subject: "off_niche" }, { niches: ["databases"] });
+    const hidden = await seedOpportunity(t, { subject: "hidden_niche" }, { niches: ["llms"] });
+    await t.run((ctx) => ctx.db.patch("campaigns", hidden.campaignId, { status: "paused" }));
+    const first = await seedOpportunity(
+      t,
+      { subject: "new_niche" },
+      { niches: ["llms"], skills: ["python"] },
+    );
+    const second = await seedOpportunity(t, { subject: "legacy_niche" });
+    await t.run((ctx) => ctx.db.patch("opportunities", second.opportunityId, { niches: ["llms"] }));
+    const firstPage = await t.run((ctx) =>
+      discoverOpportunities(ctx, { niche: "LLMs", paginationOpts: { numItems: 1, cursor: null } }),
+    );
+    const secondPage = await t.run((ctx) =>
+      discoverOpportunities(ctx, {
+        niche: "LLMs",
+        paginationOpts: { numItems: 1, cursor: firstPage.continueCursor },
+      }),
+    );
+    expect(firstPage.page.map(({ _id, niches, skills }) => ({ _id, niches, skills }))).toEqual([
+      { _id: first.opportunityId, niches: ["llms"], skills: ["python"] },
+    ]);
+    expect(firstPage.isDone).toBe(false);
+    expect(secondPage.page.map(({ _id, niches, skills }) => ({ _id, niches, skills }))).toEqual([
+      { _id: second.opportunityId, niches: ["llms"], skills: [] },
+    ]);
+    // A full stream page may need one more read to discover the end of the index.
+    const lastPage = await t.run((ctx) =>
+      discoverOpportunities(ctx, {
+        niche: "LLMs",
+        paginationOpts: { numItems: 1, cursor: secondPage.continueCursor },
+      }),
+    );
+    expect(lastPage.page).toEqual([]);
+    expect(lastPage.isDone).toBe(true);
+  });
+});
+
 describe("opportunity niches", () => {
   const firstPage = { numItems: 10, cursor: null };
 
@@ -2755,12 +2927,23 @@ describe("opportunity niches", () => {
         await createOpportunity(
           ctx,
           membership,
-          opportunityArgs(campaignId, { niches: ["LLMs", "AI Agents", "llms"] }),
+          opportunityArgs(campaignId, {
+            niches: ["LLMs", "AI Agents", "llms"],
+            skills: ["C++", "TypeScript", "C++"],
+          }),
         ),
     );
 
     const stored = await t.run(async (ctx) => await ctx.db.get("opportunities", opportunityId));
-    expect(stored?.niches).toEqual(["llms", "ai-agents"]);
+    expect(stored).not.toHaveProperty("niches");
+    expect(await t.run((ctx) => ctx.db.query("opportunityNiches").take(10))).toMatchObject([
+      { opportunityId, name: "llms" },
+      { opportunityId, name: "ai-agents" },
+    ]);
+    expect(await t.run((ctx) => ctx.db.query("opportunitySkills").take(10))).toMatchObject([
+      { opportunityId, name: "c-plus-plus" },
+      { opportunityId, name: "typescript" },
+    ]);
   });
 
   test("create refuses a niche that isn't on the list", async () => {
@@ -2802,7 +2985,7 @@ describe("opportunity niches", () => {
     expect(cleared.niches).toEqual([]);
     expect(
       (await t.run(async (ctx) => await ctx.db.get("opportunities", owner.opportunityId)))?.niches,
-    ).toEqual([]);
+    ).toBeUndefined();
   });
 
   test("update leaves niches alone when they aren't sent", async () => {

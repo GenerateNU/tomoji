@@ -186,6 +186,21 @@ export async function seedOpportunityHistory(t: TestConvex, opportunityId: Id<"o
   return await readOpportunityHistory(t, opportunityId);
 }
 
+/** Reads small selection fixtures directly, independently of response mappers. */
+export async function readOpportunitySelections(t: TestConvex, opportunityId: Id<"opportunities">) {
+  return await t.run(async (ctx) => ({
+    opportunity: await ctx.db.get("opportunities", opportunityId),
+    niches: await ctx.db
+      .query("opportunityNiches")
+      .withIndex("by_opportunityId", (q) => q.eq("opportunityId", opportunityId))
+      .take(10),
+    skills: await ctx.db
+      .query("opportunitySkills")
+      .withIndex("by_opportunityId", (q) => q.eq("opportunityId", opportunityId))
+      .take(10),
+  }));
+}
+
 /** A fake WorkOS token. */
 export function workosIdentity(claims: {
   subject: string;

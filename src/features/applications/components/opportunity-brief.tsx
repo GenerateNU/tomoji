@@ -6,7 +6,7 @@ import { DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { Separator } from "@/components/ui/separator";
 import { formatCompensation, formatDeadline } from "@/features/opportunities/lib/format";
 import { Section } from "./section";
-import { SkillTags } from "./skill-tags";
+import { OpportunityTags } from "./opportunity-tags";
 import { Tags } from "./tags";
 import { TextSection } from "./text-section";
 
@@ -53,8 +53,8 @@ export function OpportunityBrief({
 
       <Separator />
 
-      <div className="grid grid-cols-2 gap-6">
-        <SkillTags niches={opportunity.niches} />
+      <div className="grid gap-6 sm:grid-cols-2">
+        <OpportunityTags niches={opportunity.niches} skills={opportunity.skills} />
         {/* HARDCODED: opportunities don't store years of experience yet. */}
         <Section label="Years of experience">
           <Tags tags={[">1 year"]} />

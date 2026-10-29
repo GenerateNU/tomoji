@@ -4,6 +4,8 @@ import { internalMutation, type MutationCtx } from "./_generated/server";
 import { apiError } from "./lib/errors";
 import { HALF_HOUR_MS } from "./lib/validation";
 import { updateCreatorNiches } from "./models/creatorNiches";
+import { updateOpportunityNiches } from "./models/opportunityNiches";
+import { updateOpportunitySkills } from "./models/opportunitySkills";
 
 /**
  * Demo data for every frontend flow, for a personal dev deployment.
@@ -25,6 +27,8 @@ const OWNED_TABLES = [
   "assignments",
   "applications",
   "opportunityStars",
+  "opportunityNiches",
+  "opportunitySkills",
   "opportunities",
   "campaigns",
   "invites",
@@ -127,6 +131,7 @@ type OpportunitySpec = {
   cpmRateCents: number;
   paymentCapCents: number;
   niches: string[];
+  skills: string[];
 };
 
 /**
@@ -148,6 +153,7 @@ const OPPORTUNITIES: OpportunitySpec[] = [
     cpmRateCents: 500,
     paymentCapCents: 200_000,
     niches: ["ai-agents", "developer-tools"],
+    skills: ["python", "typescript"],
   },
   {
     title: "Ship a side project on our free tier",
@@ -162,6 +168,7 @@ const OPPORTUNITIES: OpportunitySpec[] = [
     cpmRateCents: 0,
     paymentCapCents: 0,
     niches: ["web-development", "startups"],
+    skills: ["react", "nextjs"],
   },
   {
     title: "Explain our vector search in one minute",
@@ -176,6 +183,7 @@ const OPPORTUNITIES: OpportunitySpec[] = [
     cpmRateCents: 400,
     paymentCapCents: 90_000,
     niches: ["databases", "machine-learning"],
+    skills: ["postgresql", "python"],
   },
   {
     title: "Security review of our auth flow",
@@ -190,6 +198,7 @@ const OPPORTUNITIES: OpportunitySpec[] = [
     cpmRateCents: 0,
     paymentCapCents: 0,
     niches: ["cybersecurity"],
+    skills: ["application-security"],
   },
   {
     title: "Our CLI in your daily workflow",
@@ -204,6 +213,7 @@ const OPPORTUNITIES: OpportunitySpec[] = [
     cpmRateCents: 0,
     paymentCapCents: 0,
     niches: ["developer-tools", "productivity"],
+    skills: ["bash-shell"],
   },
   {
     title: "Migrating off a legacy ORM",
@@ -218,6 +228,7 @@ const OPPORTUNITIES: OpportunitySpec[] = [
     cpmRateCents: 0,
     paymentCapCents: 0,
     niches: ["databases"],
+    skills: ["prisma", "sql"],
   },
 ];
 
@@ -282,19 +293,19 @@ async function seedCompanyContent(
 
   const opportunityIds: Id<"opportunities">[] = [];
   for (const spec of OPPORTUNITIES) {
-    const { deadlineInDays, niches, ...fields } = spec;
-    opportunityIds.push(
-      await ctx.db.insert("opportunities", {
-        ...fields,
-        ...BOILERPLATE,
-        campaignId: openCampaignId,
-        companyId: company._id,
-        createdBy: admin._id,
-        usesAiReviewDefault: false,
-        deadline: halfHourFromNow(deadlineInDays),
-        niches,
-      }),
-    );
+    const { deadlineInDays, niches, skills, ...fields } = spec;
+    const opportunityId = await ctx.db.insert("opportunities", {
+      ...fields,
+      ...BOILERPLATE,
+      campaignId: openCampaignId,
+      companyId: company._id,
+      createdBy: admin._id,
+      usesAiReviewDefault: false,
+      deadline: halfHourFromNow(deadlineInDays),
+    });
+    await updateOpportunityNiches(ctx, opportunityId, niches);
+    await updateOpportunitySkills(ctx, opportunityId, skills);
+    opportunityIds.push(opportunityId);
   }
   return { openCampaignId, opportunityIds };
 }

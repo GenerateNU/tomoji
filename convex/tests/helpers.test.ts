@@ -62,10 +62,10 @@ test("campaign argument overrides remain unvalidated for negative and legacy fix
   expect(args).not.toHaveProperty("createdBy");
 });
 
-test("campaign arguments use the shared current-time and audience defaults", () => {
+test("campaign arguments use the shared current-time and title defaults", () => {
   const before = Date.now();
   const args = campaignArgs();
-  expect(args.audience).toBe("Skincare enthusiasts");
+  expect(args.title).toBe("Spring launch");
   expect(args.startsAt).toBeGreaterThanOrEqual(before);
   expect(args.startsAt).toBeLessThanOrEqual(Date.now());
 });
@@ -75,7 +75,7 @@ test("shared campaign seeding uses the campaign argument defaults", async () => 
   const before = Date.now();
   const { campaignId } = await seedCampaign(t, { subject: "fixture_defaults" });
   const campaign = await t.run((ctx) => ctx.db.get("campaigns", campaignId));
-  expect(campaign?.audience).toBe("Skincare enthusiasts");
+  expect(campaign?.title).toBe("Spring launch");
   expect(campaign?.startsAt).toBeGreaterThanOrEqual(before);
   expect(campaign?.startsAt).toBeLessThanOrEqual(Date.now());
 });

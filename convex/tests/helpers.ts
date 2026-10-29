@@ -321,9 +321,6 @@ type CampaignArgs = FunctionArgs<typeof api.campaigns.create>;
 export function campaignArgs(overrides: Partial<CampaignArgs> = {}): CampaignArgs {
   return {
     title: "Spring launch",
-    objective: "Introduce the new skincare range",
-    product: "Daily moisturizer",
-    audience: "Skincare enthusiasts",
     description: "Campaign supporting the spring launch.",
     status: "open",
     budgetCents: 250_000,

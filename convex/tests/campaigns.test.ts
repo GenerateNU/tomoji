@@ -1311,9 +1311,6 @@ describe("campaigns.create", () => {
 
     expect(stored?.title).toBe(args.title);
     expect(stored?.description).toBe(args.description);
-    expect(stored?.objective).toBe(args.objective);
-    expect(stored?.product).toBe(args.product);
-    expect(stored?.audience).toBe(args.audience);
     expect(stored?.budgetCents).toBe(args.budgetCents);
     expect(stored?.startsAt).toBe(args.startsAt);
     expect(stored?.status).toBe(args.status);

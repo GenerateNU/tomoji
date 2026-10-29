@@ -3,9 +3,6 @@ import type { api } from "@convex/_generated/api";
 
 export const briefFields = {
   title: "Campaign name",
-  objective: "Objective",
-  product: "Product",
-  audience: "Audience",
   description: "Description",
 } as const;
 

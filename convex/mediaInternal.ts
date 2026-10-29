@@ -5,6 +5,7 @@ import {
   authorizeMediaUpload,
   finalizeMediaUpload,
   requireOwnedMediaUpload,
+  requireReadableCompanyMedia,
   requireReadableProfilePicture,
   requireReadableVideo,
   reserveMediaUpload,
@@ -75,6 +76,18 @@ export const getProfilePicture = internalQuery({
     const upload = await requireReadableProfilePicture(ctx, args.mediaId);
     if (upload.permanentKey === undefined) throw apiError("misconfigured");
     return { key: upload.permanentKey, contentType: upload.contentType };
+  },
+});
+
+/** Only the picture and banner a company currently shows are exposed. */
+export const getCompanyMedia = internalQuery({
+  args: { mediaId: v.id("mediaUploads") },
+  returns: v.object({ key: v.string(), contentType: v.string(), kind: mediaKind }),
+  handler: async (ctx, args) => {
+    await requireUser(ctx);
+    const upload = await requireReadableCompanyMedia(ctx, args.mediaId);
+    if (upload.permanentKey === undefined) throw apiError("misconfigured");
+    return { key: upload.permanentKey, contentType: upload.contentType, kind: upload.kind };
   },
 });
 

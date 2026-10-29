@@ -118,6 +118,41 @@ export const completeUpload = action({
   },
 });
 
+/** Reads an image object, checking it still matches the grant it was stored under. */
+async function readImageObject(
+  image: { key: string; contentType: string },
+  kind: MediaKind,
+): Promise<{ contentType: string; bytes: ArrayBuffer }> {
+  const config = readMediaConfig(env);
+  let object: GetObjectCommandOutput;
+  try {
+    object = await createMediaS3Client(config).send(
+      new GetObjectCommand({ Bucket: config.bucket, Key: image.key }),
+    );
+  } catch {
+    throw apiError("upstream_failure");
+  }
+  if (
+    object.ContentLength === undefined ||
+    object.ContentLength < 1 ||
+    object.ContentLength > mediaLimits[kind] ||
+    object.ContentType !== image.contentType ||
+    object.Body === undefined
+  ) {
+    throw apiError("invalid_state", { reason: "invalid_media_object" });
+  }
+  let bytes: Uint8Array;
+  try {
+    bytes = await object.Body.transformToByteArray();
+  } catch {
+    throw apiError("upstream_failure");
+  }
+  if (bytes.length < 1 || bytes.length > mediaLimits[kind]) {
+    throw apiError("invalid_state", { reason: "invalid_media_object" });
+  }
+  return { contentType: image.contentType, bytes: Uint8Array.from(bytes).buffer };
+}
+
 /** Sends a current private picture through Convex; S3 never grants the browser GET access. */
 export const getProfilePicture = action({
   args: { mediaId: v.id("mediaUploads") },
@@ -125,34 +160,18 @@ export const getProfilePicture = action({
   handler: async (ctx, args): Promise<{ contentType: string; bytes: ArrayBuffer }> => {
     await requireIdentity(ctx);
     const picture = await ctx.runQuery(internal.mediaInternal.getProfilePicture, args);
-    const config = readMediaConfig(env);
-    let object: GetObjectCommandOutput;
-    try {
-      object = await createMediaS3Client(config).send(
-        new GetObjectCommand({ Bucket: config.bucket, Key: picture.key }),
-      );
-    } catch {
-      throw apiError("upstream_failure");
-    }
-    if (
-      object.ContentLength === undefined ||
-      object.ContentLength < 1 ||
-      object.ContentLength > mediaLimits["profile-picture"] ||
-      object.ContentType !== picture.contentType ||
-      object.Body === undefined
-    ) {
-      throw apiError("invalid_state", { reason: "invalid_media_object" });
-    }
-    let bytes: Uint8Array;
-    try {
-      bytes = await object.Body.transformToByteArray();
-    } catch {
-      throw apiError("upstream_failure");
-    }
-    if (bytes.length < 1 || bytes.length > mediaLimits["profile-picture"]) {
-      throw apiError("invalid_state", { reason: "invalid_media_object" });
-    }
-    return { contentType: picture.contentType, bytes: Uint8Array.from(bytes).buffer };
+    return await readImageObject(picture, "profile-picture");
+  },
+});
+
+/** The same path for a company's picture or banner, which any signed-in user may see. */
+export const getCompanyMedia = action({
+  args: { mediaId: v.id("mediaUploads") },
+  returns: v.object({ contentType: v.string(), bytes: v.bytes() }),
+  handler: async (ctx, args): Promise<{ contentType: string; bytes: ArrayBuffer }> => {
+    await requireIdentity(ctx);
+    const media = await ctx.runQuery(internal.mediaInternal.getCompanyMedia, args);
+    return await readImageObject(media, media.kind);
   },
 });
 

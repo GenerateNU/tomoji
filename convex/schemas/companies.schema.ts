@@ -5,9 +5,12 @@ export const companiesTable = defineTable({
   workosId: v.string(),
   name: v.string(),
   isActive: v.boolean(),
-  profilePicture: v.optional(v.string()),
+  profilePictureMediaId: v.optional(v.id("mediaUploads")),
+  bannerMediaId: v.optional(v.id("mediaUploads")),
   website: v.optional(v.string()),
   description: v.optional(v.string()),
+  countryOfResidence: v.optional(v.string()),
+  industry: v.optional(v.string()),
 })
   .index("by_workosId", ["workosId"])
   .index("by_isActive", ["isActive"]);

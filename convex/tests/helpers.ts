@@ -1,9 +1,8 @@
 import type { TestConvex as ConvexTest } from "convex-test";
-import type { UserIdentity, WithoutSystemFields, FunctionArgs } from "convex/server";
+import type { UserIdentity, WithoutSystemFields } from "convex/server";
 import type { Infer } from "convex/values";
 import { expect } from "vitest";
 import type { Doc, Id } from "../_generated/dataModel";
-import type { api } from "../_generated/api";
 import type { DeliverableCreate } from "../models/deliverableDrafts";
 import type { SubmissionDraft } from "../models/submissions";
 import type { ApiErrorCode } from "../lib/errors";
@@ -348,7 +347,13 @@ export type SeedCampaignOptions = {
   status?: Doc<"campaigns">["status"];
 };
 
-type CampaignArgs = FunctionArgs<typeof api.campaigns.create>;
+// Derive fixtures from the model without routing their types back through the generated API.
+type CampaignArgs = Omit<
+  Parameters<typeof createCampaign>[1],
+  "companyId" | "createdBy" | "status"
+> & {
+  status: "draft" | "open";
+};
 
 /** Builds client-editable campaign fields; raw fixtures add owner/state overrides separately. */
 export function campaignArgs(overrides: Partial<CampaignArgs> = {}): CampaignArgs {

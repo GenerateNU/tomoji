@@ -8,12 +8,15 @@ import { optionalNonBlank, requireNonBlank } from "../lib/validation";
 import { submissionShapes } from "../schemas/submissions.schema";
 import { requireAssignment, requireActiveAssignment, type AssignmentViewer } from "./assignments";
 import { creatorName, notifyCompanyUser, notifyCreator } from "./notifications";
+import { requireSubmissionVideo } from "./media";
+import { createAiReviewAttempt } from "./aiReviewAttempts";
 
 /** The creator-supplied fields of a new submission. */
 export const submissionDraft = v.object({
   assignmentId: v.id("assignments"),
   deliverableId: v.id("deliverables"),
-  draftUrl: v.string(),
+  draftUrl: v.optional(v.string()),
+  mediaId: v.optional(v.id("mediaUploads")),
   draftDescription: v.string(),
 });
 
@@ -141,6 +144,7 @@ function toCreatorView(
     assignmentId: submission.assignmentId,
     deliverableId: submission.deliverableId,
     draftUrl: submission.draftUrl,
+    ...(submission.mediaId === undefined ? {} : { mediaId: submission.mediaId }),
     draftDescription: submission.draftDescription,
     usesAiReview: submission.usesAiReview,
     closedWithoutReview,
@@ -232,14 +236,26 @@ export async function createSubmission(
     throw apiError("invalid_state", { reason: "already_approved" });
   }
 
+  if (draft.mediaId !== undefined) {
+    if (draft.draftUrl !== undefined)
+      throw apiError("invalid_state", { reason: "submission_source_conflict" });
+    await requireSubmissionVideo(ctx, assignment, draft.mediaId);
+  } else if (draft.draftUrl === undefined) {
+    throw apiError("invalid_state", { reason: "submission_source_required" });
+  }
+
   const submissionId = await ctx.db.insert("submissions", {
     assignmentId: assignment._id,
     deliverableId: deliverable._id,
-    draftUrl: requireDraftUrl(draft.draftUrl),
+    draftUrl: draft.draftUrl === undefined ? undefined : requireDraftUrl(draft.draftUrl),
+    mediaId: draft.mediaId,
     draftDescription: requireText(draft.draftDescription, "draftDescription"),
     status: "pending",
     usesAiReview: assignment.usesAiReview,
   });
+  // Legacy URL drafts retain manual review during rollout; only owned media can feed AI.
+  if (assignment.usesAiReview && draft.mediaId !== undefined)
+    await createAiReviewAttempt(ctx, submissionId);
   const opportunity = await ctx.db.get("opportunities", assignment.opportunityId);
   if (opportunity !== null) {
     // A draft after a change request is the creator's response to that review.

@@ -539,3 +539,23 @@ test("assignment locking also protects the confirmed criteria", async () => {
     "opportunity_has_assignments",
   );
 });
+
+test("editing criteria preserves the deliverable text and an empty array clears them", async () => {
+  const t = convexTest(schema, modules);
+  const { membership, opportunityId } = await seedOpportunity(t, { subject: "criteria-editor" });
+  const [deliverable] = await storedDeliverables(t, opportunityId);
+  const updated = await t.run((ctx) =>
+    updateDeliverable(ctx, membership, deliverable._id, {
+      reviewCriteria: [{ id: "disclosure", description: " State the sponsorship. " }],
+    }),
+  );
+  expect(updated).toEqual({
+    ...deliverable,
+    reviewCriteria: [{ id: "disclosure", description: "State the sponsorship." }],
+  });
+  const cleared = await t.run((ctx) =>
+    updateDeliverable(ctx, membership, deliverable._id, { reviewCriteria: [] }),
+  );
+  expect(cleared).toEqual({ ...deliverable, reviewCriteria: [] });
+  expect(await storedDeliverables(t, opportunityId)).toEqual([cleared]);
+});

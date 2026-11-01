@@ -19,20 +19,25 @@ export type DeliverableUpdate = Infer<typeof deliverableUpdate>;
 // Allowlist creator fields so new stored fields do not become visible to creators by default.
 export const creatorDeliverable = schema
   .doc("deliverables")
-  .pick("_id", "_creationTime", "opportunityId", "title", "description");
+  .pick("_id", "_creationTime", "opportunityId", "title", "description", "reviewCriteria");
 export type CreatorDeliverable = Infer<typeof creatorDeliverable>;
 
 /** What `list` returns: the stored row, or the creator view without who created it. */
 export const deliverableView = v.union(schema.doc("deliverables"), creatorDeliverable);
 
+/** Shows creators the confirmed requirements without exposing the company member's ID. */
 function toCreatorDeliverable(deliverable: Doc<"deliverables">): CreatorDeliverable {
-  return {
+  const view: CreatorDeliverable = {
     _id: deliverable._id,
     _creationTime: deliverable._creationTime,
     opportunityId: deliverable.opportunityId,
     title: deliverable.title,
     description: deliverable.description,
   };
+  if (deliverable.reviewCriteria !== undefined) {
+    view.reviewCriteria = deliverable.reviewCriteria;
+  }
+  return view;
 }
 
 /** Whether any creator has ever been assigned, whatever the assignment's status now. */
@@ -101,7 +106,7 @@ export async function createDeliverable(
   return deliverableId;
 }
 
-/** Edits a deliverable's text. Errors are listed on the `deliverables.update` route. */
+/** Edits a deliverable's text and criteria under the same assignment lock. */
 export async function updateDeliverable(
   ctx: MutationCtx,
   membership: Doc<"companyUsers">,
@@ -113,6 +118,7 @@ export async function updateDeliverable(
   const patch = normalizeDeliverable({
     title: updates.title ?? deliverable.title,
     description: updates.description ?? deliverable.description,
+    reviewCriteria: updates.reviewCriteria ?? deliverable.reviewCriteria,
   });
   await ctx.db.patch("deliverables", deliverableId, patch);
   return { ...deliverable, ...patch };

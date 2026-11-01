@@ -17,6 +17,8 @@ import {
   opportunityArgs,
   requireSeededUser,
   seedAssignment,
+  seedAiReviewFixture,
+  seedMembership,
   seedCampaign,
   seedCreatorId,
   seedOpportunity,
@@ -503,4 +505,37 @@ describe("listDeliverables", () => {
       "not_found",
     );
   });
+});
+
+test("companies can confirm criteria before assignments but not edit another company's deliverable", async () => {
+  const t = convexTest(schema, modules);
+  const { membership, opportunityId } = await seedOpportunity(t, { subject: "criteria-owner" });
+  const id = await t.run((ctx) =>
+    createDeliverable(ctx, membership, opportunityId, {
+      title: "Demo",
+      description: "Introduce Driftwood.",
+      reviewCriteria: [{ id: " product ", description: " Mention Driftwood. " }],
+    }),
+  );
+  expect(await t.run((ctx) => ctx.db.get("deliverables", id))).toMatchObject({
+    reviewCriteria: [{ id: "product", description: "Mention Driftwood." }],
+  });
+  const other = await seedMembership(t, "criteria-intruder");
+  await expectApiError(
+    () => t.run((ctx) => updateDeliverable(ctx, other.membership, id, { reviewCriteria: [] })),
+    "not_found",
+  );
+});
+
+test("assignment locking also protects the confirmed criteria", async () => {
+  const t = convexTest(schema, modules);
+  const fixture = await seedAiReviewFixture(t);
+  await expectApiError(
+    () =>
+      t.run((ctx) =>
+        updateDeliverable(ctx, fixture.membership, fixture.deliverableId, { reviewCriteria: [] }),
+      ),
+    "invalid_state",
+    "opportunity_has_assignments",
+  );
 });

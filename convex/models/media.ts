@@ -40,6 +40,27 @@ export type VerifiedMediaUpload = {
   sizeBytes: number;
 };
 
+/** Requires a completed immutable video owned by the assignment's creator. */
+export async function requireSubmissionVideo(
+  ctx: QueryCtx | MutationCtx,
+  assignment: Doc<"assignments">,
+  mediaId: Id<"mediaUploads">,
+): Promise<Doc<"mediaUploads">> {
+  const creator = await ctx.db.get("creators", assignment.creatorId);
+  const upload = await ctx.db.get("mediaUploads", mediaId);
+  if (
+    !creator ||
+    !upload ||
+    upload.ownerUserId !== creator.userId ||
+    upload.assignmentId !== assignment._id ||
+    upload.kind !== "video-submission"
+  )
+    throw apiError("not_found", { resource: "video" });
+  if (upload.status !== "complete" || !upload.permanentKey?.startsWith("media/video-submission/"))
+    throw apiError("invalid_state", { reason: "video_not_complete" });
+  return upload;
+}
+
 /**
  * Checks the owner and target before a grant is issued or a staged upload is
  * accepted. Returns the company a company-kind upload belongs to, so callers

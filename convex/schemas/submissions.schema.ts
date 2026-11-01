@@ -17,7 +17,8 @@ export const submissionStatus = v.union(v.literal("pending"), ...reviewedSubmiss
 
 const submissionFields = {
   assignmentId: v.id("assignments"),
-  draftUrl: v.string(),
+  draftUrl: v.optional(v.string()),
+  mediaId: v.optional(v.id("mediaUploads")),
   draftDescription: v.string(),
   // Must belong to the assignment's opportunity
   deliverableId: v.id("deliverables"),

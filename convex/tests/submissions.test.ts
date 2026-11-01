@@ -17,6 +17,10 @@ import {
   seedSubmission,
   seedUser,
   seedWrongOrgCaller,
+  seedSubmissionVideo,
+  seedCreatorId,
+  seedAssignment,
+  seedAiReviewFixture,
   storedSubmission,
   storedSubmissions,
   withoutReviewerIdentity,
@@ -25,6 +29,107 @@ import {
 } from "./helpers";
 
 const modules = import.meta.glob("../**/*.ts");
+
+test("media drafts expose only the owned media ID, not private storage keys or review internals", async () => {
+  const t = convexTest(schema, modules);
+  const fixture = await seedAiReviewFixture(t);
+  const result = await fixture.asCreator.query(api.submissions.get, {
+    submissionId: fixture.submissionId,
+  });
+  expect(result.mediaId).toBe(fixture.mediaId);
+  expect(result.draftUrl).toBeUndefined();
+  expect(result).not.toHaveProperty("permanentKey");
+  expect(result).not.toHaveProperty("context");
+  expect(result).not.toHaveProperty("transcription");
+});
+
+test("rejects another creator's uploaded video even when its assignment matches", async () => {
+  const t = convexTest(schema, modules);
+  const fixture = await seedAssignmentFixture(t);
+  const creatorId = await seedCreatorId(t, "video-intruder");
+  const other = await t.run((ctx) => ctx.db.get("creators", creatorId));
+  const mediaId = await seedSubmissionVideo(t, fixture, { ownerUserId: other!.userId });
+  await expectApiError(
+    () =>
+      fixture.asCreator.mutation(
+        api.submissions.create,
+        submissionArgs(fixture, { draftUrl: undefined, mediaId }),
+      ),
+    "not_found",
+  );
+});
+
+test("rejects a video bound to another assignment of the same creator", async () => {
+  const t = convexTest(schema, modules);
+  const fixture = await seedAssignmentFixture(t);
+  const assignment = await t.run((ctx) => ctx.db.get("assignments", fixture.assignmentId));
+  const otherAssignmentId = await seedAssignment(t, {
+    creatorId: fixture.creatorId,
+    opportunityId: assignment!.opportunityId,
+    status: "active",
+  });
+  const mediaId = await seedSubmissionVideo(t, fixture, { assignmentId: otherAssignmentId });
+  await expectApiError(
+    () =>
+      fixture.asCreator.mutation(
+        api.submissions.create,
+        submissionArgs(fixture, { draftUrl: undefined, mediaId }),
+      ),
+    "not_found",
+  );
+});
+
+test("rejects an incomplete upload", async () => {
+  const t = convexTest(schema, modules);
+  const fixture = await seedAssignmentFixture(t);
+  const mediaId = await seedSubmissionVideo(t, fixture, {
+    status: "pending",
+    permanentKey: undefined,
+  });
+  await expectApiError(
+    () =>
+      fixture.asCreator.mutation(
+        api.submissions.create,
+        submissionArgs(fixture, { draftUrl: undefined, mediaId }),
+      ),
+    "invalid_state",
+    "video_not_complete",
+  );
+});
+
+test("rejects profile pictures as submission videos", async () => {
+  const t = convexTest(schema, modules);
+  const fixture = await seedAssignmentFixture(t);
+  const mediaId = await seedSubmissionVideo(t, fixture, { kind: "profile-picture" });
+  await expectApiError(
+    () =>
+      fixture.asCreator.mutation(
+        api.submissions.create,
+        submissionArgs(fixture, { draftUrl: undefined, mediaId }),
+      ),
+    "not_found",
+  );
+});
+
+test("requires exactly one draft source", async () => {
+  const t = convexTest(schema, modules);
+  const fixture = await seedAssignmentFixture(t);
+  const mediaId = await seedSubmissionVideo(t, fixture);
+  await expectApiError(
+    () => fixture.asCreator.mutation(api.submissions.create, submissionArgs(fixture, { mediaId })),
+    "invalid_state",
+    "submission_source_conflict",
+  );
+  await expectApiError(
+    () =>
+      fixture.asCreator.mutation(
+        api.submissions.create,
+        submissionArgs(fixture, { draftUrl: undefined }),
+      ),
+    "invalid_state",
+    "submission_source_required",
+  );
+});
 
 function pageArgs(fixture: AssignmentFixture) {
   return {

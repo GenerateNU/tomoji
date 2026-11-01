@@ -2,7 +2,29 @@
 
 The provider helpers in `convex/lib/ai/assemblyAi.ts` and `convex/lib/ai/jev.ts` are for
 server-side actions. They do not create submissions, schedule work, write reviews,
-or approve content. Submission/schema integration follows in separate PRs for #162.
+or approve content. The submission foundation now prepares review state; provider
+execution and approval policy follow in PR 3 for #162.
+
+## Submission foundation
+
+`submissions.create` accepts exactly one source: an existing `draftUrl` or an owned,
+completed video `mediaId` for the same assignment. Existing URL drafts keep their
+manual-review behavior during rollout. No URL backfill is required or performed.
+
+Companies can set up to 20 explicit `{ id, description }` review criteria through
+deliverable create/update; `[]` clears them. Existing assignment locking applies.
+Creators can read these criteria alongside the deliverable text.
+
+Media-backed AI drafts require confirmed criteria. The creation transaction snapshots
+them and the opportunity context into `aiReviewAttempts` with status `ready`. It does
+not enqueue work. Internal model operations claim an attempt, retain the transcription
+job and transcript, and save results without changing submission approval. Every
+write rejects stale attempts or submissions already reviewed/on inactive assignments.
+
+All new fields on existing tables are optional; the attempt table is new. No live
+migration is needed for this additive schema. Criteria and snapshot placement must
+be aligned with #177/#178 before merge. Retry scheduling, duration enforcement,
+provider execution, public processing-state reads and review notifications remain PR 3.
 
 ## Configuration and calls
 

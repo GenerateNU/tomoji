@@ -4,9 +4,12 @@ import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { apiError } from "../lib/errors";
 import { requireNonBlank } from "../lib/validation";
 import schema from "../schema";
+import { normalizeReviewCriteria } from "../lib/ai/validation";
 
 /** The company-supplied fields of a deliverable. */
-export const deliverableCreate = schema.doc("deliverables").pick("title", "description");
+export const deliverableCreate = schema
+  .doc("deliverables")
+  .pick("title", "description", "reviewCriteria");
 export type DeliverableCreate = Infer<typeof deliverableCreate>;
 
 /** Most deliverables one opportunity can have, so every read of them is bounded. */
@@ -20,7 +23,7 @@ const MAX_LENGTH = { title: 200, description: 5000 } as const;
  * created with its deliverables.
  */
 export function normalizeDeliverable(fields: DeliverableCreate): DeliverableCreate {
-  return {
+  const normalized: DeliverableCreate = {
     title: requireNonBlank(fields.title, "deliverableTitle", MAX_LENGTH.title),
     description: requireNonBlank(
       fields.description,
@@ -28,6 +31,10 @@ export function normalizeDeliverable(fields: DeliverableCreate): DeliverableCrea
       MAX_LENGTH.description,
     ),
   };
+  if (fields.reviewCriteria !== undefined) {
+    normalized.reviewCriteria = normalizeReviewCriteria(fields.reviewCriteria);
+  }
+  return normalized;
 }
 
 /** An opportunity's deliverables, in the order they were added. */

@@ -4,7 +4,7 @@ import type { Infer } from "convex/values";
 import { expect } from "vitest";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { DeliverableCreate } from "../models/deliverableDrafts";
-import type { SubmissionDraft } from "../models/submissions";
+import { createSubmission, type SubmissionDraft } from "../models/submissions";
 import type { ApiErrorCode } from "../lib/errors";
 import { companyContext } from "../lib/functions";
 import { getCreatorByUserId } from "../models/creators";
@@ -583,6 +583,60 @@ export async function seedAssignmentFixture(
     asCreator: t.withIdentity(workosIdentity({ subject: FIXTURE_CREATOR })),
     asCompany,
   };
+}
+
+/** Seeds a completed private video; overrides intentionally model invalid media in authorization tests. */
+export async function seedSubmissionVideo(
+  t: TestConvex,
+  fixture: AssignmentFixture,
+  overrides: Partial<WithoutSystemFields<Doc<"mediaUploads">>> = {},
+): Promise<Id<"mediaUploads">> {
+  return await t.run((ctx) =>
+    ctx.db.insert("mediaUploads", {
+      ownerUserId: fixture.creatorUserId,
+      assignmentId: fixture.assignmentId,
+      kind: "video-submission",
+      status: "complete",
+      contentType: "video/mp4",
+      stagingKey: "staging/video-submission/test",
+      permanentKey: "media/video-submission/test",
+      sizeBytes: 1024,
+      grantExpiresAt: Date.now() + 60_000,
+      ...overrides,
+    }),
+  );
+}
+
+/** Seeds a media-backed AI draft with one company-confirmed requirement and a ready attempt. */
+export async function seedAiReviewFixture(t: TestConvex): Promise<
+  AssignmentFixture & {
+    mediaId: Id<"mediaUploads">;
+    submissionId: Id<"submissions">;
+    attempt: Doc<"aiReviewAttempts">;
+  }
+> {
+  const fixture = await seedAssignmentFixture(t, { usesAiReview: true });
+  await t.run((ctx) =>
+    ctx.db.patch("deliverables", fixture.deliverableId, {
+      reviewCriteria: [{ id: "product", description: "Mention Driftwood." }],
+    }),
+  );
+  const mediaId = await seedSubmissionVideo(t, fixture);
+  const submissionId = await t.run((ctx) =>
+    createSubmission(
+      ctx,
+      fixture.creatorId,
+      submissionArgs(fixture, { draftUrl: undefined, mediaId }),
+    ),
+  );
+  const attempt = await t.run((ctx) =>
+    ctx.db
+      .query("aiReviewAttempts")
+      .withIndex("by_submissionId", (q) => q.eq("submissionId", submissionId))
+      .unique(),
+  );
+  if (!attempt) throw new Error("expected seeded AI review attempt");
+  return { ...fixture, mediaId, submissionId, attempt };
 }
 
 /**

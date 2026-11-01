@@ -21,6 +21,39 @@ import type { submissionStatus } from "../schemas/submissions.schema";
 
 export type TestConvex = ConvexTest<typeof schema>;
 
+/** Builds a completed transcription response using synthetic speech and millisecond timestamps. */
+export function assemblyTranscriptResponse(overrides: Record<string, unknown> = {}): Response {
+  return Response.json({
+    id: "transcript-1",
+    status: "completed",
+    text: "Try Driftwood.",
+    words: [
+      { text: "Try", start: 100, end: 300 },
+      { text: "Driftwood.", start: 300, end: 900 },
+    ],
+    audio_duration: 2,
+    speech_model_used: "universal-2",
+    ...overrides,
+  });
+}
+
+/** Builds a single-criterion Jev response without invoking a live model. */
+export function jevReviewResponse(overrides: Record<string, unknown> = {}): Response {
+  return Response.json({
+    model: "jev-1.14.0",
+    answers: {
+      criterion_0: {
+        type: "choice",
+        choice: "uncertain",
+        confidence: 0.3,
+        probabilities: { met: 0.3, not_met: 0.3, uncertain: 0.4 },
+      },
+    },
+    usage: { input_tokens: 200, output_tokens: 10 },
+    ...overrides,
+  });
+}
+
 /** Reads a seeded user for direct model tests. */
 export async function requireSeededUser(t: TestConvex, subject: string) {
   return await t.run(async (ctx) => {

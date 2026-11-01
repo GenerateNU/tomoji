@@ -6,6 +6,7 @@ import type { Doc, Id } from "../_generated/dataModel";
 import type { DeliverableCreate } from "../models/deliverableDrafts";
 import { createSubmission, type SubmissionDraft } from "../models/submissions";
 import type { ApiErrorCode } from "../lib/errors";
+import type { Transcription } from "../lib/ai/assemblyAi";
 import { companyContext } from "../lib/functions";
 import { getCreatorByUserId } from "../models/creators";
 import { upsertXAccount, type XAccountLink } from "../models/xAccounts";
@@ -547,21 +548,23 @@ const FIXTURE_OPERATOR = "fixture-operator";
  */
 export async function seedAssignmentFixture(
   t: TestConvex,
-  assignment: Partial<Pick<Doc<"assignments">, "status" | "usesAiReview">> = {},
+  options: Partial<Pick<Doc<"assignments">, "status" | "usesAiReview">> & {
+    opportunity?: Partial<OpportunityCreate>;
+  } = {},
   companyRoleForFixture: Infer<typeof companyRole> = "member",
 ): Promise<AssignmentFixture> {
-  const { asCompany, membership, opportunityId } = await seedOpportunity(t, {
-    subject: FIXTURE_COMPANY,
-    orgId: "org_fixture",
-    role: companyRoleForFixture,
-  });
+  const { asCompany, membership, opportunityId } = await seedOpportunity(
+    t,
+    { subject: FIXTURE_COMPANY, orgId: "org_fixture", role: companyRoleForFixture },
+    options.opportunity,
+  );
   const creatorId = await seedCreatorId(t, FIXTURE_CREATOR);
   const assignmentId = await seedAssignment(t, {
     opportunityId,
     creatorId,
-    status: assignment.status ?? "active",
+    status: options.status ?? "active",
   });
-  const usesAiReview = assignment.usesAiReview ?? false;
+  const usesAiReview = options.usesAiReview ?? false;
   const { creatorUserId, deliverableId } = await t.run(async (ctx) => {
     await ctx.db.patch("assignments", assignmentId, { usesAiReview });
     const user = await getUserByWorkosId(ctx, FIXTURE_CREATOR);
@@ -582,6 +585,21 @@ export async function seedAssignmentFixture(
     membership,
     asCreator: t.withIdentity(workosIdentity({ subject: FIXTURE_CREATOR })),
     asCompany,
+  };
+}
+
+/** Builds normalized provider output for persistence tests, independently of provider parsing. */
+export function aiTranscriptionArgs(
+  overrides: Partial<Extract<Transcription, { status: "completed" }>> = {},
+): Extract<Transcription, { status: "completed" }> {
+  return {
+    id: "job-1",
+    status: "completed",
+    text: "Driftwood.",
+    words: [{ text: "Driftwood.", startMs: 0, endMs: 900 }],
+    durationSeconds: 1,
+    model: "universal-2",
+    ...overrides,
   };
 }
 
@@ -615,12 +633,23 @@ export async function seedAiReviewFixture(t: TestConvex): Promise<
     attempt: Doc<"aiReviewAttempts">;
   }
 > {
-  const fixture = await seedAssignmentFixture(t, { usesAiReview: true });
-  await t.run((ctx) =>
-    ctx.db.patch("deliverables", fixture.deliverableId, {
-      reviewCriteria: [{ id: "product", description: "Mention Driftwood." }],
-    }),
-  );
+  const fixture = await seedAssignmentFixture(t, {
+    usesAiReview: true,
+    opportunity: {
+      title: "Driftwood launch demo",
+      description: "Demonstrate a first deployment using Driftwood CLI.",
+      contentRequirements: "Explain how Driftwood simplifies deployment.",
+      prohibitedClaims: "Do not promise zero downtime.",
+      disclosureRequirements: "Disclose the paid partnership.",
+      deliverables: [
+        deliverableArgs({
+          title: "CLI demo",
+          description: "Introduce Driftwood and explain a first deployment.",
+          reviewCriteria: [{ id: "product", description: "Mention Driftwood." }],
+        }),
+      ],
+    },
+  });
   const mediaId = await seedSubmissionVideo(t, fixture);
   const submissionId = await t.run((ctx) =>
     createSubmission(

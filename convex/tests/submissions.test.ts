@@ -21,6 +21,8 @@ import {
   seedCreatorId,
   seedAssignment,
   seedAiReviewFixture,
+  requireSeededUser,
+  seedOpportunity,
   storedSubmission,
   storedSubmissions,
   withoutReviewerIdentity,
@@ -46,9 +48,9 @@ test("media drafts expose only the owned media ID, not private storage keys or r
 test("rejects another creator's uploaded video even when its assignment matches", async () => {
   const t = convexTest(schema, modules);
   const fixture = await seedAssignmentFixture(t);
-  const creatorId = await seedCreatorId(t, "video-intruder");
-  const other = await t.run((ctx) => ctx.db.get("creators", creatorId));
-  const mediaId = await seedSubmissionVideo(t, fixture, { ownerUserId: other!.userId });
+  await seedCreatorId(t, "video-intruder");
+  const other = await requireSeededUser(t, "video-intruder");
+  const mediaId = await seedSubmissionVideo(t, fixture, { ownerUserId: other._id });
   await expectApiError(
     () =>
       fixture.asCreator.mutation(
@@ -62,10 +64,13 @@ test("rejects another creator's uploaded video even when its assignment matches"
 test("rejects a video bound to another assignment of the same creator", async () => {
   const t = convexTest(schema, modules);
   const fixture = await seedAssignmentFixture(t);
-  const assignment = await t.run((ctx) => ctx.db.get("assignments", fixture.assignmentId));
+  const other = await seedOpportunity(t, {
+    subject: "other-video-company",
+    orgId: "org_other_video",
+  });
   const otherAssignmentId = await seedAssignment(t, {
     creatorId: fixture.creatorId,
-    opportunityId: assignment!.opportunityId,
+    opportunityId: other.opportunityId,
     status: "active",
   });
   const mediaId = await seedSubmissionVideo(t, fixture, { assignmentId: otherAssignmentId });

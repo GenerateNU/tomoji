@@ -1,12 +1,22 @@
+import { internal } from "../_generated/api";
+import { aiReviewWorkflow } from "../lib/ai/workflow";
 import type { Infer } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
-import type { MutationCtx } from "../_generated/server";
+import type { MutationCtx, QueryCtx } from "../_generated/server";
+import { env } from "../_generated/server";
 import { apiError } from "../lib/errors";
 import {
   normalizeReviewCriteria,
   type aiReviewResult,
   type completedTranscription,
 } from "../lib/ai/validation";
+import {
+  decideAiReview,
+  AI_REVIEW_MAX_DURATION_SECONDS,
+  AI_REVIEW_TIMEOUT_MS,
+} from "../lib/ai/reviewPolicy";
+import { recordSubmissionReview } from "./submissionReviews";
+import { notifyCompanyUser } from "./notifications";
 import { requireActiveAssignment } from "./assignments";
 import { requireSubmissionVideo } from "./media";
 
@@ -42,14 +52,14 @@ export async function createAiReviewAttempt(
     mediaId: submission.mediaId,
     criteria,
     context: { title, description, contentRequirements, prohibitedClaims, disclosureRequirements },
-    // Prepared only. PR 3 will schedule provider work; nothing is enqueued here.
+    // The creator submission transaction enqueues work when automation is enabled.
     status: "ready",
   });
 }
 
 /** Every write rechecks ownership-independent lifecycle guards in the same transaction. */
 async function requireCurrentAttempt(
-  ctx: MutationCtx,
+  ctx: MutationCtx | QueryCtx,
   attemptId: Id<"aiReviewAttempts">,
   status: Doc<"aiReviewAttempts">["status"],
 ): Promise<Doc<"aiReviewAttempts">> {
@@ -113,40 +123,169 @@ export async function saveAiTranscription(
   await ctx.db.patch("aiReviewAttempts", attemptId, { transcription, status: "evaluating" });
 }
 
-/** Stores every snapshotted criterion's result; business approval remains PR 3's responsibility. */
-export async function saveAiReviewResult(
+/** Reserves one external POST; a crash after dispatch is ambiguous, never a reason to bill twice. */
+export async function reserveAiTranscription(
+  ctx: MutationCtx,
+  attemptId: Id<"aiReviewAttempts">,
+): Promise<boolean> {
+  const attempt = await requireCurrentAttempt(ctx, attemptId, "transcribing");
+  if (attempt.deadlineAt !== undefined && Date.now() >= attempt.deadlineAt)
+    throw apiError("invalid_state", { reason: "ai_review_timeout" });
+  if (attempt.dispatchStartedAt !== undefined) return false;
+  await ctx.db.patch("aiReviewAttempts", attemptId, { dispatchStartedAt: Date.now() });
+  return true;
+}
+
+/** Returns the current attempt for a worker without exposing operational data publicly. */
+export async function getAiReviewInput(
+  ctx: QueryCtx,
+  attemptId: Id<"aiReviewAttempts">,
+): Promise<Doc<"aiReviewAttempts">> {
+  const attempt = await ctx.db.get("aiReviewAttempts", attemptId);
+  if (!attempt || (attempt.status !== "transcribing" && attempt.status !== "evaluating"))
+    throw apiError("invalid_state", { reason: "ai_review_stale" });
+  await requireCurrentAttempt(ctx, attemptId, attempt.status);
+  return attempt;
+}
+
+/** Saves evidence and its business outcome in one transaction; retries cannot notify twice. */
+export async function finishAiReview(
   ctx: MutationCtx,
   attemptId: Id<"aiReviewAttempts">,
   result: Infer<typeof aiReviewResult>,
 ): Promise<void> {
   const attempt = await requireCurrentAttempt(ctx, attemptId, "evaluating");
+  if (
+    !attempt.transcription?.text.trim() ||
+    attempt.transcription.durationSeconds > AI_REVIEW_MAX_DURATION_SECONDS
+  )
+    throw apiError("invalid_state", { reason: "review_input_invalid" });
+  if (attempt.deadlineAt !== undefined && Date.now() >= attempt.deadlineAt)
+    return await markAiReviewForManualReview(ctx, attemptId, "timeout");
   const ids = new Set(result.results.map((item) => item.criterionId));
   if (
     ids.size !== attempt.criteria.length ||
     result.results.length !== ids.size ||
-    !attempt.criteria.every((criterion) => ids.has(criterion.id))
+    !attempt.criteria.every((c) => ids.has(c.id))
   )
     throw apiError("invalid_state", { reason: "review_result_mismatch" });
+  if (attempt.workflowId && env.AI_REVIEW_ENABLED !== "true")
+    return await markAiReviewForManualReview(ctx, attemptId, "disabled");
+  const decision = decideAiReview(result.results);
+  if (decision.status === "manualReview") {
+    await markAiReviewForManualReview(ctx, attemptId, "uncertain");
+    await ctx.db.patch("aiReviewAttempts", attemptId, { result });
+    return;
+  }
   await ctx.db.patch("aiReviewAttempts", attemptId, {
     result,
     status: "completed",
     finishedAt: Date.now(),
   });
+  const submission = await ctx.db.get("submissions", attempt.submissionId);
+  if (!submission || submission.status !== "pending")
+    throw apiError("invalid_state", { reason: "ai_review_stale" });
+  const assignment = await ctx.db.get("assignments", submission.assignmentId);
+  if (!assignment) throw apiError("not_found", { resource: "assignment" });
+  const review =
+    decision.status === "approved"
+      ? { status: "approved" as const }
+      : {
+          status: "changesRequested" as const,
+          reviewNote: `Please address these spoken requirements: ${attempt.criteria
+            .filter((c) => decision.failedCriterionIds.includes(c.id))
+            .map((c) => c.description)
+            .join("; ")}`.slice(0, 2000),
+        };
+  await recordSubmissionReview(ctx, submission, assignment, review, { reviewerType: "ai" });
 }
 
-/** Preserves an eligible pending submission for human review without interpreting failure as rejection. */
+/** A terminal fallback is safe to repeat, including after cancellation or a worker crash. */
 export async function markAiReviewForManualReview(
   ctx: MutationCtx,
   attemptId: Id<"aiReviewAttempts">,
   reason: NonNullable<Doc<"aiReviewAttempts">["failureReason"]>,
 ): Promise<void> {
   const attempt = await ctx.db.get("aiReviewAttempts", attemptId);
-  if (!attempt || attempt.status === "completed" || attempt.status === "manualReview")
-    throw apiError("invalid_state", { reason: "ai_review_stale" });
-  await requireCurrentAttempt(ctx, attemptId, attempt.status);
+  if (!attempt || attempt.status === "completed" || attempt.status === "manualReview") return;
   await ctx.db.patch("aiReviewAttempts", attemptId, {
     status: "manualReview",
     failureReason: reason,
     finishedAt: Date.now(),
   });
+  const submission = await ctx.db.get("submissions", attempt.submissionId);
+  const assignment = submission && (await ctx.db.get("assignments", submission.assignmentId));
+  const latest = await ctx.db
+    .query("aiReviewAttempts")
+    .withIndex("by_submissionId", (q) => q.eq("submissionId", attempt.submissionId))
+    .order("desc")
+    .first();
+  if (
+    submission?.status !== "pending" ||
+    assignment?.status !== "active" ||
+    latest?._id !== attemptId
+  )
+    return;
+  const opportunity = await ctx.db.get("opportunities", assignment.opportunityId);
+  if (opportunity)
+    await notifyCompanyUser(ctx, opportunity.createdBy, {
+      type: "submissionCreated",
+      title: `A draft for ${opportunity.title} needs your review`,
+      target: { kind: "submission", submissionId: submission._id, assignmentId: assignment._id },
+    });
+}
+
+/** Resolves only the immutable object already authorized by the attempt's ownership guards. */
+export async function getAiReviewVideo(
+  ctx: QueryCtx,
+  attemptId: Id<"aiReviewAttempts">,
+): Promise<{ key: string }> {
+  const attempt = await getAiReviewInput(ctx, attemptId);
+  const media = await ctx.db.get("mediaUploads", attempt.mediaId);
+  if (!media?.permanentKey) throw apiError("invalid_state", { reason: "invalid_media_object" });
+  return { key: media.permanentKey };
+}
+
+/** Releases a timed-out worker even if its workflow no longer makes progress. */
+export async function expireAiReview(
+  ctx: MutationCtx,
+  attemptId: Id<"aiReviewAttempts">,
+): Promise<void> {
+  const attempt = await ctx.db.get("aiReviewAttempts", attemptId);
+  if (attempt?.deadlineAt !== undefined && Date.now() >= attempt.deadlineAt)
+    await markAiReviewForManualReview(ctx, attemptId, "timeout");
+}
+
+/** A workflow completion callback may only close its own nonterminal attempt. */
+export async function completeAiReviewWorkflow(
+  ctx: MutationCtx,
+  attemptId: Id<"aiReviewAttempts">,
+  workflowId: string,
+): Promise<void> {
+  const attempt = await ctx.db.get("aiReviewAttempts", attemptId);
+  if (attempt?.workflowId === workflowId)
+    await markAiReviewForManualReview(ctx, attemptId, "review_failed");
+}
+
+/** Enqueues exactly one workflow in the same transaction as the submission and attempt. */
+export async function enqueueAiReview(
+  ctx: MutationCtx,
+  attemptId: Id<"aiReviewAttempts">,
+): Promise<void> {
+  const attempt = await ctx.db.get("aiReviewAttempts", attemptId);
+  if (!attempt || attempt.workflowId || attempt.status !== "ready") return;
+  const deadlineAt = Date.now() + AI_REVIEW_TIMEOUT_MS;
+  const workflowId = await aiReviewWorkflow.start(
+    ctx,
+    internal.aiReview.run,
+    { attemptId },
+    {
+      startAsync: true,
+      onComplete: internal.aiReviewInternal.onComplete,
+      context: { attemptId },
+    },
+  );
+  await ctx.db.patch("aiReviewAttempts", attemptId, { workflowId, deadlineAt });
+  // Also releases a draft if execution stops before the completion callback can run.
+  await ctx.scheduler.runAt(deadlineAt, internal.aiReviewInternal.expire, { attemptId });
 }

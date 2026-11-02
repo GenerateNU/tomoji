@@ -1,6 +1,6 @@
 /// <reference types="vite/client" />
 import { convexTest } from "convex-test";
-import { describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import type { Doc, Id } from "../../_generated/dataModel";
 import {
   createSubmission,
@@ -13,8 +13,12 @@ import {
   type SubmissionViewer,
 } from "../../models/submissions";
 import { listOpportunityDeliverables } from "../../models/deliverableDrafts";
+import { markAiReviewForManualReview, finishAiReview } from "../../models/aiReviewAttempts";
 import schema from "../../schema";
 import {
+  prepareAiReviewEvaluation,
+  aiReviewResultArgs,
+  seedAiReviewFixture,
   creatorNotifications,
   expectApiError,
   submissionArgs,
@@ -36,6 +40,7 @@ import {
 } from "../helpers";
 
 const modules = import.meta.glob("../../**/*.ts");
+afterEach(() => vi.unstubAllEnvs());
 
 const firstPage = { numItems: 10, cursor: null as string | null };
 
@@ -806,5 +811,96 @@ describe("notifications", () => {
         target: { kind: "submission", submissionId, assignmentId: fixture.assignmentId },
       },
     ]);
+  });
+});
+
+test("paginated creator reads retain safe review outcomes on the second page", async () => {
+  const t = convexTest(schema, modules);
+  const fixture = await seedAiReviewFixture(t);
+  const result = aiReviewResultArgs();
+  await prepareAiReviewEvaluation(t, fixture.attempt._id);
+  await t.run(async (ctx) => {
+    await finishAiReview(ctx, fixture.attempt._id, {
+      ...result,
+      results: [
+        {
+          ...result.results[0],
+          outcome: "not_met",
+          probabilities: { met: 0.02, not_met: 0.95, uncertain: 0.03 },
+        },
+      ],
+    });
+    await createSubmission(
+      ctx,
+      fixture.creatorId,
+      submissionArgs(fixture, { mediaId: fixture.mediaId }),
+    );
+  });
+  const viewer = { role: "creator" as const, creatorId: fixture.creatorId };
+  const first = await t.run((ctx) =>
+    listSubmissions(ctx, viewer, fixture.assignmentId, fixture.deliverableId, {
+      numItems: 1,
+      cursor: null,
+    }),
+  );
+  expect(first.isDone).toBe(false);
+  expect(first.page[0].aiReview).toEqual({ status: "manualReview", results: [] });
+  const second = await t.run((ctx) =>
+    listSubmissions(ctx, viewer, fixture.assignmentId, fixture.deliverableId, {
+      numItems: 1,
+      cursor: first.continueCursor,
+    }),
+  );
+  expect(second.isDone).toBe(true);
+  expect(second.page).toEqual([
+    {
+      _id: fixture.submissionId,
+      _creationTime: expect.any(Number),
+      assignmentId: fixture.assignmentId,
+      deliverableId: fixture.deliverableId,
+      mediaId: fixture.mediaId,
+      draftDescription: "60-second walkthrough: install, `driftwood init`, first deploy at 0:45.",
+      usesAiReview: true,
+      closedWithoutReview: false,
+      status: "changesRequested",
+      reviewerType: "ai",
+      reviewedAt: expect.any(Number),
+      reviewNote: "Please address these spoken requirements: Mention Driftwood.",
+      aiReview: { status: "completed", results: [{ criterionId: "product", outcome: "not_met" }] },
+    },
+  ]);
+});
+
+test("company review is blocked while an enabled AI workflow is processing", async () => {
+  const t = convexTest(schema, modules);
+  const fixture = await seedAiReviewFixture(t);
+  vi.stubEnv("AI_REVIEW_ENABLED", "true");
+  // Model the queued state without running provider actions in this model test.
+  await t.run((ctx) =>
+    ctx.db.patch("aiReviewAttempts", fixture.attempt._id, { workflowId: "workflow-processing" }),
+  );
+  await expectApiError(
+    () => reviewAs(t, fixture.membership, fixture.submissionId, { status: "approved" }),
+    "invalid_state",
+    "ai_review_processing",
+  );
+});
+
+test("company review is allowed after an enabled AI workflow falls back", async () => {
+  const t = convexTest(schema, modules);
+  const fixture = await seedAiReviewFixture(t);
+  vi.stubEnv("AI_REVIEW_ENABLED", "true");
+  await t.run(async (ctx) => {
+    await ctx.db.patch("aiReviewAttempts", fixture.attempt._id, {
+      workflowId: "workflow-fallback",
+    });
+    await markAiReviewForManualReview(ctx, fixture.attempt._id, "review_failed");
+  });
+  expect(
+    await reviewAs(t, fixture.membership, fixture.submissionId, { status: "approved" }),
+  ).toMatchObject({
+    status: "approved",
+    reviewerType: "companyUser",
+    reviewedBy: fixture.membership._id,
   });
 });

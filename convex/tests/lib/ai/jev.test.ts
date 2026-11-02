@@ -56,7 +56,7 @@ test("batches criteria in one pinned-model request and returns criterion decisio
   expect(request.headers.Authorization).toBe("Bearer test-key");
   const body = JSON.parse(request.body);
   expect(body.model).toBe("jev-1.14.0");
-  expect(body.state).toEqual({ transcript: "I deploy with Driftwood." });
+  expect(body.state).toEqual({ transcript: "I deploy with Driftwood.", context: {} });
   expect(Object.keys(body.questions)).toEqual(["criterion_0", "criterion_1"]);
   expect(body.questions.criterion_0.instructions.requirement).toBe("Mention Driftwood.");
   expect(fetch).toHaveBeenCalledTimes(1);

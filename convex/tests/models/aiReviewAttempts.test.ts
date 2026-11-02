@@ -1,19 +1,24 @@
 /// <reference types="vite/client" />
 import { convexTest } from "convex-test";
-import type { Infer } from "convex/values";
 import { afterEach, expect, test, vi } from "vitest";
 import schema from "../../schema";
-import type { aiReviewResult } from "../../lib/ai/validation";
 import { createSubmission, reviewSubmission } from "../../models/submissions";
 import {
+  completeAiReviewWorkflow,
+  expireAiReview,
+  markAiReviewForManualReview,
+  reserveAiTranscription,
   claimAiReviewAttempt,
   createAiReviewAttempt,
-  markAiReviewForManualReview,
   recordAiTranscriptionJob,
   saveAiTranscription,
-  saveAiReviewResult,
+  finishAiReview,
 } from "../../models/aiReviewAttempts";
 import {
+  aiReviewResultArgs,
+  prepareAiReviewEvaluation,
+  creatorNotifications,
+  memberNotifications,
   seedAssignmentFixture,
   submissionArgs,
   seedAiReviewFixture,
@@ -23,19 +28,7 @@ import {
 } from "../helpers";
 
 const modules = import.meta.glob("../../**/*.ts");
-const reviewResult: Infer<typeof aiReviewResult> = {
-  model: "jev-1.14.0",
-  inputTokens: 200,
-  outputTokens: 10,
-  results: [
-    {
-      criterionId: "product",
-      outcome: "met",
-      confidence: 0.9,
-      probabilities: { met: 0.95, not_met: 0.03, uncertain: 0.02 },
-    },
-  ],
-};
+const reviewResult = aiReviewResultArgs({ outputTokens: 10 });
 const reviewCriteria = [
   { id: "product", description: "Mention Driftwood." },
   { id: "disclosure", description: "Disclose the paid partnership." },
@@ -115,14 +108,14 @@ test("recording the same job ID is idempotent but replacing it is refused", asyn
   );
 });
 
-test("stores transcript and criterion results without approving the submission", async () => {
+test("stores transcript and criterion results with the automatic approval", async () => {
   const t = convexTest(schema, modules);
   const { attempt, submissionId } = await seedAiReviewFixture(t);
   await t.run(async (ctx) => {
     await claimAiReviewAttempt(ctx, attempt._id);
     await recordAiTranscriptionJob(ctx, attempt._id, "job-1");
     await saveAiTranscription(ctx, attempt._id, aiTranscriptionArgs());
-    await saveAiReviewResult(ctx, attempt._id, reviewResult);
+    await finishAiReview(ctx, attempt._id, reviewResult);
   });
   const stored = await t.run((ctx) => ctx.db.get("aiReviewAttempts", attempt._id));
   expect(stored).toMatchObject({
@@ -132,7 +125,8 @@ test("stores transcript and criterion results without approving the submission",
     result: reviewResult,
   });
   expect(await t.run((ctx) => ctx.db.get("submissions", submissionId))).toMatchObject({
-    status: "pending",
+    status: "approved",
+    reviewerType: "ai",
   });
 });
 
@@ -229,7 +223,7 @@ test("does not complete a review with missing criterion results", async () => {
   await expectApiError(
     () =>
       t.run((ctx) =>
-        saveAiReviewResult(ctx, attempt._id, {
+        finishAiReview(ctx, attempt._id, {
           model: "jev-1.14.0",
           inputTokens: 100,
           outputTokens: 10,
@@ -255,7 +249,7 @@ test("rejects same-count results with an unrelated criterion ID", async () => {
   await expectApiError(
     () =>
       t.run((ctx) =>
-        saveAiReviewResult(ctx, attempt._id, {
+        finishAiReview(ctx, attempt._id, {
           ...reviewResult,
           results: [
             reviewResult.results[0],
@@ -282,7 +276,7 @@ test("rejects extra criterion results", async () => {
   await expectApiError(
     () =>
       t.run((ctx) =>
-        saveAiReviewResult(ctx, attempt._id, {
+        finishAiReview(ctx, attempt._id, {
           ...reviewResult,
           results: [
             reviewResult.results[0],
@@ -310,7 +304,7 @@ test("rejects duplicate criterion IDs even when every expected ID is present", a
   await expectApiError(
     () =>
       t.run((ctx) =>
-        saveAiReviewResult(ctx, attempt._id, {
+        finishAiReview(ctx, attempt._id, {
           ...reviewResult,
           results: [
             reviewResult.results[0],
@@ -355,4 +349,142 @@ test("requires confirmed criteria and rolls back an ineligible media draft", asy
         .first(),
     ),
   ).toBeNull();
+});
+
+test("commits approval and one creator notification atomically, rejecting duplicate completion", async () => {
+  const t = convexTest(schema, modules);
+  const fixture = await seedAiReviewFixture(t);
+  await prepareAiReviewEvaluation(t, fixture.attempt._id);
+  await t.run(async (ctx) => {
+    await finishAiReview(ctx, fixture.attempt._id, reviewResult);
+  });
+  expect(await t.run((ctx) => ctx.db.get("submissions", fixture.submissionId))).toMatchObject({
+    status: "approved",
+    reviewerType: "ai",
+    reviewedAt: expect.any(Number),
+  });
+  await expectApiError(
+    () => t.run((ctx) => finishAiReview(ctx, fixture.attempt._id, reviewResult)),
+    "invalid_state",
+    "ai_review_stale",
+  );
+  const notifications = await creatorNotifications(t, fixture.creatorId);
+  expect(notifications.filter((n) => n.type === "submissionApproved")).toHaveLength(1);
+});
+
+test("fallback is idempotent and permits company review without accepting a late AI result", async () => {
+  const t = convexTest(schema, modules);
+  const fixture = await seedAiReviewFixture(t);
+  await t.run((ctx) => claimAiReviewAttempt(ctx, fixture.attempt._id));
+  await t.run((ctx) => markAiReviewForManualReview(ctx, fixture.attempt._id, "timeout"));
+  await t.run((ctx) => markAiReviewForManualReview(ctx, fixture.attempt._id, "timeout"));
+  await t.run((ctx) =>
+    reviewSubmission(ctx, fixture.membership, fixture.submissionId, { status: "approved" }),
+  );
+  await expectApiError(
+    () => t.run((ctx) => finishAiReview(ctx, fixture.attempt._id, reviewResult)),
+    "invalid_state",
+    "ai_review_stale",
+  );
+});
+
+test("a dispatched transcription cannot be submitted twice", async () => {
+  const t = convexTest(schema, modules);
+  const { attempt } = await seedAiReviewFixture(t);
+  await t.run((ctx) => claimAiReviewAttempt(ctx, attempt._id));
+  expect(await t.run((ctx) => reserveAiTranscription(ctx, attempt._id))).toBe(true);
+  expect(await t.run((ctx) => reserveAiTranscription(ctx, attempt._id))).toBe(false);
+});
+
+test("a confident unmet criterion requests actionable changes and notifies the creator", async () => {
+  const t = convexTest(schema, modules);
+  const fixture = await seedAiReviewFixture(t);
+  await prepareAiReviewEvaluation(t, fixture.attempt._id);
+  await t.run(async (ctx) => {
+    await finishAiReview(ctx, fixture.attempt._id, {
+      ...reviewResult,
+      results: [
+        {
+          ...reviewResult.results[0],
+          outcome: "not_met",
+          probabilities: { met: 0.02, not_met: 0.95, uncertain: 0.03 },
+        },
+      ],
+    });
+  });
+  expect(await t.run((ctx) => ctx.db.get("submissions", fixture.submissionId))).toMatchObject({
+    status: "changesRequested",
+    reviewerType: "ai",
+    reviewNote: "Please address these spoken requirements: Mention Driftwood.",
+  });
+  expect(await creatorNotifications(t, fixture.creatorId)).toContainEqual(
+    expect.objectContaining({
+      type: "submissionChangesRequested",
+      body: "Please address these spoken requirements: Mention Driftwood.",
+    }),
+  );
+});
+
+test("cancellation prevents AI approval and fallback does not ask the company to review a closed assignment", async () => {
+  const t = convexTest(schema, modules);
+  const fixture = await seedAiReviewFixture(t);
+  await prepareAiReviewEvaluation(t, fixture.attempt._id);
+  await t.run(async (ctx) => {
+    await ctx.db.patch("assignments", fixture.assignmentId, { status: "cancelled" });
+  });
+  const before = await memberNotifications(t, fixture.membership);
+  await expectApiError(
+    () => t.run((ctx) => finishAiReview(ctx, fixture.attempt._id, reviewResult)),
+    "invalid_state",
+    "ai_review_stale",
+  );
+  await t.run((ctx) => markAiReviewForManualReview(ctx, fixture.attempt._id, "review_failed"));
+  expect(await memberNotifications(t, fixture.membership)).toEqual(before);
+  expect(await t.run((ctx) => ctx.db.get("submissions", fixture.submissionId))).toMatchObject({
+    status: "pending",
+  });
+});
+
+test("the deadline releases a stopped worker and a late job cannot revive it", async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  const t = convexTest(schema, modules);
+  const fixture = await seedAiReviewFixture(t);
+  await t.run((ctx) =>
+    ctx.db.patch("aiReviewAttempts", fixture.attempt._id, {
+      status: "transcribing",
+      deadlineAt: Date.now() + 1000,
+    }),
+  );
+  await t.run((ctx) => expireAiReview(ctx, fixture.attempt._id));
+  expect((await t.run((ctx) => ctx.db.get("aiReviewAttempts", fixture.attempt._id)))?.status).toBe(
+    "transcribing",
+  );
+  vi.setSystemTime(Date.now() + 1000);
+  await t.run((ctx) => expireAiReview(ctx, fixture.attempt._id));
+  expect(
+    (await t.run((ctx) => ctx.db.get("aiReviewAttempts", fixture.attempt._id)))?.failureReason,
+  ).toBe("timeout");
+  await expectApiError(
+    () => t.run((ctx) => recordAiTranscriptionJob(ctx, fixture.attempt._id, "late-job")),
+    "invalid_state",
+    "ai_review_stale",
+  );
+});
+
+test("a stale workflow callback cannot release the current review", async () => {
+  const t = convexTest(schema, modules);
+  const fixture = await seedAiReviewFixture(t);
+  await t.run((ctx) =>
+    ctx.db.patch("aiReviewAttempts", fixture.attempt._id, { workflowId: "current-workflow" }),
+  );
+  await t.run((ctx) => completeAiReviewWorkflow(ctx, fixture.attempt._id, "old-workflow"));
+  expect(await t.run((ctx) => ctx.db.get("aiReviewAttempts", fixture.attempt._id))).toMatchObject({
+    status: "ready",
+    workflowId: "current-workflow",
+  });
+  await t.run((ctx) => completeAiReviewWorkflow(ctx, fixture.attempt._id, "current-workflow"));
+  expect(await t.run((ctx) => ctx.db.get("aiReviewAttempts", fixture.attempt._id))).toMatchObject({
+    status: "manualReview",
+    failureReason: "review_failed",
+  });
 });

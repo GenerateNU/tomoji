@@ -1,67 +1,88 @@
-# AI review providers
+# AI submission review
 
-The provider helpers in `convex/lib/ai/assemblyAi.ts` and `convex/lib/ai/jev.ts` are for
-server-side actions. They do not create submissions, schedule work, write reviews,
-or approve content. The submission foundation now prepares review state; provider
-execution and approval policy follow in PR 3 for #162.
+When `AI_REVIEW_ENABLED=true`, a media-backed AI submission queues a durable Convex
+workflow in its creation transaction. The browser returns immediately and subscribes
+to `submissions.get` or `submissions.list` for the `aiReview` summary.
 
-## Submission foundation
+The pipeline uses the completed, creator-owned immutable S3 video, AssemblyAI
+Universal-2 (English, no paid add-ons), then pinned `jev-1.14.0`. Signed video URLs
+are created internally for the provider, expire after one hour, and are never stored.
+The worker rechecks the attempt, pending submission, active assignment, and media
+ownership before provider work. Client-supplied draft URLs are never transcribed.
 
-`submissions.create` accepts exactly one source: an existing `draftUrl` or an owned,
-completed video `mediaId` for the same assignment. Existing URL drafts keep their
-manual-review behavior during rollout. No URL backfill is required or performed.
+## Inputs and decisions
 
-Companies can set up to 20 explicit `{ id, description }` review criteria through
-deliverable create/update; `[]` clears them. Existing assignment locking applies.
-Creators can read these criteria alongside the deliverable text.
+Companies confirm up to 20 `{ id, description }` criteria on a deliverable before
+assignment locking. The attempt snapshots those criteria and the opportunity brief.
+Jev receives the snapshot as context, but evaluates only the explicit criteria.
+Transcript content is evidence, not instructions. Visual content, captions, and
+post-publication X matching are outside this version.
 
-Media-backed AI drafts require confirmed criteria. The creation transaction snapshots
-them and the opportunity context into `aiReviewAttempts` with status `ready`. It does
-not enqueue work. Internal model operations claim an attempt, retain the transcription
-job and transcript, and save results without changing submission approval. Every
-write rejects stale attempts or submissions already reviewed/on inactive assignments.
+Convex applies the policy in `convex/lib/ai/reviewPolicy.ts`:
 
-All new fields on existing tables are optional; the attempt table is new. No live
-migration is needed for this additive schema. Criteria and snapshot placement must
-be aligned with #177/#178 before merge. Retry scheduling, duration enforcement,
-provider execution, public processing-state reads and review notifications remain PR 3.
+| Evidence                                                                   | Outcome                                    |
+| -------------------------------------------------------------------------- | ------------------------------------------ |
+| Every criterion is `met` with selected probability >= 0.90                 | Approve                                    |
+| At least one `not_met` >= 0.90, with no uncertainty/low probabilities      | Request changes, naming unmet requirements |
+| Uncertain, low probability, silence, invalid response, or provider failure | Leave pending for company review           |
 
-## Configuration and calls
+The threshold is an initial operating policy, not measured accuracy. Company and AI
+reviews share the decision/notification operation. Evidence, decision, and creator
+notification commit together. Duplicate or stale completion cannot notify twice.
+Company review is blocked while an enabled workflow is processing; fallback, legacy
+URL drafts, and disabled automation permit company review. Existing operator override
+behavior is unchanged.
 
-Ask a TL for `ASSEMBLYAI_API_KEY` and `TYPESAFE_API_KEY`. Keep them in `.env.local`
-for local tooling; never prefix them with `NEXT_PUBLIC_` or commit their values.
-`readAiReviewConfig` validates supplied configuration when invoked. These helpers
-receive keys explicitly; `.env.local` is not automatically available to Convex.
-Deployment env declarations and setup-script wiring follow with the pipeline.
+## Recovery and limits
 
-- `submitTranscription(key, videoUrl)` submits one fresh, server-authorized signed
-  S3 URL using `speech_models: ["universal-2"]`, English, with no paid add-ons.
-  Ownership and source-bucket authorization belong to the calling action.
-- Persist the returned job ID, then call `getTranscription(key, id)` on later
-  executions. It returns queued/processing/error or a completed transcript with
-  word timestamps in milliseconds, duration in seconds, and the actual model.
-  Silence produces empty text/words; it must not become automatic approval.
-- `evaluateTranscript(key, transcript, criteria)` sends all criteria in one request
-  to pinned `jev-1.14.0`. Each result retains its criterion ID, choice
-  (`met`, `not_met`, `uncertain`), confidence, and probabilities. Input/output token
-  counts are returned for cost accounting. No approval thresholds are chosen here.
+The workflow component permits five concurrent steps, not five concurrent provider
+jobs. It retains completed steps across interruptions. Transcription POSTs are not
+automatically retried: a dispatch reservation prevents another billed submission if
+a response or database acknowledgement is lost. Ambiguous outcomes go to a person.
 
-## Failures and retries
+Polling runs at ten-second intervals, with at most 60 polls and three transient
+poll failures. Jev gets at most three calls and reuses the stored transcript. Retries
+honor provider backoff. Each HTTP request has a 15-second timeout; the attempt has a
+ten-minute deadline. A separate scheduled deadline and workflow completion callback
+release stopped workers to manual review. Disabling automation also stops further
+provider calls and automatic decisions. Already submitted provider jobs are not canceled.
 
-Every HTTP request has a 15-second timeout and rejects redirects. Errors use
-`apiError` with redacted `provider`, `reason`, and `retryable` details; HTTP errors
-also include their status. No response bodies, signed URLs, or credentials are
-included. A terminal transcription failure returns `status: "error"`.
+Videos over five minutes fall back based on AssemblyAI's returned duration. This
+check happens **after transcription**: it does not cap the initial transcription bill
+or replace the existing 250 MiB upload limit. No truncated transcript is approved as
+a complete video review. A strict duration check before transcription requires trusted
+media inspection and is not implemented here.
 
-There are no automatic retries or polling loops. The future orchestrator must
-bound retries and honor provider backoff. If `requestMayHaveSucceeded` is true,
-reconcile the attempt or send it to manual review: do not submit another billed
-transcription blindly. Retrying Jev can also incur another inference charge.
+## Setup and rollout
 
-Tests mock `fetch` under the existing edge-runtime Vitest project. Run:
-`bun run test convex/tests/lib/ai/assemblyAi.test.ts convex/tests/lib/ai/jev.test.ts convex/tests/lib/ai/aiProvider.test.ts`.
-They verify contracts and failure handling, not model accuracy or live latency.
+Set server-only `ASSEMBLYAI_API_KEY` and `TYPESAFE_API_KEY` together in `.env.local`.
+`just convex-env` copies them to the selected Convex deployment when present. Neither
+key is required for unrelated development. Never use a `NEXT_PUBLIC_` prefix.
+`AI_REVIEW_ENABLED=false` is the default; copying credentials does not enable review.
+
+Before enabling on a deployment:
+
+- Align the two schema TODOs with Afnan's #177/#178 changes.
+- Obtain TL approval for the threshold and the duration/cost limitation above.
+- Agree on transcript retention, including provider and workflow journals. This PR
+  does not add automatic deletion; raw evidence stays internal and must not be logged.
+- Configure S3 access and both provider keys on that deployment.
+
+There is no automatic historical backfill or replay of existing attempts. Existing
+URL submissions retain manual review. New attempt metadata is optional, so no data
+migration is required for this PR; recheck schema compatibility before merging.
+
+## Verification
+
+`bun run ci` checks types, lint, formatting, and tests. Provider contract tests mock
+`fetch`; model tests exercise decisions, lifecycle guards, and notifications directly.
+`convex/tests/aiReview.test.ts` drives the real workflow component with mocked S3
+signing and provider responses under the existing Node action test project. It runs
+without credentials, network calls, uploads, or provider charges.
+
+Live smoke testing, accuracy evaluation, and latency benchmarks are separate and
+have not been performed for this implementation.
 
 API contracts: [AssemblyAI](https://www.assemblyai.com/docs/pre-recorded-audio/api-reference/transcripts/submit),
 [Jev](https://docs.typesafe.ai/primitives/choice),
-[Jev model versions](https://docs.typesafe.ai/models).
+[Convex workflows](https://docs.convex.dev/agents/workflows).

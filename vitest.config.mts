@@ -10,7 +10,11 @@ export default defineConfig({
           name: "convex",
           environment: "edge-runtime",
           include: ["convex/tests/**/*.test.ts"],
-          exclude: ["convex/tests/lib/s3.test.ts", "convex/tests/mediaActions.test.ts"],
+          exclude: [
+            "convex/tests/lib/s3.test.ts",
+            "convex/tests/mediaActions.test.ts",
+            "convex/tests/aiReview.test.ts",
+          ],
           server: { deps: { inline: ["convex-test"] } },
         },
       },
@@ -19,7 +23,11 @@ export default defineConfig({
         test: {
           name: "convex-node",
           environment: "node",
-          include: ["convex/tests/lib/s3.test.ts", "convex/tests/mediaActions.test.ts"],
+          include: [
+            "convex/tests/lib/s3.test.ts",
+            "convex/tests/mediaActions.test.ts",
+            "convex/tests/aiReview.test.ts",
+          ],
         },
       },
       {

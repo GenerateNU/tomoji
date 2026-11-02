@@ -97,3 +97,15 @@ test("aborts stalled requests and refuses redirects", async () => {
     timeout.mockRestore();
   }
 });
+
+test("preserves provider backoff without leaking the response body", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi
+      .fn()
+      .mockResolvedValue(new Response("secret", { status: 429, headers: { "Retry-After": "12" } })),
+  );
+  await expect(getTranscription("test-key", "transcript-1")).rejects.toMatchObject({
+    data: { retryable: true, retryAfterMs: 12000 },
+  });
+});

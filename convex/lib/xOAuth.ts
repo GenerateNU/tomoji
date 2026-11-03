@@ -1,5 +1,6 @@
 import { apiError } from "./errors";
 import { X_ACCOUNT_SCOPES } from "../models/xAccounts";
+import { object, xJson, xRequest } from "./xApi";
 
 export type XConfig = { clientId: string; clientSecret: string; redirectUri: string };
 export type XTokens = {
@@ -8,7 +9,6 @@ export type XTokens = {
   accessTokenExpiresAt: number;
   scopes: string[];
 };
-const requestTimeoutMs = 8_000;
 
 /** Requires backend-only OAuth configuration before beginning a linking flow. */
 export function readXConfig(values: {
@@ -75,46 +75,6 @@ export async function createXAuthorization(config: XConfig) {
   return { url: url.toString(), stateHash: await hashXState(state), verifier };
 }
 
-/** Narrows provider JSON before inspecting any untrusted fields. */
-function object(value: unknown): Record<string, unknown> {
-  if (value === null || typeof value !== "object" || Array.isArray(value))
-    throw apiError("upstream_failure");
-  return value as Record<string, unknown>;
-}
-
-/** Performs one bounded request, redacting network errors and rejecting redirects. */
-async function xRequest(path: string, init: RequestInit): Promise<Response> {
-  let response: Response;
-  try {
-    response = await fetch(`https://api.x.com/2/${path}`, {
-      ...init,
-      redirect: "error",
-      signal: AbortSignal.timeout(requestTimeoutMs),
-    });
-  } catch {
-    throw apiError("upstream_failure");
-  }
-  if (!response.ok) {
-    if (path === "oauth2/token" && response.status === 400)
-      throw apiError("invalid_state", { reason: "x_authorization_failed" });
-    if (path === "oauth2/token" && response.status === 401)
-      throw apiError("misconfigured", { reason: "x_client_rejected" });
-    throw apiError("upstream_failure");
-  }
-  return response;
-}
-
-/** Parses JSON without forwarding an upstream payload or error to callers. */
-async function xJson(response: Response): Promise<Record<string, unknown>> {
-  let value: unknown;
-  try {
-    value = await response.json();
-  } catch {
-    throw apiError("upstream_failure");
-  }
-  return object(value);
-}
-
 /** Builds confidential-client Basic auth and a form-encoded token request. */
 function tokenRequest(config: XConfig, fields: Record<string, string>): RequestInit {
   return {
@@ -125,6 +85,14 @@ function tokenRequest(config: XConfig, fields: Record<string, string>): RequestI
     },
     body: new URLSearchParams(fields).toString(),
   };
+}
+
+/** A rejected code is the user's to retry; a rejected client is our configuration. */
+function tokenFailure(response: Response) {
+  if (response.status === 400)
+    return apiError("invalid_state", { reason: "x_authorization_failed" });
+  if (response.status === 401) return apiError("misconfigured", { reason: "x_client_rejected" });
+  return undefined;
 }
 
 /** Exchanges a code once; callers must not automatically retry this non-idempotent request. */
@@ -143,6 +111,7 @@ export async function exchangeXCode(
         redirect_uri: config.redirectUri,
         code_verifier: verifier,
       }),
+      tokenFailure,
     ),
   );
   if (

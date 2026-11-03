@@ -19,6 +19,8 @@ const app = defineApp({
     X_REDIRECT_URI: v.optional(v.string()),
     X_TOKEN_ENCRYPTION_KEYS: v.optional(v.string()),
     X_TOKEN_ENCRYPTION_KEY_VERSION: v.optional(v.string()),
+    X_BEARER_TOKEN: v.optional(v.string()),
+    X_METRICS_SYNC_ENABLED: v.optional(v.string()),
   },
 });
 app.use(workOSAuthKit);

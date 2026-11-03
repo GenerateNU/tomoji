@@ -33,6 +33,7 @@ import type * as lib_s3 from "../lib/s3.js";
 import type * as lib_urls from "../lib/urls.js";
 import type * as lib_validation from "../lib/validation.js";
 import type * as lib_workos from "../lib/workos.js";
+import type * as lib_xApi from "../lib/xApi.js";
 import type * as lib_xOAuth from "../lib/xOAuth.js";
 import type * as lib_xTokenEncryption from "../lib/xTokenEncryption.js";
 import type * as media from "../media.js";
@@ -113,6 +114,7 @@ declare const fullApi: ApiFromModules<{
   "lib/urls": typeof lib_urls;
   "lib/validation": typeof lib_validation;
   "lib/workos": typeof lib_workos;
+  "lib/xApi": typeof lib_xApi;
   "lib/xOAuth": typeof lib_xOAuth;
   "lib/xTokenEncryption": typeof lib_xTokenEncryption;
   media: typeof media;

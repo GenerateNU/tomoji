@@ -8,6 +8,7 @@ import {
   seedAssignmentFixture,
   seedOperator,
   seedPayout,
+  seedPost,
   seedUser,
   seedWrongOrgCaller,
   workosIdentity,
@@ -19,9 +20,11 @@ const firstPage = { numItems: 10, cursor: null };
 
 async function seedPayment(t: TestConvex, role: "admin" | "member" = "member") {
   const fixture = await seedAssignmentFixture(t, {}, role);
+  const postId = await seedPost(t, fixture.assignmentId);
   const payoutId = await seedPayout(t, fixture.assignmentId, {
+    postId,
     sourceKey: "internal-earnings-event",
-    amountCents: 12_345,
+    amount: 12_345,
     currency: "usd",
     reviewRequestedAt: 1_800_000_000_000,
     approvalDueAt: 1_800_259_200_000,
@@ -31,7 +34,7 @@ async function seedPayment(t: TestConvex, role: "admin" | "member" = "member") {
     approvedBy: fixture.membership.userId,
     paymentStatus: "queued",
   });
-  return { ...fixture, payoutId };
+  return { ...fixture, payoutId, postId };
 }
 
 describe("payouts.get", () => {
@@ -52,9 +55,10 @@ describe("payouts.get", () => {
       expect(result).toMatchObject({
         _id: fixture.payoutId,
         assignmentId: fixture.assignmentId,
+        postId: fixture.postId,
         creatorId: fixture.creatorId,
         companyId: fixture.membership.companyId,
-        amountCents: 12_345,
+        amount: 12_345,
         currency: "usd",
         reviewRequestedAt: 1_800_000_000_000,
         approvalDueAt: 1_800_259_200_000,
@@ -65,6 +69,7 @@ describe("payouts.get", () => {
       });
       expect(result).not.toHaveProperty("sourceKey");
       expect(result).not.toHaveProperty("approvedBy");
+      expect(result).not.toHaveProperty("amountCents");
     },
   );
 
@@ -157,7 +162,12 @@ describe("payouts.list", () => {
       const result = await caller.query(api.payouts.list, { paginationOpts: firstPage });
 
       expect(result.page).toHaveLength(1);
-      expect(result.page[0]).toMatchObject({ _id: fixture.payoutId, amountCents: 12_345 });
+      expect(result.page[0]).toMatchObject({
+        _id: fixture.payoutId,
+        postId: fixture.postId,
+        amount: 12_345,
+      });
+      expect(result.page[0]).not.toHaveProperty("amountCents");
       expect(result.page[0]).not.toHaveProperty("sourceKey");
       expect(result.page[0]).not.toHaveProperty("approvedBy");
       expect(result.isDone).toBe(true);

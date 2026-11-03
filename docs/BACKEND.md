@@ -184,10 +184,10 @@ opportunities, which keeps the imports acyclic.
 
 ## Payout records and reads
 
-`payouts` records individual finalized earnings payments. An assignment can have
-several payouts; a payout can optionally identify a specific post and an earning
-period. Ownership is stored on the payout so historical reads do not depend on an
-assignment, campaign, or post remaining active or present.
+`payouts` records individual finalized earnings payments. Every payout identifies
+one post and its assignment; both an assignment and a post can have several payouts.
+An earning period is optional. Ownership is stored on the payout so historical reads
+do not depend on an assignment, campaign, or post remaining active or present.
 
 - `payouts.get({ payoutId })` returns one authorized payout. Missing and inaccessible
   payouts both return `not_found`.
@@ -206,7 +206,8 @@ assignment, campaign, or post remaining active or present.
 
 Approval and payment status are separate. `transferred` means money reached the
 creator's payment-provider balance, not their bank. Times are Unix milliseconds;
-amounts are stored in integer currency minor units (cents for USD).
+`amount` is stored in integer currency minor units (cents for USD, yen for JPY),
+alongside `currency`. Renaming the field does not rescale existing monetary values.
 
 This first slice exposes reads only. Payout creation, money and relationship
 validation, transactional uniqueness of `(assignmentId, sourceKey)`, the three-day

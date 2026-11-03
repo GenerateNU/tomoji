@@ -11,12 +11,24 @@ import {
   seedCreatorId,
   seedOpportunity,
   seedPayout,
-  seedSubmission,
+  seedPost,
   type TestConvex,
 } from "../helpers";
 
 const modules = import.meta.glob("../../**/*.ts");
 const firstPage = { numItems: 10, cursor: null };
+
+test("a payout cannot lose its required post reference", async () => {
+  const t = convexTest(schema, modules);
+  const fixture = await seedAssignmentFixture(t);
+  const payoutId = await seedPayout(t, fixture.assignmentId);
+
+  await expect(
+    t.run(async (ctx) => {
+      await ctx.db.patch("payouts", payoutId, { postId: undefined });
+    }),
+  ).rejects.toThrow("Missing required field `postId`");
+});
 
 /** Two creators across two companies, including shared-creator and shared-company cases. */
 async function seedReadScenario(t: TestConvex) {
@@ -70,11 +82,15 @@ async function seedReadScenario(t: TestConvex) {
   };
 }
 
-test("the creator can read payout history after its assignment is removed", async () => {
+test("the creator can read payout history after its assignment and post are removed", async () => {
   const t = convexTest(schema, modules);
   const fixture = await seedAssignmentFixture(t);
-  const payoutId = await seedPayout(t, fixture.assignmentId);
-  await t.run(async (ctx) => await ctx.db.delete("assignments", fixture.assignmentId));
+  const postId = await seedPost(t, fixture.assignmentId);
+  const payoutId = await seedPayout(t, fixture.assignmentId, { postId });
+  await t.run(async (ctx) => {
+    await ctx.db.delete("assignments", fixture.assignmentId);
+    await ctx.db.delete("posts", postId);
+  });
 
   const payout = await t.run(
     async (ctx) =>
@@ -84,9 +100,10 @@ test("the creator can read payout history after its assignment is removed", asyn
   expect(payout).toMatchObject({
     _id: payoutId,
     assignmentId: fixture.assignmentId,
+    postId,
     creatorId: fixture.creatorId,
     companyId: fixture.membership.companyId,
-    amountCents: 10_000,
+    amount: 10_000,
     currency: "usd",
     approvalStatus: "pending",
     paymentStatus: "notStarted",
@@ -120,23 +137,10 @@ test("lists mixed approval states by review time rather than insertion time or s
   expect(result.isDone).toBe(true);
 });
 
-test("preserves optional payout context while omitting private fields", async () => {
+test("preserves the post and optional payout context while omitting private fields", async () => {
   const t = convexTest(schema, modules);
   const fixture = await seedAssignmentFixture(t);
-  const submissionId = await seedSubmission(t, fixture, "approved");
-  const postId = await t.run(async (ctx) => {
-    const assignment = await ctx.db.get("assignments", fixture.assignmentId);
-    if (assignment === null) throw new Error("expected seeded assignment");
-    return await ctx.db.insert("posts", {
-      submissionId,
-      campaignId: assignment.campaignId,
-      url: "https://x.com/creator/status/1234",
-      xPostId: "1234",
-      isActive: true,
-      isVerified: true,
-      postedAt: 1000,
-    });
-  });
+  const postId = await seedPost(t, fixture.assignmentId);
   const payoutId = await seedPayout(t, fixture.assignmentId, {
     postId,
     earningPeriod: { startsAt: 1000, endsAt: 2000 },
@@ -312,17 +316,21 @@ test("cursor pages preserve chronological order across mixed approval states", a
 test("cursor pages do not skip tied review times with different approval states", async () => {
   const t = convexTest(schema, modules);
   const fixture = await seedAssignmentFixture(t);
+  const postId = await seedPost(t, fixture.assignmentId);
   const firstCreated = await seedPayout(t, fixture.assignmentId, {
+    postId,
     sourceKey: "period-1",
     reviewRequestedAt: 3000,
     approvalStatus: "pending",
   });
   const secondCreated = await seedPayout(t, fixture.assignmentId, {
+    postId,
     sourceKey: "period-2",
     reviewRequestedAt: 3000,
     approvalStatus: "approved",
   });
   const lastCreated = await seedPayout(t, fixture.assignmentId, {
+    postId,
     sourceKey: "period-3",
     reviewRequestedAt: 3000,
     approvalStatus: "pending",
@@ -346,6 +354,11 @@ test("cursor pages do not skip tied review times with different approval states"
     lastCreated,
     secondCreated,
     firstCreated,
+  ]);
+  expect([...first.page, ...second.page, ...third.page].map((payout) => payout.postId)).toEqual([
+    postId,
+    postId,
+    postId,
   ]);
   expect(first.isDone).toBe(false);
   expect(second.isDone).toBe(false);

@@ -20,10 +20,11 @@ export const payoutsTable = defineTable({
   campaignId: v.id("campaigns"),
   // Internal earning-event key; future writers enforce uniqueness within the assignment.
   sourceKey: v.string(),
-  postId: v.optional(v.id("posts")),
+  postId: v.id("posts"),
   earningPeriod: v.optional(v.object({ startsAt: v.number(), endsAt: v.number() })),
-  // Integer minor units and lowercase currency code. Future writers validate money bounds.
-  amountCents: v.number(),
+  // Integer currency minor units (e.g. cents for USD, yen for JPY).
+  // Future writers validate money bounds and the lowercase currency code.
+  amount: v.number(),
   currency: v.string(),
   reviewRequestedAt: v.number(), // Unix milliseconds.
   approvalDueAt: v.number(), // Unix milliseconds; future approval workflow enforces the deadline.

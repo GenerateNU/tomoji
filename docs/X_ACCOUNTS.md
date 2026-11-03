@@ -132,14 +132,24 @@ an X app or configure deployment secrets. CI uses synthetic responses and creden
 
 This implementation adds one attempt table and changes the editable profile API,
 but does not run a migration, configure credentials, or enable X as a sign-in provider.
-Live linking must be verified with a real X app before release. No posting, analytics,
-token-refresh service, or ingestion is included.
+Live linking must be verified with a real X app before release. Linking includes no
+posting, analytics, token-refresh service, or ingestion; post metrics are covered below.
 
 ## Post metrics sync configuration
 
 Post metrics come from X's public post lookup, which accepts the app-only bearer
 token, so the sync never decrypts creator credentials. Every read is billed against
 the team's X credits.
+
+Nothing calls the lookup yet: no cron runs and no post's counts are updated. The weekly
+fetch will run inside the payout cron, before payouts are calculated. The X field names
+below come from X's documentation and haven't been checked against a live response.
+Before enabling the sync anywhere, make one lookup for a post you own (about $0.005)
+and confirm `public_metrics` includes `impression_count`:
+
+```bash
+curl -s -H "Authorization: Bearer $X_BEARER_TOKEN" "https://api.x.com/2/tweets?ids=<post_id>&tweet.fields=public_metrics"
+```
 
 | Setting                  | Meaning                                                       |
 | ------------------------ | ------------------------------------------------------------- |
@@ -156,6 +166,28 @@ token, but it never clears a deployment value. To turn an enabled deployment off
 `X_POST_EARNING_DAYS` (30) is a placeholder for how long a post keeps earning after it
 goes live, pending product confirmation. Payouts run weekly, so a post is paid through
 the end of the week its last earning day falls in.
+
+`getXPostMetrics` looks up at most 100 post IDs per call through `GET /2/tweets` with
+`tweet.fields=public_metrics`. It maps `like_count`, `reply_count`, `retweet_count`, and
+`impression_count` to the post's `likes`, `comments`, `reposts`, and `views`.
+
+One unusable post never fails the batch. Each such post is listed in `missing` with a
+reason:
+
+| Reason           | Meaning                                                                 |
+| ---------------- | ----------------------------------------------------------------------- |
+| `invalid_id`     | Not X's id format (1–19 digits, no leading zero), so it was never sent. |
+| `not_found`      | X reports the post doesn't exist, usually because it was deleted.       |
+| `not_authorized` | X reports the post is protected or otherwise not visible to the app.    |
+| `not_returned`   | X left the post out without saying why; it may come back next run.      |
+| `malformed`      | X returned the post, but a count was missing or not a whole number.     |
+
+An empty, oversized (over 100), or duplicated id list is a caller bug and fails as
+`invalid_state`. A response containing a post that wasn't requested, or the same post
+twice, can't be trusted for any post and fails as `upstream_failure`. HTTP 429 fails as
+`upstream_failure` with reason `x_rate_limited`, plus `retryAt` (Unix ms) when X's
+`x-rate-limit-reset` header gives one; every other failure is a redacted
+`upstream_failure`. `xOAuth.ts` shares the same request helpers from `xApi.ts`.
 
 ## Later X API consumers
 

@@ -5,6 +5,7 @@ import {
   getXIdentity,
   hashXState,
   readXConfig,
+  revokeXToken,
 } from "../../lib/xOAuth";
 import { expectApiError, xTokenResponse } from "../helpers";
 
@@ -62,6 +63,26 @@ test("a token rejection is redacted and never automatically retried", async () =
   vi.stubGlobal("fetch", fetch);
   await expectApiError(() => exchangeXCode(config, "code", "verifier"), "invalid_state");
   expect(fetch).toHaveBeenCalledTimes(1);
+});
+
+test("only token exchange names its 400 and 401 failures", async () => {
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("", { status: 400 })));
+  await expectApiError(
+    () => exchangeXCode(config, "code", "verifier"),
+    "invalid_state",
+    "x_authorization_failed",
+  );
+  await expect(revokeXToken(config, "token")).rejects.toMatchObject({
+    data: { code: "upstream_failure" },
+  });
+
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("", { status: 401 })));
+  await expectApiError(
+    () => exchangeXCode(config, "code", "verifier"),
+    "misconfigured",
+    "x_client_rejected",
+  );
+  await expectApiError(() => getXIdentity("token"), "upstream_failure");
 });
 
 test("network errors including credential-bearing messages are redacted", async () => {

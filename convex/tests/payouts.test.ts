@@ -174,29 +174,38 @@ describe("payouts.list", () => {
     },
   );
 
-  test.each(["creator", "company"] as const)(
+  test.each(["creator", "member", "admin"] as const)(
     "does not let a %s use scope filters to see someone else's payout",
     async (role) => {
       const t = convexTest(schema, modules);
       const fixture = await seedPayment(t);
       const outsider = await seedUser(t, {
         subject: "outsider",
-        ...(role === "company" ? { org: { id: "org_outside" } } : {}),
+        ...(role === "creator" ? {} : { org: { id: "org_outside", role } }),
       });
       const payout = await t.run(async (ctx) => await ctx.db.get("payouts", fixture.payoutId));
       if (payout === null) throw new Error("expected seeded payout");
 
+      const unfiltered = await outsider.query(api.payouts.list, { paginationOpts: firstPage });
+      expect(unfiltered.page).toEqual([]);
+      expect(unfiltered.isDone).toBe(true);
+
       for (const filters of [
-        {},
         { assignmentId: fixture.assignmentId },
         { campaignId: payout.campaignId },
         { assignmentId: fixture.assignmentId, campaignId: payout.campaignId },
       ]) {
-        const result = await outsider.query(api.payouts.list, {
-          ...filters,
-          approvalStatus: "approved",
-          paginationOpts: firstPage,
-        });
+        const read = () =>
+          outsider.query(api.payouts.list, {
+            ...filters,
+            approvalStatus: "approved",
+            paginationOpts: firstPage,
+          });
+        if (role !== "creator") {
+          await expectApiError(read, "not_found");
+          continue;
+        }
+        const result = await read();
         expect(result.page).toEqual([]);
         expect(result.isDone).toBe(true);
       }

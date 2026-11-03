@@ -75,9 +75,10 @@ export const payoutListFilters = schema
 export type PayoutListFilters = Infer<typeof payoutListFilters>;
 
 /**
- * Lists the viewer's payouts newest review request first. Parent filters narrow
- * stored ownership, so foreign scopes return no rows and missing parents do not
- * hide history. Assignment and campaign filters may be combined.
+ * Lists the viewer's payouts newest review request first. Company callers cannot
+ * filter by an existing parent owned by another company. Stored payout ownership
+ * still scopes every result, including history whose parents have been deleted.
+ * Assignment and campaign filters may be combined.
  */
 export async function listPayouts(
   ctx: QueryCtx,
@@ -85,6 +86,22 @@ export async function listPayouts(
   options: PayoutListFilters,
 ): Promise<PaginationResult<PayoutView>> {
   const { assignmentId, campaignId, paginationOpts } = options;
+  if (viewer.role === "company") {
+    // Reject foreign parents before scanning their payouts. Missing parents fall
+    // back to stored payout ownership so deletion does not hide financial history.
+    if (campaignId !== undefined) {
+      const campaign = await ctx.db.get("campaigns", campaignId);
+      if (campaign !== null && campaign.companyId !== viewer.companyId) {
+        throw apiError("not_found", { resource: "campaign" });
+      }
+    }
+    if (assignmentId !== undefined) {
+      const assignment = await ctx.db.get("assignments", assignmentId);
+      if (assignment !== null && assignment.companyId !== viewer.companyId) {
+        throw apiError("not_found", { resource: "assignment" });
+      }
+    }
+  }
   let query = payoutsOf(ctx, viewer, options);
   const hasParentScope = assignmentId !== undefined || campaignId !== undefined;
   // Parent indexes bound the scan; ownership is still checked on every stored

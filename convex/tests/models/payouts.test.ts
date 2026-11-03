@@ -1,6 +1,6 @@
 /// <reference types="vite/client" />
 import { convexTest } from "convex-test";
-import { expect, test } from "vitest";
+import { expect, test, vi } from "vitest";
 import type { ResourceViewer } from "../../lib/authz";
 import { listPayouts, requirePayout } from "../../models/payouts";
 import schema from "../../schema";
@@ -209,6 +209,35 @@ test.each(["creator", "company", "operator"] as const)(
   },
 );
 
+test.each(["campaign", "assignment"] as const)(
+  "company rejects a foreign %s before scanning payouts",
+  async (parent) => {
+    const t = convexTest(schema, modules);
+    const scenario = await seedReadScenario(t);
+    const filters =
+      parent === "campaign"
+        ? { campaignId: scenario.otherCompany.campaignId }
+        : { assignmentId: scenario.foreignAssignmentId };
+
+    await t.run(async (ctx) => {
+      const query = vi.spyOn(ctx.db, "query");
+      try {
+        await expectApiError(
+          () =>
+            listPayouts(ctx, scenario.viewers.company, {
+              ...filters,
+              paginationOpts: firstPage,
+            }),
+          "not_found",
+        );
+        expect(query).not.toHaveBeenCalled();
+      } finally {
+        query.mockRestore();
+      }
+    });
+  },
+);
+
 test.each(["creator", "company", "operator"] as const)(
   "%s parent filters narrow stored ownership and can be combined",
   async (role) => {
@@ -236,10 +265,20 @@ test.each(["creator", "company", "operator"] as const)(
           campaignId: scenario.otherCompany.campaignId,
         },
         expected: [],
+        companyNotFound: true,
+      },
+      {
+        args: {
+          assignmentId: scenario.foreignAssignmentId,
+          campaignId: scenario.assignment.campaignId,
+        },
+        expected: [],
+        companyNotFound: true,
       },
       {
         args: { assignmentId: scenario.foreignAssignmentId },
         expected: role === "operator" ? [scenario.foreign] : [],
+        companyNotFound: true,
       },
       {
         args: { campaignId: scenario.otherCompany.campaignId },
@@ -249,18 +288,25 @@ test.each(["creator", "company", "operator"] as const)(
             : role === "creator"
               ? [scenario.creatorPeer]
               : [],
+        companyNotFound: true,
       },
     ];
-    for (const { args, expected } of filters) {
+    for (const { args, expected, companyNotFound } of filters) {
       for (const approvalStatus of [undefined, "pending", "approved"] as const) {
-        const result = await t.run(
-          async (ctx) =>
-            await listPayouts(ctx, scenario.viewers[role], {
-              ...args,
-              approvalStatus,
-              paginationOpts: firstPage,
-            }),
-        );
+        const read = () =>
+          t.run(
+            async (ctx) =>
+              await listPayouts(ctx, scenario.viewers[role], {
+                ...args,
+                approvalStatus,
+                paginationOpts: firstPage,
+              }),
+          );
+        if (role === "company" && companyNotFound) {
+          await expectApiError(read, "not_found");
+          continue;
+        }
+        const result = await read();
         const approved = new Set([scenario.own, scenario.foreign]);
         expect(result.page.map((payout) => payout._id)).toEqual(
           expected.filter(
@@ -273,22 +319,65 @@ test.each(["creator", "company", "operator"] as const)(
   },
 );
 
-test("parent-scoped history survives missing assignments and campaigns", async () => {
+test.each(["creator", "company", "operator"] as const)(
+  "%s parent-scoped history survives missing assignments and campaigns",
+  async (role) => {
+    const t = convexTest(schema, modules);
+    const scenario = await seedReadScenario(t);
+    await t.run(async (ctx) => {
+      await ctx.db.delete("assignments", scenario.fixture.assignmentId);
+      await ctx.db.delete("campaigns", scenario.assignment.campaignId);
+    });
+    for (const { filters, expected } of [
+      { filters: { assignmentId: scenario.fixture.assignmentId }, expected: [scenario.own] },
+      {
+        filters: { campaignId: scenario.assignment.campaignId },
+        expected: role === "creator" ? [scenario.own] : [scenario.own, scenario.companyPeer],
+      },
+      {
+        filters: {
+          assignmentId: scenario.fixture.assignmentId,
+          campaignId: scenario.assignment.campaignId,
+        },
+        expected: [scenario.own],
+      },
+    ]) {
+      const result = await t.run(
+        async (ctx) =>
+          await listPayouts(ctx, scenario.viewers[role], {
+            ...filters,
+            paginationOpts: firstPage,
+          }),
+      );
+      expect(result.page.map((payout) => payout._id)).toEqual(expected);
+    }
+  },
+);
+
+test("missing foreign parents do not expose another company's payout history", async () => {
   const t = convexTest(schema, modules);
   const scenario = await seedReadScenario(t);
   await t.run(async (ctx) => {
-    await ctx.db.delete("assignments", scenario.fixture.assignmentId);
-    await ctx.db.delete("campaigns", scenario.assignment.campaignId);
+    await ctx.db.delete("assignments", scenario.foreignAssignmentId);
+    await ctx.db.delete("campaigns", scenario.otherCompany.campaignId);
   });
-  const result = await t.run(
-    async (ctx) =>
-      await listPayouts(ctx, scenario.viewers.creator, {
-        assignmentId: scenario.fixture.assignmentId,
-        campaignId: scenario.assignment.campaignId,
-        paginationOpts: firstPage,
-      }),
-  );
-  expect(result.page.map((payout) => payout._id)).toEqual([scenario.own]);
+  for (const filters of [
+    { assignmentId: scenario.foreignAssignmentId },
+    { campaignId: scenario.otherCompany.campaignId },
+    {
+      assignmentId: scenario.foreignAssignmentId,
+      campaignId: scenario.otherCompany.campaignId,
+    },
+  ]) {
+    const result = await t.run(
+      async (ctx) =>
+        await listPayouts(ctx, scenario.viewers.company, {
+          ...filters,
+          paginationOpts: firstPage,
+        }),
+    );
+    expect(result.page).toEqual([]);
+  }
 });
 
 test("cursor pages preserve chronological order across mixed approval states", async () => {

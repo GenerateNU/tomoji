@@ -20,10 +20,14 @@ export const get = authedQuery({
 /**
  * Lists visible payouts newest review request first, with optional assignment,
  * campaign, and approval-status filters. Assignment and campaign may be combined.
- * Foreign scopes return no rows. Historical parents need not still exist.
+ * Company callers cannot filter by an existing campaign or assignment owned by
+ * another company. Missing parents still allow reads of historical payouts.
+ * Creator and operator filters use the payout's stored ownership.
  *
  * Uses native cursor pagination; a scan-limited page may be short or empty while
  * `isDone` is false. Continue with `continueCursor` and the same filters.
+ *
+ * @throws `not_found` for a company caller filtering by another company's existing parent.
  */
 export const list = authedQuery({
   args: payoutListFilters.fields,

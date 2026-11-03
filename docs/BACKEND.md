@@ -194,7 +194,11 @@ do not depend on an assignment, campaign, or post remaining active or present.
 - `payouts.list({ paginationOpts, assignmentId?, campaignId?, approvalStatus? })`
   returns a page ordered by `reviewRequestedAt` descending, then creation time
   descending for ties. Filters combine and only narrow the caller's scope.
-  Filters with no visible matching payouts return an empty page. Parent-filtered
+  For company callers, filters naming an existing campaign or assignment owned by
+  another company return `not_found` before scanning payouts. Missing parents fall
+  back to the payout's stored ownership so historical payouts remain readable.
+  Creator and operator access is unchanged by parent existence or company ownership.
+  Other filters with no visible matching payouts return an empty page. Parent-filtered
   queries cap rows scanned per page, so a short or empty page with `isDone: false`
   must be continued using `continueCursor` and the same filters.
 - Creators see their own payouts, company members and admins see their company's,

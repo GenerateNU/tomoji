@@ -16,6 +16,7 @@ import { opportunityStarsTable } from "./schemas/opportunityStars.schema";
 import { opportunityNichesTable } from "./schemas/opportunityNiches.schema";
 import { opportunitySkillsTable } from "./schemas/opportunitySkills.schema";
 import { postsTable } from "./schemas/posts.schema";
+import { payoutsTable } from "./schemas/payouts.schema";
 import { submissionsTable } from "./schemas/submissions.schema";
 import { usersTable } from "./schemas/users.schema";
 import { xAccountsTable } from "./schemas/xAccounts.schema";
@@ -41,6 +42,7 @@ export default defineSchema({
   assignments: assignmentsTable,
   submissions: submissionsTable,
   posts: postsTable,
+  payouts: payoutsTable,
   disputes: disputesTable,
   mediaUploads: mediaUploadsTable,
   xAccounts: xAccountsTable,

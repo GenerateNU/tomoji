@@ -614,6 +614,65 @@ export async function seedOneSubmission(
   return { fixture, submissionId };
 }
 
+/** Seeds a verified post and approved submission for an existing assignment. */
+export async function seedPost(t: TestConvex, assignmentId: Id<"assignments">) {
+  return await t.run(async (ctx) => {
+    const assignment = await ctx.db.get("assignments", assignmentId);
+    if (assignment === null) throw new Error("expected seeded assignment");
+    const deliverable = await ctx.db
+      .query("deliverables")
+      .withIndex("by_opportunityId", (q) => q.eq("opportunityId", assignment.opportunityId))
+      .first();
+    if (deliverable === null) throw new Error("expected seeded deliverable");
+    const submissionId = await ctx.db.insert("submissions", {
+      ...submissionArgs({ assignmentId, deliverableId: deliverable._id }),
+      usesAiReview: true,
+      status: "approved",
+      reviewerType: "ai",
+      reviewedAt: Date.now(),
+    });
+    const xPostId = String(BigInt(`0x${crypto.randomUUID().replaceAll("-", "")}`));
+    return await ctx.db.insert("posts", {
+      submissionId,
+      campaignId: assignment.campaignId,
+      url: `https://x.com/creator/status/${xPostId}`,
+      xPostId,
+      isActive: true,
+      isVerified: true,
+      postedAt: Date.now(),
+    });
+  });
+}
+
+/** Inserts a payout with a post, copying historical ownership from its assignment. */
+export async function seedPayout(
+  t: TestConvex,
+  assignmentId: Id<"assignments">,
+  overrides: Partial<Omit<WithoutSystemFields<Doc<"payouts">>, "assignmentId">> = {},
+): Promise<Id<"payouts">> {
+  const postId = overrides.postId ?? (await seedPost(t, assignmentId));
+  return await t.run(async (ctx) => {
+    const assignment = await ctx.db.get("assignments", assignmentId);
+    if (assignment === null) throw new Error("expected seeded assignment");
+    const reviewRequestedAt = overrides.reviewRequestedAt ?? Date.now();
+    return await ctx.db.insert("payouts", {
+      assignmentId,
+      creatorId: assignment.creatorId,
+      companyId: assignment.companyId,
+      campaignId: assignment.campaignId,
+      postId,
+      sourceKey: `test-earning:${crypto.randomUUID()}`,
+      amount: 10_000,
+      currency: "usd",
+      reviewRequestedAt,
+      approvalDueAt: reviewRequestedAt + 3 * 86_400_000,
+      approvalStatus: "pending",
+      paymentStatus: "notStarted",
+      ...overrides,
+    });
+  });
+}
+
 type OpenDispute = Extract<Doc<"disputes">, { status: "open" }>;
 type DisputeResolutionFields = Omit<
   Extract<Doc<"disputes">, { status: "resolved" }>,

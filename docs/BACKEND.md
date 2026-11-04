@@ -84,7 +84,7 @@ Use these instead of the raw `query` and `mutation` functions. It proves the cal
 
 Authorization should always happen on the server. Never accept a `userId` from the client to determine what someone is allowed to do. Derive the caller's identity from `ctx` instead.
 
-For application, assignment, and submission reads, `requireCallerViewer` in
+For application, assignment, submission, and payout reads, `requireCallerViewer` in
 `lib/functions.ts` resolves the caller to the shared `ResourceViewer` ownership scope.
 `canViewResource` checks creator/company ownership; domain `require…` helpers still
 own missing-row errors and resource-specific rules. Do not apply that ownership policy
@@ -201,6 +201,43 @@ deliverable separately:
 `deliverableId` is required with no migration, since nothing is deployed yet. A
 dev deployment holding submissions from before it won't accept the schema:
 clear its `submissions`, `posts`, and `disputes` tables, then push again.
+
+## Payout records and reads
+
+`payouts` records individual finalized earnings payments. Every payout identifies
+one post and its assignment; both an assignment and a post can have several payouts.
+An earning period is optional. Ownership is stored on the payout so historical reads
+do not depend on an assignment, campaign, or post remaining active or present.
+
+- `payouts.get({ payoutId })` returns one authorized payout. Missing and inaccessible
+  payouts both return `not_found`.
+- `payouts.list({ paginationOpts, assignmentId?, campaignId?, approvalStatus? })`
+  returns a page ordered by `reviewRequestedAt` descending, then creation time
+  descending for ties. Filters combine and only narrow the caller's scope.
+  For company callers, filters naming an existing campaign or assignment owned by
+  another company return `not_found` before scanning payouts. Missing parents fall
+  back to the payout's stored ownership so historical payouts remain readable.
+  Creator and operator access is unchanged by parent existence or company ownership.
+  Other filters with no visible matching payouts return an empty page. Parent-filtered
+  queries cap rows scanned per page, so a short or empty page with `isDone: false`
+  must be continued using `continueCursor` and the same filters.
+- Creators see their own payouts, company members and admins see their company's,
+  and operators can read all payouts. Company scope comes from verified membership;
+  callers cannot supply a creator or company ID to override it.
+- Both endpoints return an explicit public view, excluding `sourceKey` and
+  `approvedBy`. The source key is for internal earning-event deduplication and the
+  approver ID is audit metadata.
+
+Approval and payment status are separate. `transferred` means money reached the
+creator's payment-provider balance, not their bank. Times are Unix milliseconds;
+`amount` is stored in integer currency minor units (cents for USD, yen for JPY),
+alongside `currency`. Renaming the field does not rescale existing monetary values.
+
+This first slice exposes reads only. Payout creation, money and relationship
+validation, transactional uniqueness of `(assignmentId, sourceKey)`, the three-day
+approval workflow, and dispute holds belong to the next slice. The indexes alone
+do not enforce uniqueness. Stripe execution and bank-payout reconciliation are
+separate integration work; this schema does not send money or schedule approvals.
 
 ## Tests
 

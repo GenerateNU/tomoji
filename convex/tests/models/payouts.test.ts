@@ -21,6 +21,7 @@ import {
   seedDispute,
   seedOpportunity,
   seedPayout,
+  seedPost,
   seedSubmission,
   type TestConvex,
 } from "../helpers";
@@ -30,7 +31,7 @@ const firstPage = { numItems: 10, cursor: null };
 
 afterEach(() => vi.useRealTimers());
 
-const finalizedEarning = { sourceKey: "fixed-fee", amountCents: 10_000, currency: "usd" };
+const finalizedEarning = { sourceKey: "fixed-fee", amount: 10_000, currency: "usd" };
 
 describe("payout approval", () => {
   test("company approval records its actor and leaves the amount, deadline, and payment status intact", async () => {
@@ -47,7 +48,7 @@ describe("payout approval", () => {
     );
     expect(approved).toMatchObject({
       _id: payoutId,
-      amountCents: before.amountCents,
+      amount: before.amount,
       approvalDueAt: before.approvalDueAt,
       approvalStatus: "approved",
       approvalSource: "company",
@@ -231,12 +232,14 @@ test("creates a finalized payout with assignment ownership and exactly 72 hours 
   vi.setSystemTime(now);
   const t = convexTest(schema, modules);
   const fixture = await seedAssignmentFixture(t);
+  const postId = await seedPost(t, fixture.assignmentId);
   const payout = await t.run(
     async (ctx) =>
       await createPayout(ctx, {
         assignmentId: fixture.assignmentId,
+        postId,
         sourceKey: "fixed-fee",
-        amountCents: 10_000,
+        amount: 10_000,
         currency: "usd",
       }),
   );
@@ -245,11 +248,12 @@ test("creates a finalized payout with assignment ownership and exactly 72 hours 
   );
   expect(payout).toMatchObject({
     assignmentId: fixture.assignmentId,
+    postId,
     creatorId: fixture.creatorId,
     companyId: fixture.membership.companyId,
     campaignId: assignment?.campaignId,
     sourceKey: "fixed-fee",
-    amountCents: 10_000,
+    amount: 10_000,
     currency: "usd",
     reviewRequestedAt: now,
     approvalDueAt: now + 259_200_000,
@@ -263,9 +267,10 @@ test("creates a finalized payout with assignment ownership and exactly 72 hours 
 
 test.each([0, -1, 1.5, NaN, Infinity, -Infinity, Number.MAX_SAFE_INTEGER + 1])(
   "rejects invalid payout amount %s without writing a payout",
-  async (amountCents) => {
+  async (amount) => {
     const t = convexTest(schema, modules);
     const fixture = await seedAssignmentFixture(t);
+    const postId = await seedPost(t, fixture.assignmentId);
     await expectApiError(
       () =>
         t.run(
@@ -273,7 +278,8 @@ test.each([0, -1, 1.5, NaN, Infinity, -Infinity, Number.MAX_SAFE_INTEGER + 1])(
             await createPayout(ctx, {
               ...finalizedEarning,
               assignmentId: fixture.assignmentId,
-              amountCents,
+              postId,
+              amount,
             }),
         ),
       "invalid_state",
@@ -301,6 +307,7 @@ test.each([
   async (overrides, reason) => {
     const t = convexTest(schema, modules);
     const fixture = await seedAssignmentFixture(t);
+    const postId = await seedPost(t, fixture.assignmentId);
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(5000);
     await expectApiError(
@@ -310,6 +317,7 @@ test.each([
             await createPayout(ctx, {
               ...finalizedEarning,
               assignmentId: fixture.assignmentId,
+              postId,
               ...overrides,
             }),
         ),
@@ -323,11 +331,13 @@ test.each([
 test("normalizes currency and source key and returns the original payout on a later retry", async () => {
   const t = convexTest(schema, modules);
   const fixture = await seedAssignmentFixture(t);
+  const postId = await seedPost(t, fixture.assignmentId);
   vi.useFakeTimers({ toFake: ["Date"] });
   vi.setSystemTime(5000);
   const args = {
     ...finalizedEarning,
     assignmentId: fixture.assignmentId,
+    postId,
     earningPeriod: { startsAt: 0, endsAt: 5000 },
   };
   const first = await t.run(
@@ -347,7 +357,7 @@ test("normalizes currency and source key and returns the original payout on a la
 });
 
 test.each([
-  { amountCents: 20_000 },
+  { amount: 20_000 },
   { currency: "eur" },
   { earningPeriod: undefined },
   { earningPeriod: { startsAt: 0, endsAt: 2000 } },
@@ -357,9 +367,11 @@ test.each([
   async (overrides) => {
     const t = convexTest(schema, modules);
     const fixture = await seedAssignmentFixture(t);
+    const postId = await seedPost(t, fixture.assignmentId);
     const args = {
       ...finalizedEarning,
       assignmentId: fixture.assignmentId,
+      postId,
       earningPeriod: { startsAt: 1000, endsAt: 2000 },
     };
     const first = await t.run(async (ctx) => await createPayout(ctx, args));
@@ -375,6 +387,7 @@ test.each([
 test("different earnings create multiple payouts and different assignments can reuse source keys", async () => {
   const t = convexTest(schema, modules);
   const fixture = await seedAssignmentFixture(t);
+  const postId = await seedPost(t, fixture.assignmentId);
   const assignment = await t.run(
     async (ctx) => await ctx.db.get("assignments", fixture.assignmentId),
   );
@@ -382,11 +395,13 @@ test("different earnings create multiple payouts and different assignments can r
     opportunityId: assignment!.opportunityId,
     creatorId: await seedCreatorId(t, "other-earner"),
   });
+  const otherPostId = await seedPost(t, otherAssignmentId);
   const first = await t.run(
     async (ctx) =>
       await createPayout(ctx, {
         ...finalizedEarning,
         assignmentId: fixture.assignmentId,
+        postId,
       }),
   );
   const next = await t.run(
@@ -394,6 +409,7 @@ test("different earnings create multiple payouts and different assignments can r
       await createPayout(ctx, {
         ...finalizedEarning,
         assignmentId: fixture.assignmentId,
+        postId,
         sourceKey: "view-period-1",
       }),
   );
@@ -402,6 +418,7 @@ test("different earnings create multiple payouts and different assignments can r
       await createPayout(ctx, {
         ...finalizedEarning,
         assignmentId: otherAssignmentId,
+        postId: otherPostId,
       }),
   );
   expect(new Set([first._id, next._id, other._id]).size).toBe(3);
@@ -410,7 +427,8 @@ test("different earnings create multiple payouts and different assignments can r
 test("retries reconcile after assignment deletion without resetting approval or payment progress", async () => {
   const t = convexTest(schema, modules);
   const fixture = await seedAssignmentFixture(t);
-  const args = { ...finalizedEarning, assignmentId: fixture.assignmentId };
+  const postId = await seedPost(t, fixture.assignmentId);
+  const args = { ...finalizedEarning, assignmentId: fixture.assignmentId, postId };
   const first = await t.run(async (ctx) => await createPayout(ctx, args));
   const progressed = await t.run(async (ctx) => {
     await ctx.db.patch("payouts", first._id, {
@@ -487,8 +505,9 @@ test("post context is immutable and identical retries work after the post disapp
   );
   const args = { ...finalizedEarning, assignmentId: fixture.assignmentId, postId };
   const first = await t.run(async (ctx) => await createPayout(ctx, args));
+  const otherPostId = await seedPost(t, fixture.assignmentId);
   await expectApiError(
-    () => t.run(async (ctx) => await createPayout(ctx, { ...args, postId: undefined })),
+    () => t.run(async (ctx) => await createPayout(ctx, { ...args, postId: otherPostId })),
     "conflict",
     "payout_source_conflict",
   );
@@ -499,6 +518,7 @@ test("post context is immutable and identical retries work after the post disapp
 test("creation still records finalized earnings for completed work after a campaign closes", async () => {
   const t = convexTest(schema, modules);
   const fixture = await seedAssignmentFixture(t, { status: "completed" });
+  const postId = await seedPost(t, fixture.assignmentId);
   await t.run(async (ctx) => {
     const assignment = (await ctx.db.get("assignments", fixture.assignmentId))!;
     await ctx.db.patch("campaigns", assignment.campaignId, { status: "closed" });
@@ -509,10 +529,23 @@ test("creation still records finalized earnings for completed work after a campa
       await createPayout(ctx, {
         ...finalizedEarning,
         assignmentId: fixture.assignmentId,
+        postId,
       }),
   );
   expect(payout.assignmentId).toBe(fixture.assignmentId);
   expect(payout.approvalStatus).toBe("pending");
+});
+
+test("a payout cannot lose its required post reference", async () => {
+  const t = convexTest(schema, modules);
+  const fixture = await seedAssignmentFixture(t);
+  const payoutId = await seedPayout(t, fixture.assignmentId);
+
+  await expect(
+    t.run(async (ctx) => {
+      await ctx.db.patch("payouts", payoutId, { postId: undefined });
+    }),
+  ).rejects.toThrow("Missing required field `postId`");
 });
 
 /** Two creators across two companies, including shared-creator and shared-company cases. */
@@ -567,11 +600,15 @@ async function seedReadScenario(t: TestConvex) {
   };
 }
 
-test("the creator can read payout history after its assignment is removed", async () => {
+test("the creator can read payout history after its assignment and post are removed", async () => {
   const t = convexTest(schema, modules);
   const fixture = await seedAssignmentFixture(t);
-  const payoutId = await seedPayout(t, fixture.assignmentId);
-  await t.run(async (ctx) => await ctx.db.delete("assignments", fixture.assignmentId));
+  const postId = await seedPost(t, fixture.assignmentId);
+  const payoutId = await seedPayout(t, fixture.assignmentId, { postId });
+  await t.run(async (ctx) => {
+    await ctx.db.delete("assignments", fixture.assignmentId);
+    await ctx.db.delete("posts", postId);
+  });
 
   const payout = await t.run(
     async (ctx) =>
@@ -581,9 +618,10 @@ test("the creator can read payout history after its assignment is removed", asyn
   expect(payout).toMatchObject({
     _id: payoutId,
     assignmentId: fixture.assignmentId,
+    postId,
     creatorId: fixture.creatorId,
     companyId: fixture.membership.companyId,
-    amountCents: 10_000,
+    amount: 10_000,
     currency: "usd",
     approvalStatus: "pending",
     paymentStatus: "notStarted",
@@ -617,23 +655,10 @@ test("lists mixed approval states by review time rather than insertion time or s
   expect(result.isDone).toBe(true);
 });
 
-test("preserves optional payout context while omitting private fields", async () => {
+test("preserves the post and optional payout context while omitting private fields", async () => {
   const t = convexTest(schema, modules);
   const fixture = await seedAssignmentFixture(t);
-  const submissionId = await seedSubmission(t, fixture, "approved");
-  const postId = await t.run(async (ctx) => {
-    const assignment = await ctx.db.get("assignments", fixture.assignmentId);
-    if (assignment === null) throw new Error("expected seeded assignment");
-    return await ctx.db.insert("posts", {
-      submissionId,
-      campaignId: assignment.campaignId,
-      url: "https://x.com/creator/status/1234",
-      xPostId: "1234",
-      isActive: true,
-      isVerified: true,
-      postedAt: 1000,
-    });
-  });
+  const postId = await seedPost(t, fixture.assignmentId);
   const payoutId = await seedPayout(t, fixture.assignmentId, {
     postId,
     earningPeriod: { startsAt: 1000, endsAt: 2000 },
@@ -702,6 +727,35 @@ test.each(["creator", "company", "operator"] as const)(
   },
 );
 
+test.each(["campaign", "assignment"] as const)(
+  "company rejects a foreign %s before scanning payouts",
+  async (parent) => {
+    const t = convexTest(schema, modules);
+    const scenario = await seedReadScenario(t);
+    const filters =
+      parent === "campaign"
+        ? { campaignId: scenario.otherCompany.campaignId }
+        : { assignmentId: scenario.foreignAssignmentId };
+
+    await t.run(async (ctx) => {
+      const query = vi.spyOn(ctx.db, "query");
+      try {
+        await expectApiError(
+          () =>
+            listPayouts(ctx, scenario.viewers.company, {
+              ...filters,
+              paginationOpts: firstPage,
+            }),
+          "not_found",
+        );
+        expect(query).not.toHaveBeenCalled();
+      } finally {
+        query.mockRestore();
+      }
+    });
+  },
+);
+
 test.each(["creator", "company", "operator"] as const)(
   "%s parent filters narrow stored ownership and can be combined",
   async (role) => {
@@ -729,10 +783,20 @@ test.each(["creator", "company", "operator"] as const)(
           campaignId: scenario.otherCompany.campaignId,
         },
         expected: [],
+        companyNotFound: true,
+      },
+      {
+        args: {
+          assignmentId: scenario.foreignAssignmentId,
+          campaignId: scenario.assignment.campaignId,
+        },
+        expected: [],
+        companyNotFound: true,
       },
       {
         args: { assignmentId: scenario.foreignAssignmentId },
         expected: role === "operator" ? [scenario.foreign] : [],
+        companyNotFound: true,
       },
       {
         args: { campaignId: scenario.otherCompany.campaignId },
@@ -742,18 +806,25 @@ test.each(["creator", "company", "operator"] as const)(
             : role === "creator"
               ? [scenario.creatorPeer]
               : [],
+        companyNotFound: true,
       },
     ];
-    for (const { args, expected } of filters) {
+    for (const { args, expected, companyNotFound } of filters) {
       for (const approvalStatus of [undefined, "pending", "approved"] as const) {
-        const result = await t.run(
-          async (ctx) =>
-            await listPayouts(ctx, scenario.viewers[role], {
-              ...args,
-              approvalStatus,
-              paginationOpts: firstPage,
-            }),
-        );
+        const read = () =>
+          t.run(
+            async (ctx) =>
+              await listPayouts(ctx, scenario.viewers[role], {
+                ...args,
+                approvalStatus,
+                paginationOpts: firstPage,
+              }),
+          );
+        if (role === "company" && companyNotFound) {
+          await expectApiError(read, "not_found");
+          continue;
+        }
+        const result = await read();
         const approved = new Set([scenario.own, scenario.foreign]);
         expect(result.page.map((payout) => payout._id)).toEqual(
           expected.filter(
@@ -766,22 +837,65 @@ test.each(["creator", "company", "operator"] as const)(
   },
 );
 
-test("parent-scoped history survives missing assignments and campaigns", async () => {
+test.each(["creator", "company", "operator"] as const)(
+  "%s parent-scoped history survives missing assignments and campaigns",
+  async (role) => {
+    const t = convexTest(schema, modules);
+    const scenario = await seedReadScenario(t);
+    await t.run(async (ctx) => {
+      await ctx.db.delete("assignments", scenario.fixture.assignmentId);
+      await ctx.db.delete("campaigns", scenario.assignment.campaignId);
+    });
+    for (const { filters, expected } of [
+      { filters: { assignmentId: scenario.fixture.assignmentId }, expected: [scenario.own] },
+      {
+        filters: { campaignId: scenario.assignment.campaignId },
+        expected: role === "creator" ? [scenario.own] : [scenario.own, scenario.companyPeer],
+      },
+      {
+        filters: {
+          assignmentId: scenario.fixture.assignmentId,
+          campaignId: scenario.assignment.campaignId,
+        },
+        expected: [scenario.own],
+      },
+    ]) {
+      const result = await t.run(
+        async (ctx) =>
+          await listPayouts(ctx, scenario.viewers[role], {
+            ...filters,
+            paginationOpts: firstPage,
+          }),
+      );
+      expect(result.page.map((payout) => payout._id)).toEqual(expected);
+    }
+  },
+);
+
+test("missing foreign parents do not expose another company's payout history", async () => {
   const t = convexTest(schema, modules);
   const scenario = await seedReadScenario(t);
   await t.run(async (ctx) => {
-    await ctx.db.delete("assignments", scenario.fixture.assignmentId);
-    await ctx.db.delete("campaigns", scenario.assignment.campaignId);
+    await ctx.db.delete("assignments", scenario.foreignAssignmentId);
+    await ctx.db.delete("campaigns", scenario.otherCompany.campaignId);
   });
-  const result = await t.run(
-    async (ctx) =>
-      await listPayouts(ctx, scenario.viewers.creator, {
-        assignmentId: scenario.fixture.assignmentId,
-        campaignId: scenario.assignment.campaignId,
-        paginationOpts: firstPage,
-      }),
-  );
-  expect(result.page.map((payout) => payout._id)).toEqual([scenario.own]);
+  for (const filters of [
+    { assignmentId: scenario.foreignAssignmentId },
+    { campaignId: scenario.otherCompany.campaignId },
+    {
+      assignmentId: scenario.foreignAssignmentId,
+      campaignId: scenario.otherCompany.campaignId,
+    },
+  ]) {
+    const result = await t.run(
+      async (ctx) =>
+        await listPayouts(ctx, scenario.viewers.company, {
+          ...filters,
+          paginationOpts: firstPage,
+        }),
+    );
+    expect(result.page).toEqual([]);
+  }
 });
 
 test("cursor pages preserve chronological order across mixed approval states", async () => {
@@ -809,17 +923,21 @@ test("cursor pages preserve chronological order across mixed approval states", a
 test("cursor pages do not skip tied review times with different approval states", async () => {
   const t = convexTest(schema, modules);
   const fixture = await seedAssignmentFixture(t);
+  const postId = await seedPost(t, fixture.assignmentId);
   const firstCreated = await seedPayout(t, fixture.assignmentId, {
+    postId,
     sourceKey: "period-1",
     reviewRequestedAt: 3000,
     approvalStatus: "pending",
   });
   const secondCreated = await seedPayout(t, fixture.assignmentId, {
+    postId,
     sourceKey: "period-2",
     reviewRequestedAt: 3000,
     approvalStatus: "approved",
   });
   const lastCreated = await seedPayout(t, fixture.assignmentId, {
+    postId,
     sourceKey: "period-3",
     reviewRequestedAt: 3000,
     approvalStatus: "pending",
@@ -843,6 +961,11 @@ test("cursor pages do not skip tied review times with different approval states"
     lastCreated,
     secondCreated,
     firstCreated,
+  ]);
+  expect([...first.page, ...second.page, ...third.page].map((payout) => payout.postId)).toEqual([
+    postId,
+    postId,
+    postId,
   ]);
   expect(first.isDone).toBe(false);
   expect(second.isDone).toBe(false);

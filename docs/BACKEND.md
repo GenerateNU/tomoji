@@ -184,17 +184,21 @@ opportunities, which keeps the imports acyclic.
 
 ## Payout records
 
-`payouts` records individual finalized earnings payments. An assignment can have
-several payouts; a payout can optionally identify a specific post and an earning
-period. Ownership is stored on the payout so historical reads do not depend on an
-assignment, campaign, or post remaining active or present.
+`payouts` records individual finalized earnings payments. Every payout identifies
+one post and its assignment; both an assignment and a post can have several payouts.
+An earning period is optional. Ownership is stored on the payout so historical reads
+do not depend on an assignment, campaign, or post remaining active or present.
 
 - `payouts.get({ payoutId })` returns one authorized payout. Missing and inaccessible
   payouts both return `not_found`.
 - `payouts.list({ paginationOpts, assignmentId?, campaignId?, approvalStatus? })`
   returns a page ordered by `reviewRequestedAt` descending, then creation time
   descending for ties. Filters combine and only narrow the caller's scope.
-  Filters with no visible matching payouts return an empty page. Parent-filtered
+  For company callers, filters naming an existing campaign or assignment owned by
+  another company return `not_found` before scanning payouts. Missing parents fall
+  back to the payout's stored ownership so historical payouts remain readable.
+  Creator and operator access is unchanged by parent existence or company ownership.
+  Other filters with no visible matching payouts return an empty page. Parent-filtered
   queries cap rows scanned per page, so a short or empty page with `isDone: false`
   must be continued using `continueCursor` and the same filters.
 - Creators see their own payouts, company members and admins see their company's,
@@ -206,20 +210,21 @@ assignment, campaign, or post remaining active or present.
 
 Approval and payment status are separate. `transferred` means money reached the
 creator's payment-provider balance, not their bank. Times are Unix milliseconds;
-amounts are stored in integer currency minor units (cents for USD).
+`amount` is stored in integer currency minor units (cents for USD, yen for JPY),
+alongside `currency`. Renaming the field does not rescale existing monetary values.
 
 ### Recording finalized earnings
 
-`internal.payouts.create({ assignmentId, sourceKey, amountCents, currency, postId?,
+`internal.payouts.create({ assignmentId, sourceKey, amount, currency, postId,
 earningPeriod? })` records a finalized earning and returns the stored payout.
 Only trusted backend functions call it; creators, companies, and operators do not
 have a public payout-creation endpoint. The caller is responsible for calculating
 the earned amount and deciding when it is final.
 
-- Ownership comes from the assignment. An optional post must exist and link to
+- Ownership comes from the assignment. The required post must exist and link to
   that assignment through its submission. Parent activity and assignment status
   do not determine whether historical earnings can be recorded.
-- `amountCents` must be a positive safe integer in the currency's minor units.
+- `amount` must be a positive safe integer in the currency's minor units.
   Currency is trimmed, lowercased, and checked for three ASCII letters. This is
   format validation; provider-supported currencies and currency-specific payout
   limits belong to the later payment integration.
@@ -228,15 +233,25 @@ the earned amount and deciding when it is final.
 - Creation sets `reviewRequestedAt` from server time, `approvalDueAt` exactly
   72 hours later, `approvalStatus: "pending"`, and `paymentStatus: "notStarted"`.
   The deadline is not rounded to the campaign/opportunity half-hour schedule.
-- `sourceKey` is a trimmed, nonblank key that the caller must reuse for retries
-  of the same earning event. Different earnings on one assignment use different
-  keys. The same key may be used on another assignment.
+- `sourceKey` is a trimmed, nonblank earning-event identifier supplied by the
+  trusted earnings caller; `createPayout` does not generate it. The caller must
+  reuse the key for every retry of the same earning, including a recalculation
+  that changes the amount (which returns a conflict rather than another payout).
+  Different earnings on one assignment use different keys. The same key may be
+  used on another assignment.
 - A single mutation reads the `(assignmentId, sourceKey)` index and inserts the
   payout. This enforces uniqueness transactionally; the index alone is not unique.
   Retrying with the same amount, currency, post, and period returns the existing
   payout without changing its deadline or approval/payment progress. Changed
   details return `conflict` with reason `payout_source_conflict`. Identical retries
   still reconcile after related records have been deleted.
+
+Source-key generation belongs to the future earnings-calculation workflow, which
+has not been implemented yet. Illustrative formats are `post:<postId>:fixed-fee`
+for a post's fixed fee or `views:<postId>:<periodStart>:<periodEnd>` for one finalized
+measurement period. The final format depends on the agreed earning rules. Keys
+must identify the earning itself, not the attempt: a fresh random key on each
+retry would allow duplicate payouts.
 
 This operation records obligations; it does not calculate fixed fees or view-based
 earnings, approve payouts, or schedule payments.

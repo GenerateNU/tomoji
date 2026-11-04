@@ -11,7 +11,7 @@ import { hasOpenDispute } from "./disputes";
 
 export const payoutCreate = schema
   .doc("payouts")
-  .pick("assignmentId", "sourceKey", "amountCents", "currency", "postId", "earningPeriod");
+  .pick("assignmentId", "sourceKey", "amount", "currency", "postId", "earningPeriod");
 export type PayoutCreate = Infer<typeof payoutCreate>;
 
 const REVIEW_WINDOW_MS = 72 * 60 * 60 * 1000;
@@ -19,6 +19,9 @@ const REVIEW_WINDOW_MS = 72 * 60 * 60 * 1000;
 /**
  * Records a finalized earning and starts its company review window. The caller
  * calculates eligibility and the final amount; this does not execute a payment.
+ * That trusted caller supplies a stable sourceKey for the earning event and
+ * reuses it on retries. Key generation belongs to the future earnings logic;
+ * generating a new random key on each attempt would allow duplicate payouts.
  * Identical retries return the existing payout without resetting its progress.
  * @throws `conflict` if a source key is reused with different earning details.
  */
@@ -26,7 +29,7 @@ export async function createPayout(ctx: MutationCtx, args: PayoutCreate): Promis
   const now = Date.now();
   const sourceKey = requireNonBlank(args.sourceKey, "sourceKey");
   const currency = args.currency.trim().toLowerCase();
-  if (!Number.isSafeInteger(args.amountCents) || args.amountCents <= 0) {
+  if (!Number.isSafeInteger(args.amount) || args.amount <= 0) {
     throw apiError("invalid_state", { reason: "amount_invalid" });
   }
   // Format only; the payment integration will define supported currencies.
@@ -56,7 +59,7 @@ export async function createPayout(ctx: MutationCtx, args: PayoutCreate): Promis
     .unique();
   if (existing !== null) {
     if (
-      existing.amountCents !== args.amountCents ||
+      existing.amount !== args.amount ||
       existing.currency !== currency ||
       existing.postId !== args.postId ||
       existing.earningPeriod?.startsAt !== earningPeriod?.startsAt ||
@@ -69,20 +72,18 @@ export async function createPayout(ctx: MutationCtx, args: PayoutCreate): Promis
 
   const assignment = await ctx.db.get("assignments", args.assignmentId);
   if (assignment === null) throw apiError("not_found", { resource: "assignment" });
-  if (args.postId !== undefined) {
-    const post = await ctx.db.get("posts", args.postId);
-    if (post === null) throw apiError("not_found", { resource: "post" });
-    const submission = await ctx.db.get("submissions", post.submissionId);
-    if (submission === null) throw apiError("not_found", { resource: "submission" });
-    if (submission.assignmentId !== assignment._id) {
-      throw apiError("invalid_state", { reason: "post_assignment_mismatch" });
-    }
+  const post = await ctx.db.get("posts", args.postId);
+  if (post === null) throw apiError("not_found", { resource: "post" });
+  const submission = await ctx.db.get("submissions", post.submissionId);
+  if (submission === null) throw apiError("not_found", { resource: "submission" });
+  if (submission.assignmentId !== assignment._id) {
+    throw apiError("invalid_state", { reason: "post_assignment_mismatch" });
   }
 
   const payoutId = await ctx.db.insert("payouts", {
     assignmentId: assignment._id,
     sourceKey,
-    amountCents: args.amountCents,
+    amount: args.amount,
     currency,
     postId: args.postId,
     earningPeriod,
@@ -109,7 +110,7 @@ export const payoutView = schema
     "campaignId",
     "postId",
     "earningPeriod",
-    "amountCents",
+    "amount",
     "currency",
     "reviewRequestedAt",
     "approvalDueAt",
@@ -130,13 +131,13 @@ function toPayoutView(payout: Doc<"payouts">): PayoutView {
     creatorId: payout.creatorId,
     companyId: payout.companyId,
     campaignId: payout.campaignId,
-    amountCents: payout.amountCents,
+    postId: payout.postId,
+    amount: payout.amount,
     currency: payout.currency,
     reviewRequestedAt: payout.reviewRequestedAt,
     approvalDueAt: payout.approvalDueAt,
     approvalStatus: payout.approvalStatus,
     paymentStatus: payout.paymentStatus,
-    ...(payout.postId === undefined ? {} : { postId: payout.postId }),
     ...(payout.earningPeriod === undefined ? {} : { earningPeriod: payout.earningPeriod }),
     ...(payout.approvedAt === undefined ? {} : { approvedAt: payout.approvedAt }),
     ...(payout.approvalSource === undefined ? {} : { approvalSource: payout.approvalSource }),
@@ -228,9 +229,10 @@ export const payoutListFilters = schema
 export type PayoutListFilters = Infer<typeof payoutListFilters>;
 
 /**
- * Lists the viewer's payouts newest review request first. Parent filters narrow
- * stored ownership, so foreign scopes return no rows and missing parents do not
- * hide history. Assignment and campaign filters may be combined.
+ * Lists the viewer's payouts newest review request first. Company callers cannot
+ * filter by an existing parent owned by another company. Stored payout ownership
+ * still scopes every result, including history whose parents have been deleted.
+ * Assignment and campaign filters may be combined.
  */
 export async function listPayouts(
   ctx: QueryCtx,
@@ -238,6 +240,22 @@ export async function listPayouts(
   options: PayoutListFilters,
 ): Promise<PaginationResult<PayoutView>> {
   const { assignmentId, campaignId, paginationOpts } = options;
+  if (viewer.role === "company") {
+    // Reject foreign parents before scanning their payouts. Missing parents fall
+    // back to stored payout ownership so deletion does not hide financial history.
+    if (campaignId !== undefined) {
+      const campaign = await ctx.db.get("campaigns", campaignId);
+      if (campaign !== null && campaign.companyId !== viewer.companyId) {
+        throw apiError("not_found", { resource: "campaign" });
+      }
+    }
+    if (assignmentId !== undefined) {
+      const assignment = await ctx.db.get("assignments", assignmentId);
+      if (assignment !== null && assignment.companyId !== viewer.companyId) {
+        throw apiError("not_found", { resource: "assignment" });
+      }
+    }
+  }
   let query = payoutsOf(ctx, viewer, options);
   const hasParentScope = assignmentId !== undefined || campaignId !== undefined;
   // Parent indexes bound the scan; ownership is still checked on every stored

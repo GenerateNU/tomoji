@@ -4,6 +4,7 @@ import type { Infer } from "convex/values";
 import { expect } from "vitest";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { api } from "../_generated/api";
+import type { DeliverableCreate } from "../models/deliverableDrafts";
 import type { SubmissionDraft } from "../models/submissions";
 import type { ApiErrorCode } from "../lib/errors";
 import { companyContext } from "../lib/functions";
@@ -185,6 +186,21 @@ export async function seedOpportunityHistory(t: TestConvex, opportunityId: Id<"o
   return await readOpportunityHistory(t, opportunityId);
 }
 
+/** Reads small selection fixtures directly, independently of response mappers. */
+export async function readOpportunitySelections(t: TestConvex, opportunityId: Id<"opportunities">) {
+  return await t.run(async (ctx) => ({
+    opportunity: await ctx.db.get("opportunities", opportunityId),
+    niches: await ctx.db
+      .query("opportunityNiches")
+      .withIndex("by_opportunityId", (q) => q.eq("opportunityId", opportunityId))
+      .take(10),
+    skills: await ctx.db
+      .query("opportunitySkills")
+      .withIndex("by_opportunityId", (q) => q.eq("opportunityId", opportunityId))
+      .take(10),
+  }));
+}
+
 /** A fake WorkOS token. */
 export function workosIdentity(claims: {
   subject: string;
@@ -305,9 +321,6 @@ type CampaignArgs = FunctionArgs<typeof api.campaigns.create>;
 export function campaignArgs(overrides: Partial<CampaignArgs> = {}): CampaignArgs {
   return {
     title: "Spring launch",
-    objective: "Introduce the new skincare range",
-    product: "Daily moisturizer",
-    audience: "Skincare enthusiasts",
     description: "Campaign supporting the spring launch.",
     status: "open",
     budgetCents: 250_000,
@@ -337,7 +350,16 @@ export async function seedCampaign(t: TestConvex, options: SeedCampaignOptions) 
   return { asCompany, campaignId, membership };
 }
 
-/** A complete opportunity brief without server-owned fields. */
+/** A company-supplied deliverable. */
+export function deliverableArgs(overrides: Partial<DeliverableCreate> = {}): DeliverableCreate {
+  return {
+    title: "Launch video",
+    description: "A 30-second vertical video showing the moisturizer in your morning routine.",
+    ...overrides,
+  };
+}
+
+/** A complete opportunity brief, with one deliverable, without server-owned fields. */
 export function opportunityArgs(
   campaignId: Id<"campaigns">,
   overrides: Partial<OpportunityCreate> = {},
@@ -360,8 +382,18 @@ export function opportunityArgs(
     prohibitedClaims: "No medical claims",
     disclosureRequirements: "Disclose the paid partnership",
     usageRights: "Organic reposting for 30 days",
+    deliverables: [deliverableArgs()],
     ...overrides,
   };
+}
+
+/** The brief as stored on the opportunity; its deliverables are stored as their own rows. */
+export function withoutDeliverables(
+  args: OpportunityCreate,
+): Omit<OpportunityCreate, "deliverables"> {
+  const brief: Partial<OpportunityCreate> = { ...args };
+  delete brief.deliverables;
+  return brief as Omit<OpportunityCreate, "deliverables">;
 }
 
 /** Seeds a campaign and an opportunity through the model, bypassing route authorization. */
@@ -442,6 +474,8 @@ export async function seedMembership(
 
 export type AssignmentFixture = {
   assignmentId: Id<"assignments">;
+  /** The seeded opportunity's only deliverable. */
+  deliverableId: Id<"deliverables">;
   creatorId: Id<"creators">;
   creatorUserId: Id<"users">;
   membership: Doc<"companyUsers">;
@@ -452,14 +486,15 @@ export type AssignmentFixture = {
 export const submissionDraftFields = {
   draftUrl: "https://drive.example.com/drafts/driftwood-first-deploy",
   draftDescription: "60-second walkthrough: install, `driftwood init`, first deploy at 0:45.",
-} satisfies Omit<SubmissionDraft, "assignmentId">;
+} satisfies Omit<SubmissionDraft, "assignmentId" | "deliverableId">;
 
 /** Builds a creator-supplied draft while allowing each test to override its scenario. */
 export function submissionArgs(
-  assignmentId: Id<"assignments">,
+  fixture: Pick<AssignmentFixture, "assignmentId" | "deliverableId">,
   overrides: Partial<SubmissionDraft> = {},
 ): SubmissionDraft {
-  return { assignmentId, ...submissionDraftFields, ...overrides };
+  const { assignmentId, deliverableId } = fixture;
+  return { assignmentId, deliverableId, ...submissionDraftFields, ...overrides };
 }
 
 // Subjects the assignment fixture seeds. Every test gets a fresh database and
@@ -489,21 +524,47 @@ export async function seedAssignmentFixture(
     status: assignment.status ?? "active",
   });
   const usesAiReview = assignment.usesAiReview ?? false;
-  const creatorUserId = await t.run(async (ctx) => {
+  const { creatorUserId, deliverableId } = await t.run(async (ctx) => {
     await ctx.db.patch("assignments", assignmentId, { usesAiReview });
     const user = await getUserByWorkosId(ctx, FIXTURE_CREATOR);
     if (user === null) throw new Error("expected seeded creator");
-    return user._id;
+    const deliverable = await ctx.db
+      .query("deliverables")
+      .withIndex("by_opportunityId", (q) => q.eq("opportunityId", opportunityId))
+      .first();
+    if (deliverable === null) throw new Error("expected seeded deliverable");
+    return { creatorUserId: user._id, deliverableId: deliverable._id };
   });
 
   return {
     assignmentId,
+    deliverableId,
     creatorId,
     creatorUserId,
     membership,
     asCreator: t.withIdentity(workosIdentity({ subject: FIXTURE_CREATOR })),
     asCompany,
   };
+}
+
+/**
+ * Adds another deliverable to the fixture's opportunity. Inserts directly,
+ * since the fixture's assignment already locks deliverables against the model.
+ */
+export async function seedDeliverable(
+  t: TestConvex,
+  fixture: AssignmentFixture,
+): Promise<Id<"deliverables">> {
+  return await t.run(async (ctx) => {
+    const existing = await ctx.db.get("deliverables", fixture.deliverableId);
+    if (existing === null) throw new Error("expected seeded deliverable");
+    return await ctx.db.insert("deliverables", {
+      opportunityId: existing.opportunityId,
+      createdBy: existing.createdBy,
+      title: "Follow-up thread",
+      description: "Three posts on your results after two weeks.",
+    });
+  });
 }
 
 /** Inserts a submission in the given state, bypassing the create rules. */
@@ -517,6 +578,7 @@ export async function seedSubmission(
     if (assignment === null) throw new Error("expected seeded assignment");
     const draft = {
       assignmentId: fixture.assignmentId,
+      deliverableId: fixture.deliverableId,
       draftUrl: "https://drive.example.com/drafts/driftwood-cli-screencast",
       draftDescription: "Screencast: installing the Driftwood CLI and running a first deploy.",
       usesAiReview: assignment.usesAiReview,
@@ -550,6 +612,65 @@ export async function seedOneSubmission(
   const fixture = await seedAssignmentFixture(t, assignment);
   const submissionId = await seedSubmission(t, fixture, status);
   return { fixture, submissionId };
+}
+
+/** Seeds a verified post and approved submission for an existing assignment. */
+export async function seedPost(t: TestConvex, assignmentId: Id<"assignments">) {
+  return await t.run(async (ctx) => {
+    const assignment = await ctx.db.get("assignments", assignmentId);
+    if (assignment === null) throw new Error("expected seeded assignment");
+    const deliverable = await ctx.db
+      .query("deliverables")
+      .withIndex("by_opportunityId", (q) => q.eq("opportunityId", assignment.opportunityId))
+      .first();
+    if (deliverable === null) throw new Error("expected seeded deliverable");
+    const submissionId = await ctx.db.insert("submissions", {
+      ...submissionArgs({ assignmentId, deliverableId: deliverable._id }),
+      usesAiReview: true,
+      status: "approved",
+      reviewerType: "ai",
+      reviewedAt: Date.now(),
+    });
+    const xPostId = String(BigInt(`0x${crypto.randomUUID().replaceAll("-", "")}`));
+    return await ctx.db.insert("posts", {
+      submissionId,
+      campaignId: assignment.campaignId,
+      url: `https://x.com/creator/status/${xPostId}`,
+      xPostId,
+      isActive: true,
+      isVerified: true,
+      postedAt: Date.now(),
+    });
+  });
+}
+
+/** Inserts a payout with a post, copying historical ownership from its assignment. */
+export async function seedPayout(
+  t: TestConvex,
+  assignmentId: Id<"assignments">,
+  overrides: Partial<Omit<WithoutSystemFields<Doc<"payouts">>, "assignmentId">> = {},
+): Promise<Id<"payouts">> {
+  const postId = overrides.postId ?? (await seedPost(t, assignmentId));
+  return await t.run(async (ctx) => {
+    const assignment = await ctx.db.get("assignments", assignmentId);
+    if (assignment === null) throw new Error("expected seeded assignment");
+    const reviewRequestedAt = overrides.reviewRequestedAt ?? Date.now();
+    return await ctx.db.insert("payouts", {
+      assignmentId,
+      creatorId: assignment.creatorId,
+      companyId: assignment.companyId,
+      campaignId: assignment.campaignId,
+      postId,
+      sourceKey: `test-earning:${crypto.randomUUID()}`,
+      amount: 10_000,
+      currency: "usd",
+      reviewRequestedAt,
+      approvalDueAt: reviewRequestedAt + 3 * 86_400_000,
+      approvalStatus: "pending",
+      paymentStatus: "notStarted",
+      ...overrides,
+    });
+  });
 }
 
 type OpenDispute = Extract<Doc<"disputes">, { status: "open" }>;
@@ -613,6 +734,7 @@ export async function seedOverriddenSubmission(t: TestConvex) {
     const reviewedAt = Date.now();
     return await ctx.db.insert("submissions", {
       assignmentId: fixture.assignmentId,
+      deliverableId: fixture.deliverableId,
       draftUrl: "https://drive.example.com/drafts/driftwood-cli-screencast",
       draftDescription: "Screencast: installing the Driftwood CLI and running a first deploy.",
       usesAiReview: false,
@@ -652,7 +774,8 @@ export function withoutReviewerIdentity(view: object): object {
 /** A notification as the recipient sees it, without IDs or timestamps. */
 export type ReceivedNotification = Pick<Doc<"notifications">, "type" | "title" | "body" | "target">;
 
-async function notificationsForUser(t: TestConvex, userId: Id<"users">) {
+/** Reads the notifications sent to one user, oldest first. */
+export async function notificationsForUser(t: TestConvex, userId: Id<"users">) {
   return await t.run(async (ctx) => {
     const rows = await ctx.db
       .query("notifications")

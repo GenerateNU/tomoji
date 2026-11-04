@@ -11,12 +11,14 @@ import {
   updatePostMetrics,
   verifyPost,
 } from "../../models/posts";
+import { listOpportunityDeliverables } from "../../models/deliverableDrafts";
 import schema from "../../schema";
 import {
   expectApiError,
   seedAssignment,
   seedCampaign,
   seedCreatorId,
+  seedDeliverable,
   seedMembership,
   seedOneSubmission,
   seedOpportunity,
@@ -314,6 +316,8 @@ async function addPost(t: TestConvex, fixture: AssignmentFixture, subject: strin
   return await t.run(async (ctx) => {
     const submissionId = await ctx.db.insert("submissions", {
       assignmentId,
+      // Same opportunity as the fixture, so the same deliverable.
+      deliverableId: fixture.deliverableId,
       draftUrl: "https://drive.example.com/drafts/another",
       draftDescription: "Another draft",
       usesAiReview: false,
@@ -364,6 +368,55 @@ describe("listPosts by assignment", () => {
       expect(ids(result.page)).toEqual([postId]);
       expect(result.isDone).toBe(true);
     }
+  });
+
+  test("returns each approved deliverable's post, newest first, while another is in review", async () => {
+    const t = convexTest(schema, modules);
+    const { fixture, postId: firstPostId } = await seedFixturePost(t);
+    const secondDeliverableId = await seedDeliverable(t, fixture);
+    const thirdDeliverableId = await seedDeliverable(t, fixture);
+    vi.setSystemTime(Date.now() + 1000);
+    const secondPostId = await t.run(async (ctx) => {
+      const submissionId = await ctx.db.insert("submissions", {
+        assignmentId: fixture.assignmentId,
+        deliverableId: secondDeliverableId,
+        draftUrl: "https://drive.example.com/drafts/follow-up-thread",
+        draftDescription: "Follow-up thread on two weeks of results.",
+        usesAiReview: false,
+        status: "approved",
+        reviewerType: "companyUser",
+        reviewedBy: fixture.membership._id,
+        reviewedAt: Date.now(),
+      });
+      return await createPost(ctx, fixture.creatorId, {
+        submissionId,
+        url: "https://x.com/driftwood_dev/status/1843000000000000002",
+      });
+    });
+    // The assignment's newest submission is now a pending draft for a third deliverable.
+    await t.run(
+      async (ctx) =>
+        await ctx.db.insert("submissions", {
+          assignmentId: fixture.assignmentId,
+          deliverableId: thirdDeliverableId,
+          draftUrl: "https://drive.example.com/drafts/unboxing",
+          draftDescription: "Unboxing video.",
+          usesAiReview: false,
+          status: "pending",
+        }),
+    );
+
+    const result = await t.run(
+      async (ctx) =>
+        await listPosts(
+          ctx,
+          { role: "operator" },
+          { assignmentId: fixture.assignmentId, paginationOpts: firstPage },
+        ),
+    );
+
+    expect(ids(result.page)).toEqual([secondPostId, firstPostId]);
+    expect(result.isDone).toBe(true);
   });
 
   test("returns only the active post after a replacement", async () => {
@@ -450,8 +503,10 @@ describe("listPosts by campaign", () => {
       status: "active",
     });
     await t.run(async (ctx) => {
+      const [otherDeliverable] = await listOpportunityDeliverables(ctx, other.opportunityId);
       const submissionId = await ctx.db.insert("submissions", {
         assignmentId: otherAssignmentId,
+        deliverableId: otherDeliverable._id,
         draftUrl: "https://drive.example.com/drafts/other",
         draftDescription: "Other campaign draft",
         usesAiReview: false,

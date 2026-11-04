@@ -16,6 +16,8 @@ async function rawReviewInserter(t: TestConvex) {
     async (ctx) =>
       await ctx.db.insert("users", {
         workosId: "schema-operator",
+        firstName: "Schema",
+        lastName: "Operator",
         email: "operator@example.com",
         role: "operator",
         isActive: true,
@@ -36,6 +38,7 @@ async function rawReviewInserter(t: TestConvex) {
       async (ctx) =>
         await ctx.db.insert("submissions", {
           assignmentId: fixture.assignmentId,
+          deliverableId: fixture.deliverableId,
           draftUrl: "https://drive.example.com/drafts/driftwood-cli-screencast",
           draftDescription: "Screencast: installing the Driftwood CLI and running a first deploy.",
           usesAiReview: false,

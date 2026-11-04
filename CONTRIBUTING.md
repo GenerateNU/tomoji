@@ -189,7 +189,8 @@ with `--frozen-lockfile`. Run `bun install` and commit the lockfile.
 
 # Part 2 — Working here
 
-For backend codebase conventions, see [docs/BACKEND.md](docs/BACKEND.md).
+For backend codebase conventions, see [docs/BACKEND.md](docs/BACKEND.md). For frontend
+conventions, see [docs/FRONTEND.md](docs/FRONTEND.md).
 
 ## Version control
 

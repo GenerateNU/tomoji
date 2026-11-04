@@ -3,6 +3,7 @@ import { v, type Infer } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { apiError } from "../lib/errors";
+import { requireUrl } from "../lib/urls";
 import { optionalNonBlank, requireNonBlank } from "../lib/validation";
 import { submissionShapes } from "../schemas/submissions.schema";
 import { requireAssignment, requireActiveAssignment, type AssignmentViewer } from "./assignments";
@@ -11,9 +12,11 @@ import { creatorName, notifyCompanyUser, notifyCreator } from "./notifications";
 /** The creator-supplied fields of a new submission. */
 export const submissionDraft = v.object({
   assignmentId: v.id("assignments"),
+  deliverableId: v.id("deliverables"),
   draftUrl: v.string(),
   draftDescription: v.string(),
 });
+
 export type SubmissionDraft = Infer<typeof submissionDraft>;
 
 /** A review decision. A change request needs a note; an approval's is optional. */
@@ -66,25 +69,13 @@ function optionalText(
 
 /** Returns the URL in its parsed form, so reviewers open exactly the link that was checked. */
 function requireDraftUrl(value: string): string {
-  const trimmed = requireText(value, "draftUrl");
-  let url: URL;
-  try {
-    url = new URL(trimmed);
-  } catch {
-    throw apiError("invalid_state", { reason: "draftUrl_invalid" });
-  }
-  if (url.protocol !== "http:" && url.protocol !== "https:") {
-    throw apiError("invalid_state", { reason: "draftUrl_invalid" });
-  }
-  // Draft links never need login details, and `drive.google.com@evil.example` goes to evil.example.
-  if (url.username !== "" || url.password !== "") {
-    throw apiError("invalid_state", { reason: "draftUrl_invalid" });
-  }
-  // Encoding can make the URL longer than what was typed, so check again.
-  if (url.href.length > MAX_LENGTH.draftUrl) {
-    throw apiError("invalid_state", { reason: "draftUrl_too_long" });
-  }
-  return url.href;
+  // Drafts live on whatever host the creator already uses, including http ones.
+  return requireUrl(requireText(value, "draftUrl"), {
+    reason: "draftUrl_invalid",
+    allowHttp: true,
+    maxLength: MAX_LENGTH.draftUrl,
+    tooLongReason: "draftUrl_too_long",
+  });
 }
 
 /**
@@ -148,6 +139,7 @@ function toCreatorView(
     _id: submission._id,
     _creationTime: submission._creationTime,
     assignmentId: submission.assignmentId,
+    deliverableId: submission.deliverableId,
     draftUrl: submission.draftUrl,
     draftDescription: submission.draftDescription,
     usesAiReview: submission.usesAiReview,
@@ -183,14 +175,36 @@ function requireSubmissionWindowOpen(assignment: Doc<"assignments">): void {
   // TODO(dueAt): reject after `assignment.dueAt` once assignments have it.
 }
 
-/** Indexes end in `_creationTime`, so descending order reads the newest row first. */
+/**
+ * A deliverable of the assignment's opportunity. Throws `not_found` for one
+ * from another opportunity, the same as a missing one.
+ */
+async function requireAssignmentDeliverable(
+  ctx: QueryCtx | MutationCtx,
+  assignment: Doc<"assignments">,
+  deliverableId: Id<"deliverables">,
+): Promise<Doc<"deliverables">> {
+  const deliverable = await ctx.db.get("deliverables", deliverableId);
+  if (deliverable === null || deliverable.opportunityId !== assignment.opportunityId) {
+    throw apiError("not_found", { resource: "deliverable" });
+  }
+  return deliverable;
+}
+
+/**
+ * The newest draft for one deliverable of an assignment. Indexes end in
+ * `_creationTime`, so descending order reads the newest row first.
+ */
 export async function getLatestSubmission(
   ctx: QueryCtx | MutationCtx,
   assignmentId: Id<"assignments">,
+  deliverableId: Id<"deliverables">,
 ): Promise<Doc<"submissions"> | null> {
   return await ctx.db
     .query("submissions")
-    .withIndex("by_assignmentId", (q) => q.eq("assignmentId", assignmentId))
+    .withIndex("by_assignmentId_and_deliverableId", (q) =>
+      q.eq("assignmentId", assignmentId).eq("deliverableId", deliverableId),
+    )
     .order("desc")
     .first();
 }
@@ -207,8 +221,10 @@ export async function createSubmission(
     draft.assignmentId,
   );
   requireSubmissionWindowOpen(assignment);
+  const deliverable = await requireAssignmentDeliverable(ctx, assignment, draft.deliverableId);
 
-  const latest = await getLatestSubmission(ctx, assignment._id);
+  // One approved draft per deliverable; the others are still open to submit.
+  const latest = await getLatestSubmission(ctx, assignment._id, deliverable._id);
   if (latest?.status === "pending") {
     throw apiError("conflict", { reason: "submission_pending" });
   }
@@ -218,6 +234,7 @@ export async function createSubmission(
 
   const submissionId = await ctx.db.insert("submissions", {
     assignmentId: assignment._id,
+    deliverableId: deliverable._id,
     draftUrl: requireDraftUrl(draft.draftUrl),
     draftDescription: requireText(draft.draftDescription, "draftDescription"),
     status: "pending",
@@ -298,17 +315,24 @@ export async function requireSubmission(
   return toSubmissionView(viewer, submission, isClosedWithoutReview(submission, assignment));
 }
 
-/** One page of an assignment's submissions, newest first, as the viewer may see them. */
+/**
+ * One page of the drafts for one deliverable of an assignment, newest first, as
+ * the viewer may see them. Drafts are always read per deliverable.
+ */
 export async function listSubmissions(
   ctx: QueryCtx,
   viewer: SubmissionViewer,
   assignmentId: Id<"assignments">,
+  deliverableId: Id<"deliverables">,
   paginationOpts: PaginationOptions,
 ): Promise<PaginationResult<SubmissionView>> {
   const assignment = await requireAssignment(ctx, viewer, assignmentId);
+  await requireAssignmentDeliverable(ctx, assignment, deliverableId);
   const result = await ctx.db
     .query("submissions")
-    .withIndex("by_assignmentId", (q) => q.eq("assignmentId", assignmentId))
+    .withIndex("by_assignmentId_and_deliverableId", (q) =>
+      q.eq("assignmentId", assignmentId).eq("deliverableId", deliverableId),
+    )
     .order("desc")
     .paginate(paginationOpts);
   return {

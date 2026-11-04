@@ -8,7 +8,7 @@ import {
   seedAssignmentFixture,
   seedOperator,
   seedPayout,
-  seedSubmission,
+  seedPost,
   seedUser,
   seedWrongOrgCaller,
   workosIdentity,
@@ -30,21 +30,24 @@ describe("internal payouts.create", () => {
   test("records finalized earnings and starts the three-day company review window", async () => {
     const t = convexTest(schema, modules);
     const fixture = await seedAssignmentFixture(t);
+    const postId = await seedPost(t, fixture.assignmentId);
     const before = Date.now();
 
     const payout = await t.mutation(internal.payouts.create, {
       assignmentId: fixture.assignmentId,
+      postId,
       sourceKey: "fixed-fee:published",
-      amountCents: 12_345,
+      amount: 12_345,
       currency: "usd",
     });
 
     expect(payout).toMatchObject({
       assignmentId: fixture.assignmentId,
+      postId,
       creatorId: fixture.creatorId,
       companyId: fixture.membership.companyId,
       sourceKey: "fixed-fee:published",
-      amountCents: 12_345,
+      amount: 12_345,
       currency: "usd",
       approvalStatus: "pending",
       paymentStatus: "notStarted",
@@ -55,28 +58,36 @@ describe("internal payouts.create", () => {
     expect(await t.run((ctx) => ctx.db.get("payouts", payout._id))).toEqual(payout);
   });
 
+  test("rejects creation without a post before writing a payout", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await seedAssignmentFixture(t);
+
+    await expect(
+      // @ts-expect-error Prove runtime validation rejects a missing required post.
+      t.mutation(internal.payouts.create, {
+        assignmentId: fixture.assignmentId,
+        sourceKey: "fixed-fee:published",
+        amount: 12_345,
+        currency: "usd",
+      }),
+    ).rejects.toThrow("Missing required field `postId`");
+    expect(await t.run((ctx) => ctx.db.query("payouts").take(1))).toEqual([]);
+  });
+
   test("returns optional earning context and exposes the payout only through authorized reads", async () => {
     const t = convexTest(schema, modules);
     const fixture = await seedAssignmentFixture(t);
-    const submissionId = await seedSubmission(t, fixture, "approved");
-    const { postId, campaignId } = await t.run(async (ctx) => {
+    const postId = await seedPost(t, fixture.assignmentId);
+    const campaignId = await t.run(async (ctx) => {
       const assignment = await ctx.db.get("assignments", fixture.assignmentId);
       if (assignment === null) throw new Error("expected seeded assignment");
-      const postId = await ctx.db.insert("posts", {
-        submissionId,
-        campaignId: assignment.campaignId,
-        url: "https://x.com/creator/status/1234",
-        xPostId: "1234",
-        isActive: true,
-        isVerified: true,
-      });
-      return { postId, campaignId: assignment.campaignId };
+      return assignment.campaignId;
     });
     const earningPeriod = { startsAt: Date.now() - 86_400_000, endsAt: Date.now() - 1000 };
     const payout = await t.mutation(internal.payouts.create, {
       assignmentId: fixture.assignmentId,
       sourceKey: "views:period-1",
-      amountCents: 2500,
+      amount: 2500,
       currency: "usd",
       postId,
       earningPeriod,
@@ -103,19 +114,27 @@ describe("internal payouts.create", () => {
     }
 
     const outsiders = [
-      await seedUser(t, { subject: "outside-creator" }),
-      await seedUser(t, { subject: "outside-company", org: { id: "org_outside" } }),
-    ];
-    for (const caller of outsiders) {
+      { role: "creator", caller: await seedUser(t, { subject: "outside-creator" }) },
+      {
+        role: "company",
+        caller: await seedUser(t, { subject: "outside-company", org: { id: "org_outside" } }),
+      },
+    ] as const;
+    for (const { role, caller } of outsiders) {
       await expectApiError(
         () => caller.query(api.payouts.get, { payoutId: payout._id }),
         "not_found",
       );
-      const listed = await caller.query(api.payouts.list, {
-        paginationOpts: firstPage,
-        assignmentId: fixture.assignmentId,
-      });
-      expect(listed.page).toEqual([]);
+      const list = () =>
+        caller.query(api.payouts.list, {
+          paginationOpts: firstPage,
+          assignmentId: fixture.assignmentId,
+        });
+      if (role === "company") {
+        await expectApiError(list, "not_found");
+      } else {
+        expect((await list()).page).toEqual([]);
+      }
     }
   });
 
@@ -133,6 +152,7 @@ describe("internal payouts.create", () => {
     async (field) => {
       const t = convexTest(schema, modules);
       const fixture = await seedAssignmentFixture(t);
+      const postId = await seedPost(t, fixture.assignmentId);
       const assignment = await t.run((ctx) => ctx.db.get("assignments", fixture.assignmentId));
       if (assignment === null) throw new Error("expected seeded assignment");
       const forbiddenFields = {
@@ -147,8 +167,9 @@ describe("internal payouts.create", () => {
       };
       const args = {
         assignmentId: fixture.assignmentId,
+        postId,
         sourceKey: "fixed-fee:published",
-        amountCents: 12_345,
+        amount: 12_345,
         currency: "usd",
         [field]: forbiddenFields[field],
       };
@@ -172,9 +193,11 @@ describe("internal payouts.create", () => {
 
 async function seedPayment(t: TestConvex, role: "admin" | "member" = "member") {
   const fixture = await seedAssignmentFixture(t, {}, role);
+  const postId = await seedPost(t, fixture.assignmentId);
   const payoutId = await seedPayout(t, fixture.assignmentId, {
+    postId,
     sourceKey: "internal-earnings-event",
-    amountCents: 12_345,
+    amount: 12_345,
     currency: "usd",
     reviewRequestedAt: 1_800_000_000_000,
     approvalDueAt: 1_800_259_200_000,
@@ -184,7 +207,7 @@ async function seedPayment(t: TestConvex, role: "admin" | "member" = "member") {
     approvedBy: fixture.membership.userId,
     paymentStatus: "queued",
   });
-  return { ...fixture, payoutId };
+  return { ...fixture, payoutId, postId };
 }
 
 describe("payouts.get", () => {
@@ -205,9 +228,10 @@ describe("payouts.get", () => {
       expect(result).toMatchObject({
         _id: fixture.payoutId,
         assignmentId: fixture.assignmentId,
+        postId: fixture.postId,
         creatorId: fixture.creatorId,
         companyId: fixture.membership.companyId,
-        amountCents: 12_345,
+        amount: 12_345,
         currency: "usd",
         reviewRequestedAt: 1_800_000_000_000,
         approvalDueAt: 1_800_259_200_000,
@@ -218,6 +242,7 @@ describe("payouts.get", () => {
       });
       expect(result).not.toHaveProperty("sourceKey");
       expect(result).not.toHaveProperty("approvedBy");
+      expect(result).not.toHaveProperty("amountCents");
     },
   );
 
@@ -310,36 +335,50 @@ describe("payouts.list", () => {
       const result = await caller.query(api.payouts.list, { paginationOpts: firstPage });
 
       expect(result.page).toHaveLength(1);
-      expect(result.page[0]).toMatchObject({ _id: fixture.payoutId, amountCents: 12_345 });
+      expect(result.page[0]).toMatchObject({
+        _id: fixture.payoutId,
+        postId: fixture.postId,
+        amount: 12_345,
+      });
+      expect(result.page[0]).not.toHaveProperty("amountCents");
       expect(result.page[0]).not.toHaveProperty("sourceKey");
       expect(result.page[0]).not.toHaveProperty("approvedBy");
       expect(result.isDone).toBe(true);
     },
   );
 
-  test.each(["creator", "company"] as const)(
+  test.each(["creator", "member", "admin"] as const)(
     "does not let a %s use scope filters to see someone else's payout",
     async (role) => {
       const t = convexTest(schema, modules);
       const fixture = await seedPayment(t);
       const outsider = await seedUser(t, {
         subject: "outsider",
-        ...(role === "company" ? { org: { id: "org_outside" } } : {}),
+        ...(role === "creator" ? {} : { org: { id: "org_outside", role } }),
       });
       const payout = await t.run(async (ctx) => await ctx.db.get("payouts", fixture.payoutId));
       if (payout === null) throw new Error("expected seeded payout");
 
+      const unfiltered = await outsider.query(api.payouts.list, { paginationOpts: firstPage });
+      expect(unfiltered.page).toEqual([]);
+      expect(unfiltered.isDone).toBe(true);
+
       for (const filters of [
-        {},
         { assignmentId: fixture.assignmentId },
         { campaignId: payout.campaignId },
         { assignmentId: fixture.assignmentId, campaignId: payout.campaignId },
       ]) {
-        const result = await outsider.query(api.payouts.list, {
-          ...filters,
-          approvalStatus: "approved",
-          paginationOpts: firstPage,
-        });
+        const read = () =>
+          outsider.query(api.payouts.list, {
+            ...filters,
+            approvalStatus: "approved",
+            paginationOpts: firstPage,
+          });
+        if (role !== "creator") {
+          await expectApiError(read, "not_found");
+          continue;
+        }
+        const result = await read();
         expect(result.page).toEqual([]);
         expect(result.isDone).toBe(true);
       }

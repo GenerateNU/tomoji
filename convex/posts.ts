@@ -61,7 +61,8 @@ export const get = authedQuery({
 
 /**
  * Lists active posts, newest first, for exactly one of `assignmentId` or
- * `campaignId`. An assignment has at most one active post. Listing by campaign is for the owning
+ * `campaignId`. An assignment has at most one active post per deliverable, all
+ * returned in one page. Listing by campaign is for the owning
  * company and operators.
  *
  * @throws `invalid_state` unless exactly one filter is given.

@@ -19,6 +19,8 @@ const submissionFields = {
   assignmentId: v.id("assignments"),
   draftUrl: v.string(),
   draftDescription: v.string(),
+  // Must belong to the assignment's opportunity
+  deliverableId: v.id("deliverables"),
   // Source of truth for who completes first review
   usesAiReview: v.boolean(),
 };
@@ -88,5 +90,5 @@ export function submissionShapes<
 export const submissionsTable = defineTable(
   v.union(...submissionShapes(v.id("companyUsers"), v.id("users"), {})),
 )
-  .index("by_assignmentId", ["assignmentId"])
-  .index("by_reviewedBy", ["reviewedBy"]);
+  .index("by_reviewedBy", ["reviewedBy"])
+  .index("by_assignmentId_and_deliverableId", ["assignmentId", "deliverableId"]);

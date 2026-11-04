@@ -12,6 +12,7 @@ import {
   type SubmissionReview,
   type SubmissionViewer,
 } from "../../models/submissions";
+import { listOpportunityDeliverables } from "../../models/deliverableDrafts";
 import schema from "../../schema";
 import {
   creatorNotifications,
@@ -22,8 +23,10 @@ import {
   memberNotifications,
   seedAssignmentFixture,
   seedCreatorId,
+  seedDeliverable,
   seedMembership,
   seedOneSubmission,
+  seedOpportunity,
   seedSubmission,
   storedSubmission,
   storedSubmissions,
@@ -44,8 +47,7 @@ async function submit(
   creatorId: Id<"creators"> = fixture.creatorId,
 ) {
   return await t.run(
-    async (ctx) =>
-      await createSubmission(ctx, creatorId, submissionArgs(fixture.assignmentId, overrides)),
+    async (ctx) => await createSubmission(ctx, creatorId, submissionArgs(fixture, overrides)),
   );
 }
 
@@ -75,11 +77,13 @@ async function getAs(t: TestConvex, viewer: SubmissionViewer, submissionId: Id<"
 async function listAs(
   t: TestConvex,
   viewer: SubmissionViewer,
-  assignmentId: Id<"assignments">,
+  fixture: AssignmentFixture,
   paginationOpts = firstPage,
+  deliverableId = fixture.deliverableId,
 ) {
   return await t.run(
-    async (ctx) => await listSubmissions(ctx, viewer, assignmentId, paginationOpts),
+    async (ctx) =>
+      await listSubmissions(ctx, viewer, fixture.assignmentId, deliverableId, paginationOpts),
   );
 }
 
@@ -94,6 +98,7 @@ describe("createSubmission", () => {
 
       expect(await storedSubmission(t, id)).toMatchObject({
         assignmentId: fixture.assignmentId,
+        deliverableId: fixture.deliverableId,
         ...draft,
         status: "pending",
         usesAiReview,
@@ -174,6 +179,44 @@ describe("createSubmission", () => {
       [firstId, "changesRequested"],
       [secondId, "pending"],
     ]);
+  });
+
+  test("lets a creator submit one deliverable while another is pending or approved", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await seedAssignmentFixture(t);
+    const secondId = await seedDeliverable(t, fixture);
+    const thirdId = await seedDeliverable(t, fixture);
+    await seedSubmission(t, fixture, "approved");
+    await submit(t, fixture, { deliverableId: secondId });
+
+    const id = await submit(t, fixture, { deliverableId: thirdId });
+
+    expect(await storedSubmission(t, id)).toMatchObject({ deliverableId: thirdId });
+    // The rules still hold per deliverable.
+    await expectApiError(
+      () => submit(t, fixture, { deliverableId: secondId }),
+      "conflict",
+      "submission_pending",
+    );
+    await expectApiError(() => submit(t, fixture), "invalid_state", "already_approved");
+  });
+
+  test("rejects a deliverable from another opportunity without writing a submission", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await seedAssignmentFixture(t);
+    const other = await seedOpportunity(t, { subject: "cs-other-company", orgId: "org_other" });
+    const [otherDeliverable] = await t.run((ctx) =>
+      listOpportunityDeliverables(ctx, other.opportunityId),
+    );
+    const deleted = await seedDeliverable(t, fixture);
+    await t.run(async (ctx) => await ctx.db.delete("deliverables", deleted));
+
+    for (const deliverableId of [otherDeliverable._id, deleted]) {
+      await expect(submit(t, fixture, { deliverableId })).rejects.toMatchObject({
+        data: { code: "not_found", resource: "deliverable" },
+      });
+    }
+    expect(await storedSubmissions(t)).toHaveLength(0);
   });
 
   test.each([
@@ -454,9 +497,9 @@ describe("closedWithoutReview", () => {
   async function readAll(t: TestConvex, fixture: AssignmentFixture, id: Id<"submissions">) {
     return [
       await getAs(t, operatorViewer, id),
-      (await listAs(t, operatorViewer, fixture.assignmentId)).page[0],
+      (await listAs(t, operatorViewer, fixture)).page[0],
       await getAs(t, creatorViewer(fixture), id),
-      (await listAs(t, creatorViewer(fixture), fixture.assignmentId)).page[0],
+      (await listAs(t, creatorViewer(fixture), fixture)).page[0],
     ];
   }
 
@@ -503,6 +546,7 @@ describe("toSubmissionView", () => {
     _id: "submissions|1" as Id<"submissions">,
     _creationTime: 1,
     assignmentId: "assignments|1" as Id<"assignments">,
+    deliverableId: "deliverables|1" as Id<"deliverables">,
     ...draft,
     usesAiReview: false,
   };
@@ -649,7 +693,7 @@ describe("listSubmissions", () => {
     const firstId = await seedSubmission(t, fixture, "changesRequested");
     const secondId = await seedSubmission(t, fixture, "pending");
 
-    const result = await listAs(t, companyViewer(fixture), fixture.assignmentId);
+    const result = await listAs(t, companyViewer(fixture), fixture);
 
     expect(result.page.map((s) => s._id)).toEqual([secondId, firstId]);
     expect(result.isDone).toBe(true);
@@ -661,11 +705,11 @@ describe("listSubmissions", () => {
     const firstId = await seedSubmission(t, fixture, "changesRequested");
     const secondId = await seedSubmission(t, fixture, "pending");
 
-    const pageOne = await listAs(t, operatorViewer, fixture.assignmentId, {
+    const pageOne = await listAs(t, operatorViewer, fixture, {
       numItems: 1,
       cursor: null,
     });
-    const pageTwo = await listAs(t, operatorViewer, fixture.assignmentId, {
+    const pageTwo = await listAs(t, operatorViewer, fixture, {
       numItems: 1,
       cursor: pageOne.continueCursor,
     });
@@ -680,7 +724,7 @@ describe("listSubmissions", () => {
     const firstId = await seedSubmission(t, fixture, "changesRequested");
     const secondId = await seedSubmission(t, fixture, "approved");
 
-    const result = await listAs(t, creatorViewer(fixture), fixture.assignmentId);
+    const result = await listAs(t, creatorViewer(fixture), fixture);
 
     expect(result.page).toEqual([
       withoutReviewerIdentity(await expectedFull(t, secondId)),
@@ -692,7 +736,7 @@ describe("listSubmissions", () => {
     const t = convexTest(schema, modules);
     const fixture = await seedAssignmentFixture(t);
 
-    const result = await listAs(t, creatorViewer(fixture), fixture.assignmentId);
+    const result = await listAs(t, creatorViewer(fixture), fixture);
 
     expect(result.page).toEqual([]);
   });
@@ -703,7 +747,7 @@ describe("listSubmissions", () => {
     const intruderId = await seedCreatorId(t, "ls-intruder");
 
     await expectApiError(
-      () => listAs(t, { role: "creator", creatorId: intruderId }, fixture.assignmentId),
+      () => listAs(t, { role: "creator", creatorId: intruderId }, fixture),
       "not_found",
     );
   });
@@ -714,7 +758,7 @@ describe("listSubmissions", () => {
     const { membership: outsider } = await seedMembership(t, "ls-outsider");
 
     await expectApiError(
-      () => listAs(t, { role: "company", companyId: outsider.companyId }, fixture.assignmentId),
+      () => listAs(t, { role: "company", companyId: outsider.companyId }, fixture),
       "not_found",
     );
   });
@@ -724,7 +768,35 @@ describe("listSubmissions", () => {
     const fixture = await seedAssignmentFixture(t);
     await t.run(async (ctx) => await ctx.db.delete("assignments", fixture.assignmentId));
 
-    await expectApiError(() => listAs(t, operatorViewer, fixture.assignmentId), "not_found");
+    await expectApiError(() => listAs(t, operatorViewer, fixture), "not_found");
+  });
+
+  test("lists only the given deliverable's drafts, newest first", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await seedAssignmentFixture(t);
+    const otherId = await seedDeliverable(t, fixture);
+    const firstId = await seedSubmission(t, fixture, "changesRequested");
+    const otherDraftId = await seedSubmission(t, { ...fixture, deliverableId: otherId }, "pending");
+    const secondId = await seedSubmission(t, fixture, "pending");
+
+    const result = await listAs(t, companyViewer(fixture), fixture);
+    const other = await listAs(t, companyViewer(fixture), fixture, firstPage, otherId);
+
+    expect(result.page.map((s) => s._id)).toEqual([secondId, firstId]);
+    expect(other.page.map((s) => s._id)).toEqual([otherDraftId]);
+  });
+
+  test("hides a deliverable from another opportunity", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await seedAssignmentFixture(t);
+    const other = await seedOpportunity(t, { subject: "ls-other-company", orgId: "org_other" });
+    const [otherDeliverable] = await t.run((ctx) =>
+      listOpportunityDeliverables(ctx, other.opportunityId),
+    );
+
+    await expect(
+      listAs(t, operatorViewer, fixture, firstPage, otherDeliverable._id),
+    ).rejects.toMatchObject({ data: { code: "not_found", resource: "deliverable" } });
   });
 });
 

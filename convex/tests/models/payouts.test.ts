@@ -155,6 +155,30 @@ test("normalizes currency and source key and returns the original payout on a la
   expect(await t.run(async (ctx) => await ctx.db.query("payouts").take(2))).toEqual([first]);
 });
 
+test("identical retries survive clock rollback while new future earnings are rejected", async () => {
+  const t = convexTest(schema, modules);
+  const fixture = await seedAssignmentFixture(t);
+  const postId = await seedPost(t, fixture.assignmentId);
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(5000);
+  const args = {
+    ...finalizedEarning,
+    assignmentId: fixture.assignmentId,
+    postId,
+    earningPeriod: { startsAt: 0, endsAt: 5000 },
+  };
+  const first = await t.run(async (ctx) => await createPayout(ctx, args));
+
+  vi.setSystemTime(4999);
+  expect(await t.run(async (ctx) => await createPayout(ctx, args))).toEqual(first);
+  await expectApiError(
+    () => t.run(async (ctx) => await createPayout(ctx, { ...args, sourceKey: "new-earning" })),
+    "invalid_state",
+    "earning_period_invalid",
+  );
+  expect(await t.run(async (ctx) => await ctx.db.query("payouts").take(2))).toEqual([first]);
+});
+
 test.each([
   { amount: 20_000 },
   { currency: "eur" },

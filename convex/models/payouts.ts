@@ -42,8 +42,7 @@ export async function createPayout(ctx: MutationCtx, args: PayoutCreate): Promis
     (!Number.isSafeInteger(earningPeriod.startsAt) ||
       !Number.isSafeInteger(earningPeriod.endsAt) ||
       earningPeriod.startsAt < 0 ||
-      earningPeriod.endsAt <= earningPeriod.startsAt ||
-      earningPeriod.endsAt > now)
+      earningPeriod.endsAt <= earningPeriod.startsAt)
   ) {
     throw apiError("invalid_state", { reason: "earning_period_invalid" });
   }
@@ -68,6 +67,10 @@ export async function createPayout(ctx: MutationCtx, args: PayoutCreate): Promis
       throw apiError("conflict", { reason: "payout_source_conflict" });
     }
     return existing;
+  }
+
+  if (earningPeriod !== undefined && earningPeriod.endsAt > now) {
+    throw apiError("invalid_state", { reason: "earning_period_invalid" });
   }
 
   const assignment = await ctx.db.get("assignments", args.assignmentId);

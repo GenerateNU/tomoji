@@ -4,6 +4,7 @@ import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { apiError } from "../lib/errors";
 import { requireAssignment, type AssignmentViewer } from "./assignments";
+import { listOpportunityDeliverables } from "./deliverableDrafts";
 import { getLatestSubmission } from "./submissions";
 
 /** The creator-supplied fields of a new post. */
@@ -118,8 +119,9 @@ export async function createPost(
     throw apiError("invalid_state", { reason: "assignment_not_active" });
   }
   const { url, xPostId } = requirePostUrl(fields.url);
-  // One active post per submission, and so per assignment, since an assignment
-  // has at most one approved submission. The index is not unique, so check here.
+  // One active post per submission, and so per deliverable, since each
+  // deliverable has at most one approved submission. The index is not unique,
+  // so check here.
   const existing = await ctx.db
     .query("posts")
     .withIndex("by_submissionId_and_isActive", (q) =>
@@ -319,6 +321,31 @@ export async function updatePostMetrics(
   return { ...post, ...patch };
 }
 
+/**
+ * The assignment's active posts, newest first: one per deliverable with an
+ * approved submission. Approval is final, so a deliverable's approved
+ * submission is its latest. An opportunity has at most `MAX_DELIVERABLES`, so
+ * this is bounded and returned as a single page.
+ */
+async function listAssignmentPosts(
+  ctx: QueryCtx,
+  assignment: Doc<"assignments">,
+): Promise<Doc<"posts">[]> {
+  const posts: Doc<"posts">[] = [];
+  for (const deliverable of await listOpportunityDeliverables(ctx, assignment.opportunityId)) {
+    const submission = await getLatestSubmission(ctx, assignment._id, deliverable._id);
+    if (submission?.status !== "approved") continue;
+    const post = await ctx.db
+      .query("posts")
+      .withIndex("by_submissionId_and_isActive", (q) =>
+        q.eq("submissionId", submission._id).eq("isActive", true),
+      )
+      .first();
+    if (post !== null) posts.push(post);
+  }
+  return posts.sort((a, b) => b._creationTime - a._creationTime);
+}
+
 /** `list` takes exactly one of `assignmentId` or `campaignId`. */
 export const postListFilters = v.object({
   assignmentId: v.optional(v.id("assignments")),
@@ -328,8 +355,8 @@ export const postListFilters = v.object({
 
 /**
  * Returns one page of active posts, newest first, for either an assignment or
- * a campaign. An assignment has at most one active post; replaced posts are
- * only reachable by id. Campaign listing is for the
+ * a campaign. An assignment has at most one active post per deliverable, all
+ * returned in one page; replaced posts are only reachable by id. Campaign listing is for the
  * owning company and operators; creators only see their own posts.
  *
  * @throws `invalid_state` with `invalid_filter` unless exactly one filter is given.
@@ -348,18 +375,7 @@ export async function listPosts(
 
   if (assignmentId !== undefined) {
     const assignment = await requireAssignment(ctx, viewer, assignmentId);
-    // Approval is final, so if the assignment has an approved submission it's the latest.
-    const submission = await getLatestSubmission(ctx, assignment._id);
-    if (submission === null || submission.status !== "approved") {
-      return { page: [], isDone: true, continueCursor: "" };
-    }
-    return await ctx.db
-      .query("posts")
-      .withIndex("by_submissionId_and_isActive", (q) =>
-        q.eq("submissionId", submission._id).eq("isActive", true),
-      )
-      .order("desc")
-      .paginate(paginationOpts);
+    return { page: await listAssignmentPosts(ctx, assignment), isDone: true, continueCursor: "" };
   }
 
   if (viewer.role === "creator") {

@@ -22,6 +22,10 @@ export const notificationType = v.union(
   v.literal("opportunityClosed"), // Deadline cron only.
   v.literal("campaignClosed"), // End-date cron only.
   v.literal("applicationOfferExpired"),
+  // To everyone on a dispute except whoever acted: both sides and Tomoji
+  v.literal("disputeOpened"),
+  v.literal("disputeResolved"),
+  v.literal("disputeOverridden"),
 );
 
 // What clicking the notification opens. IDs rather than URLs, so the client
@@ -40,6 +44,7 @@ export const notificationTarget = v.union(
   }),
   v.object({ kind: v.literal("opportunity"), opportunityId: v.id("opportunities") }),
   v.object({ kind: v.literal("campaign"), campaignId: v.id("campaigns") }),
+  v.object({ kind: v.literal("dispute"), disputeId: v.id("disputes") }),
 );
 
 /**
@@ -66,6 +71,9 @@ export const notificationTargetKind = {
   opportunityClosed: "opportunity",
   campaignClosed: "campaign",
   applicationOfferExpired: "application",
+  disputeOpened: "dispute",
+  disputeResolved: "dispute",
+  disputeOverridden: "dispute",
 } as const satisfies Record<
   Infer<typeof notificationType>,
   Infer<typeof notificationTarget>["kind"]

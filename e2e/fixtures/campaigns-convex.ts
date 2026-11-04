@@ -18,9 +18,6 @@ const campaigns: Doc<"campaigns">[] = ["draft", "open", "paused", "closed", "ope
       "Summer launch",
       "Winter launch",
     ][i],
-    objective: "Introduce the product to developers",
-    product: "Developer platform",
-    audience: "Developers",
     description: "Show how the product helps your daily workflow.",
     status: status as Doc<"campaigns">["status"],
     budgetCents: 125050,
@@ -75,8 +72,8 @@ export function useQuery(
     synced: true as const,
     userId: "viewer" as Id<"users">,
     email: "company@example.com",
-    firstName: undefined,
-    lastName: undefined,
+    firstName: "Dana",
+    lastName: "Okafor",
     profilePictureMediaId: undefined,
   };
   return fixture.mode === "creator"

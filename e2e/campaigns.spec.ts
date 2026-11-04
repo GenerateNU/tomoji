@@ -91,9 +91,6 @@ test("captures the responsive campaign list", async ({ page }) => {
 /** Completes the backend-supported brief; there are no payment or publishing steps. */
 async function fillDraft(page: Page) {
   await page.getByLabel("Campaign name").fill("  Developer launch  ");
-  await page.getByLabel("Objective").fill("Introduce our developer platform");
-  await page.getByLabel("Product", { exact: true }).fill("Developer platform");
-  await page.getByLabel("Audience").fill("Developers");
   await page.getByLabel("Description").fill("Show a practical workflow using our platform.");
   await page.getByLabel("Budget (USD)").fill("1250.05");
   await page.getByLabel("Start (UTC)").fill("2026-10-15T12:00");
@@ -112,9 +109,6 @@ test("saves an exact draft payload once and offers a return to the list", async 
   expect(await page.evaluate(() => window.campaignsFixture.writes)).toEqual([
     {
       title: "Developer launch",
-      objective: "Introduce our developer platform",
-      product: "Developer platform",
-      audience: "Developers",
       description: "Show a practical workflow using our platform.",
       budgetCents: 125005,
       startsAt: Date.parse("2026-10-15T12:00Z"),

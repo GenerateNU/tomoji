@@ -1,9 +1,9 @@
 "use client";
 
 import { useEffect, useId, useRef, useState } from "react";
-import { ExternalLink } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { parseGithubLink } from "../lib/github-link";
+import { ExternalLink } from "./external-link";
 import { GithubLinkForm } from "./github-link-form";
 
 export function GithubLinkSection({ githubLink }: { githubLink?: string }) {
@@ -51,16 +51,7 @@ export function GithubLinkSection({ githubLink }: { githubLink?: string }) {
       ) : (
         <div className="space-y-2">
           {savedLink.ok && savedLink.value ? (
-            <a
-              href={savedLink.value}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex max-w-full items-center gap-2 rounded text-sm underline underline-offset-4 outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            >
-              <span className="min-w-0 break-all">{savedLink.value}</span>
-              <ExternalLink aria-hidden className="size-4 shrink-0" />
-              <span className="sr-only">(opens in a new tab)</span>
-            </a>
+            <ExternalLink href={savedLink.value} />
           ) : githubLink ? (
             <p className="text-sm text-muted-foreground">
               Your saved link needs updating. Edit it to add a valid GitHub URL.

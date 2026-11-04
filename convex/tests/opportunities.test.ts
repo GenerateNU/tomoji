@@ -63,7 +63,7 @@ describe("opportunities.close", () => {
     expect(result.status).toBe("closed");
     expect(
       await t.run(async (ctx) => await ctx.db.get("opportunities", owner.opportunityId)),
-    ).toEqual(result);
+    ).toEqual({ ...result, niches: undefined, skills: undefined });
   });
 
   test("rejects a signed-out caller", async () => {
@@ -229,7 +229,7 @@ describe("opportunities.pause", () => {
     expect(result).toEqual({ ...before, status: "paused" });
     expect(
       await t.run(async (ctx) => await ctx.db.get("opportunities", owner.opportunityId)),
-    ).toEqual(result);
+    ).toEqual({ ...result, niches: undefined, skills: undefined });
     await expectApiError(
       () => asCreator.query(api.opportunities.get, { opportunityId: owner.opportunityId }),
       "not_found",
@@ -314,7 +314,7 @@ describe("opportunities.resume", () => {
       opportunityId: owner.opportunityId,
     });
 
-    expect(result).toEqual({ ...before, status: "open" });
+    expect(result).toEqual({ ...before, status: "open", niches: [], skills: [] });
     const creatorView = await asCreator.query(api.opportunities.get, {
       opportunityId: owner.opportunityId,
     });
@@ -412,7 +412,7 @@ describe("opportunities.publish", () => {
       opportunityId: owner.opportunityId,
     });
 
-    expect(result).toEqual({ ...before, status: "open" });
+    expect(result).toEqual({ ...before, status: "open", niches: [], skills: [] });
     const creatorView = await asCreator.query(api.opportunities.get, {
       opportunityId: owner.opportunityId,
     });
@@ -442,7 +442,7 @@ describe("opportunities.publish", () => {
     expect(result.status).toBe("open");
     expect(
       await t.run(async (ctx) => await ctx.db.get("opportunities", owner.opportunityId)),
-    ).toEqual(result);
+    ).toEqual({ ...result, niches: undefined, skills: undefined });
   });
 
   test("rejects a signed-out caller", async () => {
@@ -651,10 +651,10 @@ describe("opportunities.update", () => {
       title: "  Evening routine  ",
     });
 
-    expect(result).toEqual({ ...before, title: "Evening routine" });
+    expect(result).toEqual({ ...before, title: "Evening routine", niches: [], skills: [] });
     expect(
       await t.run(async (ctx) => await ctx.db.get("opportunities", owner.opportunityId)),
-    ).toEqual(result);
+    ).toEqual({ ...result, niches: undefined, skills: undefined });
   });
 
   test("lets a company admin remove an optional product link", async () => {
@@ -673,7 +673,7 @@ describe("opportunities.update", () => {
     expect(result).not.toHaveProperty("productAccessLink");
     expect(
       await t.run(async (ctx) => await ctx.db.get("opportunities", owner.opportunityId)),
-    ).toEqual(result);
+    ).toEqual({ ...result, niches: undefined, skills: undefined });
   });
 
   test("rejects a signed-out caller", async () => {
@@ -803,6 +803,7 @@ describe("opportunities.discover", () => {
         "companyName",
         "isStarred",
         "niches",
+        "skills",
         "title",
         "description",
         "isGated",
@@ -899,7 +900,11 @@ describe("opportunities.list", () => {
     });
 
     expect(result.page).toEqual([
-      await t.run(async (ctx) => await ctx.db.get("opportunities", owner.opportunityId)),
+      {
+        ...(await t.run(async (ctx) => await ctx.db.get("opportunities", owner.opportunityId))),
+        niches: [],
+        skills: [],
+      },
     ]);
     expect(result.isDone).toBe(true);
   });
@@ -917,7 +922,11 @@ describe("opportunities.list", () => {
     });
 
     expect(result.page).toEqual([
-      await t.run(async (ctx) => await ctx.db.get("opportunities", owner.opportunityId)),
+      {
+        ...(await t.run(async (ctx) => await ctx.db.get("opportunities", owner.opportunityId))),
+        niches: [],
+        skills: [],
+      },
     ]);
   });
 
@@ -1293,6 +1302,7 @@ describe("opportunities.get", () => {
         "companyName",
         "isStarred",
         "niches",
+        "skills",
         "title",
         "description",
         "isGated",
@@ -1319,13 +1329,25 @@ describe("opportunities.get", () => {
     const { asCompany, opportunityId } = await seedOpportunity(
       t,
       { subject: "op_owner" },
-      { productAccessLink: "https://example.com/private-product" },
+      {
+        productAccessLink: "https://example.com/private-product",
+        niches: ["databases"],
+        skills: ["typescript"],
+      },
     );
     const asOperator = await seedOperator(t, "op_operator");
     const stored = await t.run(async (ctx) => await ctx.db.get("opportunities", opportunityId));
 
-    expect(await asCompany.query(api.opportunities.get, { opportunityId })).toEqual(stored);
-    expect(await asOperator.query(api.opportunities.get, { opportunityId })).toEqual(stored);
+    expect(await asCompany.query(api.opportunities.get, { opportunityId })).toEqual({
+      ...stored,
+      niches: ["databases"],
+      skills: ["typescript"],
+    });
+    expect(await asOperator.query(api.opportunities.get, { opportunityId })).toEqual({
+      ...stored,
+      niches: ["databases"],
+      skills: ["typescript"],
+    });
   });
 });
 

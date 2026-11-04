@@ -16,6 +16,8 @@ import {
   createOpportunity,
   discoverOpportunities,
   getOpportunity,
+  getOpportunityView,
+  opportunityView,
   listOpportunities,
   opportunityCreate,
   opportunityDiscover,
@@ -37,14 +39,16 @@ import {
   withStarredFlags,
 } from "./models/opportunityStars";
 import { requireCallerCreatorId } from "./models/users";
-import schema from "./schema";
 
 /** Closes an owned published opportunity permanently without cancelling existing assignments. */
 export const close = companyMutation({
   args: { opportunityId: v.id("opportunities") },
-  returns: schema.doc("opportunities"),
+  returns: opportunityView,
   handler: async (ctx, { opportunityId }) => {
-    return await closeOpportunity(ctx, ctx.membership, opportunityId);
+    return await getOpportunityView(
+      ctx,
+      await closeOpportunity(ctx, ctx.membership, opportunityId),
+    );
   },
 });
 
@@ -62,27 +66,36 @@ export const closeExpired = internalMutation({
 /** Pauses an open opportunity owned by the caller's company, preserving existing workflow records. */
 export const pause = companyMutation({
   args: { opportunityId: v.id("opportunities") },
-  returns: schema.doc("opportunities"),
+  returns: opportunityView,
   handler: async (ctx, { opportunityId }) => {
-    return await pauseOpportunity(ctx, ctx.membership, opportunityId);
+    return await getOpportunityView(
+      ctx,
+      await pauseOpportunity(ctx, ctx.membership, opportunityId),
+    );
   },
 });
 
 /** Resumes a paused opportunity in an open campaign before its deadline. */
 export const resume = companyMutation({
   args: { opportunityId: v.id("opportunities") },
-  returns: schema.doc("opportunities"),
+  returns: opportunityView,
   handler: async (ctx, { opportunityId }) => {
-    return await resumeOpportunity(ctx, ctx.membership, opportunityId);
+    return await getOpportunityView(
+      ctx,
+      await resumeOpportunity(ctx, ctx.membership, opportunityId),
+    );
   },
 });
 
 /** Publishes a draft with at least one deliverable in an open campaign the company owns. */
 export const publish = companyMutation({
   args: { opportunityId: v.id("opportunities") },
-  returns: schema.doc("opportunities"),
+  returns: opportunityView,
   handler: async (ctx, { opportunityId }) => {
-    return await publishOpportunity(ctx, ctx.membership, opportunityId);
+    return await getOpportunityView(
+      ctx,
+      await publishOpportunity(ctx, ctx.membership, opportunityId),
+    );
   },
 });
 
@@ -99,7 +112,7 @@ export const remove = companyMutation({
 /** Updates editable opportunity fields for the caller's company, preserving assignment terms. */
 export const update = companyMutation({
   args: { opportunityId: v.id("opportunities"), ...opportunityUpdate.fields },
-  returns: schema.doc("opportunities"),
+  returns: opportunityView,
   handler: async (ctx, { opportunityId, ...updates }) => {
     return await updateOpportunity(ctx, ctx.membership, opportunityId, updates);
   },
@@ -157,7 +170,7 @@ export const listStarred = creatorQuery({
 /** Returns the caller's company opportunities, optionally filtered by campaign and status. */
 export const list = companyQuery({
   args: opportunityList.fields,
-  returns: paginationResultValidator(schema.doc("opportunities")),
+  returns: paginationResultValidator(opportunityView),
   handler: async (ctx, args) => {
     return await listOpportunities(ctx, ctx.membership.companyId, args);
   },
@@ -175,16 +188,16 @@ export const create = companyMutation({
   },
 });
 
-/** Returns a public brief to creators or the complete document to its company and operators. */
+/** Returns a creator-facing brief or a complete opportunity with selections for its company/operators. */
 export const get = authedQuery({
   args: { opportunityId: v.id("opportunities") },
-  returns: v.union(schema.doc("opportunities"), starredCreatorOpportunity),
+  returns: v.union(opportunityView, starredCreatorOpportunity),
   handler: async (ctx, args) => {
     const opportunity = await getOpportunity(ctx, args.opportunityId, {
       user: ctx.user,
       orgId: findOrgId(ctx.identity),
     });
-    // Company users and operators get the full document; only creator briefs carry `companyName`.
+    // Company users and operators retain private fields; only creator briefs carry `companyName`.
     if (!("companyName" in opportunity)) return opportunity;
     // Creators also get whether they've starred it.
     const creatorId = await requireCallerCreatorId(ctx, ctx.user);

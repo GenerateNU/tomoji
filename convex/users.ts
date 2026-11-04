@@ -14,8 +14,8 @@ import { userRole } from "./schemas/users.schema";
 const identityFields = {
   synced: v.literal(true),
   userId: v.id("users"),
-  firstName: v.optional(v.string()),
-  lastName: v.optional(v.string()),
+  firstName: v.string(),
+  lastName: v.string(),
   email: v.string(),
   profilePictureMediaId: v.optional(v.id("mediaUploads")),
 };

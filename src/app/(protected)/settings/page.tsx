@@ -10,7 +10,7 @@ export default function SettingsPage() {
         <div className="space-y-2">
           <h1 className="text-3xl font-semibold tracking-tight">Settings</h1>
           <p className="text-sm text-muted-foreground">
-            Manage your basic details, profile picture, and GitHub profile.
+            Manage your details, picture, links, and who can find your profile.
           </p>
         </div>
         <SettingsContent />

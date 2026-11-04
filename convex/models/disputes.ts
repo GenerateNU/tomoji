@@ -16,6 +16,13 @@ import {
 import { userRole } from "../schemas/users.schema";
 import { canViewResource } from "../lib/authz";
 import { requireAssignment, type AssignmentViewer } from "./assignments";
+import { getCompanyUser } from "./companyUsers";
+import {
+  notifyCompanyUser,
+  notifyCreator,
+  notifyOperators,
+  type NotificationContent,
+} from "./notifications";
 
 export const disputeCreate = v.object({
   assignmentId: v.id("assignments"),
@@ -92,7 +99,7 @@ export async function createDispute(
   }
   const description = requireNonBlank(input.description, "description", MAX_LENGTH.description);
 
-  return await ctx.db.insert("disputes", {
+  const dispute = {
     assignmentId: assignment._id,
     companyId: assignment.companyId,
     creatorId: assignment.creatorId,
@@ -103,8 +110,15 @@ export async function createDispute(
     reason: input.reason,
     customReason,
     description,
-    status: "open",
-  });
+    status: "open" as const,
+  };
+  const disputeId = await ctx.db.insert("disputes", dispute);
+  await notifyDisputeParties(ctx, dispute, { userId: openedBy, role: viewer.role }, (subject) => ({
+    type: "disputeOpened",
+    title: `A dispute was opened on ${subject}`,
+    target: disputeTarget(disputeId),
+  }));
+  return disputeId;
 }
 
 /** Reports a missing post and one from another assignment the same way. */
@@ -169,6 +183,21 @@ export async function resolveDispute(
     note: optionalNonBlank(note, "note", MAX_LENGTH.note),
   };
   await ctx.db.replace("disputes", dispute._id, resolved);
+  await notifyDisputeParties(
+    ctx,
+    resolved,
+    { userId: resolvedBy, role: viewer.role },
+    (subject) => ({
+      type: "disputeResolved",
+      // Tomoji can withdraw only a dispute it opened, which reads the same as anyone's.
+      title:
+        resolved.resolvedByRole === "operator" && outcome !== "withdrawn"
+          ? `Tomoji ${outcome} the dispute on ${subject}`
+          : `The dispute on ${subject} was ${outcome}`,
+      body: resolved.note,
+      target: disputeTarget(dispute._id),
+    }),
+  );
   return toDisputeView(viewer, resolved);
 }
 
@@ -206,7 +235,66 @@ export async function overrideDispute(
     overriddenResolution: { resolvedBy: dispute.resolvedBy, ...withoutResolver(dispute) },
   };
   await ctx.db.replace("disputes", dispute._id, overridden);
+  await notifyDisputeParties(
+    ctx,
+    overridden,
+    { userId: resolvedBy, role: "operator" },
+    (subject) => ({
+      type: "disputeOverridden",
+      title: `Tomoji changed the result of the dispute on ${subject} to ${outcome}`,
+      body: overridden.note,
+      target: disputeTarget(dispute._id),
+    }),
+  );
   return overridden;
+}
+
+/** Links a notification to the dispute. */
+function disputeTarget(disputeId: Id<"disputes">) {
+  return { kind: "dispute" as const, disputeId };
+}
+
+/**
+ * Notifies everyone on a dispute except whoever acted: the creator, the
+ * opportunity's owner and the company member who opened it (if one did), and
+ * every active operator unless Tomoji acted. Company members who have left
+ * aren't told, and an owner who also opened it gets one notification. Call it
+ * from the mutation that makes the change, so a refused change notifies no
+ * one. Like other notifications, none are sent if the opportunity is missing.
+ */
+async function notifyDisputeParties(
+  ctx: MutationCtx,
+  dispute: Pick<
+    Doc<"disputes">,
+    "assignmentId" | "companyId" | "creatorId" | "openedBy" | "openedByRole"
+  >,
+  actor: { userId: Id<"users">; role: AssignmentViewer["role"] },
+  content: (subject: string) => NotificationContent,
+): Promise<void> {
+  const assignment = await ctx.db.get("assignments", dispute.assignmentId);
+  const opportunity = assignment && (await ctx.db.get("opportunities", assignment.opportunityId));
+  if (opportunity === null) return;
+  const notification = content(opportunity.title);
+
+  // Only the dispute's own creator can act on it as a creator.
+  if (actor.role !== "creator") {
+    await notifyCreator(ctx, dispute.creatorId, notification);
+  }
+
+  // The opportunity's owner, plus the member who opened the dispute if that's
+  // someone else. Members who have left the company aren't told.
+  const members = [await ctx.db.get("companyUsers", opportunity.createdBy)];
+  if (dispute.openedByRole === "company") {
+    const opener = await getCompanyUser(ctx, dispute.openedBy, dispute.companyId);
+    if (opener !== null && opener._id !== opportunity.createdBy) members.push(opener);
+  }
+  for (const member of members) {
+    if (member?.isActive && member.userId !== actor.userId) {
+      await notifyCompanyUser(ctx, member._id, notification);
+    }
+  }
+
+  if (actor.role !== "operator") await notifyOperators(ctx, notification);
 }
 
 /** One dispute, as the viewer may see it. */

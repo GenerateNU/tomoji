@@ -114,15 +114,14 @@ describe("updateCompany", () => {
     const t = convexTest(schema, modules);
     const companyId = await insertCompany(t, "org_up", "Before");
     await t.run(
-      async (ctx) =>
-        await updateCompany(ctx, companyId, { profilePicture: "https://example.com/logo.png" }),
+      async (ctx) => await updateCompany(ctx, companyId, { industry: "Developer tools" }),
     );
 
     await t.run(async (ctx) => await updateCompany(ctx, companyId, { name: "After" }));
 
     expect(await companyRow(t, companyId)).toMatchObject({
       name: "After",
-      profilePicture: "https://example.com/logo.png",
+      industry: "Developer tools",
     });
   });
 
@@ -139,7 +138,7 @@ describe("updateCompany", () => {
     );
 
     expect(await companyRow(t, companyId)).toMatchObject({
-      website: "https://acme.com",
+      website: "https://acme.com/",
       description: "Developer tools.",
     });
   });
@@ -155,7 +154,26 @@ describe("updateCompany", () => {
       () => t.run(async (ctx) => await updateCompany(ctx, companyId, { website: " " })),
       "invalid_state",
     );
-    expect((await companyRow(t, companyId))?.website).toBe("https://acme.com");
+    expect((await companyRow(t, companyId))?.website).toBe("https://acme.com/");
+  });
+
+  test.each([
+    ["a bare domain", "acme.com"],
+    ["plain http", "http://acme.com"],
+    ["a javascript scheme", "javascript:alert(1)"],
+    ["login details that disguise the host", "https://acme.com@evil.test"],
+  ])("rejects %s as a website and leaves the row unchanged", async (_label, website) => {
+    const t = convexTest(schema, modules);
+    const companyId = await insertCompany(t, "org_bad_site");
+    await t.run(
+      async (ctx) => await updateCompany(ctx, companyId, { website: "https://acme.com" }),
+    );
+
+    await expectApiError(
+      () => t.run(async (ctx) => await updateCompany(ctx, companyId, { website })),
+      "invalid_state",
+    );
+    expect((await companyRow(t, companyId))?.website).toBe("https://acme.com/");
   });
 
   test("rejects a blank description and leaves the row unchanged", async () => {
@@ -181,19 +199,61 @@ describe("updateCompany", () => {
     expect((await companyRow(t, companyId))?.name).toBe("Keep");
   });
 
-  test("rejects a blank profile picture and leaves the row unchanged", async () => {
+  test("sets the country and industry", async () => {
     const t = convexTest(schema, modules);
-    const companyId = await insertCompany(t, "org_pic");
+    const companyId = await insertCompany(t, "org_profile");
+
     await t.run(
       async (ctx) =>
-        await updateCompany(ctx, companyId, { profilePicture: "https://example.com/logo.png" }),
+        await updateCompany(ctx, companyId, {
+          countryOfResidence: "id",
+          industry: "  Developer tools  ",
+        }),
     );
 
+    expect(await companyRow(t, companyId)).toMatchObject({
+      countryOfResidence: "ID",
+      industry: "Developer tools",
+    });
+  });
+
+  test("clears optional fields with null and leaves the rest alone", async () => {
+    const t = convexTest(schema, modules);
+    const companyId = await insertCompany(t, "org_clear", "Keep");
+    await t.run(
+      async (ctx) =>
+        await updateCompany(ctx, companyId, {
+          website: "https://acme.com",
+          countryOfResidence: "US",
+          industry: "Developer tools",
+        }),
+    );
+
+    await t.run(
+      async (ctx) =>
+        await updateCompany(ctx, companyId, { countryOfResidence: null, industry: null }),
+    );
+
+    const row = await companyRow(t, companyId);
+    expect(row).toMatchObject({ name: "Keep", website: "https://acme.com/" });
+    expect(row).not.toHaveProperty("countryOfResidence");
+    expect(row).not.toHaveProperty("industry");
+  });
+
+  test.each([
+    ["an unassigned country code", { countryOfResidence: "ZZ" }],
+    ["a blank industry", { industry: "   " }],
+    ["an industry longer than the cap", { industry: "x".repeat(81) }],
+  ])("rejects %s and leaves the row unchanged", async (_label, fields) => {
+    const t = convexTest(schema, modules);
+    const companyId = await insertCompany(t, "org_bad_profile", "Keep");
+    const before = await companyRow(t, companyId);
+
     await expectApiError(
-      () => t.run(async (ctx) => await updateCompany(ctx, companyId, { profilePicture: "  " })),
+      () => t.run(async (ctx) => await updateCompany(ctx, companyId, fields)),
       "invalid_state",
     );
-    expect((await companyRow(t, companyId))?.profilePicture).toBe("https://example.com/logo.png");
+    expect(await companyRow(t, companyId)).toEqual(before);
   });
 });
 

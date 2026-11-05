@@ -84,11 +84,25 @@ test("rejects a video bound to another assignment of the same creator", async ()
   );
 });
 
-test("rejects an incomplete upload", async () => {
+test("rejects a pending video even when its permanent key is valid", async () => {
+  const t = convexTest(schema, modules);
+  const fixture = await seedAssignmentFixture(t);
+  const mediaId = await seedSubmissionVideo(t, fixture, { status: "pending" });
+  await expectApiError(
+    () =>
+      fixture.asCreator.mutation(
+        api.submissions.create,
+        submissionArgs(fixture, { draftUrl: undefined, mediaId }),
+      ),
+    "invalid_state",
+    "video_not_complete",
+  );
+});
+
+test("rejects a completed video without an immutable storage key", async () => {
   const t = convexTest(schema, modules);
   const fixture = await seedAssignmentFixture(t);
   const mediaId = await seedSubmissionVideo(t, fixture, {
-    status: "pending",
     permanentKey: undefined,
   });
   await expectApiError(

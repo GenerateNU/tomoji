@@ -1,7 +1,9 @@
 /// <reference types="vite/client" />
 import { convexTest } from "convex-test";
+import type { Infer } from "convex/values";
 import { afterEach, expect, test, vi } from "vitest";
 import schema from "../../schema";
+import type { aiReviewResult } from "../../lib/ai/validation";
 import { createSubmission, reviewSubmission } from "../../models/submissions";
 import {
   claimAiReviewAttempt,
@@ -21,6 +23,23 @@ import {
 } from "../helpers";
 
 const modules = import.meta.glob("../../**/*.ts");
+const reviewResult: Infer<typeof aiReviewResult> = {
+  model: "jev-1.14.0",
+  inputTokens: 200,
+  outputTokens: 10,
+  results: [
+    {
+      criterionId: "product",
+      outcome: "met",
+      confidence: 0.9,
+      probabilities: { met: 0.95, not_met: 0.03, uncertain: 0.02 },
+    },
+  ],
+};
+const reviewCriteria = [
+  { id: "product", description: "Mention Driftwood." },
+  { id: "disclosure", description: "Disclose the paid partnership." },
+];
 afterEach(() => vi.useRealTimers());
 
 test("prepares an owned video with an independent criteria and brief snapshot", async () => {
@@ -103,26 +122,14 @@ test("stores transcript and criterion results without approving the submission",
     await claimAiReviewAttempt(ctx, attempt._id);
     await recordAiTranscriptionJob(ctx, attempt._id, "job-1");
     await saveAiTranscription(ctx, attempt._id, aiTranscriptionArgs());
-    await saveAiReviewResult(ctx, attempt._id, {
-      model: "jev-1.14.0",
-      inputTokens: 200,
-      outputTokens: 10,
-      results: [
-        {
-          criterionId: "product",
-          outcome: "met",
-          confidence: 0.9,
-          probabilities: { met: 0.95, not_met: 0.03, uncertain: 0.02 },
-        },
-      ],
-    });
+    await saveAiReviewResult(ctx, attempt._id, reviewResult);
   });
   const stored = await t.run((ctx) => ctx.db.get("aiReviewAttempts", attempt._id));
   expect(stored).toMatchObject({
     status: "completed",
     transcriptionJobId: "job-1",
     transcription: { text: "Driftwood." },
-    result: { model: "jev-1.14.0", inputTokens: 200 },
+    result: reviewResult,
   });
   expect(await t.run((ctx) => ctx.db.get("submissions", submissionId))).toMatchObject({
     status: "pending",
@@ -235,6 +242,89 @@ test("does not complete a review with missing criterion results", async () => {
   expect(await t.run((ctx) => ctx.db.get("aiReviewAttempts", attempt._id))).toMatchObject({
     status: "evaluating",
   });
+});
+
+test("rejects same-count results with an unrelated criterion ID", async () => {
+  const t = convexTest(schema, modules);
+  const { attempt } = await seedAiReviewFixture(t, reviewCriteria);
+  await t.run(async (ctx) => {
+    await claimAiReviewAttempt(ctx, attempt._id);
+    await recordAiTranscriptionJob(ctx, attempt._id, "job-1");
+    await saveAiTranscription(ctx, attempt._id, aiTranscriptionArgs());
+  });
+  await expectApiError(
+    () =>
+      t.run((ctx) =>
+        saveAiReviewResult(ctx, attempt._id, {
+          ...reviewResult,
+          results: [
+            reviewResult.results[0],
+            { ...reviewResult.results[0], criterionId: "unrelated" },
+          ],
+        }),
+      ),
+    "invalid_state",
+    "review_result_mismatch",
+  );
+  const stored = await t.run((ctx) => ctx.db.get("aiReviewAttempts", attempt._id));
+  expect(stored?.status).toBe("evaluating");
+  expect(stored).not.toHaveProperty("result");
+});
+
+test("rejects extra criterion results", async () => {
+  const t = convexTest(schema, modules);
+  const { attempt } = await seedAiReviewFixture(t, reviewCriteria);
+  await t.run(async (ctx) => {
+    await claimAiReviewAttempt(ctx, attempt._id);
+    await recordAiTranscriptionJob(ctx, attempt._id, "job-1");
+    await saveAiTranscription(ctx, attempt._id, aiTranscriptionArgs());
+  });
+  await expectApiError(
+    () =>
+      t.run((ctx) =>
+        saveAiReviewResult(ctx, attempt._id, {
+          ...reviewResult,
+          results: [
+            reviewResult.results[0],
+            { ...reviewResult.results[0], criterionId: "disclosure" },
+            { ...reviewResult.results[0], criterionId: "extra" },
+          ],
+        }),
+      ),
+    "invalid_state",
+    "review_result_mismatch",
+  );
+  const stored = await t.run((ctx) => ctx.db.get("aiReviewAttempts", attempt._id));
+  expect(stored?.status).toBe("evaluating");
+  expect(stored).not.toHaveProperty("result");
+});
+
+test("rejects duplicate criterion IDs even when every expected ID is present", async () => {
+  const t = convexTest(schema, modules);
+  const { attempt } = await seedAiReviewFixture(t, reviewCriteria);
+  await t.run(async (ctx) => {
+    await claimAiReviewAttempt(ctx, attempt._id);
+    await recordAiTranscriptionJob(ctx, attempt._id, "job-1");
+    await saveAiTranscription(ctx, attempt._id, aiTranscriptionArgs());
+  });
+  await expectApiError(
+    () =>
+      t.run((ctx) =>
+        saveAiReviewResult(ctx, attempt._id, {
+          ...reviewResult,
+          results: [
+            reviewResult.results[0],
+            { ...reviewResult.results[0], criterionId: "disclosure" },
+            reviewResult.results[0],
+          ],
+        }),
+      ),
+    "invalid_state",
+    "review_result_mismatch",
+  );
+  const stored = await t.run((ctx) => ctx.db.get("aiReviewAttempts", attempt._id));
+  expect(stored?.status).toBe("evaluating");
+  expect(stored).not.toHaveProperty("result");
 });
 
 test("requires confirmed criteria and rolls back an ineligible media draft", async () => {

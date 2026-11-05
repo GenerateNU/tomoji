@@ -625,8 +625,13 @@ export async function seedSubmissionVideo(
   );
 }
 
-/** Seeds a media-backed AI draft with one company-confirmed requirement and a ready attempt. */
-export async function seedAiReviewFixture(t: TestConvex): Promise<
+/** Seeds a media-backed AI draft with confirmed requirements and a ready attempt. */
+export async function seedAiReviewFixture(
+  t: TestConvex,
+  reviewCriteria: NonNullable<DeliverableCreate["reviewCriteria"]> = [
+    { id: "product", description: "Mention Driftwood." },
+  ],
+): Promise<
   AssignmentFixture & {
     mediaId: Id<"mediaUploads">;
     submissionId: Id<"submissions">;
@@ -645,7 +650,7 @@ export async function seedAiReviewFixture(t: TestConvex): Promise<
         deliverableArgs({
           title: "CLI demo",
           description: "Introduce Driftwood and explain a first deployment.",
-          reviewCriteria: [{ id: "product", description: "Mention Driftwood." }],
+          reviewCriteria,
         }),
       ],
     },

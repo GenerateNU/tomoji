@@ -10,6 +10,13 @@ import {
   SelectPreview,
   TextFieldPreview,
 } from "@/features/design-system/components/form-controls";
+import {
+  AvatarPreview,
+  NavigationPreview,
+  ProgressPreview,
+  TagPreview,
+} from "@/features/design-system/components/display";
+import { MenuPreview, MultiSelectPreview } from "@/features/design-system/components/overlays";
 
 export const metadata: Metadata = { title: "Design system · Tomoji" };
 
@@ -29,7 +36,13 @@ export default function DesignSystemPage() {
       <ButtonPreview />
       <TextFieldPreview />
       <SelectPreview />
+      <MultiSelectPreview />
       <ChoicePreview />
+      <TagPreview />
+      <AvatarPreview />
+      <NavigationPreview />
+      <ProgressPreview />
+      <MenuPreview />
     </main>
   );
 }

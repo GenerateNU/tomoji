@@ -34,7 +34,7 @@ export function NavAuth() {
           {user.email}
         </span>
         <form action={signOutAction}>
-          <Button type="submit" variant="outline" className="h-10 rounded-full px-4">
+          <Button type="submit" variant="secondary" className="h-10 rounded-full px-4">
             Sign out
           </Button>
         </form>

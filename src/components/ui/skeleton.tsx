@@ -1,4 +1,4 @@
-import { cn } from "cn";
+import { cn } from "@/lib/utils";
 
 /** A pulsing placeholder. Size it with `className`, e.g. `h-5 w-48`. */
 function Skeleton({ className, ...props }: React.ComponentProps<"div">) {

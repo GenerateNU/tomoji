@@ -35,7 +35,7 @@ export function PersonalDetailsSection({
         {!editing && (
           <Button
             ref={editButton}
-            variant="outline"
+            variant="secondary"
             className="min-h-11"
             onClick={() => {
               setSuccess("");

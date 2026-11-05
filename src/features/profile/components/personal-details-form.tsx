@@ -139,7 +139,7 @@ export function PersonalDetailsForm({
         <Button
           type="button"
           aria-label="Discard personal details changes"
-          variant="outline"
+          variant="secondary"
           className="min-h-11"
           disabled={pending}
           onClick={onDiscard}

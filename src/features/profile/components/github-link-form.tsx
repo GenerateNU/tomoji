@@ -93,7 +93,7 @@ export function GithubLinkForm({
         <Button
           type="button"
           aria-label="Discard GitHub changes"
-          variant="outline"
+          variant="secondary"
           className="min-h-11"
           disabled={pending}
           onClick={onDiscard}

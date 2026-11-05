@@ -12,7 +12,7 @@ export function GoogleButton({ next = "/" }: { next?: string }) {
     <a
       href={withNext("/auth/google", next)}
       // cn() resolves the variant's border over the base `border-transparent`, as Button does.
-      className={cn(buttonVariants({ variant: "outline", size: "lg" }), "w-full")}
+      className={cn(buttonVariants({ variant: "secondary", size: "lg" }), "w-full")}
     >
       <GoogleLogo />
       Continue with Google

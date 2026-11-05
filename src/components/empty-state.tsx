@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { cn } from "cn";
+import { cn } from "@/lib/utils";
 
 /** The message shown where a list would be, when the list has nothing in it. */
 export function EmptyState({ children, className }: { children: ReactNode; className?: string }) {

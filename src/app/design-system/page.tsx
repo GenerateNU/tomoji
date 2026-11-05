@@ -16,6 +16,7 @@ import {
   ProgressPreview,
   TagPreview,
 } from "@/features/design-system/components/display";
+import { SidebarPreview, TablePreview } from "@/features/design-system/components/layout";
 import { MenuPreview, MultiSelectPreview } from "@/features/design-system/components/overlays";
 
 export const metadata: Metadata = { title: "Design system · Tomoji" };
@@ -43,6 +44,8 @@ export default function DesignSystemPage() {
       <NavigationPreview />
       <ProgressPreview />
       <MenuPreview />
+      <SidebarPreview />
+      <TablePreview />
     </main>
   );
 }

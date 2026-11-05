@@ -9,6 +9,7 @@ import {
   VideoIcon,
 } from "lucide-react";
 import { ActivityItem } from "@/components/activity-item";
+import { AvatarLabel } from "@/components/avatar-label";
 import { Stepper } from "@/components/stepper";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
@@ -101,20 +102,36 @@ export function AvatarPreview() {
             ))}
           </div>
         </Example>
-        <Example label="with a name">
-          <div className="flex flex-wrap items-center gap-6">
-            <div className="flex items-center gap-2">
-              <Avatar size="sm">
-                <AvatarFallback>JR</AvatarFallback>
-              </Avatar>
-              <span className="text-body-sm font-medium">Julia Rowniewski</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <Avatar size="sm" shape="square">
-                <AvatarFallback />
-              </Avatar>
-              <span className="text-body-sm font-medium">OpenAI</span>
-            </div>
+        <Example label="AvatarLabel">
+          <div className="-mx-2 flex flex-wrap items-center gap-2">
+            <AvatarLabel
+              render={<button type="button" />}
+              className="hover:bg-muted"
+              avatar={
+                <Avatar size="sm">
+                  <AvatarFallback />
+                </Avatar>
+              }
+              name="Aaron"
+              chevron
+            />
+            <AvatarLabel
+              avatar={
+                <Avatar size="sm">
+                  <AvatarFallback>JR</AvatarFallback>
+                </Avatar>
+              }
+              name="Julia Rowniewski"
+              secondary="julia@ohani.com"
+            />
+            <AvatarLabel
+              avatar={
+                <Avatar size="sm" shape="square">
+                  <AvatarFallback />
+                </Avatar>
+              }
+              name="OpenAI"
+            />
           </div>
         </Example>
       </div>

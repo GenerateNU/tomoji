@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { normalizeReviewCriteria } from "../../../lib/ai/validation";
+import { MAX_REVIEW_CRITERIA, normalizeReviewCriteria } from "../../../lib/ai/validation";
 
 test("normalizes confirmed criteria and allows clearing them", () => {
   expect(
@@ -29,10 +29,21 @@ test("rejects an overlong criterion description", () => {
   );
 });
 
-test("rejects more than 20 criteria", () => {
+test("accepts exactly the maximum number of criteria", () => {
+  const criteria = Array.from({ length: MAX_REVIEW_CRITERIA }, (_, i) => ({
+    id: String(i),
+    description: "Mention Driftwood.",
+  }));
+  expect(normalizeReviewCriteria(criteria)).toEqual(criteria);
+});
+
+test("rejects more than the maximum number of criteria", () => {
   expect(() =>
     normalizeReviewCriteria(
-      Array.from({ length: 21 }, (_, i) => ({ id: String(i), description: "Mention Driftwood." })),
+      Array.from({ length: MAX_REVIEW_CRITERIA + 1 }, (_, i) => ({
+        id: String(i),
+        description: "Mention Driftwood.",
+      })),
     ),
   ).toThrow(/too_many_review_criteria/);
 });

@@ -56,12 +56,19 @@ export async function requestAiProvider(
   }
   if (!response.ok) {
     const transient = response.status === 429 || response.status >= 500;
+    const retryAfter = response.headers.get("Retry-After");
+    let retryAfterMs = 0;
+    if (retryAfter !== null) {
+      if (/^\d+$/.test(retryAfter)) retryAfterMs = Number(retryAfter) * 1000;
+      else retryAfterMs = Math.max(0, Date.parse(retryAfter) - Date.now());
+    }
     throw apiError(
       response.status === 401 || response.status === 403 ? "misconfigured" : "upstream_failure",
       {
         provider,
         reason: "request_rejected",
         status: response.status,
+        retryAfterMs: Number.isFinite(retryAfterMs) ? retryAfterMs : 0,
         retryable: transient && !(submission && response.status >= 500),
         requestMayHaveSucceeded: submission && response.status >= 500,
       },

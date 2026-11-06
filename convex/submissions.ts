@@ -22,7 +22,7 @@ import schema from "./schema";
  * Submits a draft for one deliverable of the caller's own active assignment.
  * Each deliverable is reviewed on its own: one being pending or approved doesn't
  * block the others. Supply either a legacy URL or a completed owned video mediaId.
- * Media-backed AI drafts snapshot confirmed criteria; provider work is not scheduled yet.
+ * Media-backed AI drafts snapshot confirmed criteria and start background review when enabled.
  *
  * @throws `not_found` if the assignment doesn't exist or isn't the caller's, or
  * the deliverable isn't one of the assignment's opportunity.
@@ -49,7 +49,7 @@ export const create = creatorMutation({
  *
  * @throws `not_found` if the submission doesn't exist or isn't the company's.
  * @throws `invalid_state` if it was already reviewed, the assignment isn't
- * active, the note on a change request is blank, or the note is too long.
+ * active, automation is processing, the note on a change request is blank, or the note is too long.
  * @returns the reviewed submission.
  */
 export const review = companyMutation({

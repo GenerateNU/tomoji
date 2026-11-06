@@ -30,8 +30,11 @@ import type { DataModel } from "./dataModel.js";
 type Env = {
   readonly CONVEX_CLOUD_URL: string;
   readonly CONVEX_SITE_URL: string;
+  readonly AI_REVIEW_ENABLED: string | undefined;
+  readonly ASSEMBLYAI_API_KEY: string | undefined;
   readonly S3_MEDIA_BUCKET: string;
   readonly S3_MEDIA_REGION: string;
+  readonly TYPESAFE_API_KEY: string | undefined;
   readonly WORKOS_API_KEY: string | undefined;
   readonly WORKOS_OPERATOR_ORG_ID: string | undefined;
   readonly X_CLIENT_ID: string | undefined;

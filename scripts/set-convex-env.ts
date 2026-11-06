@@ -45,10 +45,27 @@ if (configureX && X_KEYS.some((key) => readValue(key) === "")) {
   process.exit(1);
 }
 
+const AI_KEYS = ["ASSEMBLYAI_API_KEY", "TYPESAFE_API_KEY"] as const;
+const configureAi =
+  AI_KEYS.some((key) => readValue(key) !== "") || readValue("AI_REVIEW_ENABLED") === "true";
+if (configureAi && AI_KEYS.some((key) => readValue(key) === "")) {
+  console.error(
+    "Set ASSEMBLYAI_API_KEY and TYPESAFE_API_KEY together, or leave AI review disabled and both keys empty.",
+  );
+  process.exit(1);
+}
+const aiEnabled = readValue("AI_REVIEW_ENABLED");
+if (aiEnabled !== "" && aiEnabled !== "true" && aiEnabled !== "false") {
+  console.error("AI_REVIEW_ENABLED must be true or false.");
+  process.exit(1);
+}
+
 const ENCRYPTION_KEYS = ["X_TOKEN_ENCRYPTION_KEYS", "X_TOKEN_ENCRYPTION_KEY_VERSION"] as const;
 const configureEncryption = ENCRYPTION_KEYS.some((key) => readValue(key) !== "");
 const keys = [
   ...KEYS,
+  ...(configureAi ? AI_KEYS : []),
+  ...(aiEnabled !== "" ? ["AI_REVIEW_ENABLED"] : []),
   ...(configureX ? X_KEYS : []),
   ...(configureEncryption ? ENCRYPTION_KEYS : []),
 ];

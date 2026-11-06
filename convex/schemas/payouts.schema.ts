@@ -18,12 +18,13 @@ export const payoutsTable = defineTable({
   creatorId: v.id("creators"),
   companyId: v.id("companies"),
   campaignId: v.id("campaigns"),
-  // Internal earning-event key; future writers enforce uniqueness within the assignment.
+  // Caller-supplied earning-event key, stable across retries within an assignment.
+  // createPayout enforces uniqueness transactionally.
   sourceKey: v.string(),
   postId: v.id("posts"),
   earningPeriod: v.optional(v.object({ startsAt: v.number(), endsAt: v.number() })),
-  // Integer currency minor units (e.g. cents for USD, yen for JPY).
-  // Future writers validate money bounds and the lowercase currency code.
+  // Positive safe integer currency minor units (e.g. cents for USD, yen for JPY).
+  // createPayout validates money bounds and the lowercase currency code.
   amount: v.number(),
   currency: v.string(),
   reviewRequestedAt: v.number(), // Unix milliseconds.

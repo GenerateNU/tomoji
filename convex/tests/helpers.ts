@@ -1,9 +1,8 @@
 import type { TestConvex as ConvexTest } from "convex-test";
-import type { UserIdentity, WithoutSystemFields, FunctionArgs } from "convex/server";
+import type { UserIdentity, WithoutSystemFields } from "convex/server";
 import type { Infer } from "convex/values";
 import { expect } from "vitest";
 import type { Doc, Id } from "../_generated/dataModel";
-import type { api } from "../_generated/api";
 import type { DeliverableCreate } from "../models/deliverableDrafts";
 import type { SubmissionDraft } from "../models/submissions";
 import type { ApiErrorCode } from "../lib/errors";
@@ -20,6 +19,39 @@ import type schema from "../schema";
 import type { submissionStatus } from "../schemas/submissions.schema";
 
 export type TestConvex = ConvexTest<typeof schema>;
+
+/** Builds a completed transcription response using synthetic speech and millisecond timestamps. */
+export function assemblyTranscriptResponse(overrides: Record<string, unknown> = {}): Response {
+  return Response.json({
+    id: "transcript-1",
+    status: "completed",
+    text: "Try Driftwood.",
+    words: [
+      { text: "Try", start: 100, end: 300 },
+      { text: "Driftwood.", start: 300, end: 900 },
+    ],
+    audio_duration: 2,
+    speech_model_used: "universal-2",
+    ...overrides,
+  });
+}
+
+/** Builds a single-criterion Jev response without invoking a live model. */
+export function jevReviewResponse(overrides: Record<string, unknown> = {}): Response {
+  return Response.json({
+    model: "jev-1.14.0",
+    answers: {
+      criterion_0: {
+        type: "choice",
+        choice: "uncertain",
+        confidence: 0.3,
+        probabilities: { met: 0.3, not_met: 0.3, uncertain: 0.4 },
+      },
+    },
+    usage: { input_tokens: 200, output_tokens: 10 },
+    ...overrides,
+  });
+}
 
 /** Reads a seeded user for direct model tests. */
 export async function requireSeededUser(t: TestConvex, subject: string) {
@@ -315,7 +347,13 @@ export type SeedCampaignOptions = {
   status?: Doc<"campaigns">["status"];
 };
 
-type CampaignArgs = FunctionArgs<typeof api.campaigns.create>;
+// Derive fixtures from the model without routing their types back through the generated API.
+type CampaignArgs = Omit<
+  Parameters<typeof createCampaign>[1],
+  "companyId" | "createdBy" | "status"
+> & {
+  status: "draft" | "open";
+};
 
 /** Builds client-editable campaign fields; raw fixtures add owner/state overrides separately. */
 export function campaignArgs(overrides: Partial<CampaignArgs> = {}): CampaignArgs {

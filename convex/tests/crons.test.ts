@@ -1,6 +1,16 @@
 import { describe, expect, test } from "vitest";
 import crons from "../crons";
 
+describe("payout approval cron", () => {
+  test("checks for due payouts every minute through the internal mutation", () => {
+    expect(crons.crons["approve due payouts"]).toEqual({
+      name: "payouts:autoApprove",
+      args: [{}],
+      schedule: { type: "interval", minutes: 1 },
+    });
+  });
+});
+
 describe("campaign deadline cron", () => {
   test("runs the internal campaign deadline mutation at :00 and :30 UTC", () => {
     expect(crons.crons["close expired campaigns"]).toEqual({

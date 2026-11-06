@@ -1,19 +1,14 @@
 import { apiError } from "../errors";
 import { invalidProviderResponse, providerObject, requestAiProvider } from "./aiProvider";
+import type { Infer } from "convex/values";
+import type { completedTranscription, transcriptWord } from "./validation";
 
 const TRANSCRIPTS_URL = "https://api.assemblyai.com/v2/transcript";
 export const ASSEMBLYAI_MODEL = "universal-2";
-export type TranscriptWord = { text: string; startMs: number; endMs: number };
+export type TranscriptWord = Infer<typeof transcriptWord>;
 export type Transcription =
   | { id: string; status: "queued" | "processing" | "error" }
-  | {
-      id: string;
-      status: "completed";
-      text: string;
-      words: TranscriptWord[];
-      durationSeconds: number;
-      model: string;
-    };
+  | Infer<typeof completedTranscription>;
 
 /** Submits an already-authorized S3 URL once; persist the ID before polling. */
 export async function submitTranscription(apiKey: string, videoUrl: string): Promise<string> {

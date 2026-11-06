@@ -17,6 +17,8 @@ import {
   opportunityArgs,
   requireSeededUser,
   seedAssignment,
+  seedAiReviewFixture,
+  seedMembership,
   seedCampaign,
   seedCreatorId,
   seedOpportunity,
@@ -503,4 +505,57 @@ describe("listDeliverables", () => {
       "not_found",
     );
   });
+});
+
+test("companies can confirm criteria before assignments but not edit another company's deliverable", async () => {
+  const t = convexTest(schema, modules);
+  const { membership, opportunityId } = await seedOpportunity(t, { subject: "criteria-owner" });
+  const id = await t.run((ctx) =>
+    createDeliverable(ctx, membership, opportunityId, {
+      title: "Demo",
+      description: "Introduce Driftwood.",
+      reviewCriteria: [{ id: " product ", description: " Mention Driftwood. " }],
+    }),
+  );
+  expect(await t.run((ctx) => ctx.db.get("deliverables", id))).toMatchObject({
+    reviewCriteria: [{ id: "product", description: "Mention Driftwood." }],
+  });
+  const other = await seedMembership(t, "criteria-intruder");
+  await expectApiError(
+    () => t.run((ctx) => updateDeliverable(ctx, other.membership, id, { reviewCriteria: [] })),
+    "not_found",
+  );
+});
+
+test("assignment locking also protects the confirmed criteria", async () => {
+  const t = convexTest(schema, modules);
+  const fixture = await seedAiReviewFixture(t);
+  await expectApiError(
+    () =>
+      t.run((ctx) =>
+        updateDeliverable(ctx, fixture.membership, fixture.deliverableId, { reviewCriteria: [] }),
+      ),
+    "invalid_state",
+    "opportunity_has_assignments",
+  );
+});
+
+test("editing criteria preserves the deliverable text and an empty array clears them", async () => {
+  const t = convexTest(schema, modules);
+  const { membership, opportunityId } = await seedOpportunity(t, { subject: "criteria-editor" });
+  const [deliverable] = await storedDeliverables(t, opportunityId);
+  const updated = await t.run((ctx) =>
+    updateDeliverable(ctx, membership, deliverable._id, {
+      reviewCriteria: [{ id: "disclosure", description: " State the sponsorship. " }],
+    }),
+  );
+  expect(updated).toEqual({
+    ...deliverable,
+    reviewCriteria: [{ id: "disclosure", description: "State the sponsorship." }],
+  });
+  const cleared = await t.run((ctx) =>
+    updateDeliverable(ctx, membership, deliverable._id, { reviewCriteria: [] }),
+  );
+  expect(cleared).toEqual({ ...deliverable, reviewCriteria: [] });
+  expect(await storedDeliverables(t, opportunityId)).toEqual([cleared]);
 });

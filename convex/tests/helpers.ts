@@ -4,8 +4,9 @@ import type { Infer } from "convex/values";
 import { expect } from "vitest";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { DeliverableCreate } from "../models/deliverableDrafts";
-import type { SubmissionDraft } from "../models/submissions";
+import { createSubmission, type SubmissionDraft } from "../models/submissions";
 import type { ApiErrorCode } from "../lib/errors";
+import type { Transcription } from "../lib/ai/assemblyAi";
 import { companyContext } from "../lib/functions";
 import { getCreatorByUserId } from "../models/creators";
 import { upsertXAccount, type XAccountLink } from "../models/xAccounts";
@@ -547,21 +548,23 @@ const FIXTURE_OPERATOR = "fixture-operator";
  */
 export async function seedAssignmentFixture(
   t: TestConvex,
-  assignment: Partial<Pick<Doc<"assignments">, "status" | "usesAiReview">> = {},
+  options: Partial<Pick<Doc<"assignments">, "status" | "usesAiReview">> & {
+    opportunity?: Partial<OpportunityCreate>;
+  } = {},
   companyRoleForFixture: Infer<typeof companyRole> = "member",
 ): Promise<AssignmentFixture> {
-  const { asCompany, membership, opportunityId } = await seedOpportunity(t, {
-    subject: FIXTURE_COMPANY,
-    orgId: "org_fixture",
-    role: companyRoleForFixture,
-  });
+  const { asCompany, membership, opportunityId } = await seedOpportunity(
+    t,
+    { subject: FIXTURE_COMPANY, orgId: "org_fixture", role: companyRoleForFixture },
+    options.opportunity,
+  );
   const creatorId = await seedCreatorId(t, FIXTURE_CREATOR);
   const assignmentId = await seedAssignment(t, {
     opportunityId,
     creatorId,
-    status: assignment.status ?? "active",
+    status: options.status ?? "active",
   });
-  const usesAiReview = assignment.usesAiReview ?? false;
+  const usesAiReview = options.usesAiReview ?? false;
   const { creatorUserId, deliverableId } = await t.run(async (ctx) => {
     await ctx.db.patch("assignments", assignmentId, { usesAiReview });
     const user = await getUserByWorkosId(ctx, FIXTURE_CREATOR);
@@ -583,6 +586,91 @@ export async function seedAssignmentFixture(
     asCreator: t.withIdentity(workosIdentity({ subject: FIXTURE_CREATOR })),
     asCompany,
   };
+}
+
+/** Builds normalized provider output for persistence tests, independently of provider parsing. */
+export function aiTranscriptionArgs(
+  overrides: Partial<Extract<Transcription, { status: "completed" }>> = {},
+): Extract<Transcription, { status: "completed" }> {
+  return {
+    id: "job-1",
+    status: "completed",
+    text: "Driftwood.",
+    words: [{ text: "Driftwood.", startMs: 0, endMs: 900 }],
+    durationSeconds: 1,
+    model: "universal-2",
+    ...overrides,
+  };
+}
+
+/** Seeds a completed private video; overrides intentionally model invalid media in authorization tests. */
+export async function seedSubmissionVideo(
+  t: TestConvex,
+  fixture: AssignmentFixture,
+  overrides: Partial<WithoutSystemFields<Doc<"mediaUploads">>> = {},
+): Promise<Id<"mediaUploads">> {
+  return await t.run((ctx) =>
+    ctx.db.insert("mediaUploads", {
+      ownerUserId: fixture.creatorUserId,
+      assignmentId: fixture.assignmentId,
+      kind: "video-submission",
+      status: "complete",
+      contentType: "video/mp4",
+      stagingKey: "staging/video-submission/test",
+      permanentKey: "media/video-submission/test",
+      sizeBytes: 1024,
+      grantExpiresAt: Date.now() + 60_000,
+      ...overrides,
+    }),
+  );
+}
+
+/** Seeds a media-backed AI draft with confirmed requirements and a ready attempt. */
+export async function seedAiReviewFixture(
+  t: TestConvex,
+  reviewCriteria: NonNullable<DeliverableCreate["reviewCriteria"]> = [
+    { id: "product", description: "Mention Driftwood." },
+  ],
+): Promise<
+  AssignmentFixture & {
+    mediaId: Id<"mediaUploads">;
+    submissionId: Id<"submissions">;
+    attempt: Doc<"aiReviewAttempts">;
+  }
+> {
+  const fixture = await seedAssignmentFixture(t, {
+    usesAiReview: true,
+    opportunity: {
+      title: "Driftwood launch demo",
+      description: "Demonstrate a first deployment using Driftwood CLI.",
+      contentRequirements: "Explain how Driftwood simplifies deployment.",
+      prohibitedClaims: "Do not promise zero downtime.",
+      disclosureRequirements: "Disclose the paid partnership.",
+      deliverables: [
+        deliverableArgs({
+          title: "CLI demo",
+          description: "Introduce Driftwood and explain a first deployment.",
+          reviewCriteria,
+        }),
+      ],
+    },
+  });
+  const mediaId = await seedSubmissionVideo(t, fixture);
+  const submissionId = await t.run((ctx) =>
+    createSubmission(
+      ctx,
+      fixture.creatorId,
+      submissionArgs(fixture, { draftUrl: undefined, mediaId }),
+    ),
+  );
+  const attempt = await t.run((ctx) =>
+    ctx.db
+      .query("aiReviewAttempts")
+      .withIndex("by_submissionId", (q) => q.eq("submissionId", submissionId))
+      .unique(),
+  );
+  if (!attempt) throw new Error("expected seeded AI review attempt");
+  return { ...fixture, mediaId, submissionId, attempt };
 }
 
 /**

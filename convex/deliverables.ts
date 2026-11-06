@@ -32,7 +32,8 @@ export const create = companyMutation({
 });
 
 /**
- * Edits a deliverable's title or description. Omitted fields stay unchanged.
+ * Edits a deliverable's title, description, or confirmed review criteria.
+ * Omitted fields stay unchanged; an empty criteria array clears criteria.
  *
  * @throws `not_found` if the deliverable doesn't exist or isn't the company's.
  * @throws `invalid_state` if the opportunity or its campaign is closed

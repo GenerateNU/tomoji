@@ -1,16 +1,18 @@
 import { apiError } from "../errors";
 import { invalidProviderResponse, providerObject, requestAiProvider } from "./aiProvider";
+import type { Infer } from "convex/values";
+import {
+  MAX_REVIEW_CRITERIA,
+  type criterionResult,
+  type reviewCriterion,
+  type reviewOutcome,
+} from "./validation";
 
 export const JEV_MODEL = "jev-1.14.0";
 const outcomes = ["met", "not_met", "uncertain"] as const;
-export type ReviewOutcome = (typeof outcomes)[number];
-export type ReviewCriterion = { id: string; description: string };
-export type CriterionResult = {
-  criterionId: string;
-  outcome: ReviewOutcome;
-  confidence: number;
-  probabilities: Record<ReviewOutcome, number>;
-};
+export type ReviewOutcome = Infer<typeof reviewOutcome>;
+export type ReviewCriterion = Infer<typeof reviewCriterion>;
+export type CriterionResult = Infer<typeof criterionResult>;
 
 /** Narrows an outcome without accepting provider-invented choices. */
 function isOutcome(value: unknown): value is ReviewOutcome {
@@ -38,7 +40,7 @@ export async function evaluateTranscript(
   if (
     !transcript.trim() ||
     criteria.length === 0 ||
-    criteria.length > 20 ||
+    criteria.length > MAX_REVIEW_CRITERIA ||
     criteria.some((criterion) => !criterion.id.trim() || !criterion.description.trim()) ||
     new Set(criteria.map((criterion) => criterion.id)).size !== criteria.length
   )

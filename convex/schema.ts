@@ -23,6 +23,7 @@ import { xAccountsTable } from "./schemas/xAccounts.schema";
 import { xAccountCredentialsTable } from "./schemas/xAccountCredentials.schema";
 import { xLinkAttemptsTable } from "./schemas/xLinkAttempts.schema";
 import { deliverablesTable } from "./schemas/deliverables.schema";
+import { aiReviewAttemptsTable } from "./schemas/aiReviewAttempts.schema";
 
 export default defineSchema({
   users: usersTable,
@@ -41,6 +42,7 @@ export default defineSchema({
   applications: applicationsTable,
   assignments: assignmentsTable,
   submissions: submissionsTable,
+  aiReviewAttempts: aiReviewAttemptsTable,
   posts: postsTable,
   payouts: payoutsTable,
   disputes: disputesTable,

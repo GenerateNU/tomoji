@@ -10,6 +10,7 @@
  *   S3_MEDIA_BUCKET
  *   S3_MEDIA_REGION
  *   X_CLIENT_ID / X_CLIENT_SECRET / X_REDIRECT_URI (when supplied together)
+ *   X_BEARER_TOKEN / X_METRICS_SYNC_ENABLED (each when supplied)
  */
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
@@ -47,10 +48,19 @@ if (configureX && X_KEYS.some((key) => readValue(key) === "")) {
 
 const ENCRYPTION_KEYS = ["X_TOKEN_ENCRYPTION_KEYS", "X_TOKEN_ENCRYPTION_KEY_VERSION"] as const;
 const configureEncryption = ENCRYPTION_KEYS.some((key) => readValue(key) !== "");
+// Either can be set alone; only an enabled sync with no token can't run.
+if (readValue("X_METRICS_SYNC_ENABLED") === "true" && readValue("X_BEARER_TOKEN") === "") {
+  console.error(
+    "X_METRICS_SYNC_ENABLED=true needs X_BEARER_TOKEN. Set the token or turn the flag off.",
+  );
+  process.exit(1);
+}
+const METRICS_KEYS = ["X_BEARER_TOKEN", "X_METRICS_SYNC_ENABLED"] as const;
 const keys = [
   ...KEYS,
   ...(configureX ? X_KEYS : []),
   ...(configureEncryption ? ENCRYPTION_KEYS : []),
+  ...METRICS_KEYS.filter((key) => readValue(key) !== ""),
 ];
 const missing = keys.filter((key) => readValue(key) === "");
 if (missing.length > 0) {

@@ -1,6 +1,9 @@
 /// <reference types="vite/client" />
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
+import type { Id } from "../../_generated/dataModel";
+import { updateCreatorNiches } from "../../models/creatorNiches";
+import { updateCreatorSkills } from "../../models/creatorSkills";
 import {
   getCreatorByUserId,
   hasCreatorActivity,
@@ -11,7 +14,7 @@ import {
 } from "../../models/creators";
 import { deactivateUser, getUserByWorkosId } from "../../models/users";
 import schema from "../../schema";
-import { NICHES } from "../../models/niches";
+import { MAX_NICHES, NICHES } from "../../models/niches";
 import { SKILLS } from "../../models/skills";
 import {
   expectApiError,
@@ -85,13 +88,19 @@ describe("requireCreatorProfile", () => {
 describe("listCreators", () => {
   test("paginates fully populated profiles within Convex transaction limits", async () => {
     const t = convexTest({ schema, modules, transactionLimits: true });
-    const niches = NICHES.slice(0, 5).map((niche) => niche.name);
+    const niches = NICHES.slice(0, MAX_NICHES).map((niche) => niche.name);
     const skills = SKILLS.map((skill) => skill.name);
-    for (let index = 0; index < 210; index++) {
-      const subject = `creator_full_${index}`;
-      await seedUser(t, { subject });
-      const user = await requireSeededUser(t, subject);
-      await t.run((ctx) => updateCreatorProfile(ctx, user, { niches, skills }));
+    // One more than a full page exercises the cap and continuation without a second full-page scan.
+    const creatorIds: Id<"creators">[] = [];
+    for (let index = 0; index < 101; index++) {
+      creatorIds.push(await seedCreatorId(t, `creator_full_${index}`));
+    }
+    // Populate through the association models without hydrating every profile during setup.
+    for (const creatorId of creatorIds) {
+      await t.run(async (ctx) => {
+        await updateCreatorNiches(ctx, creatorId, niches);
+        await updateCreatorSkills(ctx, creatorId, skills);
+      });
     }
 
     const first = await t.run((ctx) =>
@@ -101,24 +110,18 @@ describe("listCreators", () => {
     );
     expect(first.page).toHaveLength(100);
     expect(first.isDone).toBe(false);
-    expect(first.page[0]).toMatchObject({ niches, skills });
     const second = await t.run((ctx) =>
       listCreators(ctx, {
         paginationOpts: { cursor: first.continueCursor, numItems: 1000, maximumRowsRead: 10000 },
       }),
     );
-    expect(second.page).toHaveLength(100);
-    expect(second.isDone).toBe(false);
-    const third = await t.run((ctx) =>
-      listCreators(ctx, {
-        paginationOpts: { cursor: second.continueCursor, numItems: 1000, maximumRowsRead: 10000 },
-      }),
+    expect(second.page).toHaveLength(1);
+    expect(second.isDone).toBe(true);
+    const profiles = [...first.page, ...second.page];
+    expect(profiles.map((profile) => profile.email)).toEqual(
+      Array.from({ length: 101 }, (_, index) => `creator_full_${index}@example.com`),
     );
-    expect(third.page).toHaveLength(10);
-    expect(third.isDone).toBe(true);
-    expect([...first.page, ...second.page, ...third.page].map((profile) => profile.email)).toEqual(
-      Array.from({ length: 210 }, (_, index) => `creator_full_${index}@example.com`),
-    );
+    for (const profile of profiles) expect(profile).toMatchObject({ niches, skills });
   }, 60_000);
 
   test("caps default and oversized read budgets while preserving cursor pagination", async () => {

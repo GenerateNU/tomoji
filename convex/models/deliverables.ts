@@ -1,6 +1,7 @@
 import { v, type Infer } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
+import { normalizeReviewCriteria, reviewCriterion } from "../lib/ai/validation";
 import { apiError } from "../lib/errors";
 import schema from "../schema";
 import {
@@ -8,6 +9,7 @@ import {
   insertDeliverables,
   listOpportunityDeliverables,
   normalizeDeliverable,
+  requireAiReviewCriteria,
   type DeliverableCreate,
 } from "./deliverableDrafts";
 import { requireEditableOpportunity, requireOpportunity } from "./opportunities";
@@ -19,7 +21,8 @@ export type DeliverableUpdate = Infer<typeof deliverableUpdate>;
 // Allowlist creator fields so new stored fields do not become visible to creators by default.
 export const creatorDeliverable = schema
   .doc("deliverables")
-  .pick("_id", "_creationTime", "opportunityId", "title", "description", "reviewCriteria");
+  .pick("_id", "_creationTime", "opportunityId", "title", "description")
+  .extend({ reviewCriteria: v.array(reviewCriterion) });
 export type CreatorDeliverable = Infer<typeof creatorDeliverable>;
 
 /** What `list` returns: the stored row, or the creator view without who created it. */
@@ -27,17 +30,14 @@ export const deliverableView = v.union(schema.doc("deliverables"), creatorDelive
 
 /** Shows creators the confirmed requirements without exposing the company member's ID. */
 function toCreatorDeliverable(deliverable: Doc<"deliverables">): CreatorDeliverable {
-  const view: CreatorDeliverable = {
+  return {
     _id: deliverable._id,
     _creationTime: deliverable._creationTime,
     opportunityId: deliverable.opportunityId,
     title: deliverable.title,
     description: deliverable.description,
+    reviewCriteria: normalizeReviewCriteria(deliverable.reviewCriteria ?? []),
   };
-  if (deliverable.reviewCriteria !== undefined) {
-    view.reviewCriteria = deliverable.reviewCriteria;
-  }
-  return view;
 }
 
 /** Whether any creator has ever been assigned, whatever the assignment's status now. */
@@ -94,7 +94,8 @@ export async function createDeliverable(
   opportunityId: Id<"opportunities">,
   fields: DeliverableCreate,
 ): Promise<Id<"deliverables">> {
-  await requireEditableOpportunity(ctx, membership, opportunityId);
+  const { opportunity } = await requireEditableOpportunity(ctx, membership, opportunityId);
+  requireAiReviewCriteria(opportunity.usesAiReviewDefault, [fields]);
   const existing = await listOpportunityDeliverables(ctx, opportunityId);
   const [deliverableId] = await insertDeliverables(
     ctx,
@@ -113,13 +114,18 @@ export async function updateDeliverable(
   deliverableId: Id<"deliverables">,
   updates: DeliverableUpdate,
 ): Promise<Doc<"deliverables">> {
-  const { deliverable } = await requireEditableDeliverable(ctx, membership, deliverableId);
+  const { deliverable, opportunity } = await requireEditableDeliverable(
+    ctx,
+    membership,
+    deliverableId,
+  );
   await requireNoAssignments(ctx, deliverable.opportunityId);
   const patch = normalizeDeliverable({
     title: updates.title ?? deliverable.title,
     description: updates.description ?? deliverable.description,
     reviewCriteria: updates.reviewCriteria ?? deliverable.reviewCriteria,
   });
+  requireAiReviewCriteria(opportunity.usesAiReviewDefault, [patch]);
   await ctx.db.patch("deliverables", deliverableId, patch);
   return { ...deliverable, ...patch };
 }

@@ -7,13 +7,18 @@ execution and approval policy follow in PR 3 for #162.
 
 ## Submission foundation
 
-`submissions.create` accepts exactly one source: an existing `draftUrl` or an owned,
-completed video `mediaId` for the same assignment. Existing URL drafts keep their
-manual-review behavior during rollout. No URL backfill is required or performed.
+`submissions.create` requires a completed video `mediaId` owned by the creator and
+bound to the same assignment. External draft URLs are no longer accepted or stored.
+Before deploying this schema, reseed disposable development submissions that still
+contain `draftUrl` or lack `mediaId`, as agreed in review. Do not clear shared or
+production data without its owner's approval.
 
 Companies can set up to 20 explicit `{ id, description }` review criteria through
-deliverable create/update; `[]` clears them. Existing assignment locking applies.
-Creators can read these criteria alongside the deliverable text.
+deliverable create/update. AI-enabled opportunities require criteria on every
+deliverable when created, enabled, published, resumed, or edited; manual-review
+opportunities may clear them with `[]`. Existing assignment locking applies.
+Creators receive normalized criteria alongside the deliverable text, with `[]`
+when none are stored.
 
 Media-backed AI drafts require confirmed criteria. The creation transaction snapshots
 them and the opportunity context into `aiReviewAttempts` with status `ready`. It does
@@ -21,8 +26,8 @@ not enqueue work. Internal model operations claim an attempt, retain the transcr
 job and transcript, and save results without changing submission approval. Every
 write rejects stale attempts or submissions already reviewed/on inactive assignments.
 
-All new fields on existing tables are optional; the attempt table is new. No live
-migration is needed for this additive schema. Criteria and snapshot placement must
+The attempt table is new; the required submission media field is a breaking schema
+change and needs the development reseed described above. Criteria and snapshot placement must
 be aligned with #177/#178 before merge. Retry scheduling, duration enforcement,
 provider execution, public processing-state reads and review notifications remain PR 3.
 

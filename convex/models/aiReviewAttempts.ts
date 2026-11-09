@@ -16,12 +16,7 @@ export async function createAiReviewAttempt(
   submissionId: Id<"submissions">,
 ): Promise<Id<"aiReviewAttempts">> {
   const submission = await ctx.db.get("submissions", submissionId);
-  if (
-    !submission ||
-    submission.status !== "pending" ||
-    !submission.usesAiReview ||
-    !submission.mediaId
-  )
+  if (!submission || submission.status !== "pending" || !submission.usesAiReview)
     throw apiError("invalid_state", { reason: "ai_review_not_eligible" });
   const assignment = await ctx.db.get("assignments", submission.assignmentId);
   if (!assignment) throw apiError("not_found", { resource: "assignment" });

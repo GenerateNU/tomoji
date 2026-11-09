@@ -100,6 +100,7 @@ describe("createSubmission", () => {
         assignmentId: fixture.assignmentId,
         deliverableId: fixture.deliverableId,
         ...draft,
+        mediaId: fixture.mediaId,
         status: "pending",
         usesAiReview,
       });
@@ -111,7 +112,6 @@ describe("createSubmission", () => {
     const fixture = await seedAssignmentFixture(t);
 
     const id = await submit(t, fixture, {
-      draftUrl: `  ${draft.draftUrl}  `,
       draftDescription: `  ${draft.draftDescription}\n`,
     });
 
@@ -219,86 +219,25 @@ describe("createSubmission", () => {
     expect(await storedSubmissions(t)).toHaveLength(0);
   });
 
-  test.each([
-    ["draftUrl", "   "],
-    ["draftDescription", " \n "],
-  ] as const)("rejects a blank %s without writing a submission", async (field, value) => {
+  test("rejects a blank description without writing a submission", async () => {
     const t = convexTest(schema, modules);
     const fixture = await seedAssignmentFixture(t);
-
     await expectApiError(
-      () => submit(t, fixture, { [field]: value } as Partial<SubmissionDraft>),
+      () => submit(t, fixture, { draftDescription: " \n " }),
       "invalid_state",
-      `${field}_blank`,
+      "draftDescription_blank",
     );
-
     expect(await storedSubmissions(t)).toHaveLength(0);
   });
 
-  // Everything before `@` is login details: `drive.google.com@evil.example` goes to evil.example.
-  test.each([
-    "not a url",
-    "ftp://example.com/draft.mp4",
-    "javascript:alert(1)",
-    "https://drive.google.com@evil.example/draft",
-    "https://user:pass@drive.example.com/draft",
-  ])("rejects draft URL %s without writing a submission", async (draftUrl) => {
+  test("rejects a description over the length limit", async () => {
     const t = convexTest(schema, modules);
     const fixture = await seedAssignmentFixture(t);
-
     await expectApiError(
-      () => submit(t, fixture, { draftUrl }),
+      () => submit(t, fixture, { draftDescription: "a".repeat(5001) }),
       "invalid_state",
-      "draftUrl_invalid",
+      "draftDescription_too_long",
     );
-
-    expect(await storedSubmissions(t)).toHaveLength(0);
-  });
-
-  test.each([
-    ["https://drive.example.com/a\nb", "https://drive.example.com/ab"],
-    [
-      'https://drive.example.com/"><img src=x>',
-      "https://drive.example.com/%22%3E%3Cimg%20src=x%3E",
-    ],
-    ["HTTPS://Drive.Example.com/draft", "https://drive.example.com/draft"],
-  ])("stores draft URL %j in its parsed form", async (draftUrl, stored) => {
-    const t = convexTest(schema, modules);
-    const fixture = await seedAssignmentFixture(t);
-
-    const id = await submit(t, fixture, { draftUrl });
-
-    expect(await storedSubmission(t, id)).toMatchObject({ draftUrl: stored });
-  });
-
-  test("rejects a draft URL that goes over the length limit once encoded", async () => {
-    const t = convexTest(schema, modules);
-    const fixture = await seedAssignmentFixture(t);
-    // 726 characters as typed; each `"` becomes `%22`, making it 2,126.
-    const draftUrl = `https://drive.example.com/${'"'.repeat(700)}`;
-
-    await expectApiError(
-      () => submit(t, fixture, { draftUrl }),
-      "invalid_state",
-      "draftUrl_too_long",
-    );
-
-    expect(await storedSubmissions(t)).toHaveLength(0);
-  });
-
-  test.each([
-    ["draftUrl", `https://drive.example.com/${"a".repeat(2048)}`],
-    ["draftDescription", "a".repeat(5001)],
-  ] as const)("rejects a %s over the length limit", async (field, value) => {
-    const t = convexTest(schema, modules);
-    const fixture = await seedAssignmentFixture(t);
-
-    await expectApiError(
-      () => submit(t, fixture, { [field]: value } as Partial<SubmissionDraft>),
-      "invalid_state",
-      `${field}_too_long`,
-    );
-
     expect(await storedSubmissions(t)).toHaveLength(0);
   });
 
@@ -543,6 +482,7 @@ describe("closedWithoutReview", () => {
 
 describe("toSubmissionView", () => {
   const base = {
+    mediaId: "mediaUploads|1" as Id<"mediaUploads">,
     _id: "submissions|1" as Id<"submissions">,
     _creationTime: 1,
     assignmentId: "assignments|1" as Id<"assignments">,

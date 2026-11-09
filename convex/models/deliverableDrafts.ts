@@ -83,3 +83,16 @@ export async function insertDeliverables(
   }
   return ids;
 }
+
+/** AI review requires confirmed criteria for every deliverable, including later additions. */
+export function requireAiReviewCriteria(
+  enabled: boolean,
+  deliverables: Pick<DeliverableCreate, "reviewCriteria">[],
+): void {
+  if (!enabled) return;
+  for (const deliverable of deliverables) {
+    if (normalizeReviewCriteria(deliverable.reviewCriteria ?? []).length === 0) {
+      throw apiError("invalid_state", { reason: "ai_review_criteria_required" });
+    }
+  }
+}

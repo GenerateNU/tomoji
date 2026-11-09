@@ -392,6 +392,7 @@ export async function seedCampaign(t: TestConvex, options: SeedCampaignOptions) 
 /** A company-supplied deliverable. */
 export function deliverableArgs(overrides: Partial<DeliverableCreate> = {}): DeliverableCreate {
   return {
+    reviewCriteria: [{ id: "product", description: "Mention the product." }],
     title: "Launch video",
     description: "A 30-second vertical video showing the moisturizer in your morning routine.",
     ...overrides,
@@ -513,6 +514,7 @@ export async function seedMembership(
 
 export type AssignmentFixture = {
   assignmentId: Id<"assignments">;
+  mediaId: Id<"mediaUploads">;
   /** The seeded opportunity's only deliverable. */
   deliverableId: Id<"deliverables">;
   creatorId: Id<"creators">;
@@ -523,17 +525,16 @@ export type AssignmentFixture = {
 };
 
 export const submissionDraftFields = {
-  draftUrl: "https://drive.example.com/drafts/driftwood-first-deploy",
   draftDescription: "60-second walkthrough: install, `driftwood init`, first deploy at 0:45.",
-} satisfies Omit<SubmissionDraft, "assignmentId" | "deliverableId">;
+} satisfies Omit<SubmissionDraft, "assignmentId" | "deliverableId" | "mediaId">;
 
 /** Builds a creator-supplied draft while allowing each test to override its scenario. */
 export function submissionArgs(
-  fixture: Pick<AssignmentFixture, "assignmentId" | "deliverableId">,
+  fixture: Pick<AssignmentFixture, "assignmentId" | "deliverableId" | "mediaId">,
   overrides: Partial<SubmissionDraft> = {},
 ): SubmissionDraft {
-  const { assignmentId, deliverableId } = fixture;
-  return { assignmentId, deliverableId, ...submissionDraftFields, ...overrides };
+  const { assignmentId, deliverableId, mediaId } = fixture;
+  return { assignmentId, deliverableId, mediaId, ...submissionDraftFields, ...overrides };
 }
 
 // Subjects the assignment fixture seeds. Every test gets a fresh database and
@@ -577,7 +578,9 @@ export async function seedAssignmentFixture(
     return { creatorUserId: user._id, deliverableId: deliverable._id };
   });
 
+  const mediaId = await seedSubmissionVideo(t, { assignmentId, creatorUserId });
   return {
+    mediaId,
     assignmentId,
     deliverableId,
     creatorId,
@@ -606,7 +609,7 @@ export function aiTranscriptionArgs(
 /** Seeds a completed private video; overrides intentionally model invalid media in authorization tests. */
 export async function seedSubmissionVideo(
   t: TestConvex,
-  fixture: AssignmentFixture,
+  fixture: Pick<AssignmentFixture, "creatorUserId" | "assignmentId">,
   overrides: Partial<WithoutSystemFields<Doc<"mediaUploads">>> = {},
 ): Promise<Id<"mediaUploads">> {
   return await t.run((ctx) =>
@@ -655,13 +658,9 @@ export async function seedAiReviewFixture(
       ],
     },
   });
-  const mediaId = await seedSubmissionVideo(t, fixture);
+  const mediaId = fixture.mediaId;
   const submissionId = await t.run((ctx) =>
-    createSubmission(
-      ctx,
-      fixture.creatorId,
-      submissionArgs(fixture, { draftUrl: undefined, mediaId }),
-    ),
+    createSubmission(ctx, fixture.creatorId, submissionArgs(fixture, { mediaId })),
   );
   const attempt = await t.run((ctx) =>
     ctx.db
@@ -705,7 +704,7 @@ export async function seedSubmission(
     const draft = {
       assignmentId: fixture.assignmentId,
       deliverableId: fixture.deliverableId,
-      draftUrl: "https://drive.example.com/drafts/driftwood-cli-screencast",
+      mediaId: fixture.mediaId,
       draftDescription: "Screencast: installing the Driftwood CLI and running a first deploy.",
       usesAiReview: assignment.usesAiReview,
     };
@@ -861,7 +860,7 @@ export async function seedOverriddenSubmission(t: TestConvex) {
     return await ctx.db.insert("submissions", {
       assignmentId: fixture.assignmentId,
       deliverableId: fixture.deliverableId,
-      draftUrl: "https://drive.example.com/drafts/driftwood-cli-screencast",
+      mediaId: fixture.mediaId,
       draftDescription: "Screencast: installing the Driftwood CLI and running a first deploy.",
       usesAiReview: false,
       status: "approved",

@@ -24,6 +24,7 @@ import {
   seedOneSubmission,
   seedOpportunity,
   seedSubmission,
+  seedSubmissionVideo,
   type AssignmentFixture,
   type TestConvex,
 } from "../helpers";
@@ -314,12 +315,15 @@ async function addPost(t: TestConvex, fixture: AssignmentFixture, subject: strin
     async (ctx) => (await ctx.db.get("assignments", fixture.assignmentId))!.opportunityId,
   );
   const assignmentId = await seedAssignment(t, { opportunityId, creatorId, status: "active" });
+  const creator = await t.run((ctx) => ctx.db.get("creators", creatorId));
+  if (!creator) throw new Error("expected seeded creator");
+  const mediaId = await seedSubmissionVideo(t, { assignmentId, creatorUserId: creator.userId });
   return await t.run(async (ctx) => {
     const submissionId = await ctx.db.insert("submissions", {
       assignmentId,
       // Same opportunity as the fixture, so the same deliverable.
       deliverableId: fixture.deliverableId,
-      draftUrl: "https://drive.example.com/drafts/another",
+      mediaId,
       draftDescription: "Another draft",
       usesAiReview: false,
       status: "approved",
@@ -381,7 +385,7 @@ describe("listPosts by assignment", () => {
       const submissionId = await ctx.db.insert("submissions", {
         assignmentId: fixture.assignmentId,
         deliverableId: secondDeliverableId,
-        draftUrl: "https://drive.example.com/drafts/follow-up-thread",
+        mediaId: fixture.mediaId,
         draftDescription: "Follow-up thread on two weeks of results.",
         usesAiReview: false,
         status: "approved",
@@ -400,7 +404,7 @@ describe("listPosts by assignment", () => {
         await ctx.db.insert("submissions", {
           assignmentId: fixture.assignmentId,
           deliverableId: thirdDeliverableId,
-          draftUrl: "https://drive.example.com/drafts/unboxing",
+          mediaId: fixture.mediaId,
           draftDescription: "Unboxing video.",
           usesAiReview: false,
           status: "pending",
@@ -503,12 +507,18 @@ describe("listPosts by campaign", () => {
       creatorId: otherCreatorId,
       status: "active",
     });
+    const otherCreator = await t.run((ctx) => ctx.db.get("creators", otherCreatorId));
+    if (!otherCreator) throw new Error("expected seeded creator");
+    const otherMediaId = await seedSubmissionVideo(t, {
+      assignmentId: otherAssignmentId,
+      creatorUserId: otherCreator.userId,
+    });
     await t.run(async (ctx) => {
       const [otherDeliverable] = await listOpportunityDeliverables(ctx, other.opportunityId);
       const submissionId = await ctx.db.insert("submissions", {
         assignmentId: otherAssignmentId,
         deliverableId: otherDeliverable._id,
-        draftUrl: "https://drive.example.com/drafts/other",
+        mediaId: otherMediaId,
         draftDescription: "Other campaign draft",
         usesAiReview: false,
         status: "approved",

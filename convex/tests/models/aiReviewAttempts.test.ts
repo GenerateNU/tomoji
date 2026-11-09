@@ -329,16 +329,18 @@ test("rejects duplicate criterion IDs even when every expected ID is present", a
 
 test("requires confirmed criteria and rolls back an ineligible media draft", async () => {
   const t = convexTest(schema, modules);
-  const fixture = await seedAssignmentFixture(t, { usesAiReview: true });
+  const fixture = await seedAssignmentFixture(t, {
+    usesAiReview: true,
+    opportunity: {
+      usesAiReviewDefault: false,
+      deliverables: [{ title: "Video", description: "Show the product." }],
+    },
+  });
   const mediaId = await seedSubmissionVideo(t, fixture);
   await expectApiError(
     () =>
       t.run((ctx) =>
-        createSubmission(
-          ctx,
-          fixture.creatorId,
-          submissionArgs(fixture, { draftUrl: undefined, mediaId }),
-        ),
+        createSubmission(ctx, fixture.creatorId, submissionArgs(fixture, { mediaId })),
       ),
     "invalid_state",
     "ai_review_criteria_required",

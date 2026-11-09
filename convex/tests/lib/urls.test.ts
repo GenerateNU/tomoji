@@ -65,14 +65,14 @@ describe("requireUrl", () => {
 
   describe("with a length cap", () => {
     const capped = {
-      reason: "draftUrl_invalid",
+      reason: "assetUrl_invalid",
       maxLength: 40,
-      tooLongReason: "draftUrl_too_long",
+      tooLongReason: "assetUrl_too_long",
     };
 
     test("measures the encoded URL, which can be longer than what was typed", () => {
       expect(reasonOf(() => requireUrl(`https://example.com/${"a".repeat(40)}`, capped))).toBe(
-        "draftUrl_too_long",
+        "assetUrl_too_long",
       );
     });
 

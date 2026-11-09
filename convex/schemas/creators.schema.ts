@@ -3,6 +3,17 @@ import { v } from "convex/values";
 
 export const MAX_ADDITIONAL_LINKS = 3;
 
+// Self-reported reach, so ranking needs no X API calls. Bounds live in models/followerRanges.ts.
+export const followerRange = v.union(
+  v.literal("under-1k"),
+  v.literal("1k-5k"),
+  v.literal("5k-10k"),
+  v.literal("10k-50k"),
+  v.literal("50k-100k"),
+  v.literal("100k-500k"),
+  v.literal("500k-plus"),
+);
+
 export const creatorsTable = defineTable({
   userId: v.id("users"),
   githubLink: v.optional(v.string()),
@@ -23,4 +34,5 @@ export const creatorsTable = defineTable({
   // Legacy selections remain readable until backfilled into creatorNiches.
   // New writes use association rows and remove this field atomically.
   niches: v.optional(v.array(v.string())),
+  followerRange: v.optional(followerRange),
 }).index("by_userId", ["userId"]);

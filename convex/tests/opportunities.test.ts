@@ -657,6 +657,27 @@ describe("opportunities.update", () => {
     ).toEqual({ ...result, niches: undefined, skills: undefined });
   });
 
+  test("sets and clears an opportunity's minimum follower range", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(
+      t,
+      { subject: "update_followers" },
+      { minFollowerRange: "10k-50k" },
+    );
+
+    const raised = await owner.asCompany.mutation(api.opportunities.update, {
+      opportunityId: owner.opportunityId,
+      minFollowerRange: "50k-100k",
+    });
+    expect(raised.minFollowerRange).toBe("50k-100k");
+
+    const cleared = await owner.asCompany.mutation(api.opportunities.update, {
+      opportunityId: owner.opportunityId,
+      minFollowerRange: null,
+    });
+    expect(cleared).not.toHaveProperty("minFollowerRange");
+  });
+
   test("lets a company admin remove an optional product link", async () => {
     const t = convexTest(schema, modules);
     const owner = await seedOpportunity(

@@ -23,6 +23,7 @@ import {
 } from "./opportunityNiches";
 import { listOpportunitySkills, updateOpportunitySkills } from "./opportunitySkills";
 import schema from "../schema";
+import { followerRange } from "../schemas/creators.schema";
 
 export const opportunityCreate = schema
   .doc("opportunities")
@@ -133,10 +134,11 @@ export async function getOpportunity(
 
 // Deliverables change through the `deliverables` routes.
 export const opportunityUpdate = opportunityCreate
-  .omit("campaignId", "status", "productAccessLink", "deliverables")
+  .omit("campaignId", "status", "productAccessLink", "minFollowerRange", "deliverables")
   .partial()
   .extend({
     productAccessLink: v.optional(v.union(v.string(), v.null())),
+    minFollowerRange: v.optional(v.union(followerRange, v.null())),
   });
 
 export type OpportunityUpdate = Infer<typeof opportunityUpdate>;
@@ -413,6 +415,9 @@ export async function updateOpportunity(
       updates.productAccessLink === null
         ? undefined
         : requireUrl(updates.productAccessLink, { reason: "invalid_product_access_link" });
+  }
+  if (updates.minFollowerRange !== undefined) {
+    patch.minFollowerRange = updates.minFollowerRange ?? undefined;
   }
   const updated = { ...opportunity, ...patch };
   const normalized = validateOpportunityFields(updated);

@@ -467,6 +467,20 @@ export async function getVisibleCreatorOpportunity(
   ctx: QueryCtx,
   opportunity: Doc<"opportunities">,
 ): Promise<CreatorOpportunity | null> {
+  const company = await getVisibleOpportunityCompany(ctx, opportunity);
+  return company === null
+    ? null
+    : toCreatorOpportunity(opportunity, company, await getOpportunityView(ctx, opportunity));
+}
+
+/**
+ * Returns the opportunity's company if creators may see the opportunity: it's
+ * open, its campaign is open, and its company is active. Otherwise `null`.
+ */
+export async function getVisibleOpportunityCompany(
+  ctx: QueryCtx | MutationCtx,
+  opportunity: Doc<"opportunities">,
+): Promise<Doc<"companies"> | null> {
   if (opportunity.status !== "open") return null;
   const campaign = await ctx.db.get("campaigns", opportunity.campaignId);
   if (
@@ -477,9 +491,7 @@ export async function getVisibleCreatorOpportunity(
     return null;
   }
   const company = await ctx.db.get("companies", opportunity.companyId);
-  return company !== null && company.isActive
-    ? toCreatorOpportunity(opportunity, company, await getOpportunityView(ctx, opportunity))
-    : null;
+  return company !== null && company.isActive ? company : null;
 }
 
 /** Discovers open briefs across active companies without ranking or application eligibility rules. */

@@ -33,8 +33,11 @@ included. A terminal transcription failure returns `status: "error"`.
 
 There are no automatic retries or polling loops. The future orchestrator must
 bound retries and honor provider backoff. If `requestMayHaveSucceeded` is true,
-reconcile the attempt or send it to manual review: do not submit another billed
-transcription blindly. Retrying Jev can also incur another inference charge.
+reconcile the attempt or send it to manual review: both AssemblyAI and Jev POSTs
+may already have incurred a charge. Timeouts use `request_timeout` and are marked
+retryable, but callers must still honor the ambiguous-POST flag before retrying.
+Malformed JSON remains non-retryable. Transcripts exceeding 8192 words fail with
+`review_input_too_large` instead of a malformed-response error.
 
 Tests mock `fetch` under the existing edge-runtime Vitest project. Run:
 `bun run test convex/tests/lib/ai/assemblyAi.test.ts convex/tests/lib/ai/jev.test.ts convex/tests/lib/ai/aiProvider.test.ts`.

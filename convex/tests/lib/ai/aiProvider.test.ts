@@ -53,13 +53,57 @@ test("redacts network errors while distinguishing safe reads from ambiguous subm
   });
 });
 
-test("Jev server errors can be retried by the caller", async () => {
+test("Jev server errors preserve the ambiguous billed request", async () => {
   vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("secret", { status: 500 })));
   await expect(
     evaluateTranscript("test-key", "Driftwood.", [
       { id: "product", description: "Mention Driftwood." },
     ]),
-  ).rejects.toMatchObject({ data: { provider: "jev", retryable: true } });
+  ).rejects.toMatchObject({
+    data: { provider: "jev", retryable: false, requestMayHaveSucceeded: true },
+  });
+});
+
+test("Jev network failures preserve the ambiguous billed request", async () => {
+  const fetch = vi.fn().mockRejectedValue(new Error("private Jev request"));
+  vi.stubGlobal("fetch", fetch);
+  await expect(
+    evaluateTranscript("test-key", "Driftwood.", [
+      { id: "product", description: "Mention Driftwood." },
+    ]),
+  ).rejects.toMatchObject({
+    data: { provider: "jev", retryable: false, requestMayHaveSucceeded: true },
+  });
+  expect(fetch).toHaveBeenCalledTimes(1);
+});
+
+test("response-body timeouts are retryable for transcription reads", async () => {
+  const response = new Response();
+  vi.spyOn(response, "json").mockRejectedValue(new DOMException("private body", "TimeoutError"));
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue(response));
+  await expect(getTranscription("test-key", "transcript-1")).rejects.toMatchObject({
+    data: { reason: "request_timeout", retryable: true, requestMayHaveSucceeded: false },
+  });
+});
+
+test("Jev response-body timeouts remain ambiguous even though the failure is transient", async () => {
+  const response = new Response();
+  vi.spyOn(response, "json").mockRejectedValue(new DOMException("private body", "TimeoutError"));
+  const fetch = vi.fn().mockResolvedValue(response);
+  vi.stubGlobal("fetch", fetch);
+  await expect(
+    evaluateTranscript("test-key", "Driftwood.", [
+      { id: "product", description: "Mention Driftwood." },
+    ]),
+  ).rejects.toMatchObject({
+    data: {
+      provider: "jev",
+      reason: "request_timeout",
+      retryable: true,
+      requestMayHaveSucceeded: true,
+    },
+  });
+  expect(fetch).toHaveBeenCalledTimes(1);
 });
 
 test("malformed submission responses preserve the ambiguous outcome", async () => {
@@ -85,7 +129,7 @@ test("aborts stalled requests and refuses redirects", async () => {
   vi.stubGlobal("fetch", fetch);
   try {
     const request = getTranscription("test-key", "transcript-1");
-    const assertion = expectApiError(() => request, "upstream_failure", "request_failed");
+    const assertion = expectApiError(() => request, "upstream_failure", "request_timeout");
     controller.abort();
     await assertion;
     expect(timeout).toHaveBeenCalledWith(15_000);

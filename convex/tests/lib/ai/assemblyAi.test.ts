@@ -79,6 +79,37 @@ test("returns terminal job errors without retaining provider messages or source 
   });
 });
 
+test("distinguishes oversized transcripts from malformed provider responses", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn().mockResolvedValue(
+      assemblyTranscriptResponse({
+        words: Array.from({ length: 8193 }, () => ({ text: "word", start: 0, end: 1 })),
+      }),
+    ),
+  );
+  await expectApiError(
+    () => getTranscription("test-key", "transcript-1"),
+    "invalid_state",
+    "review_input_too_large",
+  );
+});
+
+test("accepts exactly 8192 transcript words", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn().mockResolvedValue(
+      assemblyTranscriptResponse({
+        words: Array.from({ length: 8192 }, () => ({ text: "word", start: 0, end: 1 })),
+      }),
+    ),
+  );
+  const transcript = await getTranscription("test-key", "transcript-1");
+  expect(transcript.status).toBe("completed");
+  if (transcript.status !== "completed") throw new Error("expected completed transcript");
+  expect(transcript.words).toHaveLength(8192);
+});
+
 test("rejects reversed word timestamps", async () => {
   vi.stubGlobal(
     "fetch",

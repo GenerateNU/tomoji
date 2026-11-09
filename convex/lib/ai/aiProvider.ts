@@ -32,27 +32,39 @@ export function providerObject(value: unknown, provider: AiProvider): Record<str
   return value as Record<string, unknown>;
 }
 
+/** Separates transient timeouts from malformed responses without exposing provider errors. */
+function requestFailure(provider: AiProvider, submission: boolean, timedOut: boolean) {
+  return apiError("upstream_failure", {
+    provider,
+    reason: timedOut ? "request_timeout" : "request_failed",
+    retryable: timedOut || !submission,
+    requestMayHaveSucceeded: submission,
+  });
+}
+
+/** The request owns its timeout signal; body reads can also reject with a timeout DOMException. */
+function isTimeout(error: unknown, signal: AbortSignal): boolean {
+  return signal.aborted || (error instanceof Error && error.name === "TimeoutError");
+}
+
 /** Makes one bounded request; callers own retries and reconciliation of ambiguous submissions. */
 export async function requestAiProvider(
   provider: AiProvider,
   url: string,
   init: RequestInit,
 ): Promise<Record<string, unknown>> {
-  const submission = provider === "assemblyai" && init.method === "POST";
+  // Both transcription and classification POSTs can incur a charge before a response is lost.
+  const submission = init.method?.toUpperCase() === "POST";
+  const signal = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
   let response: Response;
   try {
     response = await fetch(url, {
       ...init,
       redirect: "error",
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      signal,
     });
-  } catch {
-    throw apiError("upstream_failure", {
-      provider,
-      reason: "request_failed",
-      retryable: !submission,
-      requestMayHaveSucceeded: submission,
-    });
+  } catch (error) {
+    throw requestFailure(provider, submission, isTimeout(error, signal));
   }
   if (!response.ok) {
     const transient = response.status === 429 || response.status >= 500;
@@ -70,7 +82,8 @@ export async function requestAiProvider(
   try {
     const value: unknown = await response.json();
     return providerObject(value, provider);
-  } catch {
+  } catch (error) {
+    if (isTimeout(error, signal)) throw requestFailure(provider, submission, true);
     throw invalidProviderResponse(provider, submission);
   }
 }

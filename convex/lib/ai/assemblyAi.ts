@@ -59,10 +59,11 @@ export async function getTranscription(apiKey: string, id: string): Promise<Tran
       // AssemblyAI can return null text/words when the file contains no speech.
       const text = data.text === null ? "" : data.text;
       const words = data.words === null ? [] : data.words;
+      if (Array.isArray(words) && words.length > 8192)
+        throw apiError("invalid_state", { reason: "review_input_too_large" });
       if (
         typeof text !== "string" ||
         !Array.isArray(words) ||
-        words.length > 8192 ||
         (text.trim() !== "" && words.length === 0) ||
         typeof data.audio_duration !== "number" ||
         !Number.isFinite(data.audio_duration) ||

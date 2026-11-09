@@ -62,6 +62,7 @@ import type * as models_niches from "../models/niches.js";
 import type * as models_notifications from "../models/notifications.js";
 import type * as models_opportunities from "../models/opportunities.js";
 import type * as models_opportunityNiches from "../models/opportunityNiches.js";
+import type * as models_opportunityScores from "../models/opportunityScores.js";
 import type * as models_opportunitySkills from "../models/opportunitySkills.js";
 import type * as models_opportunityStars from "../models/opportunityStars.js";
 import type * as models_payouts from "../models/payouts.js";
@@ -146,6 +147,7 @@ declare const fullApi: ApiFromModules<{
   "models/notifications": typeof models_notifications;
   "models/opportunities": typeof models_opportunities;
   "models/opportunityNiches": typeof models_opportunityNiches;
+  "models/opportunityScores": typeof models_opportunityScores;
   "models/opportunitySkills": typeof models_opportunitySkills;
   "models/opportunityStars": typeof models_opportunityStars;
   "models/payouts": typeof models_payouts;

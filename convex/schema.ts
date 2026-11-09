@@ -12,6 +12,7 @@ import { disputesTable } from "./schemas/disputes.schema";
 import { mediaUploadsTable } from "./schemas/mediaUploads.schema";
 import { notificationsTable } from "./schemas/notifications.schema";
 import { opportunitiesTable } from "./schemas/opportunities.schema";
+import { opportunityScoresTable } from "./schemas/opportunityScores.schema";
 import { opportunityStarsTable } from "./schemas/opportunityStars.schema";
 import { opportunityNichesTable } from "./schemas/opportunityNiches.schema";
 import { opportunitySkillsTable } from "./schemas/opportunitySkills.schema";
@@ -37,6 +38,7 @@ export default defineSchema({
   opportunityNiches: opportunityNichesTable,
   opportunitySkills: opportunitySkillsTable,
   opportunityStars: opportunityStarsTable,
+  opportunityScores: opportunityScoresTable,
   deliverables: deliverablesTable,
   applications: applicationsTable,
   assignments: assignmentsTable,

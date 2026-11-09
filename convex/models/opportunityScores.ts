@@ -1,4 +1,11 @@
+import type { Doc, Id } from "../_generated/dataModel";
+import type { MutationCtx } from "../_generated/server";
+import { listCreatorNiches } from "./creatorNiches";
+import { listCreatorSkills } from "./creatorSkills";
 import { followerRangeFit, type FollowerRange } from "./followerRanges";
+import { getVisibleOpportunityCompany } from "./opportunities";
+import { listOpportunityNiches } from "./opportunityNiches";
+import { listOpportunitySkills } from "./opportunitySkills";
 
 /**
  * How much each signal counts toward a match. Content types (0.15) and language
@@ -53,4 +60,206 @@ export function scoreOpportunityMatch(
     weight += SCORE_WEIGHTS.followers;
   }
   return weight === 0 ? 0 : total / weight;
+}
+
+/**
+ * Company users keep the creator row made when they first signed in, and
+ * deactivated users keep theirs; neither has a feed to rank.
+ */
+async function hasCreatorFeed(ctx: MutationCtx, creator: Doc<"creators">): Promise<boolean> {
+  const user = await ctx.db.get("users", creator.userId);
+  return user !== null && user.isActive && user.role === "creator";
+}
+
+async function getCreatorSignals(
+  ctx: MutationCtx,
+  creator: Doc<"creators">,
+): Promise<CreatorSignals> {
+  const [niches, skills] = await Promise.all([
+    listCreatorNiches(ctx, creator),
+    listCreatorSkills(ctx, creator._id),
+  ]);
+  return { niches, skills, followerRange: creator.followerRange };
+}
+
+async function getOpportunitySignals(
+  ctx: MutationCtx,
+  opportunity: Doc<"opportunities">,
+): Promise<OpportunitySignals> {
+  const [niches, skills] = await Promise.all([
+    listOpportunityNiches(ctx, opportunity),
+    listOpportunitySkills(ctx, opportunity._id),
+  ]);
+  return { niches, skills, minFollowerRange: opportunity.minFollowerRange };
+}
+
+async function getOpportunityScore(
+  ctx: MutationCtx,
+  creatorId: Id<"creators">,
+  opportunityId: Id<"opportunities">,
+): Promise<Doc<"opportunityScores"> | null> {
+  return await ctx.db
+    .query("opportunityScores")
+    .withIndex("by_creatorId_and_opportunityId", (q) =>
+      q.eq("creatorId", creatorId).eq("opportunityId", opportunityId),
+    )
+    .unique();
+}
+
+/**
+ * Stores a score, writing only when it changed so feeds don't re-render for
+ * nothing. A score of 0 is stored as no row, so the table only holds real matches.
+ */
+async function saveOpportunityScore(
+  ctx: MutationCtx,
+  creatorId: Id<"creators">,
+  opportunityId: Id<"opportunities">,
+  score: number,
+): Promise<void> {
+  const existing = await getOpportunityScore(ctx, creatorId, opportunityId);
+  if (score === 0) {
+    if (existing !== null) await ctx.db.delete("opportunityScores", existing._id);
+  } else if (existing === null) {
+    await ctx.db.insert("opportunityScores", { creatorId, opportunityId, score });
+  } else if (existing.score !== score) {
+    await ctx.db.patch("opportunityScores", existing._id, { score });
+  }
+}
+
+const ROWS_PER_BATCH = 100;
+
+/**
+ * Where a batched scoring job stopped. Jobs run in numbered stages; call again
+ * with `stage` and `cursor` until `isDone`.
+ */
+export type ScoringProgress = { isDone: boolean; stage: number; cursor: string | null };
+
+const DONE: ScoringProgress = { isDone: true, stage: 0, cursor: null };
+
+/** Moves to the next stage once a page finishes, or stays to read the next page. */
+function advance(stage: number, page: { isDone: boolean; continueCursor: string }) {
+  return page.isDone
+    ? { isDone: false, stage: stage + 1, cursor: null }
+    : { isDone: false, stage, cursor: page.continueCursor };
+}
+
+/**
+ * Scores one opportunity for the creators it could match, a batch at a time.
+ * Stage 0 rescores creators who already have a score, since an edit may have
+ * dropped them. Each later stage reads the creators who picked one of the
+ * opportunity's niches or skills, so the work grows with real matches rather
+ * than with every creator. If creators can no longer see the opportunity, its
+ * scores are removed instead.
+ */
+export async function scoreOpportunityForCreators(
+  ctx: MutationCtx,
+  opportunityId: Id<"opportunities">,
+  stage: number,
+  cursor: string | null,
+): Promise<ScoringProgress> {
+  const opportunity = await ctx.db.get("opportunities", opportunityId);
+  if (opportunity === null || (await getVisibleOpportunityCompany(ctx, opportunity)) === null) {
+    const scores = await ctx.db
+      .query("opportunityScores")
+      .withIndex("by_opportunityId", (q) => q.eq("opportunityId", opportunityId))
+      .take(ROWS_PER_BATCH);
+    for (const score of scores) await ctx.db.delete("opportunityScores", score._id);
+    return scores.length < ROWS_PER_BATCH ? DONE : { isDone: false, stage: 0, cursor: null };
+  }
+
+  const signals = await getOpportunitySignals(ctx, opportunity);
+  const rescore = async (creatorId: Id<"creators">) => {
+    const creator = await ctx.db.get("creators", creatorId);
+    const score =
+      creator !== null && (await hasCreatorFeed(ctx, creator))
+        ? scoreOpportunityMatch(await getCreatorSignals(ctx, creator), signals)
+        : 0;
+    await saveOpportunityScore(ctx, creatorId, opportunityId, score);
+  };
+
+  if (stage === 0) {
+    const page = await ctx.db
+      .query("opportunityScores")
+      .withIndex("by_opportunityId", (q) => q.eq("opportunityId", opportunityId))
+      .paginate({ numItems: ROWS_PER_BATCH, cursor });
+    for (const row of page.page) await rescore(row.creatorId);
+    return advance(stage, page);
+  }
+
+  // A creator who shares several selections is scored once per selection; the
+  // repeat writes nothing because the score hasn't changed.
+  const nicheIndex = stage - 1;
+  const skillIndex = nicheIndex - signals.niches.length;
+  if (nicheIndex < signals.niches.length) {
+    const page = await ctx.db
+      .query("creatorNiches")
+      .withIndex("by_name_and_creatorId", (q) => q.eq("name", signals.niches[nicheIndex]))
+      .paginate({ numItems: ROWS_PER_BATCH, cursor });
+    for (const row of page.page) await rescore(row.creatorId);
+    return advance(stage, page);
+  }
+  if (skillIndex < signals.skills.length) {
+    const page = await ctx.db
+      .query("creatorSkills")
+      .withIndex("by_name_and_creatorId", (q) => q.eq("name", signals.skills[skillIndex]))
+      .paginate({ numItems: ROWS_PER_BATCH, cursor });
+    for (const row of page.page) await rescore(row.creatorId);
+    return advance(stage, page);
+  }
+  return DONE;
+}
+
+/**
+ * Scores open opportunities for one creator, e.g. after they edit their
+ * profile. Stage 0 rescores the opportunities they already have a score for,
+ * dropping ones that closed or stopped matching; stage 1 scores every open
+ * opportunity. If the creator no longer has a feed, their scores are removed.
+ */
+export async function scoreCreatorOpportunities(
+  ctx: MutationCtx,
+  creatorId: Id<"creators">,
+  stage: number,
+  cursor: string | null,
+): Promise<ScoringProgress> {
+  const creator = await ctx.db.get("creators", creatorId);
+  if (creator === null || !(await hasCreatorFeed(ctx, creator))) {
+    const scores = await ctx.db
+      .query("opportunityScores")
+      .withIndex("by_creatorId_and_score", (q) => q.eq("creatorId", creatorId))
+      .take(ROWS_PER_BATCH);
+    for (const score of scores) await ctx.db.delete("opportunityScores", score._id);
+    return scores.length < ROWS_PER_BATCH ? DONE : { isDone: false, stage: 0, cursor: null };
+  }
+
+  const signals = await getCreatorSignals(ctx, creator);
+  const rescore = async (
+    opportunity: Doc<"opportunities"> | null,
+    opportunityId: Id<"opportunities">,
+  ) => {
+    const score =
+      opportunity !== null && (await getVisibleOpportunityCompany(ctx, opportunity)) !== null
+        ? scoreOpportunityMatch(signals, await getOpportunitySignals(ctx, opportunity))
+        : 0;
+    await saveOpportunityScore(ctx, creatorId, opportunityId, score);
+  };
+
+  if (stage === 0) {
+    const page = await ctx.db
+      .query("opportunityScores")
+      .withIndex("by_creatorId_and_score", (q) => q.eq("creatorId", creatorId))
+      .paginate({ numItems: ROWS_PER_BATCH, cursor });
+    for (const row of page.page) {
+      await rescore(await ctx.db.get("opportunities", row.opportunityId), row.opportunityId);
+    }
+    return advance(stage, page);
+  }
+  if (stage === 1) {
+    const page = await ctx.db
+      .query("opportunities")
+      .withIndex("by_status_and_deadline", (q) => q.eq("status", "open"))
+      .paginate({ numItems: ROWS_PER_BATCH, cursor });
+    for (const opportunity of page.page) await rescore(opportunity, opportunity._id);
+    return advance(stage, page);
+  }
+  return DONE;
 }

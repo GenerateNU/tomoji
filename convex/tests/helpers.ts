@@ -741,7 +741,7 @@ export async function seedOneSubmission(
 
 /** Seeds a verified post and approved submission for an existing assignment. */
 export async function seedPost(t: TestConvex, assignmentId: Id<"assignments">) {
-  return await t.run(async (ctx) => {
+  const { assignment, deliverable, creator } = await t.run(async (ctx) => {
     const assignment = await ctx.db.get("assignments", assignmentId);
     if (assignment === null) throw new Error("expected seeded assignment");
     const deliverable = await ctx.db
@@ -749,8 +749,14 @@ export async function seedPost(t: TestConvex, assignmentId: Id<"assignments">) {
       .withIndex("by_opportunityId", (q) => q.eq("opportunityId", assignment.opportunityId))
       .first();
     if (deliverable === null) throw new Error("expected seeded deliverable");
+    const creator = await ctx.db.get("creators", assignment.creatorId);
+    if (creator === null) throw new Error("expected seeded creator");
+    return { assignment, deliverable, creator };
+  });
+  const mediaId = await seedSubmissionVideo(t, { assignmentId, creatorUserId: creator.userId });
+  return await t.run(async (ctx) => {
     const submissionId = await ctx.db.insert("submissions", {
-      ...submissionArgs({ assignmentId, deliverableId: deliverable._id }),
+      ...submissionArgs({ assignmentId, deliverableId: deliverable._id, mediaId }),
       usesAiReview: true,
       status: "approved",
       reviewerType: "ai",

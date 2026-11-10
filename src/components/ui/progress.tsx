@@ -3,7 +3,7 @@
 import { Progress as ProgressPrimitive } from "@base-ui/react/progress";
 import { cn } from "@/lib/utils";
 
-// Figma "Progress" (in the Table examples): a 10px dark-grey bar on a light track.
+// Figma "Progress" (in the Table examples): a 6px blue bar on a light gray track.
 function Progress({ className, children, value, ...props }: ProgressPrimitive.Root.Props) {
   return (
     <ProgressPrimitive.Root
@@ -24,7 +24,7 @@ function ProgressTrack({ className, ...props }: ProgressPrimitive.Track.Props) {
   return (
     <ProgressPrimitive.Track
       className={cn(
-        "relative flex h-2.5 w-full items-center overflow-x-hidden rounded-full bg-gray-200",
+        "relative flex h-1.5 w-full items-center overflow-x-hidden rounded-full bg-gray-100",
         className,
       )}
       data-slot="progress-track"
@@ -37,7 +37,7 @@ function ProgressIndicator({ className, ...props }: ProgressPrimitive.Indicator.
   return (
     <ProgressPrimitive.Indicator
       data-slot="progress-indicator"
-      className={cn("h-full rounded-full bg-gray-600 transition-all", className)}
+      className={cn("h-full rounded-full bg-primary transition-all", className)}
       {...props}
     />
   );

@@ -5,8 +5,8 @@ import { ChevronsUpDownIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 // Figma "Sidebar": a 200px column with a header, nav items, and the account at
-// the bottom. `collapsed` shrinks it to an icon rail; labels stay readable by
-// screen readers.
+// the bottom. `collapsed` shrinks it to a 56px icon rail, animating the width
+// over 200ms; labels stay readable by screen readers.
 function Sidebar({
   collapsed = false,
   className,
@@ -17,7 +17,7 @@ function Sidebar({
       data-slot="sidebar"
       data-collapsed={collapsed || undefined}
       className={cn(
-        "group/sidebar flex h-full w-50 shrink-0 flex-col justify-between gap-5 overflow-y-auto border-r border-border bg-background px-2 py-6 data-collapsed:w-14",
+        "group/sidebar flex h-full w-50 shrink-0 flex-col justify-between gap-5 overflow-x-hidden overflow-y-auto border-r border-gray-200 bg-background px-2 py-6 transition-[width] duration-200 data-collapsed:w-14",
         className,
       )}
       {...props}
@@ -55,8 +55,10 @@ function SidebarNav({ className, children, ...props }: React.ComponentProps<"nav
 }
 
 /**
- * One nav link. Pass `render={<Link href="..." />}` for client-side navigation.
- * `active` marks the current page.
+ * One nav link, marked by a 3px bar on its left edge rather than a fill. Pass
+ * `render={<Link href="..." />}` for client-side navigation. `active` marks the
+ * current page; `active="parent"` marks the section a nested panel belongs to,
+ * e.g. Campaigns while a campaign's own nav is open.
  */
 function SidebarItem({
   active = false,
@@ -67,7 +69,7 @@ function SidebarItem({
   render,
   ...props
 }: useRender.ComponentProps<"a"> & {
-  active?: boolean;
+  active?: boolean | "parent";
   icon?: React.ReactNode;
   /** A count, e.g. unread items. */
   badge?: React.ReactNode;
@@ -76,9 +78,10 @@ function SidebarItem({
     defaultTagName: "a",
     props: mergeProps<"a">(
       {
-        "aria-current": active ? "page" : undefined,
+        "aria-current": active === true ? "page" : active === "parent" ? "true" : undefined,
         className: cn(
-          "flex w-full items-center gap-2 rounded-sm px-3 py-2 text-body text-gray-700 transition-colors outline-none hover:bg-gray-50 focus-visible:ring-3 focus-visible:ring-ring/50 data-active:bg-muted data-active:font-medium data-active:text-foreground [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0",
+          "group/sidebar-item relative flex min-h-9.25 w-full items-center gap-2 rounded-sm px-3 py-2 text-body text-gray-500 transition-colors outline-none hover:text-foreground focus-visible:ring-4 focus-visible:ring-ring/25 data-active:font-medium data-active:text-foreground [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0 [&_svg]:text-gray-500 hover:[&_svg]:text-gray-700 data-active:[&_svg]:text-foreground",
+          "before:absolute before:inset-y-0 before:left-0 before:w-0.75 before:bg-transparent hover:before:bg-gray-100 data-parent:before:bg-gray-200 data-active:before:bg-primary",
           className,
         ),
         children: (
@@ -88,7 +91,7 @@ function SidebarItem({
               {children}
             </span>
             {badge != null && (
-              <span className="flex min-w-4.5 items-center justify-center rounded-full bg-gray-500 px-1.25 py-px text-body-xs font-medium text-white group-data-collapsed/sidebar:sr-only">
+              <span className="flex min-w-4.5 items-center justify-center rounded-full bg-primary px-1.5 py-px text-body-xs font-medium text-primary-foreground group-data-collapsed/sidebar:sr-only">
                 {badge}
               </span>
             )}
@@ -98,7 +101,7 @@ function SidebarItem({
       props,
     ),
     render,
-    state: { slot: "sidebar-item", active },
+    state: { slot: "sidebar-item", active: active === true, parent: active === "parent" },
   });
   return <li className="flex">{element}</li>;
 }
@@ -109,7 +112,10 @@ function SidebarFooter({ className, ...props }: React.ComponentProps<"div">) {
   );
 }
 
-/** The signed-in account at the bottom. Usually the trigger for an account menu. */
+/**
+ * The signed-in account at the bottom, usually the trigger for an account menu
+ * (View profile, Settings). The chevron shows on hover and while the menu is open.
+ */
 function SidebarAccount({
   avatar,
   className,
@@ -123,7 +129,7 @@ function SidebarAccount({
       {
         type: "button",
         className: cn(
-          "flex w-full items-center gap-2 rounded-sm px-3 py-1.5 text-left text-body font-medium text-gray-900 transition-colors outline-none hover:bg-gray-50 focus-visible:ring-3 focus-visible:ring-ring/50 group-data-collapsed/sidebar:px-2",
+          "group/sidebar-account flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-body-sm font-medium text-foreground transition-colors outline-none hover:bg-gray-25 focus-visible:ring-4 focus-visible:ring-ring/25 data-popup-open:bg-gray-25",
           className,
         ),
         children: (
@@ -134,7 +140,7 @@ function SidebarAccount({
             </span>
             <ChevronsUpDownIcon
               aria-hidden
-              className="size-4 shrink-0 group-data-collapsed/sidebar:hidden"
+              className="invisible size-4 shrink-0 text-gray-500 group-hover/sidebar-account:visible group-data-popup-open/sidebar-account:visible group-data-collapsed/sidebar:hidden"
             />
           </>
         ),

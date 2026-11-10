@@ -1,4 +1,5 @@
 import type { ComponentProps } from "react";
+import { CircleCheckIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 type StepperProps = ComponentProps<"ol"> & {
@@ -8,7 +9,7 @@ type StepperProps = ComponentProps<"ol"> & {
   current: number;
 };
 
-/** Figma "Progress Bar (Stepper)": one bar per step, filled through the current one. */
+/** Figma "Progress Bar (Stepper)": one blue bar per step, filled through the current one. */
 export function Stepper({ steps, current, className, ...props }: StepperProps) {
   return (
     <ol className={cn("flex w-full gap-1.5", className)} {...props}>
@@ -23,10 +24,13 @@ export function Stepper({ steps, current, className, ...props }: StepperProps) {
           >
             <span
               aria-hidden
-              className="h-1.5 rounded-full bg-primary group-data-[state=upcoming]/step:bg-gray-200"
+              className="h-1.5 rounded-[1px] bg-primary group-data-[state=upcoming]/step:bg-gray-100"
             />
-            <span className="truncate text-body-xs text-foreground group-data-[state=current]/step:font-medium group-data-[state=upcoming]/step:text-gray-400">
-              {label}
+            <span className="flex min-w-0 items-center gap-1 text-body-xs text-gray-700 group-data-[state=current]/step:font-medium group-data-[state=current]/step:text-foreground group-data-[state=upcoming]/step:text-gray-400">
+              {state === "complete" && (
+                <CircleCheckIcon aria-hidden className="size-3.5 shrink-0" />
+              )}
+              <span className="truncate">{label}</span>
               {state === "complete" && <span className="sr-only"> (complete)</span>}
             </span>
           </li>

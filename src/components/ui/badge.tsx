@@ -5,7 +5,7 @@ import { cn } from "@/lib/utils";
 
 // Figma "Tag": a small grey pill for statuses and metadata.
 const badgeVariants = cva(
-  "group/badge inline-flex w-fit shrink-0 items-center justify-center gap-1 overflow-hidden rounded-full bg-muted whitespace-nowrap text-neutral-600 transition-colors focus-visible:ring-3 focus-visible:ring-ring/50 [&>svg]:pointer-events-none [&>svg]:shrink-0",
+  "group/badge inline-flex w-fit shrink-0 items-center justify-center gap-1 overflow-hidden rounded-full bg-muted whitespace-nowrap text-gray-600 transition-colors focus-visible:ring-3 focus-visible:ring-ring/50 [&>svg]:pointer-events-none [&>svg]:shrink-0",
   {
     variants: {
       size: {

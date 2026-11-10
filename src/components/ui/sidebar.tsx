@@ -78,7 +78,7 @@ function SidebarItem({
       {
         "aria-current": active ? "page" : undefined,
         className: cn(
-          "flex w-full items-center gap-2 rounded-sm px-3 py-2 text-body text-neutral-700 transition-colors outline-none hover:bg-neutral-50 focus-visible:ring-3 focus-visible:ring-ring/50 data-active:bg-muted data-active:font-medium data-active:text-foreground [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0",
+          "flex w-full items-center gap-2 rounded-sm px-3 py-2 text-body text-gray-700 transition-colors outline-none hover:bg-gray-50 focus-visible:ring-3 focus-visible:ring-ring/50 data-active:bg-muted data-active:font-medium data-active:text-foreground [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0",
           className,
         ),
         children: (
@@ -88,7 +88,7 @@ function SidebarItem({
               {children}
             </span>
             {badge != null && (
-              <span className="flex min-w-4.5 items-center justify-center rounded-full bg-neutral-500 px-1.25 py-px text-body-xs font-medium text-white group-data-collapsed/sidebar:sr-only">
+              <span className="flex min-w-4.5 items-center justify-center rounded-full bg-gray-500 px-1.25 py-px text-body-xs font-medium text-white group-data-collapsed/sidebar:sr-only">
                 {badge}
               </span>
             )}
@@ -123,7 +123,7 @@ function SidebarAccount({
       {
         type: "button",
         className: cn(
-          "flex w-full items-center gap-2 rounded-sm px-3 py-1.5 text-left text-body font-medium text-neutral-900 transition-colors outline-none hover:bg-neutral-50 focus-visible:ring-3 focus-visible:ring-ring/50 group-data-collapsed/sidebar:px-2",
+          "flex w-full items-center gap-2 rounded-sm px-3 py-1.5 text-left text-body font-medium text-gray-900 transition-colors outline-none hover:bg-gray-50 focus-visible:ring-3 focus-visible:ring-ring/50 group-data-collapsed/sidebar:px-2",
           className,
         ),
         children: (

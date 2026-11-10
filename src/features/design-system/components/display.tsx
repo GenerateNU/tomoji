@@ -66,7 +66,7 @@ export function TagPreview() {
               Applied
             </Toggle>
             <Toggle variant="chip">
-              Offers <span className="font-normal text-neutral-400">12</span>
+              Offers <span className="font-normal text-gray-400">12</span>
             </Toggle>
             <Toggle variant="chip">Unread</Toggle>
           </div>

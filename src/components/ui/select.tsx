@@ -30,7 +30,7 @@ function SelectValue({ className, ...props }: SelectPrimitive.Value.Props) {
 
 // Figma "Select": a form field by default; sm is the compact toolbar select.
 const selectTriggerVariants = cva(
-  "flex w-fit items-center justify-between rounded-lg border border-input bg-background whitespace-nowrap transition-colors outline-none select-none focus-visible:border-foreground focus-visible:inset-ring-1 focus-visible:inset-ring-foreground disabled:cursor-not-allowed disabled:opacity-50 aria-invalid:border-destructive aria-invalid:inset-ring-1 aria-invalid:inset-ring-destructive data-placeholder:text-neutral-400 *:data-[slot=select-value]:line-clamp-1 *:data-[slot=select-value]:flex *:data-[slot=select-value]:items-center *:data-[slot=select-value]:gap-1.5 [&_svg]:pointer-events-none [&_svg]:shrink-0",
+  "flex w-fit items-center justify-between rounded-lg border border-input bg-background whitespace-nowrap transition-colors outline-none select-none focus-visible:border-foreground focus-visible:inset-ring-1 focus-visible:inset-ring-foreground disabled:cursor-not-allowed disabled:opacity-50 aria-invalid:border-destructive aria-invalid:inset-ring-1 aria-invalid:inset-ring-destructive data-placeholder:text-gray-400 *:data-[slot=select-value]:line-clamp-1 *:data-[slot=select-value]:flex *:data-[slot=select-value]:items-center *:data-[slot=select-value]:gap-1.5 [&_svg]:pointer-events-none [&_svg]:shrink-0",
   {
     variants: {
       size: {

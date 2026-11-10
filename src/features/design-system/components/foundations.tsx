@@ -4,15 +4,34 @@ import { PreviewSection } from "./preview-section";
 // Each role names the semantic token components should use, and the Figma
 // swatch it resolves to.
 const COLOR_ROLES = [
-  { token: "bg-background", swatch: "white", use: "Page and panel background" },
-  { token: "bg-foreground", swatch: "neutral-950", use: "Primary text" },
-  { token: "bg-primary", swatch: "neutral-950", use: "Primary buttons, selected states" },
-  { token: "bg-muted-foreground", swatch: "neutral-500", use: "Secondary and helper text" },
-  { token: "bg-input", swatch: "neutral-300", use: "Input borders" },
-  { token: "bg-secondary", swatch: "neutral-200", use: "Secondary buttons" },
-  { token: "bg-border", swatch: "neutral-200", use: "Hairline borders, dividers" },
-  { token: "bg-muted", swatch: "neutral-100", use: "Surfaces, hover rows, tags" },
-  { token: "bg-destructive", swatch: "red-600", use: "Destructive buttons, errors" },
+  { token: "bg-background", swatch: "gray-0", use: "Page and panel background" },
+  { token: "bg-foreground", swatch: "gray-950", use: "Primary text" },
+  { token: "bg-primary", swatch: "blue-primary", use: "Primary buttons, focus, selected states" },
+  { token: "bg-blue-subtle", swatch: "blue-subtle", use: "Primary subtle buttons" },
+  { token: "bg-special", swatch: "mint-primary", use: "Special buttons" },
+  { token: "bg-secondary", swatch: "gray-950", use: "Secondary buttons" },
+  { token: "bg-muted-foreground", swatch: "gray-500", use: "Secondary and helper text" },
+  { token: "bg-input", swatch: "gray-300", use: "Input borders" },
+  { token: "bg-border", swatch: "gray-100", use: "Hairline borders, dividers" },
+  { token: "bg-muted", swatch: "gray-50", use: "Surfaces, hover rows, tags" },
+  { token: "bg-destructive", swatch: "red-600", use: "Errors" },
+];
+
+// The raw scale, for reference; components should use the roles above.
+const GRAYS = [
+  "bg-gray-950",
+  "bg-gray-900",
+  "bg-gray-800",
+  "bg-gray-700",
+  "bg-gray-600",
+  "bg-gray-500",
+  "bg-gray-400",
+  "bg-gray-300",
+  "bg-gray-200",
+  "bg-gray-100",
+  "bg-gray-50",
+  "bg-gray-25",
+  "bg-gray-0",
 ];
 
 // Full class names, so Tailwind's scanner finds them.
@@ -33,12 +52,12 @@ const BODY_WEIGHTS = [
 ];
 
 const RADII = [
-  { className: "rounded-sm", size: "4px", use: "Sidebar items, checkboxes" },
+  { className: "rounded-xs", size: "2px", use: "Checkboxes" },
+  { className: "rounded-sm", size: "4px", use: "Buttons, inputs, selects, tags" },
   { className: "rounded-md", size: "6px", use: "Menu items, segments" },
-  { className: "rounded-lg", size: "8px", use: "Buttons, inputs, selects" },
-  { className: "rounded-xl", size: "12px", use: "Menus, toasts" },
-  { className: "rounded-2xl", size: "16px", use: "Cards and panels" },
-  { className: "rounded-full", size: "pill", use: "Tags, chips, switches, avatars" },
+  { className: "rounded-lg", size: "8px", use: "Cards, menus" },
+  { className: "rounded-xl", size: "12px", use: "Larger surfaces" },
+  { className: "rounded-full", size: "pill", use: "Switches, avatars" },
 ];
 
 export function ColorPreview() {
@@ -46,7 +65,7 @@ export function ColorPreview() {
     <PreviewSection
       id="colors"
       title="Colors"
-      description="Neutral throughout, with red kept for destructive actions and errors. Use the semantic token, not the raw swatch, so components stay consistent."
+      description="Blue for primary actions and focus, mint for the one special action, a cool gray scale for everything else, and red for destructive actions and errors. Use the semantic token, not the raw swatch, so components stay consistent."
     >
       <ul className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {COLOR_ROLES.map((role) => (
@@ -61,6 +80,11 @@ export function ColorPreview() {
           </li>
         ))}
       </ul>
+      <div className="flex overflow-hidden rounded-lg border">
+        {GRAYS.map((swatch) => (
+          <span key={swatch} title={swatch.slice(3)} className={cn("h-10 flex-1", swatch)} />
+        ))}
+      </div>
     </PreviewSection>
   );
 }
@@ -70,7 +94,7 @@ export function TypographyPreview() {
     <PreviewSection
       id="typography"
       title="Typography"
-      description="Inter throughout. Headings are medium weight. Body sizes pair with font-normal, font-medium or font-semibold for the default, medium and strong styles."
+      description="Host Grotesk throughout. Headings are medium weight. Body sizes pair with font-normal, font-medium or font-semibold for the default, medium and strong styles."
     >
       <div className="space-y-4">
         {HEADINGS.map((style) => (

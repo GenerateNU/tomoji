@@ -25,7 +25,7 @@ export function ActivityItem({
   return (
     <article
       data-unread={unread || undefined}
-      className={cn("flex items-start gap-3 rounded-lg p-3 data-unread:bg-neutral-50", className)}
+      className={cn("flex items-start gap-3 rounded-lg p-3 data-unread:bg-gray-50", className)}
       {...props}
     >
       <span

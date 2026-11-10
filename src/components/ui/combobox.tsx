@@ -150,7 +150,7 @@ function ComboboxItem({
       {indicator === "checkbox" && (
         <span
           aria-hidden
-          className="flex size-4 shrink-0 items-center justify-center rounded-sm border border-neutral-400 bg-background text-primary-foreground group-data-selected/combobox-item:border-primary group-data-selected/combobox-item:bg-primary"
+          className="flex size-4 shrink-0 items-center justify-center rounded-sm border border-gray-400 bg-background text-primary-foreground group-data-selected/combobox-item:border-primary group-data-selected/combobox-item:bg-primary"
         >
           <CheckIcon className="hidden size-3! group-data-selected/combobox-item:block" />
         </span>
@@ -240,7 +240,7 @@ function ComboboxChip({
     <ComboboxPrimitive.Chip
       data-slot="combobox-chip"
       className={cn(
-        "flex w-fit items-center justify-center gap-1 rounded-full bg-muted px-2.5 py-1 text-body-sm whitespace-nowrap text-neutral-600 has-disabled:pointer-events-none has-disabled:cursor-not-allowed has-disabled:opacity-50",
+        "flex w-fit items-center justify-center gap-1 rounded-full bg-muted px-2.5 py-1 text-body-sm whitespace-nowrap text-gray-600 has-disabled:pointer-events-none has-disabled:cursor-not-allowed has-disabled:opacity-50",
         className,
       )}
       {...props}
@@ -264,7 +264,7 @@ function ComboboxChipsInput({ className, ...props }: ComboboxPrimitive.Input.Pro
     <ComboboxPrimitive.Input
       data-slot="combobox-chip-input"
       className={cn(
-        "min-w-16 flex-1 bg-transparent outline-none placeholder:text-neutral-400",
+        "min-w-16 flex-1 bg-transparent outline-none placeholder:text-gray-400",
         className,
       )}
       {...props}

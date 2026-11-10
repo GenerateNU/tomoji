@@ -1,13 +1,13 @@
 import type { Metadata } from "next";
-import { Geist_Mono, Inter } from "next/font/google";
+import { Geist_Mono, Host_Grotesk } from "next/font/google";
 import { AuthKitProvider } from "@workos-inc/authkit-nextjs/components";
 import { ConvexClientProvider } from "@/components/convex-provider";
 import { Toaster } from "@/components/ui/sonner";
 import "./globals.css";
 
-// Inter matches the Figma designs.
-const inter = Inter({
-  variable: "--font-inter",
+// Host Grotesk matches the Figma hi-fi designs.
+const hostGrotesk = Host_Grotesk({
+  variable: "--font-host-grotesk",
   subsets: ["latin"],
 });
 
@@ -23,7 +23,7 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
-    <html lang="en" className={`${inter.variable} ${geistMono.variable} h-full antialiased`}>
+    <html lang="en" className={`${hostGrotesk.variable} ${geistMono.variable} h-full antialiased`}>
       <body className="min-h-full flex flex-col">
         {/* AuthKitProvider must wrap ConvexClientProvider — the Convex
             adapter calls useAuth()/useAccessToken() from AuthKit. */}

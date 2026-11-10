@@ -27,18 +27,27 @@ when none are stored.
 
 The attempt snapshots confirmed criteria and the opportunity brief.
 Jev receives the snapshot as context, but evaluates only the explicit criteria.
-Transcript content is evidence, not instructions. Visual content, captions, and
+Evaluate the entire transcript, accepting equivalent spoken wording and minor transcription
+spelling differences only when context makes the meaning clear. Explicit conditions
+still apply. Transcript content is evidence, not instructions. Visual content, captions, and
 post-publication X matching are outside this version.
 
 Convex applies the policy in `convex/lib/ai/reviewPolicy.ts`:
 
 | Evidence                                                                   | Outcome                                    |
 | -------------------------------------------------------------------------- | ------------------------------------------ |
-| Every criterion is `met` with selected probability >= 0.90                 | Approve                                    |
-| At least one `not_met` >= 0.90, with no uncertainty/low probabilities      | Request changes, naming unmet requirements |
+| Every criterion is `met` with selected probability >= 0.80                 | Approve                                    |
+| At least one `not_met` >= 0.80, with no uncertainty/low probabilities      | Request changes, naming unmet requirements |
 | Uncertain, low probability, silence, invalid response, or provider failure | Leave pending for company review           |
 
-The threshold is an initial operating policy, not measured accuracy. Company and AI
+A selected `met` or `not_met` below the cutoff is recorded as `low_probability`;
+`uncertain` means the classifier actually selected that option. Neither fallback
+changes the submission out of pending. The cutoff uses the selected option's
+probability, not Jev's separate `confidence` statistic.
+
+The selected-probability cutoff is now 0.80. Explicit `uncertain` answers still
+require manual review at any probability. This is an operating policy, not
+measured accuracy. Company and AI
 reviews share the decision/notification operation. Evidence, decision, and creator
 notification commit together. Duplicate or stale completion cannot notify twice.
 Company review is blocked while an enabled workflow is processing; fallback and
@@ -98,8 +107,15 @@ its development reseed guidance; no live migration or deployment was performed.
 signing and provider responses under the existing Node action test project. It runs
 without credentials, network calls, uploads, or provider charges.
 
-Live smoke testing, accuracy evaluation, and latency benchmarks are separate and
-have not been performed for this implementation.
+A local provider check used a 17-second sponsored demo with product-name and
+sponsorship criteria. The original prompt selected `met` for both, but the
+sponsorship probability was 0.87, below the original 0.90 cutoff. Clarifying
+whole-transcript evidence and spoken spelling variants made the sample pass on
+three checks, including one with brief context. Missing/different sponsors,
+negation, quoted disclosures, prompt injection, and a count requirement were
+rejected; a visual-only requirement stayed manual. These are small diagnostic
+controls, not a calibrated accuracy benchmark. No Convex deployment or live S3
+workflow was exercised by this check.
 
 API contracts: [AssemblyAI](https://www.assemblyai.com/docs/pre-recorded-audio/api-reference/transcripts/submit),
 [Jev](https://docs.typesafe.ai/primitives/choice),

@@ -3,19 +3,9 @@ import { aiReviewWorkflow } from "../lib/ai/workflow";
 import type { Infer } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
-import { env } from "../_generated/server";
 import { apiError } from "../lib/errors";
-import {
-  normalizeReviewCriteria,
-  type aiReviewResult,
-  type completedTranscription,
-} from "../lib/ai/validation";
-import {
-  decideAiReview,
-  AI_REVIEW_MAX_DURATION_SECONDS,
-  AI_REVIEW_TIMEOUT_MS,
-} from "../lib/ai/reviewPolicy";
-import { recordSubmissionReview } from "./submissionReviews";
+import { normalizeReviewCriteria, type completedTranscription } from "../lib/ai/validation";
+import { AI_REVIEW_TIMEOUT_MS } from "../lib/ai/reviewPolicy";
 import { notifyCompanyUser } from "./notifications";
 import { requireActiveAssignment } from "./assignments";
 import { requireSubmissionVideo } from "./media";
@@ -58,7 +48,7 @@ export async function createAiReviewAttempt(
 }
 
 /** Every write rechecks ownership-independent lifecycle guards in the same transaction. */
-async function requireCurrentAttempt(
+export async function requireCurrentAiReviewAttempt(
   ctx: MutationCtx | QueryCtx,
   attemptId: Id<"aiReviewAttempts">,
   status: Doc<"aiReviewAttempts">["status"],
@@ -90,7 +80,7 @@ export async function claimAiReviewAttempt(
   ctx: MutationCtx,
   attemptId: Id<"aiReviewAttempts">,
 ): Promise<Doc<"aiReviewAttempts">> {
-  const attempt = await requireCurrentAttempt(ctx, attemptId, "ready");
+  const attempt = await requireCurrentAiReviewAttempt(ctx, attemptId, "ready");
   const patch = { status: "transcribing" as const, startedAt: Date.now() };
   await ctx.db.patch("aiReviewAttempts", attemptId, patch);
   return { ...attempt, ...patch };
@@ -102,7 +92,7 @@ export async function recordAiTranscriptionJob(
   attemptId: Id<"aiReviewAttempts">,
   jobId: string,
 ): Promise<void> {
-  const attempt = await requireCurrentAttempt(ctx, attemptId, "transcribing");
+  const attempt = await requireCurrentAiReviewAttempt(ctx, attemptId, "transcribing");
   if (
     !jobId.trim() ||
     (attempt.transcriptionJobId !== undefined && attempt.transcriptionJobId !== jobId)
@@ -117,7 +107,7 @@ export async function saveAiTranscription(
   attemptId: Id<"aiReviewAttempts">,
   transcription: Infer<typeof completedTranscription>,
 ): Promise<void> {
-  const attempt = await requireCurrentAttempt(ctx, attemptId, "transcribing");
+  const attempt = await requireCurrentAiReviewAttempt(ctx, attemptId, "transcribing");
   if (transcription.id !== attempt.transcriptionJobId)
     throw apiError("invalid_state", { reason: "transcription_job_mismatch" });
   await ctx.db.patch("aiReviewAttempts", attemptId, { transcription, status: "evaluating" });
@@ -128,7 +118,7 @@ export async function reserveAiTranscription(
   ctx: MutationCtx,
   attemptId: Id<"aiReviewAttempts">,
 ): Promise<boolean> {
-  const attempt = await requireCurrentAttempt(ctx, attemptId, "transcribing");
+  const attempt = await requireCurrentAiReviewAttempt(ctx, attemptId, "transcribing");
   if (attempt.deadlineAt !== undefined && Date.now() >= attempt.deadlineAt)
     throw apiError("invalid_state", { reason: "ai_review_timeout" });
   if (attempt.dispatchStartedAt !== undefined) return false;
@@ -144,60 +134,8 @@ export async function getAiReviewInput(
   const attempt = await ctx.db.get("aiReviewAttempts", attemptId);
   if (!attempt || (attempt.status !== "transcribing" && attempt.status !== "evaluating"))
     throw apiError("invalid_state", { reason: "ai_review_stale" });
-  await requireCurrentAttempt(ctx, attemptId, attempt.status);
+  await requireCurrentAiReviewAttempt(ctx, attemptId, attempt.status);
   return attempt;
-}
-
-/** Saves evidence and its business outcome in one transaction; retries cannot notify twice. */
-export async function finishAiReview(
-  ctx: MutationCtx,
-  attemptId: Id<"aiReviewAttempts">,
-  result: Infer<typeof aiReviewResult>,
-): Promise<void> {
-  const attempt = await requireCurrentAttempt(ctx, attemptId, "evaluating");
-  if (
-    !attempt.transcription?.text.trim() ||
-    attempt.transcription.durationSeconds > AI_REVIEW_MAX_DURATION_SECONDS
-  )
-    throw apiError("invalid_state", { reason: "review_input_invalid" });
-  if (attempt.deadlineAt !== undefined && Date.now() >= attempt.deadlineAt)
-    return await markAiReviewForManualReview(ctx, attemptId, "timeout");
-  const ids = new Set(result.results.map((item) => item.criterionId));
-  if (
-    ids.size !== attempt.criteria.length ||
-    result.results.length !== ids.size ||
-    !attempt.criteria.every((c) => ids.has(c.id))
-  )
-    throw apiError("invalid_state", { reason: "review_result_mismatch" });
-  if (attempt.workflowId && env.AI_REVIEW_ENABLED !== "true")
-    return await markAiReviewForManualReview(ctx, attemptId, "disabled");
-  const decision = decideAiReview(result.results);
-  if (decision.status === "manualReview") {
-    await markAiReviewForManualReview(ctx, attemptId, "uncertain");
-    await ctx.db.patch("aiReviewAttempts", attemptId, { result });
-    return;
-  }
-  await ctx.db.patch("aiReviewAttempts", attemptId, {
-    result,
-    status: "completed",
-    finishedAt: Date.now(),
-  });
-  const submission = await ctx.db.get("submissions", attempt.submissionId);
-  if (!submission || submission.status !== "pending")
-    throw apiError("invalid_state", { reason: "ai_review_stale" });
-  const assignment = await ctx.db.get("assignments", submission.assignmentId);
-  if (!assignment) throw apiError("not_found", { resource: "assignment" });
-  const review =
-    decision.status === "approved"
-      ? { status: "approved" as const }
-      : {
-          status: "changesRequested" as const,
-          reviewNote: `Please address these spoken requirements: ${attempt.criteria
-            .filter((c) => decision.failedCriterionIds.includes(c.id))
-            .map((c) => c.description)
-            .join("; ")}`.slice(0, 2000),
-        };
-  await recordSubmissionReview(ctx, submission, assignment, review, { reviewerType: "ai" });
 }
 
 /** A terminal fallback is safe to repeat, including after cancellation or a worker crash. */

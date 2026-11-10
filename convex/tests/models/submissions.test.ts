@@ -4,6 +4,7 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 import type { Doc, Id } from "../../_generated/dataModel";
 import {
   createSubmission,
+  finishAiReview,
   listSubmissions,
   requireSubmission,
   reviewSubmission,
@@ -13,7 +14,7 @@ import {
   type SubmissionViewer,
 } from "../../models/submissions";
 import { listOpportunityDeliverables } from "../../models/deliverableDrafts";
-import { markAiReviewForManualReview, finishAiReview } from "../../models/aiReviewAttempts";
+import { markAiReviewForManualReview } from "../../models/aiReviewAttempts";
 import schema from "../../schema";
 import {
   prepareAiReviewEvaluation,
@@ -903,4 +904,30 @@ test("company review is allowed after an enabled AI workflow falls back", async 
     reviewerType: "companyUser",
     reviewedBy: fixture.membership._id,
   });
+});
+
+test("a met result below the probability cutoff stays pending without being labeled uncertain", async () => {
+  const t = convexTest(schema, modules);
+  const fixture = await seedAiReviewFixture(t);
+  await prepareAiReviewEvaluation(t, fixture.attempt._id);
+  const result = aiReviewResultArgs({
+    results: [
+      {
+        criterionId: "product",
+        outcome: "met",
+        confidence: 0.68,
+        probabilities: { met: 0.79, not_met: 0.16, uncertain: 0.05 },
+      },
+    ],
+  });
+  await t.run((ctx) => finishAiReview(ctx, fixture.attempt._id, result));
+  expect(await t.run((ctx) => ctx.db.get("aiReviewAttempts", fixture.attempt._id))).toMatchObject({
+    status: "manualReview",
+    failureReason: "low_probability",
+    result,
+  });
+  expect(await t.run((ctx) => ctx.db.get("submissions", fixture.submissionId))).toMatchObject({
+    status: "pending",
+  });
+  expect(await creatorNotifications(t, fixture.creatorId)).toEqual([]);
 });

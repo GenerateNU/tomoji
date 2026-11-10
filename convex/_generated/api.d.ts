@@ -77,7 +77,6 @@ import type * as models_opportunityStars from "../models/opportunityStars.js";
 import type * as models_payouts from "../models/payouts.js";
 import type * as models_posts from "../models/posts.js";
 import type * as models_skills from "../models/skills.js";
-import type * as models_submissionReviews from "../models/submissionReviews.js";
 import type * as models_submissions from "../models/submissions.js";
 import type * as models_users from "../models/users.js";
 import type * as models_xAccountLookup from "../models/xAccountLookup.js";
@@ -172,7 +171,6 @@ declare const fullApi: ApiFromModules<{
   "models/payouts": typeof models_payouts;
   "models/posts": typeof models_posts;
   "models/skills": typeof models_skills;
-  "models/submissionReviews": typeof models_submissionReviews;
   "models/submissions": typeof models_submissions;
   "models/users": typeof models_users;
   "models/xAccountLookup": typeof models_xAccountLookup;

@@ -11,11 +11,12 @@ import {
   recordAiTranscriptionJob,
   saveAiTranscription,
   getAiReviewInput,
-  finishAiReview,
   markAiReviewForManualReview,
   reserveAiTranscription,
   getAiReviewVideo,
 } from "./models/aiReviewAttempts";
+
+import { finishAiReview } from "./models/submissions";
 
 const attemptArgs = { attemptId: v.id("aiReviewAttempts") };
 

@@ -6,6 +6,7 @@ export const aiReviewFailureReason = v.union(
   v.literal("transcription_failed"),
   v.literal("review_failed"),
   v.literal("uncertain"),
+  v.literal("low_probability"),
   v.literal("ambiguous_submission"),
   v.literal("disabled"),
   v.literal("timeout"),

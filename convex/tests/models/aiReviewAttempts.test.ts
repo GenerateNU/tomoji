@@ -2,7 +2,7 @@
 import { convexTest } from "convex-test";
 import { afterEach, expect, test, vi } from "vitest";
 import schema from "../../schema";
-import { createSubmission, reviewSubmission } from "../../models/submissions";
+import { createSubmission, reviewSubmission, finishAiReview } from "../../models/submissions";
 import {
   completeAiReviewWorkflow,
   expireAiReview,
@@ -12,7 +12,6 @@ import {
   createAiReviewAttempt,
   recordAiTranscriptionJob,
   saveAiTranscription,
-  finishAiReview,
 } from "../../models/aiReviewAttempts";
 import {
   aiReviewResultArgs,

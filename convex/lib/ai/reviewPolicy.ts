@@ -1,7 +1,7 @@
 import type { CriterionResult } from "./jev";
 
 // An operational starting point, not a calibrated accuracy guarantee. Approve with TLs before enabling.
-export const AI_REVIEW_MIN_PROBABILITY = 0.9;
+export const AI_REVIEW_MIN_PROBABILITY = 0.8;
 export const AI_REVIEW_MAX_DURATION_SECONDS = 5 * 60;
 export const AI_REVIEW_TIMEOUT_MS = 10 * 60_000;
 export const AI_REVIEW_POLL_INTERVAL_MS = 10_000;

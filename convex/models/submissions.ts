@@ -3,16 +3,21 @@ import { v, type Infer } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { apiError } from "../lib/errors";
-import { requireNonBlank } from "../lib/validation";
+import { optionalNonBlank, requireNonBlank } from "../lib/validation";
 import { aiReviewAttemptsTable } from "../schemas/aiReviewAttempts.schema";
 import { submissionShapes } from "../schemas/submissions.schema";
 import { requireAssignment, requireActiveAssignment, type AssignmentViewer } from "./assignments";
-import { creatorName, notifyCompanyUser } from "./notifications";
+import { creatorName, notifyCompanyUser, notifyCreator } from "./notifications";
 import { requireSubmissionVideo } from "./media";
-import { criterionResult } from "../lib/ai/validation";
-import { recordSubmissionReview, type SubmissionReview } from "./submissionReviews";
+import { criterionResult, type aiReviewResult } from "../lib/ai/validation";
+import { decideAiReview, AI_REVIEW_MAX_DURATION_SECONDS } from "../lib/ai/reviewPolicy";
 import { env } from "../_generated/server";
-import { createAiReviewAttempt, enqueueAiReview } from "./aiReviewAttempts";
+import {
+  createAiReviewAttempt,
+  enqueueAiReview,
+  requireCurrentAiReviewAttempt,
+  markAiReviewForManualReview,
+} from "./aiReviewAttempts";
 
 /** The creator-supplied fields of a new submission. */
 export const submissionDraft = v.object({
@@ -24,8 +29,12 @@ export const submissionDraft = v.object({
 
 export type SubmissionDraft = Infer<typeof submissionDraft>;
 
-export { submissionReview } from "./submissionReviews";
-export type { SubmissionReview } from "./submissionReviews";
+/** A review decision. A change request needs a note; an approval's is optional. */
+export const submissionReview = v.union(
+  v.object({ status: v.literal("approved"), reviewNote: v.optional(v.string()) }),
+  v.object({ status: v.literal("changesRequested"), reviewNote: v.string() }),
+);
+export type SubmissionReview = Infer<typeof submissionReview>;
 
 export type CompanyUserReviewedSubmission = Extract<
   Doc<"submissions">,
@@ -349,4 +358,112 @@ async function withAiReviewSummary(ctx: QueryCtx, view: SubmissionView): Promise
         attempt.result?.results.map(({ criterionId, outcome }) => ({ criterionId, outcome })) ?? [],
     },
   };
+}
+
+type Reviewer =
+  | { reviewerType: "ai" }
+  | { reviewerType: "companyUser"; reviewedBy: Id<"companyUsers"> };
+
+/** Commits either initial reviewer's decision and notification together; callers authorize first. */
+export async function recordSubmissionReview<R extends Reviewer>(
+  ctx: MutationCtx,
+  submission: Extract<Doc<"submissions">, { status: "pending" }>,
+  assignment: Doc<"assignments">,
+  review: SubmissionReview,
+  reviewer: R,
+) {
+  requireActiveAssignment(assignment);
+  const outcome =
+    review.status === "changesRequested"
+      ? {
+          status: review.status,
+          reviewNote: requireNonBlank(review.reviewNote, "reviewNote", 2000),
+        }
+      : {
+          status: review.status,
+          reviewNote: optionalNonBlank(review.reviewNote, "reviewNote", 2000),
+        };
+  const patch = { ...outcome, ...reviewer, reviewedAt: Date.now() };
+  await ctx.db.patch("submissions", submission._id, patch);
+  const opportunity = await ctx.db.get("opportunities", assignment.opportunityId);
+  if (opportunity) {
+    const target = {
+      kind: "submission" as const,
+      submissionId: submission._id,
+      assignmentId: assignment._id,
+    };
+    await notifyCreator(
+      ctx,
+      assignment.creatorId,
+      outcome.status === "approved"
+        ? {
+            type: "submissionApproved",
+            title: `Your draft for ${opportunity.title} was approved`,
+            target,
+          }
+        : {
+            type: "submissionChangesRequested",
+            title: `Changes requested on your draft for ${opportunity.title}`,
+            body: outcome.reviewNote,
+            target,
+          },
+    );
+  }
+  return { ...submission, ...patch };
+}
+
+/** Saves evidence and its business outcome in one transaction; retries cannot notify twice. */
+export async function finishAiReview(
+  ctx: MutationCtx,
+  attemptId: Id<"aiReviewAttempts">,
+  result: Infer<typeof aiReviewResult>,
+): Promise<void> {
+  const attempt = await requireCurrentAiReviewAttempt(ctx, attemptId, "evaluating");
+  if (
+    !attempt.transcription?.text.trim() ||
+    attempt.transcription.durationSeconds > AI_REVIEW_MAX_DURATION_SECONDS
+  )
+    throw apiError("invalid_state", { reason: "review_input_invalid" });
+  if (attempt.deadlineAt !== undefined && Date.now() >= attempt.deadlineAt)
+    return await markAiReviewForManualReview(ctx, attemptId, "timeout");
+  const ids = new Set(result.results.map((item) => item.criterionId));
+  if (
+    ids.size !== attempt.criteria.length ||
+    result.results.length !== ids.size ||
+    !attempt.criteria.every((c) => ids.has(c.id))
+  )
+    throw apiError("invalid_state", { reason: "review_result_mismatch" });
+  if (attempt.workflowId && env.AI_REVIEW_ENABLED !== "true")
+    return await markAiReviewForManualReview(ctx, attemptId, "disabled");
+  const decision = decideAiReview(result.results);
+  if (decision.status === "manualReview") {
+    // A selected "met"/"not_met" below the cutoff is different from an uncertain answer.
+    const reason = result.results.some((item) => item.outcome === "uncertain")
+      ? "uncertain"
+      : "low_probability";
+    await markAiReviewForManualReview(ctx, attemptId, reason);
+    await ctx.db.patch("aiReviewAttempts", attemptId, { result });
+    return;
+  }
+  await ctx.db.patch("aiReviewAttempts", attemptId, {
+    result,
+    status: "completed",
+    finishedAt: Date.now(),
+  });
+  const submission = await ctx.db.get("submissions", attempt.submissionId);
+  if (!submission || submission.status !== "pending")
+    throw apiError("invalid_state", { reason: "ai_review_stale" });
+  const assignment = await ctx.db.get("assignments", submission.assignmentId);
+  if (!assignment) throw apiError("not_found", { resource: "assignment" });
+  const review =
+    decision.status === "approved"
+      ? { status: "approved" as const }
+      : {
+          status: "changesRequested" as const,
+          reviewNote: `Please address these spoken requirements: ${attempt.criteria
+            .filter((c) => decision.failedCriterionIds.includes(c.id))
+            .map((c) => c.description)
+            .join("; ")}`.slice(0, 2000),
+        };
+  await recordSubmissionReview(ctx, submission, assignment, review, { reviewerType: "ai" });
 }

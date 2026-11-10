@@ -16,12 +16,22 @@ import {
   SettingsIcon,
   SquarePlayIcon,
   StarIcon,
+  UserRoundIcon,
   UsersIcon,
   WalletIcon,
 } from "lucide-react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  Pagination,
+  PaginationContent,
+  PaginationEllipsis,
+  PaginationItem,
+  PaginationLink,
+  PaginationNext,
+  PaginationPrevious,
+} from "@/components/ui/pagination";
 import { Progress } from "@/components/ui/progress";
 import {
   Sidebar,
@@ -42,13 +52,20 @@ import {
   TableRow,
   TableSortButton,
 } from "@/components/ui/table";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Logo } from "@/components/logo";
 import { PreviewSection } from "./preview-section";
 
 const COMPANY_NAV = [
   { label: "Home", icon: <HouseIcon /> },
   { label: "Campaigns", icon: <FolderIcon />, active: true },
   { label: "Applications", icon: <InboxIcon />, badge: 3 },
-  { label: "Assignments", icon: <SquarePlayIcon /> },
+  { label: "Submissions", icon: <SquarePlayIcon /> },
   { label: "Analytics", icon: <ChartColumnIcon /> },
   { label: "Pay out", icon: <WalletIcon /> },
   { label: "Disputes", icon: <GavelIcon /> },
@@ -72,7 +89,17 @@ const CAMPAIGN_NAV = [
   { label: "Settings", icon: <SettingsIcon /> },
 ];
 
-type NavEntry = { label: string; icon: ReactNode; active?: boolean; badge?: number };
+// Inside a campaign, the rail marks Campaigns as the parent of the open panel.
+const COMPANY_NAV_IN_CAMPAIGN = COMPANY_NAV.map((item) =>
+  item.label === "Campaigns" ? { ...item, active: "parent" as const } : item,
+);
+
+type NavEntry = {
+  label: string;
+  icon: ReactNode;
+  active?: boolean | "parent";
+  badge?: number;
+};
 
 function NavItems({ items }: { items: NavEntry[] }) {
   return items.map((item) => (
@@ -96,18 +123,35 @@ function CompanyLogo() {
   );
 }
 
+/** The account row opens a menu with View profile and Settings. */
 function Account({ name }: { name: string }) {
   return (
     <SidebarFooter>
-      <SidebarAccount
-        avatar={
-          <Avatar size="sm">
-            <AvatarFallback />
-          </Avatar>
-        }
-      >
-        {name}
-      </SidebarAccount>
+      <DropdownMenu>
+        <DropdownMenuTrigger
+          render={
+            <SidebarAccount
+              avatar={
+                <Avatar size="sm">
+                  <AvatarFallback />
+                </Avatar>
+              }
+            >
+              {name}
+            </SidebarAccount>
+          }
+        />
+        <DropdownMenuContent side="top" align="start">
+          <DropdownMenuItem>
+            <UserRoundIcon />
+            View profile
+          </DropdownMenuItem>
+          <DropdownMenuItem>
+            <SettingsIcon />
+            Settings
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
     </SidebarFooter>
   );
 }
@@ -141,9 +185,7 @@ export function SidebarPreview() {
         <Sidebar collapsed={creatorCollapsed} className="rounded-md border">
           <SidebarContent>
             <SidebarHeader>
-              {!creatorCollapsed && (
-                <span className="text-body-lg font-medium text-gray-900">ohani</span>
-              )}
+              {creatorCollapsed ? <Logo type="collapsed" /> : <Logo />}
               <CollapseButton
                 collapsed={creatorCollapsed}
                 onToggle={() => setCreatorCollapsed((value) => !value)}
@@ -164,7 +206,7 @@ export function SidebarPreview() {
                 <button
                   type="button"
                   aria-label="Expand sidebar"
-                  className="rounded-sm outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
+                  className="rounded-sm outline-none focus-visible:ring-4 focus-visible:ring-ring/25"
                   onClick={() => setCompanyCollapsed(false)}
                 >
                   <CompanyLogo />
@@ -194,7 +236,7 @@ export function SidebarPreview() {
                 <span className="sr-only">Anthropic</span>
               </SidebarHeader>
               <SidebarNav aria-label="Company">
-                <NavItems items={COMPANY_NAV} />
+                <NavItems items={COMPANY_NAV_IN_CAMPAIGN} />
               </SidebarNav>
             </SidebarContent>
             <Account name="Bea T." />
@@ -330,7 +372,7 @@ export function TablePreview() {
     <PreviewSection
       id="table"
       title="Table"
-      description="Lists records with sortable columns. Cells hold text, an avatar with two lines, or any component such as a tag, button, or progress bar. Long text truncates."
+      description="A card listing records with sortable columns. Cells hold text, an avatar with two lines, or any component such as a tag, button, or progress bar. Long text truncates."
     >
       <Table className="min-w-[56rem] table-fixed">
         <TableCaption>
@@ -352,17 +394,15 @@ export function TablePreview() {
             <TableRow key={offer.title}>
               <TableCell>
                 <div className="flex items-center gap-3">
-                  <Avatar size="lg" shape="square">
+                  <Avatar shape="square">
                     <AvatarFallback />
                   </Avatar>
                   <div className="min-w-0">
-                    <div className="flex items-center gap-2">
-                      <span className="min-w-0 truncate">{offer.title}</span>
-                      <StarIcon aria-hidden className="size-4 shrink-0 text-muted-foreground" />
+                    <div className="flex items-center gap-1.5">
+                      <span className="min-w-0 truncate font-medium">{offer.title}</span>
+                      <StarIcon aria-hidden className="size-3.5 shrink-0 text-gray-400" />
                     </div>
-                    <p className="truncate text-body-sm font-normal text-muted-foreground">
-                      {offer.company}
-                    </p>
+                    <p className="truncate text-body-xs text-muted-foreground">{offer.company}</p>
                   </div>
                 </div>
               </TableCell>
@@ -370,7 +410,7 @@ export function TablePreview() {
               <TableCell>{offer.submitted}</TableCell>
               <TableCell>{offer.pay}</TableCell>
               <TableCell className="text-right">
-                <Button>View Offer</Button>
+                <Button size="sm">View Offer</Button>
               </TableCell>
             </TableRow>
           ))}
@@ -384,21 +424,27 @@ export function TablePreview() {
         <TableHeader>
           <TableRow>
             <SortableHead label="Name" column="name" className="w-80" {...disputes} />
-            <SortableHead label="Creator" column="creator" {...disputes} />
+            <SortableHead label="Creator" column="creator" className="w-32" {...disputes} />
             <SortableHead label="Opportunity" column="opportunity" {...disputes} />
-            <SortableHead label="Date Created" column="created" {...disputes} />
+            <SortableHead
+              label="Date Created"
+              column="created"
+              // Wide enough for the longest date, so dates never truncate.
+              className="w-44"
+              {...disputes}
+            />
             <SortableHead label="Status" column="status" className="w-40" {...disputes} />
           </TableRow>
         </TableHeader>
         <TableBody>
           {DISPUTES.map((dispute) => (
             <TableRow key={dispute.name}>
-              <TableCell className="truncate">{dispute.name}</TableCell>
+              <TableCell>{dispute.name}</TableCell>
               <TableCell>{dispute.creator}</TableCell>
               <TableCell>{dispute.opportunity}</TableCell>
               <TableCell>{dispute.created}</TableCell>
               <TableCell>
-                <Badge size="md">
+                <Badge>
                   <ClockIcon />
                   Under Review
                 </Badge>
@@ -429,7 +475,7 @@ export function TablePreview() {
               <TableCell>{budget.spent}</TableCell>
               <TableCell>
                 <Progress
-                  className="w-35"
+                  className="w-24"
                   value={budget.used}
                   aria-label={`${budget.campaign} budget used`}
                 />
@@ -438,6 +484,79 @@ export function TablePreview() {
           ))}
         </TableBody>
       </Table>
+    </PreviewSection>
+  );
+}
+
+export function PaginationPreview() {
+  const [page, setPage] = useState(1);
+  const pages = [1, 2, 3];
+  const last = 10;
+
+  return (
+    <PreviewSection
+      id="pagination"
+      title="Pagination"
+      description="Moves between pages of a long list. The current page sits on a gray fill; the arrows dim at either end."
+    >
+      <Pagination>
+        <PaginationContent>
+          <PaginationItem>
+            <PaginationPrevious
+              render={<button type="button" />}
+              aria-disabled={page === 1 || undefined}
+              onClick={() => setPage((current) => Math.max(1, current - 1))}
+            />
+          </PaginationItem>
+          {pages.map((number) => (
+            <PaginationItem key={number}>
+              <PaginationLink
+                render={<button type="button" />}
+                isActive={page === number}
+                onClick={() => setPage(number)}
+              >
+                {number}
+              </PaginationLink>
+            </PaginationItem>
+          ))}
+          <PaginationItem>
+            <PaginationEllipsis />
+          </PaginationItem>
+          <PaginationItem>
+            <PaginationLink
+              render={<button type="button" />}
+              isActive={page === last}
+              onClick={() => setPage(last)}
+            >
+              {last}
+            </PaginationLink>
+          </PaginationItem>
+          <PaginationItem>
+            <PaginationNext
+              render={<button type="button" />}
+              aria-disabled={page === last || undefined}
+              onClick={() => setPage((current) => Math.min(last, current + 1))}
+            />
+          </PaginationItem>
+        </PaginationContent>
+      </Pagination>
+    </PreviewSection>
+  );
+}
+
+export function LogoPreview() {
+  return (
+    <PreviewSection
+      id="logo"
+      title="Logo"
+      description="The [ohani] wordmark, and the [o] mark for collapsed rails. Size it by height; it takes the text color."
+    >
+      <div className="flex flex-wrap items-end gap-8">
+        <Logo className="h-4" />
+        <Logo className="h-8" />
+        <Logo type="collapsed" className="h-8" />
+        <Logo className="h-8 text-primary" />
+      </div>
     </PreviewSection>
   );
 }

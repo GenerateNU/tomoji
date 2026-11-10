@@ -17,7 +17,12 @@ import {
   ProgressPreview,
   TagPreview,
 } from "@/features/design-system/components/display";
-import { SidebarPreview, TablePreview } from "@/features/design-system/components/layout";
+import {
+  LogoPreview,
+  PaginationPreview,
+  SidebarPreview,
+  TablePreview,
+} from "@/features/design-system/components/layout";
 import { MenuPreview, MultiSelectPreview } from "@/features/design-system/components/overlays";
 
 export const metadata: Metadata = { title: "Design system · Tomoji" };
@@ -32,6 +37,7 @@ export default function DesignSystemPage() {
           Tokens and components from the Figma mid-fi library. Components live in src/components/ui.
         </p>
       </div>
+      <LogoPreview />
       <ColorPreview />
       <TypographyPreview />
       <RadiusPreview />
@@ -48,6 +54,7 @@ export default function DesignSystemPage() {
       <MenuPreview />
       <SidebarPreview />
       <TablePreview />
+      <PaginationPreview />
     </main>
   );
 }

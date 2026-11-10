@@ -116,7 +116,7 @@ function Account({ name }: { name: string }) {
 function CollapseButton({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => void }) {
   return (
     <Button
-      variant="ghost"
+      variant="secondary-ghost"
       size="icon-sm"
       className="-m-2"
       aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}

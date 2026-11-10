@@ -102,7 +102,7 @@ export function CompanyCampaigns() {
       )}
       {(pageStatus === "CanLoadMore" || pageStatus === "LoadingMore") && (
         <Button
-          variant="secondary"
+          variant="secondary-subtle"
           className="min-h-11"
           disabled={pageStatus === "LoadingMore"}
           onClick={() => loadMore(20)}

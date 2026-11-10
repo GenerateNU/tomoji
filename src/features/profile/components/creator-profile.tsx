@@ -45,7 +45,10 @@ export function CreatorProfile() {
           </div>
           <Link
             href="/settings"
-            className={cn(buttonVariants({ variant: "secondary" }), "min-h-11 self-start px-4")}
+            className={cn(
+              buttonVariants({ variant: "secondary-subtle" }),
+              "min-h-11 self-start px-4",
+            )}
           >
             Edit profile
           </Link>

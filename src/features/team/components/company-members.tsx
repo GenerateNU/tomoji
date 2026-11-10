@@ -82,7 +82,7 @@ export function CompanyMembers() {
       )}
       {(status === "CanLoadMore" || status === "LoadingMore") && allowed && (
         <Button
-          variant="secondary"
+          variant="secondary-subtle"
           className="min-h-11"
           disabled={status === "LoadingMore"}
           onClick={() => loadMore(20)}

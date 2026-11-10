@@ -145,7 +145,12 @@ export function ProfilePictureSection({ mediaId }: { mediaId?: Id<"mediaUploads"
         </h2>
         {selection && (
           <div className="flex flex-wrap gap-2">
-            <Button className="min-h-11" variant="secondary" disabled={busy} onClick={discard}>
+            <Button
+              className="min-h-11"
+              variant="secondary-subtle"
+              disabled={busy}
+              onClick={discard}
+            >
               Discard changes
             </Button>
             <Button className="min-h-11" disabled={busy} onClick={() => void save()}>
@@ -193,7 +198,7 @@ export function ProfilePictureSection({ mediaId }: { mediaId?: Id<"mediaUploads"
           <Button
             ref={chooseButton}
             className="min-h-11"
-            variant="secondary"
+            variant="secondary-subtle"
             disabled={busy || !UPLOADS_ENABLED}
             onClick={() => input.current?.click()}
           >
@@ -226,7 +231,7 @@ export function ProfilePictureSection({ mediaId }: { mediaId?: Id<"mediaUploads"
               </p>
               <Button
                 className="min-h-11"
-                variant="secondary"
+                variant="secondary-subtle"
                 disabled={busy}
                 onClick={currentPicture.retry}
               >

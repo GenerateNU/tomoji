@@ -79,7 +79,7 @@ const inputGroupButtonVariants = cva("flex items-center gap-2 text-body-sm shado
 function InputGroupButton({
   className,
   type = "button",
-  variant = "ghost",
+  variant = "secondary-ghost",
   size = "xs",
   ...props
 }: Omit<React.ComponentProps<typeof Button>, "size" | "type"> &

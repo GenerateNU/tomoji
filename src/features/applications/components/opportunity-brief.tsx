@@ -43,7 +43,6 @@ export function OpportunityBrief({
       </div>
 
       <Button
-        size="lg"
         className="w-fit px-12"
         onClick={onApply}
         disabled={!opportunity.isGated || opportunity.status !== "open"}

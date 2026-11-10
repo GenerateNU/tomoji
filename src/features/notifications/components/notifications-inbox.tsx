@@ -62,7 +62,7 @@ export function NotificationsInbox() {
       <div className="flex flex-wrap items-center justify-between gap-4 border-b pb-8">
         <h1 className="text-3xl font-semibold tracking-tight">Notifications</h1>
         <Button
-          variant="secondary"
+          variant="secondary-subtle"
           className="min-h-11"
           disabled={loading || pending !== null || allLoadedAndRead}
           onClick={() => void updateReadState("all")}
@@ -127,7 +127,7 @@ export function NotificationsInbox() {
                       </span>
                       {!item.isRead && (
                         <Button
-                          variant="ghost"
+                          variant="secondary-ghost"
                           className="mt-2 min-h-11"
                           disabled={pending !== null}
                           onClick={() => void updateReadState(item._id)}
@@ -143,7 +143,7 @@ export function NotificationsInbox() {
           ))}
           {status !== "Exhausted" && (
             <Button
-              variant="secondary"
+              variant="secondary-subtle"
               className="min-h-11"
               disabled={status === "LoadingMore"}
               onClick={() => loadMore(PAGE_SIZE)}

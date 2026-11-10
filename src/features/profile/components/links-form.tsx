@@ -151,7 +151,7 @@ export function LinksForm({
                 />
                 <Button
                   type="button"
-                  variant="secondary"
+                  variant="secondary-subtle"
                   aria-label={`Remove link ${index + 1}`}
                   className="size-11 shrink-0"
                   onClick={() => {
@@ -177,7 +177,7 @@ export function LinksForm({
         {additional.length < MAX_ADDITIONAL_LINKS && (
           <Button
             type="button"
-            variant="secondary"
+            variant="secondary-subtle"
             className="min-h-11"
             onClick={() => {
               setAdditional([...additional, ""]);
@@ -204,7 +204,7 @@ export function LinksForm({
         <Button
           type="button"
           aria-label="Discard link changes"
-          variant="secondary"
+          variant="secondary-subtle"
           className="min-h-11"
           disabled={pending}
           onClick={onDiscard}

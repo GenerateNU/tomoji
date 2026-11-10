@@ -1,6 +1,6 @@
 /**
- * Copies WorkOS, S3, and optional X OAuth/encryption settings from .env.local onto the Convex
- * deployment.
+ * Copies WorkOS, S3, and optional X OAuth/encryption and Stripe settings from .env.local onto the
+ * Convex deployment.
  *
  * Convex reads these server-side, not from .env.local:
  *   WORKOS_CLIENT_ID
@@ -11,6 +11,7 @@
  *   S3_MEDIA_REGION
  *   X_CLIENT_ID / X_CLIENT_SECRET / X_REDIRECT_URI (when supplied together)
  *   X_BEARER_TOKEN / X_METRICS_SYNC_ENABLED (each when supplied)
+ *   STRIPE_SECRET_KEY / SITE_URL / STRIPE_WEBHOOK_SECRET (when a test-mode key is supplied)
  */
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
@@ -71,6 +72,19 @@ if (readValue("X_METRICS_SYNC_ENABLED") === "true" && readValue("X_BEARER_TOKEN"
   process.exit(1);
 }
 const METRICS_KEYS = ["X_BEARER_TOKEN", "X_METRICS_SYNC_ENABLED"] as const;
+
+// SITE_URL ships with a default in the template, so only the key opts in.
+const STRIPE_KEYS = ["STRIPE_SECRET_KEY", "SITE_URL"] as const;
+const stripeSecretKey = readValue("STRIPE_SECRET_KEY");
+const configureStripe = stripeSecretKey !== "";
+// This script only targets personal dev deployments, which must never move real money.
+if (/^(sk|rk)_live_/.test(stripeSecretKey)) {
+  console.error(
+    "STRIPE_SECRET_KEY is a live key. Use a test-mode key (sk_test_ or rk_test_) from a Stripe sandbox.",
+  );
+  process.exit(1);
+}
+
 const keys = [
   ...KEYS,
   ...(configureAi ? AI_KEYS : []),
@@ -78,6 +92,7 @@ const keys = [
   ...(configureX ? X_KEYS : []),
   ...(configureEncryption ? ENCRYPTION_KEYS : []),
   ...METRICS_KEYS.filter((key) => readValue(key) !== ""),
+  ...(configureStripe ? STRIPE_KEYS : []),
 ];
 const missing = keys.filter((key) => readValue(key) === "");
 if (missing.length > 0) {
@@ -133,4 +148,31 @@ const result = spawnSync(
 );
 if (result.status !== 0) {
   process.exit(result.status ?? 1);
+}
+
+if (configureStripe) {
+  const stripeWebhookSecret = readValue("STRIPE_WEBHOOK_SECRET");
+  if (stripeWebhookSecret === "") {
+    console.error(
+      [
+        "",
+        "STRIPE_WEBHOOK_SECRET is empty in .env.local. Creator onboarding status won't update without it.",
+        "",
+        "In the Stripe sandbox, add a webhook destination for connected accounts that sends",
+        "account.updated to:",
+        "",
+        `  ${convexEnv("CONVEX_SITE_URL")}/stripe/webhook`,
+        "",
+        "Paste its signing secret (whsec_...) into .env.local, then re-run this.",
+        "",
+      ].join("\n"),
+    );
+    process.exit(1);
+  }
+  const stripeResult = spawnSync(
+    "bunx",
+    ["convex", "env", "set", "STRIPE_WEBHOOK_SECRET", stripeWebhookSecret],
+    { stdio: "inherit", shell: process.platform === "win32" },
+  );
+  if (stripeResult.status !== 0) process.exit(stripeResult.status ?? 1);
 }

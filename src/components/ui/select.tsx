@@ -28,14 +28,15 @@ function SelectValue({ className, ...props }: SelectPrimitive.Value.Props) {
   );
 }
 
-// Figma "Select": a form field by default; sm is the compact toolbar select.
+// Figma "Select": a form field by default, with Text Field's border states and
+// a blue border while open; sm is the compact toolbar select.
 const selectTriggerVariants = cva(
-  "flex w-fit items-center justify-between rounded-lg border border-input bg-background whitespace-nowrap transition-colors outline-none select-none focus-visible:border-foreground focus-visible:inset-ring-1 focus-visible:inset-ring-foreground disabled:cursor-not-allowed disabled:opacity-50 aria-invalid:border-destructive aria-invalid:inset-ring-1 aria-invalid:inset-ring-destructive data-placeholder:text-gray-400 *:data-[slot=select-value]:line-clamp-1 *:data-[slot=select-value]:flex *:data-[slot=select-value]:items-center *:data-[slot=select-value]:gap-1.5 [&_svg]:pointer-events-none [&_svg]:shrink-0",
+  "flex w-fit items-center justify-between rounded-sm border border-input bg-background whitespace-nowrap transition-[color,border-color,box-shadow] outline-none select-none hover:border-primary hover:inset-ring-1 hover:inset-ring-primary focus-visible:border-primary focus-visible:inset-ring-1 focus-visible:inset-ring-primary data-popup-open:border-primary data-popup-open:inset-ring-1 data-popup-open:inset-ring-primary disabled:cursor-not-allowed disabled:opacity-40 aria-invalid:border-red-600 aria-invalid:bg-red-50 aria-invalid:inset-ring-1 aria-invalid:inset-ring-red-600 data-placeholder:text-gray-400 *:data-[slot=select-value]:line-clamp-1 *:data-[slot=select-value]:flex *:data-[slot=select-value]:items-center *:data-[slot=select-value]:gap-1.5 [&_svg]:pointer-events-none [&_svg]:shrink-0",
   {
     variants: {
       size: {
-        default: "h-10 gap-2 px-3 text-body [&_svg:not([class*='size-'])]:size-4",
-        sm: "h-9 gap-1 pr-2.5 pl-3 text-body-sm [&_svg:not([class*='size-'])]:size-3",
+        default: "h-11.75 gap-2 px-3 text-body [&_svg:not([class*='size-'])]:size-4",
+        sm: "h-8.25 gap-1.5 pr-2.5 pl-3 text-body-sm [&_svg:not([class*='size-'])]:size-4",
       },
     },
     defaultVariants: {

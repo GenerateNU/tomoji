@@ -51,21 +51,29 @@ export function TagPreview() {
       description="Tags label a status or attribute: primary for in-progress, destructive for overdue or blocking, neutral for the rest. Filter chips toggle a filter on and off; selected chips turn blue."
     >
       <div className="flex flex-wrap gap-8">
-        <Example label='Badge size="sm" | "md"'>
+        <Example label='Badge size="sm" (default)'>
           <div className="flex flex-wrap items-center gap-2">
             <Badge>Applied</Badge>
             <Badge>
               <ClockIcon />
               Waiting 6d
             </Badge>
-            <Badge size="md">In Review</Badge>
-            <Badge size="md">Due in 3 days</Badge>
           </div>
         </Example>
-        <Example label='tone="primary" | "destructive"'>
+        <Example label='size="md"'>
           <div className="flex flex-wrap items-center gap-2">
+            <Badge size="md">In Review</Badge>
+            <Badge size="md">
+              <ClockIcon />
+              Due in 3 days
+            </Badge>
+          </div>
+        </Example>
+        <Example label='tone="neutral" | "primary" | "destructive"'>
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge>Applied</Badge>
             <Badge tone="primary">In progress</Badge>
-            <Badge size="md" tone="destructive">
+            <Badge tone="destructive">
               <ClockIcon />
               Overdue
             </Badge>

@@ -2,8 +2,9 @@
 
 This is the implementation contract for Tomoji's earnings calculator, scheduler,
 and Stripe integration. The existing [payout operations](BACKEND.md#payout-records)
-record and review earned obligations. Calculation, scheduled earnings creation,
-and Stripe collection are follow-up work; this document does not make them live.
+record and review earned obligations. Pure earnings arithmetic and period boundaries
+are implemented; measurement records, settlement, scheduled earnings creation,
+and Stripe collection are follow-up work.
 
 ## Agreed payout rules
 
@@ -91,6 +92,18 @@ Do not change the amount of the original payout or repeat the fixed fee. The
 calculation records must distinguish this separate component from a retry of the
 original earning. With complete metrics, the first payout combines fixed and
 variable earnings normally.
+
+## Pure calculator
+
+[`calculateEarnings`](../convex/lib/earningsCalculator.ts) computes the cumulative
+fixed/variable entitlement, applies whole-cent rounding and the per-deliverable
+cap, and subtracts previously recorded obligations. Missing view evidence stays
+unknown and can still release an unpaid fixed fee. Invalid or regressed inputs
+return `needsAttention` instead of a payable amount.
+
+`getEarningPeriod` derives seven-day periods from the stored verification start
+and window end, including the final partial period and an earlier cutoff. These
+helpers are pure: they do not read the database, create payouts, or send money.
 
 ## Inputs and records needed by the calculator
 
@@ -216,12 +229,10 @@ deliverables following this example earn $600 total, each on its own clock.
 
 ## Delivery and verification
 
-This PR establishes the policy and handoff. The calculator/records PR implements
-the inputs and arithmetic above; the scheduling PR creates due obligations using
-the existing review workflow. These acceptance examples become their behavioral
-tests. Stripe processing and bank-payout reconciliation remain in the separate
-Stripe stack, followed by integration tests across both stacks.
+The pure calculator is covered by unit tests for fixed fees, cumulative CPM, caps,
+rounding, missing metrics, invalid inputs, and period boundaries. Run `just ci`
+for type checking, linting, formatting, and the full test suite.
 
-For this documentation change, verify the examples, repository links, and
-consistency with existing payout semantics, then run `just ci`. No new runtime
-behavior or payment-provider configuration is introduced here.
+The next two stacked PRs add lifecycle/metric evidence and transactional
+settlement records. Scheduling and Stripe processing remain follow-up work.
+No payment-provider configuration or live charges are introduced here.

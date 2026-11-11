@@ -35,6 +35,7 @@ import type * as lib_ai_validation from "../lib/ai/validation.js";
 import type * as lib_ai_workflow from "../lib/ai/workflow.js";
 import type * as lib_authz from "../lib/authz.js";
 import type * as lib_birthdate from "../lib/birthdate.js";
+import type * as lib_earningsCalculator from "../lib/earningsCalculator.js";
 import type * as lib_errors from "../lib/errors.js";
 import type * as lib_functions from "../lib/functions.js";
 import type * as lib_identity from "../lib/identity.js";
@@ -141,6 +142,7 @@ declare const fullApi: ApiFromModules<{
   "lib/ai/workflow": typeof lib_ai_workflow;
   "lib/authz": typeof lib_authz;
   "lib/birthdate": typeof lib_birthdate;
+  "lib/earningsCalculator": typeof lib_earningsCalculator;
   "lib/errors": typeof lib_errors;
   "lib/functions": typeof lib_functions;
   "lib/identity": typeof lib_identity;

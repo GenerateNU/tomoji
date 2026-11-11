@@ -135,6 +135,28 @@ but does not run a migration, configure credentials, or enable X as a sign-in pr
 Live linking must be verified with a real X app before release. No posting, analytics,
 token-refresh service, or ingestion is included.
 
+## Post metrics sync configuration
+
+Post metrics come from X's public post lookup, which accepts the app-only bearer
+token, so the sync never decrypts creator credentials. Every read is billed against
+the team's X credits.
+
+| Setting                  | Meaning                                                       |
+| ------------------------ | ------------------------------------------------------------- |
+| `X_BEARER_TOKEN`         | App bearer token from the X Developer Console. Backend-only.  |
+| `X_METRICS_SYNC_ENABLED` | Exactly `true` enables the sync. Anything else leaves it off. |
+
+`readXMetricsConfig` in `convex/lib/xApi.ts` reads both. With the flag off it reports
+the sync disabled without checking the token. With the flag on and no token it fails
+closed as `misconfigured`. Keep the flag off on personal deployments. `just convex-env`
+copies each setting that is filled in and rejects `X_METRICS_SYNC_ENABLED=true` without a
+token, but it never clears a deployment value. To turn an enabled deployment off, run
+`bunx convex env set X_METRICS_SYNC_ENABLED false`.
+
+`X_POST_EARNING_DAYS` (30) is a placeholder for how long a post keeps earning after it
+goes live, pending product confirmation. Payouts run weekly, so a post is paid through
+the end of the week its last earning day falls in.
+
 ## Later X API consumers
 
 This ticket does not add periodic refresh. Future consumers should share an

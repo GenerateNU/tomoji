@@ -97,6 +97,7 @@ test("an internal retry requeues corrected work without resetting financial reco
       lastError: "settlement_execution_failed",
       lastAttemptedAt: START,
       lastAttemptedPeriodIndex: 0,
+      scan: { nextPeriodIndex: 1, pendingMetrics: true, cutoffAt: START + 30 * DAY },
     }),
   );
   vi.setSystemTime(START + 40 * DAY);
@@ -108,6 +109,7 @@ test("an internal retry requeues corrected work without resetting financial reco
     lastAttemptedAt: START,
     lastAttemptedPeriodIndex: 0,
   });
+  expect(schedule.scan).toBeUndefined();
   expect(await t.run((ctx) => ctx.db.query("payouts").take(1))).toEqual([]);
   expect(await t.run((ctx) => ctx.db.query("earningCalculations").take(1))).toEqual([]);
 });

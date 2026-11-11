@@ -6,6 +6,7 @@ import {
   processEarningsSchedule,
   recordEarningsScheduleFailure,
   retryEarningsSchedule,
+  type EarningsScheduleRun,
 } from "./models/earningsScheduler";
 import { earningsSweepContinuation, getDueEarningsSchedules } from "./models/earningsSchedules";
 import schema from "./schema";
@@ -37,14 +38,11 @@ export const sweep = internalMutation({
   },
 });
 
-/** Commits settlement and scheduling progress together; only the wrapper queues this work. */
+/** Commits one period and its scan progress together; only the wrapper queues this work. */
 export const process = internalMutation({
   args: earningsScheduleRun.fields,
-  returns: v.null(),
-  handler: async (ctx, args): Promise<null> => {
-    await processEarningsSchedule(ctx, args);
-    return null;
-  },
+  returns: v.union(earningsScheduleRun, v.null()),
+  handler: async (ctx, args) => await processEarningsSchedule(ctx, args),
 });
 
 /** Isolates failures so partial settlement rolls back while retry metadata can still commit. */
@@ -53,13 +51,25 @@ export const run = internalMutation({
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
     try {
-      await ctx.runMutation(internal.earningsSchedules.process, args, {
-        transactionLimits: {
-          documentsRead: 8_000,
-          bytesRead: 8_388_608,
-          documentsWritten: 2_000,
+      const continuation: EarningsScheduleRun | null = await ctx.runMutation(
+        internal.earningsSchedules.process,
+        args,
+        {
+          transactionLimits: {
+            databaseQueries: 3_500,
+            documentsRead: 8_000,
+            bytesRead: 8_388_608,
+            documentsWritten: 2_000,
+          },
         },
-      });
+      );
+      if (continuation !== null) {
+        await ctx.scheduler.runAfter(
+          Math.max(0, continuation.expectedNextCheckAt - Date.now()),
+          internal.earningsSchedules.run,
+          continuation,
+        );
+      }
     } catch {
       await recordEarningsScheduleFailure(ctx, args);
     }

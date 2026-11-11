@@ -23,12 +23,17 @@ afterEach(() => vi.useRealTimers());
 async function run(t: TestConvex, fixture: Fixture) {
   const schedule = (await t.run((ctx) => ctx.db.get("earningsSchedules", fixture.scheduleId)))!;
   if (schedule.nextCheckAt === undefined) throw new Error("expected scheduled work");
-  await t.run((ctx) =>
+  let continuation = await t.run((ctx) =>
     processEarningsSchedule(ctx, {
       scheduleId: fixture.scheduleId,
       expectedNextCheckAt: schedule.nextCheckAt!,
     }),
   );
+  while (continuation !== null) {
+    const args = continuation;
+    vi.setSystemTime(args.expectedNextCheckAt);
+    continuation = await t.run((ctx) => processEarningsSchedule(ctx, args));
+  }
   return (await t.run((ctx) => ctx.db.get("earningsSchedules", fixture.scheduleId)))!;
 }
 
@@ -51,7 +56,8 @@ test("downtime catches up all five periods with review deadlines based on actual
   payouts.sort((a, b) => a.earningPeriod!.endsAt - b.earningPeriod!.endsAt);
   expect(payouts.map((row) => row.amount)).toEqual([11_000, 2_000, 3_000, 3_000, 1_000]);
   expect(payouts.every((row) => row.approvalStatus === "pending")).toBe(true);
-  expect(payouts.every((row) => row.approvalDueAt === START + 43 * DAY)).toBe(true);
+  expect(payouts.every((row) => row.approvalDueAt === row.reviewRequestedAt + 3 * DAY)).toBe(true);
+  expect(payouts.every((row) => row.reviewRequestedAt >= START + 40 * DAY)).toBe(true);
   expect(schedule.status).toBe("complete");
   expect(schedule.nextCheckAt).toBeUndefined();
 });
@@ -163,6 +169,55 @@ test("a retrospective boundary cutoff detects recorded earnings beyond the new f
   expect(held.nextCheckAt).toBeUndefined();
   expect(await t.run((ctx) => ctx.db.query("payouts").take(3))).toEqual(before);
 });
+
+test.each(["removal", "cancellation"])(
+  "a %s between continuations restarts validation against the new cutoff",
+  async (kind) => {
+    const t = convexTest(schema, modules);
+    const fixture = await seedScheduledEarnings(t);
+    vi.setSystemTime(START + 14 * DAY);
+    await fixture.snapshot(0, 0);
+    await fixture.snapshot(7, 100);
+    const continuation = await t.run((ctx) =>
+      processEarningsSchedule(ctx, {
+        scheduleId: fixture.scheduleId,
+        expectedNextCheckAt: START + 7 * DAY,
+      }),
+    );
+    expect(continuation).not.toBeNull();
+    const before = await t.run((ctx) => ctx.db.query("payouts").take(2));
+    expect(before).toHaveLength(1);
+    await t.run(async (ctx) => {
+      if (kind === "removal") {
+        await recordPostRemoval(ctx, {
+          postId: fixture.postId,
+          removedAt: START + 3 * DAY,
+          sourceKey: "removed:between-workers",
+        });
+      } else {
+        await cancelAssignment(ctx, (await ctx.db.get("assignments", fixture.assignmentId))!);
+      }
+    });
+    const reset = (await t.run((ctx) => ctx.db.get("earningsSchedules", fixture.scheduleId)))!;
+    expect(reset.scan).toBeUndefined();
+    if (kind === "removal") {
+      // The queued continuation has an old token and must not advance the new scan.
+      vi.setSystemTime(continuation!.expectedNextCheckAt);
+      expect(await t.run((ctx) => processEarningsSchedule(ctx, continuation!))).toBeNull();
+      expect(await run(t, fixture)).toMatchObject({
+        status: "needsAttention",
+        lastError: "earning_period_changed",
+        lastAttemptedPeriodIndex: 0,
+      });
+    } else {
+      expect(await run(t, fixture)).toMatchObject({
+        status: "scheduled",
+        lastError: "metric_evidence_missing",
+      });
+    }
+    expect(await t.run((ctx) => ctx.db.query("payouts").take(2))).toEqual(before);
+  },
+);
 
 test.each([0, 20_000])(
   "zero increments complete without extra payouts after a %i cent cap",

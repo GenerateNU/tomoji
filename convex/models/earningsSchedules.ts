@@ -87,14 +87,15 @@ export async function bringForwardEarningsSchedule(
     await ctx.db.patch("earningsSchedules", schedule._id, {
       status: "needsAttention",
       nextCheckAt: undefined,
+      scan: undefined,
       lastError: timing.reason,
     });
   } else if (timing.cutoffAt < earnings.endsAt) {
-    // Preserve earlier outstanding work and all attempt diagnostics. The worker must
-    // reconsider recorded periods against this cutoff, not resume from a cursor.
+    // Preserve diagnostics, but restart validation against the shortened window.
     await ctx.db.patch("earningsSchedules", schedule._id, {
       status: "scheduled",
       nextCheckAt: Math.min(schedule.nextCheckAt ?? Infinity, timing.cutoffAt),
+      scan: undefined,
     });
   } else {
     return schedule;

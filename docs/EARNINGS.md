@@ -225,6 +225,12 @@ attempt diagnostics. These fields do not establish that an earning was settled:
 a fixed-fee-only payout can still leave variable earnings pending. Initialization
 sets `retryCount` to zero.
 
+Optional `scan` state retains the next period index, whether earlier variable
+earnings remain pending, and the effective cutoff during a chronological pass.
+Existing rows without it start at period zero. It is cleared when a pass ends,
+when a shortened cutoff wakes the schedule, or on an explicit recovery retry.
+Calculation records remain authoritative; the cursor is only scheduling progress.
+
 Cancellation and confirmed removal bring the schedule forward in the cutoff
 transaction, preserving an earlier outstanding check and attempt diagnostics.
 A shortened window can wake a previously completed or parked schedule. The
@@ -259,22 +265,28 @@ queues a continuation using the same cutoff and the next cursor. Missing metrics
 or failed work at the start of the index cannot prevent later rows from running.
 
 Each worker rereads its schedule and compares `expectedNextCheckAt` with the
-current value. Stale, early, completed, or parked work is a no-op. The worker
-settles due periods in chronological order, including missed weeks and the final
-partial period. It rechecks existing calculations against the current cutoff;
+current value. Stale, early, completed, or parked work is a no-op. Each worker
+settles at most one period, then queues a continuation in a fresh transaction
+when more work is due. Its due token advances by at least one millisecond so
+queued duplicates cannot consume the next period. A pass visits periods in
+chronological order, including missed weeks and the final partial period.
+Each new pass starts from period zero, and a changed cutoff restarts the pass.
+It rechecks existing calculations against the current cutoff;
 `lastAttemptedPeriodIndex` is diagnostic, not a cursor that permits skipping
 earlier obligations. Catch-up payouts receive a full 72-hour review window from
 their actual creation time.
 
-Settlement and schedule progress commit together in a nested mutation. If that
-mutation throws, its writes roll back; the wrapper records a safe failure code
-and retry timing. Other agreements run in separate workers. The nested mutation
-is capped at 8,000 document reads, 8 MiB read, and 2,000 document writes to reserve
+One period's settlement and scan progress commit together in a nested mutation.
+If it throws, that period's writes roll back while earlier committed periods
+remain intact; the wrapper records a safe failure code and retries the same
+period. Other agreements run in separate workers. The nested mutation is capped
+at 3,500 queries, 8,000 document reads, 8 MiB read, and 2,000 document writes to reserve
 headroom for failure recording. Windows with more than 64 weekly periods park
 with `earning_window_too_large`; the default window has five periods.
 
 | Outcome                                     | Schedule behavior                                                                                                                                |
 | ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| More due periods in the current pass        | Commit this period and continue in a separate scheduled transaction; retain pending-metric state.                                                |
 | Due periods recorded, future period remains | Check at the next canonical boundary.                                                                                                            |
 | Missing metric evidence                     | Retry after one hour, or at the next boundary if sooner; continue beyond day 30. A later supported settlement can cover earlier pending periods. |
 | All eligible periods settled                | Mark `complete` and clear `nextCheckAt`; zero increments do not create payouts.                                                                  |
@@ -284,7 +296,7 @@ with `earning_window_too_large`; the default window has five periods.
 After correcting the source problem, a trusted operator can invoke
 `internal.earningsSchedules.retry({ scheduleId })` through the selected deployment's
 internal tooling. It requeues the schedule immediately and resets the retry
-counter, preserving the earning clock, obligations, and attempt diagnostics.
+counter and scan cursor, preserving the earning clock, obligations, and attempt diagnostics.
 Successful processing clears the last error. Retrying does not itself repair an
 accounting conflict or refund an existing payout.
 
@@ -381,7 +393,10 @@ cutoff handling. Run `just ci` for type checking, linting, formatting, and the f
 test suite. Scheduling-state tests cover lifecycle timing, atomic cancellation,
 and migration batching/idempotency. Runner tests cover paginated discovery,
 overlapping runs, catch-up, delayed evidence, cutoffs, backoff, and rollback on
-exceptions or nested transaction limits. Due obligations use the same settlement
+exceptions or nested transaction limits. Resource regressions exercise large
+legacy histories and 64-period catch-up with transaction limits enforced, including
+later cumulative evidence and a failure after an earlier period commits.
+Due obligations use the same settlement
 operation and existing review workflow.
 
 Stripe processing and bank-payout reconciliation remain in the separate Stripe

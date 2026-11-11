@@ -7,6 +7,14 @@ export const earningsSchedulesTable = defineTable({
   status: v.union(v.literal("scheduled"), v.literal("needsAttention"), v.literal("complete")),
   // Absent while parked. Due-work reads must exclude undefined using gte("nextCheckAt", 0).
   nextCheckAt: v.optional(v.number()),
+  // One chronological scan spans bounded transactions; old rows start from period zero.
+  scan: v.optional(
+    v.object({
+      nextPeriodIndex: v.number(),
+      pendingMetrics: v.boolean(),
+      cutoffAt: v.number(),
+    }),
+  ),
   lastAttemptedAt: v.optional(v.number()),
   // Diagnostic only: an attempted period can still have pending variable earnings.
   lastAttemptedPeriodIndex: v.optional(v.number()),

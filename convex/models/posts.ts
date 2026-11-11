@@ -1,8 +1,13 @@
-import { paginationOptsValidator, type PaginationResult } from "convex/server";
+import {
+  paginationOptsValidator,
+  type PaginationOptions,
+  type PaginationResult,
+} from "convex/server";
 import { v, type Infer } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { apiError } from "../lib/errors";
+import { X_POST_EARNING_DAYS } from "../lib/xApi";
 import { requireAssignment, type AssignmentViewer } from "./assignments";
 import { listOpportunityDeliverables } from "./deliverableDrafts";
 import { getLatestSubmission } from "./submissions";
@@ -609,4 +614,35 @@ export async function finishCreatorCaptionCheck(
   }
   await ctx.db.patch("posts", postId, { captionCheck: status });
   return status;
+}
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+// Payouts run Monday 00:00 UTC for the week just ended, so a post stays in the
+// sync one week past its last earning day to be paid through that week.
+const SYNC_WINDOW_MS = (X_POST_EARNING_DAYS + 7) * DAY_MS;
+
+/** What the weekly X sync needs to fetch a post's counts and store them. */
+export const earningPost = v.object({ postId: v.id("posts"), xPostId: v.string() });
+export type EarningPost = Infer<typeof earningPost>;
+
+/** One page of posts the weekly X sync fetches at `now`: verified, active, and within the sync window. */
+export async function listEarningPosts(
+  ctx: QueryCtx,
+  now: number,
+  paginationOpts: PaginationOptions,
+): Promise<PaginationResult<EarningPost>> {
+  const result = await ctx.db
+    .query("posts")
+    .withIndex("by_isVerified_and_isActive_and_postedAt", (q) =>
+      q
+        .eq("isVerified", true)
+        .eq("isActive", true)
+        .gte("postedAt", now - SYNC_WINDOW_MS),
+    )
+    .paginate(paginationOpts);
+  return {
+    ...result,
+    page: result.page.map((post) => ({ postId: post._id, xPostId: post.xPostId })),
+  };
 }

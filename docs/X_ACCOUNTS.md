@@ -171,6 +171,11 @@ the end of that week. Collectors must use the agreement's verification baseline
 and period/cutoff timestamps, and retain delayed evidence needed to settle earlier
 earnings. See [Earnings rules](EARNINGS.md) for the calculation and evidence contract.
 
+The weekly sync fetches verified, active posts that went live within the last
+`X_POST_EARNING_DAYS` + 7 days. The extra week covers the final partial week, since
+payouts run Monday 00:00 UTC and a post is paid through the end of the week its last
+earning day falls in.
+
 `getXPostMetrics` looks up at most 100 post IDs per call through `GET /2/tweets` with
 `tweet.fields=public_metrics`. Each post's counts come back in two parts, stored
 separately:

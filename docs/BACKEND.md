@@ -343,6 +343,22 @@ do not depend on an assignment, campaign, or post remaining active or present.
 - Both endpoints return an explicit public view, excluding `sourceKey` and
   `approvedBy`. The source key is for internal earning-event deduplication and the
   approver ID is audit metadata.
+- `deliverableId` is returned when stored on the payout, including after related
+  records are deleted. It remains absent on legacy payouts without a stored ID;
+  reads neither infer it from a live post nor backfill historical records.
+- Each view includes `review: { hasOpenDispute, canApprove }`. `hasOpenDispute`
+  reflects any current open assignment dispute, including one about a different
+  post on the assignment. It remains true if a dispute opens after approval;
+  that does not revoke the stored approval. `canApprove` is true only for the
+  owning company's current admin when the payout is pending and undisputed.
+  Creators, company members, and operators receive false. Company scope and
+  role come from the caller's verified, active membership, never request input.
+- Review enrichment happens after ownership filtering and preserves every row,
+  sort order, and native pagination metadata. List reads check disputes once per
+  distinct assignment in the returned page. These reads do not write records or
+  change deadlines. An overdue payout stays pending until an approval operation
+  runs; clients can display the stored `approvalDueAt` without treating elapsed
+  time as proof of approval.
 
 Approval and payment status are separate. `transferred` means money reached the
 creator's payment-provider balance, not their bank. Times are Unix milliseconds;
@@ -398,6 +414,10 @@ earnings, approve payouts, or schedule payments.
 The route uses `companyAdminMutation`; creators, ordinary members, and operators
 cannot approve on a company's behalf. Missing and foreign payouts return
 `not_found`. Successful approval returns the same public view as `get` and `list`.
+The returned review context reflects the new approved state. A previous read's
+`canApprove` value is only a UI hint: the mutation rechecks current membership,
+ownership, and open disputes before approving a pending payout. Cancellation or
+missing parent records do not independently block review of an existing obligation.
 
 - Manual approval records `approvalStatus: "approved"`, server-time `approvedAt`,
   `approvalSource: "company"`, and the authenticated user's ID in `approvedBy`.

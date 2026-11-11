@@ -367,6 +367,12 @@ requirement to use a separate Stripe Transfer. Bank payouts and failures are
 separate payment-provider events; a bank-payout failure cannot trigger another
 charge to the company.
 
+Payout history reads expose a stored `deliverableId` when available and
+`review: { hasOpenDispute, canApprove }` for the authenticated caller. Review
+information is derived from current disputes and membership without changing the
+obligation. It describes manual approval eligibility, not payment readiness or
+bank-payout status. See [payout reads and review context](BACKEND.md#payout-records).
+
 Each engineer branches independently from `main`. Gulnas can test against the
 existing payout records without importing code from Eric's branch. New Stripe
 records and endpoints belong to her stack; detailed UI response contracts are

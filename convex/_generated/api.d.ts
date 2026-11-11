@@ -32,6 +32,7 @@ import type * as lib_ai_providerStep from "../lib/ai/providerStep.js";
 import type * as lib_ai_reviewPolicy from "../lib/ai/reviewPolicy.js";
 import type * as lib_ai_validation from "../lib/ai/validation.js";
 import type * as lib_ai_workflow from "../lib/ai/workflow.js";
+import type * as lib_ai_xPostText from "../lib/ai/xPostText.js";
 import type * as lib_authz from "../lib/authz.js";
 import type * as lib_birthdate from "../lib/birthdate.js";
 import type * as lib_errors from "../lib/errors.js";
@@ -126,6 +127,7 @@ declare const fullApi: ApiFromModules<{
   "lib/ai/reviewPolicy": typeof lib_ai_reviewPolicy;
   "lib/ai/validation": typeof lib_ai_validation;
   "lib/ai/workflow": typeof lib_ai_workflow;
+  "lib/ai/xPostText": typeof lib_ai_xPostText;
   "lib/authz": typeof lib_authz;
   "lib/birthdate": typeof lib_birthdate;
   "lib/errors": typeof lib_errors;

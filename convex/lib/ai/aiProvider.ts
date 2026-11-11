@@ -1,6 +1,6 @@
 import { apiError } from "../errors";
 
-export type AiProvider = "assemblyai" | "jev";
+export type AiProvider = "assemblyai" | "jev" | "x";
 const REQUEST_TIMEOUT_MS = 15_000;
 
 /** Requires server-only keys when the review pipeline is invoked, not at module load. */
@@ -53,7 +53,7 @@ export async function requestAiProvider(
   url: string,
   init: RequestInit,
 ): Promise<Record<string, unknown>> {
-  // Both transcription and classification POSTs can incur a charge before a response is lost.
+  // Provider POSTs can incur a charge before a response is lost.
   const submission = init.method?.toUpperCase() === "POST";
   const signal = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
   let response: Response;

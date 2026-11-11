@@ -3,7 +3,7 @@ import { v } from "convex/values";
 import { internalMutation, internalQuery } from "./_generated/server";
 import { aiReviewFailureReason } from "./schemas/aiReviewAttempts.schema";
 import schema from "./schema";
-import { aiReviewResult, completedTranscription } from "./lib/ai/validation";
+import { aiReviewResult, completedTranscription, reviewCriterion } from "./lib/ai/validation";
 import {
   expireAiReview,
   completeAiReviewWorkflow,
@@ -11,6 +11,7 @@ import {
   recordAiTranscriptionJob,
   saveAiTranscription,
   getAiReviewInput,
+  getAiPostReviewInput,
   markAiReviewForManualReview,
   reserveAiTranscription,
   getAiReviewVideo,
@@ -92,4 +93,16 @@ export const video = internalQuery({
   args: attemptArgs,
   returns: v.object({ key: v.string() }),
   handler: async (ctx, { attemptId }) => await getAiReviewVideo(ctx, attemptId),
+});
+
+/** Resolves a current post and the criteria originally confirmed for its draft. */
+export const postInput = internalQuery({
+  args: { postId: v.id("posts") },
+  returns: v.object({
+    xPostId: v.string(),
+    criteria: v.array(reviewCriterion),
+    context: v.record(v.string(), v.string()),
+    transcript: v.string(),
+  }),
+  handler: async (ctx, { postId }) => await getAiPostReviewInput(ctx, postId),
 });

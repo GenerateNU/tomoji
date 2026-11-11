@@ -8,6 +8,8 @@ import type { Doc, Id } from "./_generated/dataModel";
 import type { ActionCtx } from "./_generated/server";
 import { internalAction, env } from "./_generated/server";
 import { submitTranscription, getTranscription, type Transcription } from "./lib/ai/assemblyAi";
+import { operatorAction } from "./lib/functions";
+import { getXPostText } from "./lib/ai/xPostText";
 import { evaluateTranscript } from "./lib/ai/jev";
 import { readAiReviewConfig } from "./lib/ai/aiProvider";
 import { providerStepFailure, providerFailure } from "./lib/ai/providerStep";
@@ -119,5 +121,28 @@ export const evaluate = internalAction({
     } catch (error) {
       return providerFailure(error, "review_failed");
     }
+  },
+});
+
+/** Gives an operator advisory results for a published post using its actual X caption. */
+export const reviewPost = operatorAction({
+  args: { postId: v.id("posts") },
+  returns: aiReviewResult,
+  handler: async (ctx, { postId }): Promise<Infer<typeof aiReviewResult>> => {
+    if (env.AI_REVIEW_ENABLED !== "true")
+      throw apiError("invalid_state", { reason: "ai_review_disabled" });
+    const jevKey = env.TYPESAFE_API_KEY?.trim();
+    const xToken = env.X_BEARER_TOKEN?.trim();
+    if (!jevKey || !xToken)
+      throw apiError("misconfigured", { reason: "post_review_config_missing" });
+    const input = await ctx.runQuery(internal.aiReviewInternal.postInput, { postId });
+    const postText = await getXPostText(xToken, input.xPostId);
+    return await evaluateTranscript(
+      jevKey,
+      input.transcript,
+      input.criteria,
+      input.context,
+      postText,
+    );
   },
 });

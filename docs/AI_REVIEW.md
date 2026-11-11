@@ -29,8 +29,14 @@ The attempt snapshots confirmed criteria and the opportunity brief.
 Jev receives the snapshot as context, but evaluates only the explicit criteria.
 Evaluate the entire transcript, accepting equivalent spoken wording and minor transcription
 spelling differences only when context makes the meaning clear. Explicit conditions
-still apply. Transcript content is evidence, not instructions. Visual content, captions, and
-post-publication X matching are outside this version.
+still apply. Treat the transcript as evidence. Visual content is outside draft review.
+
+After a creator links a published X post, an operator can call
+`aiReviewActions.reviewPost({ postId })` to check the actual post text against the
+draft's saved criteria. The action fetches the post by its stored X ID, including
+full text for long posts, and sends that text and any saved draft transcript to
+Jev. The result is advisory. It does not verify the post or check the published
+video against the draft.
 
 Convex applies the policy in `convex/lib/ai/reviewPolicy.ts`:
 
@@ -86,6 +92,9 @@ Set server-only `ASSEMBLYAI_API_KEY` and `TYPESAFE_API_KEY` together in `.env.lo
 `just convex-env` copies them to the selected Convex deployment when present. Neither
 key is required for unrelated development. Never use a `NEXT_PUBLIC_` prefix.
 `AI_REVIEW_ENABLED=false` is the default; copying credentials does not enable review.
+To enable the operator caption check, also set the server-only `X_BEARER_TOKEN`
+to the app-only X token and sync it with `just convex-env`. Each check makes one
+X post lookup and one Jev request.
 
 Before enabling on a deployment:
 

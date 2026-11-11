@@ -227,3 +227,21 @@ export async function enqueueAiReview(
   // Also releases a draft if execution stops before the completion callback can run.
   await ctx.scheduler.runAt(deadlineAt, internal.aiReviewInternal.expire, { attemptId });
 }
+
+/** Gets the saved review evidence for an active post's approved submission. */
+export async function getAiPostReviewInput(ctx: QueryCtx, postId: Id<"posts">) {
+  const post = await ctx.db.get("posts", postId);
+  if (!post) throw apiError("not_found", { resource: "post" });
+  if (!post.isActive) throw apiError("invalid_state", { reason: "post_inactive" });
+  const attempt = await ctx.db
+    .query("aiReviewAttempts")
+    .withIndex("by_submissionId", (q) => q.eq("submissionId", post.submissionId))
+    .unique();
+  if (!attempt) throw apiError("invalid_state", { reason: "ai_review_criteria_required" });
+  return {
+    xPostId: post.xPostId,
+    criteria: attempt.criteria,
+    context: attempt.context,
+    transcript: attempt.transcription?.text ?? "",
+  };
+}

@@ -76,6 +76,7 @@ const keys = [
   ...(configureAi ? AI_KEYS : []),
   ...(aiEnabled !== "" ? ["AI_REVIEW_ENABLED"] : []),
   ...(configureX ? X_KEYS : []),
+  ...(readValue("X_BEARER_TOKEN") !== "" ? (["X_BEARER_TOKEN"] as const) : []),
   ...(configureEncryption ? ENCRYPTION_KEYS : []),
   ...METRICS_KEYS.filter((key) => readValue(key) !== ""),
 ];

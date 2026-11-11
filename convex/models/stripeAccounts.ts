@@ -93,15 +93,21 @@ export async function createStripeAccount(
 /**
  * Applies an `account.updated` webhook. Stripe delivers events out of order,
  * so a state older than the stored one is skipped; equal timestamps apply,
- * because Stripe's clock has one-second resolution. `unknown` means the
- * account belongs to another deployment sharing the Stripe sandbox.
+ * because Stripe's clock has one-second resolution.
+ *
+ * `taggedCreatorId` is the `metadata.creatorId` set when the account was
+ * created. If the server stopped before saving a new account, this adopts it
+ * for that creator. `unknown` means the account is not ours to record:
+ * another deployment sharing the Stripe sandbox made it, or the creator
+ * already has a different account.
  */
 export async function updateStripeAccount(
   ctx: MutationCtx,
   state: StripeAccountState,
-): Promise<"updated" | "stale" | "unknown"> {
+  taggedCreatorId?: string,
+): Promise<"updated" | "stale" | "adopted" | "unknown"> {
   const account = await getStripeAccountByStripeId(ctx, state.stripeAccountId);
-  if (account === null) return "unknown";
+  if (account === null) return await adoptStripeAccount(ctx, state, taggedCreatorId);
   if (state.stripeUpdatedAt < account.stripeUpdatedAt) return "stale";
   await ctx.db.patch("stripeAccounts", account._id, {
     detailsSubmitted: state.detailsSubmitted,
@@ -110,4 +116,18 @@ export async function updateStripeAccount(
     stripeUpdatedAt: state.stripeUpdatedAt,
   });
   return "updated";
+}
+
+async function adoptStripeAccount(
+  ctx: MutationCtx,
+  state: StripeAccountState,
+  taggedCreatorId: string | undefined,
+): Promise<"adopted" | "unknown"> {
+  if (taggedCreatorId === undefined) return "unknown";
+  // Null for another deployment's id, so a foreign tag cannot match a creator here.
+  const creatorId = ctx.db.normalizeId("creators", taggedCreatorId);
+  if (creatorId === null || (await ctx.db.get("creators", creatorId)) === null) return "unknown";
+  if ((await getStripeAccountByCreatorId(ctx, creatorId)) !== null) return "unknown";
+  await ctx.db.insert("stripeAccounts", { creatorId, ...state });
+  return "adopted";
 }

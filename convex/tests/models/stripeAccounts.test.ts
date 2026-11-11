@@ -222,4 +222,68 @@ describe("updateStripeAccount", () => {
       expect(await getStripeAccountByCreatorId(ctx, creatorId)).toMatchObject(created);
     });
   });
+
+  // Another deployment's creator ids do not exist here.
+  test("ignores an account tagged with a creator this deployment does not have", async () => {
+    const { t } = await seedAccount("stripe_foreign_tag");
+
+    const result = await t.run((ctx) =>
+      updateStripeAccount(ctx, { ...created, stripeAccountId: "acct_elsewhere" }, "k57notours"),
+    );
+
+    expect(result).toBe("unknown");
+    await t.run(async (ctx) => {
+      expect(await getStripeAccountByStripeId(ctx, "acct_elsewhere")).toBeNull();
+    });
+  });
+});
+
+// If the server stops between Stripe creating an account and our save, Stripe's
+// next event for that account still carries the creator we tagged it with.
+describe("updateStripeAccount adopting an unsaved account", () => {
+  test("records the account for our creator who has none", async () => {
+    const t = convexTest(schema, modules);
+    const creatorId = await seedCreatorId(t, "stripe_adopt");
+
+    const result = await t.run((ctx) => updateStripeAccount(ctx, created, creatorId));
+
+    expect(result).toBe("adopted");
+    await t.run(async (ctx) => {
+      expect(await getStripeAccountByCreatorId(ctx, creatorId)).toMatchObject({
+        creatorId,
+        ...created,
+      });
+    });
+  });
+
+  // The creator's recorded account is the one money goes to; a second is
+  // left unused rather than replacing it.
+  test("leaves a creator's recorded account in place", async () => {
+    const t = convexTest(schema, modules);
+    const creatorId = await seedCreatorId(t, "stripe_adopt_taken");
+    await t.run((ctx) => createStripeAccount(ctx, creatorId, created));
+
+    const result = await t.run((ctx) =>
+      updateStripeAccount(ctx, { ...created, stripeAccountId: "acct_duplicate" }, creatorId),
+    );
+
+    expect(result).toBe("unknown");
+    await t.run(async (ctx) => {
+      expect(await getStripeAccountByCreatorId(ctx, creatorId)).toMatchObject(created);
+      expect(await getStripeAccountByStripeId(ctx, "acct_duplicate")).toBeNull();
+    });
+  });
+
+  test("ignores an account tagged with a deleted creator", async () => {
+    const t = convexTest(schema, modules);
+    const creatorId = await seedCreatorId(t, "stripe_adopt_deleted");
+    await t.run(async (ctx) => await ctx.db.delete("creators", creatorId));
+
+    const result = await t.run((ctx) => updateStripeAccount(ctx, created, creatorId));
+
+    expect(result).toBe("unknown");
+    await t.run(async (ctx) => {
+      expect(await ctx.db.query("stripeAccounts").first()).toBeNull();
+    });
+  });
 });

@@ -2,7 +2,7 @@ import { defineTable } from "convex/server";
 import { v } from "convex/values";
 
 /**
- * A creator's Stripe Connect Express account. Onboarding status is derived
+ * A creator's Stripe Connect Standard account. Onboarding status is derived
  * from the three flags rather than stored; only the `account.updated` webhook
  * changes them.
  */

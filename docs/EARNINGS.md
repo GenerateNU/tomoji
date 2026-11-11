@@ -1,10 +1,10 @@
 # Earnings rules and payment contract
 
 This is the implementation contract for Tomoji's earnings calculator, scheduler,
-and Stripe integration. The existing [payout operations](BACKEND.md#payout-records)
-record and review earned obligations. Pure earnings arithmetic and period boundaries
-are implemented, along with verification state and immutable measurement evidence.
-Settlement, scheduled earnings creation, and Stripe collection are follow-up work.
+and Stripe integration. The calculator and internal settlement operation record
+earned obligations through the existing [payout operations](BACKEND.md#payout-records).
+The weekly scheduler and Stripe collection are follow-up work. Creating or
+approving an obligation does not charge a company or pay a bank account.
 
 ## Agreed payout rules
 
@@ -93,17 +93,11 @@ calculation records must distinguish this separate component from a retry of the
 original earning. With complete metrics, the first payout combines fixed and
 variable earnings normally.
 
-## Pure calculator
-
-[`calculateEarnings`](../convex/lib/earningsCalculator.ts) computes the cumulative
-fixed/variable entitlement, applies whole-cent rounding and the per-deliverable
-cap, and subtracts previously recorded obligations. Missing view evidence stays
-unknown and can still release an unpaid fixed fee. Invalid or regressed inputs
-return `needsAttention` instead of a payable amount.
-
-`getEarningPeriod` derives seven-day periods from the stored verification start
-and window end, including the final partial period and an earlier cutoff. These
-helpers are pure: they do not read the database, create payouts, or send money.
+A later period with a reliable baseline and cutoff can settle the cumulative
+variable earnings that earlier periods left pending. Its calculation records the
+earliest covered period and links the earlier pending records to the covering
+calculation. This does not turn a day-14 observation into day-seven evidence.
+Reconciliation problems require review rather than being covered automatically.
 
 ## Inputs and records needed by the calculator
 
@@ -118,10 +112,15 @@ The calculator must retain enough evidence to reproduce each obligation:
 | Prior obligations  | Recorded fixed/variable components and linked payout IDs, independent of collection success.                                                                |
 | Calculation result | Eligible view count, fixed/variable breakdown, rounding/cap application, resulting increment, and stable earning identity.                                  |
 
-The implementation stores one `deliverableEarnings` agreement per assignment and
-deliverable, with snapshotted compensation, ownership, the original post, and the
-verification window. `postViewSnapshots` preserves view counts, actual observation
-times, source keys, and receipt times.
+The implementation separates the agreement, measurement evidence, and settlement
+record:
+
+| Table                 | Purpose                                                                                                                                                                            |
+| --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `deliverableEarnings` | One agreement per assignment/deliverable: original post, ownership, compensation, policy version, verification start, window end, and any view-attribution hold or removal cutoff. |
+| `postViewSnapshots`   | Immutable view counts with the actual observation time, source key, and receipt time.                                                                                              |
+| `earningCalculations` | Period/component inputs and results, pending or reconciliation reasons, and linked payout or covering calculation. A pending calculation is not an additional obligation.          |
+| `payouts`             | The earned obligation and its review/payment progress. New records also retain the deliverable ID derived from the source post's submission.                                       |
 
 The [verification operation](../convex/models/posts.ts) stores `firstVerifiedAt`
 and initializes the agreement in the same transaction. `postedAt` remains the
@@ -135,9 +134,20 @@ earned obligations. Reverification and replacement
 preserve the original agreement, fixed fee, cap, and clock; uncertain attribution
 holds variable earnings for reconciliation.
 
-Existing records may lack these optional timestamps. Reverification of a legacy
-post with unknown timing does not start a new window. Genuinely new posts record
-`earningsTrackingVersion: 1`; replacement links inherit that marker and any known
+Record missing timestamps/evidence explicitly during rollout. Do not backfill
+verification time from publication time or infer historical view counts from
+today's total. Preserve records needed to settle an outstanding obligation even
+when the assignment is cancelled or the external post is removed.
+
+Existing records can lack these optional timestamps and the payout deliverable
+ID. Reverification of a legacy post with unknown timing does not start a new
+window. Settlement checks legacy payout relationships when summing existing
+obligations; missing relationships or a history beyond the bounded read limit
+require reconciliation rather than a partial total. No speculative backfill or
+automatic data migration is performed.
+
+Genuinely new posts record `earningsTrackingVersion: 1`; replacement links inherit
+that marker and any known
 original verification time. Without the marker, an original verification time,
 or an existing agreement, verification succeeds but marks earnings timing unknown
 and leaves earnings on hold. This also holds never-verified legacy posts until
@@ -146,34 +156,46 @@ posts unverified before tracking began. The initialization operation enforces th
 same guard. Do not infer verification from publication time or historical view
 counts from today's total. No automatic backfill or data migration is performed.
 
-Calculation records and direct payout linkage are added by the next stacked PR.
-
 ## Internal operations
 
-These server-only operations persist trusted evidence:
+These operations are server-only. They do not accept a client-selected payout
+amount or expose new public earnings endpoints.
 
-- `internal.earningSources.recordViews({ postId, observedAt, views, sourceKey })`
-  records an immutable observation. Identical retries return the original snapshot;
-  changed evidence under the same key or a competing key at the same timestamp
-  conflicts. Delayed observations do not rewind the post's latest metrics.
-- `internal.earningSources.recordRemoval({ postId, removedAt, sourceKey })`
-  records a confirmed removal cutoff. A failed metrics request alone does not
-  establish removal.
+| Operation                               | Inputs and effect                                                                                                                                                                                                         |
+| --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `internal.earningSources.recordViews`   | `{ postId, observedAt, views, sourceKey }`: persist trusted observation evidence. Identical retries return the original snapshot; changed evidence under the same key or a competing key at the same timestamp conflicts. |
+| `internal.earningSources.recordRemoval` | `{ postId, removedAt, sourceKey }`: record a confirmed removal cutoff. This is not called automatically on a failed metrics request.                                                                                      |
+| `internal.earnings.settle`              | `{ assignmentId, deliverableId, periodIndex }`: calculate and record one due period atomically. Indices start at zero; the default 30-day window has indices 0–4.                                                         |
+
+Settlement reads the stored agreement, timing, observations, and all relevant
+existing obligations. It saves the calculation and creates any positive payout
+in one mutation, so failure rolls back both. Zero increments create calculation
+progress without a payout. Future periods return `notDue`; periods beyond a
+cutoff return `outsideWindow`. Unresolved evidence and reconciliation return
+`pendingMetrics` or `needsAttention` with a reason. Repeated completed settlements
+return the original calculation and payout IDs.
+
+Invoke due periods in order. A later period can cover earlier attempted periods
+that are waiting only for metrics; it cannot skip an unattempted period or
+silently resolve an accounting problem. The next PR's scheduler will discover due
+periods and invoke this operation; there is no earnings cron in this PR.
 
 The existing `posts.updateViews` operation also records a snapshot at server
 receipt time; engagement-only updates do not create view evidence. A collector
-that knows the actual observation time should use
-`recordViews`, especially for delayed evidence. Regressing counts within the
-eligible window hold variable earnings for reconciliation. Confirmed removal,
-including an identical retry, rechecks metric-regression holds within the shortened
-window. A hold clears only after the complete eligible history is checked and no
-decline remains. The read is capped at 1,000 observations; longer histories retain
-the hold for reconciliation. Observations received while held are still stored
-and included in that recheck. Replacement and verification-change holds never
-clear automatically; any future resolution operation must revalidate the retained
-view evidence before releasing variable earnings.
-Live X collection must
-supply verification and cutoff evidence; fixture tests do not prove its availability.
+that knows the actual observation time should use `recordViews`, especially for
+delayed evidence. Settlement uses measurements at the stored verification and
+cutoff times; a nearby observation is not automatically an exact boundary. Live
+X collection must supply this evidence; fixture tests do not prove its availability.
+
+Regressing counts within the eligible window hold variable earnings for
+reconciliation. Confirmed removal, including an identical retry, rechecks
+metric-regression holds within the shortened window. A hold clears only after
+the complete eligible history is checked and no decline remains. The read is
+capped at 1,000 observations; longer histories retain the hold for reconciliation.
+Observations received while held are still stored and included in that recheck.
+Replacement and verification-change holds never clear automatically; any future
+resolution operation must revalidate the retained view evidence before releasing
+variable earnings.
 
 Before enabling automatic earnings for these legacy posts, a Tomoji admin must
 review the available evidence and record the reviewer, source evidence, and
@@ -267,12 +289,12 @@ deliverables following this example earn $600 total, each on its own clock.
 
 ## Delivery and verification
 
-The pure calculator is covered by unit tests for fixed fees, cumulative CPM, caps,
-rounding, missing metrics, invalid inputs, and period boundaries. Run `just ci`
-for type checking, linting, formatting, and the full test suite.
+The calculator/records implementation covers the policy above with pure arithmetic
+tests and Convex transaction tests, including retries, missing evidence, and
+cutoff handling. Run `just ci` for type checking, linting, formatting, and the full
+test suite. The scheduling PR will create due obligations automatically using the
+same settlement operation and existing review workflow.
 
-Lifecycle transaction tests also cover verification, replacement, cancellation,
-removal, immutable retries, delayed metrics, and regressing counts. The next
-stacked PR adds transactional settlement records. Scheduling and Stripe
-processing remain follow-up work.
-No payment-provider configuration or live charges are introduced here.
+Stripe processing and bank-payout reconciliation remain in the separate Stripe
+stack, followed by integration tests across both stacks. This implementation
+does not configure a payment provider or run live charges.

@@ -30,6 +30,7 @@ import { deliverablesTable } from "./schemas/deliverables.schema";
 import { aiReviewAttemptsTable } from "./schemas/aiReviewAttempts.schema";
 import { deliverableEarningsTable } from "./schemas/deliverableEarnings.schema";
 import { postViewSnapshotsTable } from "./schemas/postViewSnapshots.schema";
+import { earningCalculationsTable } from "./schemas/earningCalculations.schema";
 
 export default defineSchema({
   users: usersTable,
@@ -50,6 +51,7 @@ export default defineSchema({
   deliverables: deliverablesTable,
   deliverableEarnings: deliverableEarningsTable,
   postViewSnapshots: postViewSnapshotsTable,
+  earningCalculations: earningCalculationsTable,
   applications: applicationsTable,
   assignments: assignmentsTable,
   submissions: submissionsTable,

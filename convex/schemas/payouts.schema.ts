@@ -14,6 +14,8 @@ export const payoutPaymentStatus = v.union(
 /** An earned payment obligation, separate from payment-provider attempts and bank payouts. */
 export const payoutsTable = defineTable({
   assignmentId: v.id("assignments"),
+  // Derived from the source post on new writes; legacy rows remain readable.
+  deliverableId: v.optional(v.id("deliverables")),
   // Copied from the assignment. History remains scoped even if its parents disappear.
   creatorId: v.id("creators"),
   companyId: v.id("companies"),
@@ -64,4 +66,5 @@ export const payoutsTable = defineTable({
   .index("by_reviewRequestedAt", ["reviewRequestedAt"])
   .index("by_approvalStatus_and_reviewRequestedAt", ["approvalStatus", "reviewRequestedAt"])
   .index("by_assignmentId_and_sourceKey", ["assignmentId", "sourceKey"])
+  .index("by_assignmentId_and_deliverableId", ["assignmentId", "deliverableId"])
   .index("by_approvalStatus_and_approvalDueAt", ["approvalStatus", "approvalDueAt"]);

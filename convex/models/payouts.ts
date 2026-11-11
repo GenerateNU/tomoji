@@ -85,6 +85,7 @@ export async function createPayout(ctx: MutationCtx, args: PayoutCreate): Promis
 
   const payoutId = await ctx.db.insert("payouts", {
     assignmentId: assignment._id,
+    deliverableId: submission.deliverableId,
     sourceKey,
     amount: args.amount,
     currency,

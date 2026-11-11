@@ -9,6 +9,7 @@ import {
   requirePost,
   unverifyPost,
   updatePostMetrics,
+  updatePostQuotes,
   verifyPost,
 } from "../../models/posts";
 import { listOpportunityDeliverables } from "../../models/deliverableDrafts";
@@ -887,6 +888,60 @@ describe("updatePostMetrics", () => {
 
     await expectApiError(
       () => t.run(async (ctx) => await updatePostMetrics(ctx, postId, METRICS)),
+      "not_found",
+    );
+  });
+});
+
+describe("updatePostQuotes", () => {
+  test("stores the quote count without touching the metrics", async () => {
+    const t = convexTest(schema, modules);
+    const { postId } = await seedFixturePost(t);
+    await t.run(async (ctx) => await updatePostMetrics(ctx, postId, METRICS));
+    const before = await t.run(async (ctx) => await ctx.db.get("posts", postId));
+    vi.setSystemTime(Date.now() + 1000);
+
+    const result = await t.run(async (ctx) => await updatePostQuotes(ctx, postId, 6));
+
+    const stored = await t.run(async (ctx) => await ctx.db.get("posts", postId));
+    expect(result).toEqual(stored);
+    expect(stored).toEqual({ ...before, quotes: 6 });
+  });
+
+  test("refuses a replaced post", async () => {
+    const t = convexTest(schema, modules);
+    const { fixture, postId } = await seedFixturePost(t);
+    await replaceFixturePost(t, fixture, postId);
+    const before = await storedPosts(t);
+
+    await expect(
+      t.run(async (ctx) => await updatePostQuotes(ctx, postId, 6)),
+    ).rejects.toMatchObject({ data: { code: "invalid_state", reason: "post_inactive" } });
+    expect(await storedPosts(t)).toEqual(before);
+  });
+
+  test.each([
+    ["a negative count", -1],
+    ["a fractional count", 1.5],
+    ["a non-finite count", Number.POSITIVE_INFINITY],
+  ])("refuses %s without writing", async (_label, quotes) => {
+    const t = convexTest(schema, modules);
+    const { postId } = await seedFixturePost(t);
+    const before = await storedPosts(t);
+
+    await expect(
+      t.run(async (ctx) => await updatePostQuotes(ctx, postId, quotes)),
+    ).rejects.toMatchObject({ data: { code: "invalid_state", reason: "invalid_quotes" } });
+    expect(await storedPosts(t)).toEqual(before);
+  });
+
+  test("reports a missing post as not found", async () => {
+    const t = convexTest(schema, modules);
+    const { postId } = await seedFixturePost(t);
+    await t.run(async (ctx) => await ctx.db.delete("posts", postId));
+
+    await expectApiError(
+      () => t.run(async (ctx) => await updatePostQuotes(ctx, postId, 6)),
       "not_found",
     );
   });

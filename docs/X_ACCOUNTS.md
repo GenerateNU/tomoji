@@ -169,18 +169,24 @@ the end of the week its last earning day falls in.
 
 `getXPostMetrics` looks up at most 100 post IDs per call through `GET /2/tweets` with
 `tweet.fields=public_metrics`. It maps `like_count`, `reply_count`, `retweet_count`, and
-`impression_count` to the post's `likes`, `comments`, `reposts`, and `views`.
+`impression_count` to the post's `likes`, `comments`, `reposts`, and `views`, which
+`posts.updateMetrics` stores. `quote_count` comes back separately as `quotes` and is
+stored by its own `posts.updateQuotes`. It is never added to `reposts`, and an unusable
+quote count drops only `quotes`, never the post's other counts.
 
 One unusable post never fails the batch. Each such post is listed in `missing` with a
 reason:
 
-| Reason           | Meaning                                                                 |
-| ---------------- | ----------------------------------------------------------------------- |
-| `invalid_id`     | Not X's id format (1–19 digits, no leading zero), so it was never sent. |
-| `not_found`      | X reports the post doesn't exist, usually because it was deleted.       |
-| `not_authorized` | X reports the post is protected or otherwise not visible to the app.    |
-| `not_returned`   | X left the post out without saying why; it may come back next run.      |
-| `malformed`      | X returned the post, but a count was missing or not a whole number.     |
+| Reason           | Meaning                                                                       |
+| ---------------- | ----------------------------------------------------------------------------- |
+| `invalid_id`     | Not X's id format (1–19 digits, no leading zero), so it was never sent.       |
+| `not_found`      | X reports the post doesn't exist, usually because it was deleted.             |
+| `not_authorized` | X reports the post is protected or otherwise not visible to the app.          |
+| `not_returned`   | X left the post out without a reason we recognize; it may come back next run. |
+| `malformed`      | X returned the post, but a count was missing or not a whole number.           |
+
+Error types X doesn't document are logged with the post ID and the type, so a change in
+X's error format shows up in the logs instead of silently becoming `not_returned`.
 
 An empty, oversized (over 100), or duplicated id list is a caller bug and fails as
 `invalid_state`. A response containing a post that wasn't requested, or the same post

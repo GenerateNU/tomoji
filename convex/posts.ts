@@ -19,6 +19,7 @@ import {
   requirePost,
   unverifyPost,
   updatePostMetrics,
+  updatePostQuotes,
   verifyPost,
 } from "./models/posts";
 import { requireCallerCreatorId } from "./models/users";
@@ -133,5 +134,14 @@ export const updateMetrics = internalMutation({
   returns: schema.doc("posts"),
   handler: async (ctx, { postId, ...metrics }) => {
     return await updatePostMetrics(ctx, postId, metrics);
+  },
+});
+
+/** Stores a post's quote-post count, apart from its metrics. For the X metrics sync. */
+export const updateQuotes = internalMutation({
+  args: { postId: v.id("posts"), quotes: v.number() },
+  returns: schema.doc("posts"),
+  handler: async (ctx, { postId, quotes }) => {
+    return await updatePostQuotes(ctx, postId, quotes);
   },
 });

@@ -322,6 +322,29 @@ export async function updatePostMetrics(
 }
 
 /**
+ * Stores the post's quote-post count. Kept apart from `updatePostMetrics` so
+ * quotes never hold back or change the counts payouts use.
+ *
+ * @throws `not_found` if the post doesn't exist.
+ * @throws `invalid_state` if the post was replaced, or with `invalid_quotes`
+ * if the count isn't a nonnegative whole number.
+ */
+export async function updatePostQuotes(
+  ctx: MutationCtx,
+  postId: Id<"posts">,
+  quotes: number,
+): Promise<Doc<"posts">> {
+  const post = await ctx.db.get("posts", postId);
+  if (post === null) throw apiError("not_found", { resource: "post" });
+  requireActive(post);
+  if (!Number.isSafeInteger(quotes) || quotes < 0) {
+    throw apiError("invalid_state", { reason: "invalid_quotes" });
+  }
+  await ctx.db.patch("posts", postId, { quotes });
+  return { ...post, quotes };
+}
+
+/**
  * The assignment's active posts, newest first: one per deliverable with an
  * approved submission. Approval is final, so a deliverable's approved
  * submission is its latest. An opportunity has at most `MAX_DELIVERABLES`, so

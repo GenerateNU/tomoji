@@ -1,6 +1,7 @@
 import type { ConvexError, Value } from "convex/values";
 import { afterEach, expect, test, vi } from "vitest";
 import { getXPostMetrics, readXMetricsConfig } from "../../lib/xApi";
+import type { PostMetrics } from "../../models/posts";
 import { expectApiError } from "../helpers";
 
 afterEach(() => vi.unstubAllGlobals());
@@ -21,6 +22,15 @@ function xPost(id: string, metrics: Record<string, unknown> = {}) {
       impression_count: 1250,
       ...metrics,
     },
+  };
+}
+
+/** What `getXPostMetrics` reports for an `xPost` fixture; `quotes: null` means left out. */
+function found(xPostId: string, metrics: Partial<PostMetrics> = {}, quotes: number | null = 1) {
+  return {
+    xPostId,
+    metrics: { likes: 38, comments: 3, reposts: 7, views: 1250, ...metrics },
+    ...(quotes === null ? {} : { quotes }),
   };
 }
 
@@ -96,10 +106,7 @@ test("looks up posts with the app token and maps their public counts", async () 
     }),
   );
   expect(result).toEqual({
-    found: [
-      { xPostId: "1", likes: 38, comments: 3, reposts: 7, views: 1250 },
-      { xPostId: "2", likes: 38, comments: 3, reposts: 7, views: 0 },
-    ],
+    found: [found("1"), found("2", { views: 0 })],
     missing: [],
   });
 });
@@ -121,7 +128,7 @@ test("posts X leaves out are missing with the reason X gives", async () => {
     errors: [xProblem("2", "resource-not-found"), xProblem("3", "not-authorized-for-resource")],
   });
   expect(await getXPostMetrics(token, ["1", "2", "3", "4"])).toEqual({
-    found: [{ xPostId: "1", likes: 38, comments: 3, reposts: 7, views: 1250 }],
+    found: [found("1")],
     missing: [
       { xPostId: "2", reason: "not_found" },
       { xPostId: "3", reason: "not_authorized" },
@@ -150,7 +157,7 @@ test("stored ids X would reject are skipped without failing the batch", async ()
   const fetch = stubX({ data: [xPost("1")] });
   const ids = ["1", "12345678901234567890", "0123", "abc"];
   expect(await getXPostMetrics(token, ids)).toEqual({
-    found: [{ xPostId: "1", likes: 38, comments: 3, reposts: 7, views: 1250 }],
+    found: [found("1")],
     missing: [
       { xPostId: "12345678901234567890", reason: "invalid_id" },
       { xPostId: "0123", reason: "invalid_id" },
@@ -268,5 +275,51 @@ test("a rate limit says when X will accept requests again", async () => {
       message: "Upstream service failed",
       reason: "x_rate_limited",
     });
+  }
+});
+
+test("quotes are reported apart from the metrics and never count as reposts", async () => {
+  stubX({
+    data: [
+      xPost("1", { quote_count: 4 }),
+      // An unusable quote count drops only the quotes, never the post's metrics.
+      xPost("2", { quote_count: undefined }),
+      xPost("3", { quote_count: -1 }),
+      xPost("4", { quote_count: "4" }),
+      // A valid quote count can't rescue unusable metrics either.
+      xPost("5", { like_count: -1, quote_count: 4 }),
+    ],
+  });
+  const result = await getXPostMetrics(token, ["1", "2", "3", "4", "5"]);
+  expect(result.found).toEqual([
+    found("1", {}, 4),
+    found("2", {}, null),
+    found("3", {}, null),
+    found("4", {}, null),
+  ]);
+  expect(result.missing).toEqual([{ xPostId: "5", reason: "malformed" }]);
+});
+
+test("problem types X doesn't document are logged so a format change gets noticed", async () => {
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  try {
+    stubX({
+      data: [xPost("1")],
+      errors: [xProblem("2", "resource-not-found"), xProblem("3", "account-suspended")],
+    });
+    expect(await getXPostMetrics(token, ["1", "2", "3"])).toMatchObject({
+      missing: [
+        { xPostId: "2", reason: "not_found" },
+        { xPostId: "3", reason: "not_returned" },
+      ],
+    });
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("unrecognized"), {
+      xPostId: "3",
+      type: "https://api.x.com/2/problems/account-suspended",
+    });
+    expect(JSON.stringify(warn.mock.calls)).not.toContain(token);
+  } finally {
+    warn.mockRestore();
   }
 });

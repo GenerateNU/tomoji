@@ -22,6 +22,9 @@ export const postsTable = defineTable({
   reposts: v.optional(v.number()),
   views: v.optional(v.number()),
   metricsUpdatedAt: v.optional(v.number()), // Unix milliseconds.
+  // Quote posts from X. Stored apart from the counts above and never added to
+  // `reposts`; analytics decides whether to show it.
+  quotes: v.optional(v.number()),
 })
   .index("by_submissionId_and_isActive", ["submissionId", "isActive"])
   .index("by_campaignId_and_isActive", ["campaignId", "isActive"])

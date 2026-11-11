@@ -85,8 +85,12 @@ export async function xJson(response: Response): Promise<Record<string, unknown>
   return object(value);
 }
 
-/** The counts `updatePostMetrics` stores, keyed by the X post they came from. */
-export type XPostMetrics = PostMetrics & { xPostId: string };
+/**
+ * One post's counts. `metrics` is what `updatePostMetrics` stores. `quotes` is
+ * kept apart, never added to `reposts`, and left out when X's quote count is
+ * unusable, so it can never hold back a post's metrics.
+ */
+export type XPostResult = { xPostId: string; metrics: PostMetrics; quotes?: number };
 
 /**
  * Why a requested post has no counts. `invalid_id` was never sent because X
@@ -122,7 +126,7 @@ const xPostIdPattern = /^[1-9]\d{0,18}$/;
 export async function getXPostMetrics(
   bearerToken: string,
   xPostIds: string[],
-): Promise<{ found: XPostMetrics[]; missing: XMissingPost[] }> {
+): Promise<{ found: XPostResult[]; missing: XMissingPost[] }> {
   if (
     xPostIds.length === 0 ||
     xPostIds.length > maxPostsPerLookup ||
@@ -143,7 +147,7 @@ export async function getXPostMetrics(
         );
   const returned = returnedPosts(response.data, requested);
   const reasons = missingReasons(response.errors);
-  const found: XPostMetrics[] = [];
+  const found: XPostResult[] = [];
   const missing: XMissingPost[] = [];
   for (const xPostId of xPostIds) {
     if (!requested.has(xPostId)) {
@@ -151,8 +155,8 @@ export async function getXPostMetrics(
       continue;
     }
     const post = returned.get(xPostId);
-    const metrics = post && postMetrics(xPostId, post.public_metrics);
-    if (metrics) found.push(metrics);
+    const result = post && postResult(xPostId, post.public_metrics);
+    if (result) found.push(result);
     else
       missing.push({
         xPostId,
@@ -182,7 +186,10 @@ function returnedPosts(
   return returned;
 }
 
-/** Reads why X left posts out. Only a label, so unreadable entries are skipped. */
+/**
+ * Reads why X left posts out. Only a label, so unreadable entries are skipped.
+ * Types X doesn't document are logged, so a change in its error format shows up.
+ */
 function missingReasons(value: unknown): Map<string, XMissingReason> {
   const reasons = new Map<string, XMissingReason>();
   if (!Array.isArray(value)) return reasons;
@@ -192,12 +199,13 @@ function missingReasons(value: unknown): Map<string, XMissingReason> {
     if (typeof id !== "string" || typeof type !== "string") continue;
     if (type.endsWith("/resource-not-found")) reasons.set(id, "not_found");
     else if (type.endsWith("/not-authorized-for-resource")) reasons.set(id, "not_authorized");
+    else console.warn("X post lookup: unrecognized problem type", { xPostId: id, type });
   }
   return reasons;
 }
 
-/** The post's counts, or `undefined` if any is missing or not a non-negative integer. */
-function postMetrics(xPostId: string, value: unknown): XPostMetrics | undefined {
+/** The post's counts, or `undefined` if any metric is missing or not a non-negative integer. */
+function postResult(xPostId: string, value: unknown): XPostResult | undefined {
   if (value === null || typeof value !== "object" || Array.isArray(value)) return undefined;
   const metrics = value as Record<string, unknown>;
   const likes = count(metrics.like_count);
@@ -206,7 +214,12 @@ function postMetrics(xPostId: string, value: unknown): XPostMetrics | undefined 
   const views = count(metrics.impression_count);
   if (likes === undefined || comments === undefined || reposts === undefined || views === undefined)
     return undefined;
-  return { xPostId, likes, comments, reposts, views };
+  const quotes = count(metrics.quote_count);
+  return {
+    xPostId,
+    metrics: { likes, comments, reposts, views },
+    ...(quotes === undefined ? {} : { quotes }),
+  };
 }
 
 function count(value: unknown): number | undefined {

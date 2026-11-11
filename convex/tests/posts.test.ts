@@ -305,3 +305,14 @@ describe("posts.updateMetrics", () => {
     expect(post).toMatchObject(metrics);
   });
 });
+
+describe("posts.updateQuotes", () => {
+  test("stores the quote count for server-side callers", async () => {
+    const t = convexTest(schema, modules);
+    const { postId } = await seedPost(t);
+
+    const post = await t.mutation(internal.posts.updateQuotes, { postId, quotes: 6 });
+
+    expect(post).toMatchObject({ quotes: 6 });
+  });
+});

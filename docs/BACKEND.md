@@ -320,6 +320,13 @@ isolated workers settle missed periods, retry missing evidence, and park failure
 for attention. See [execution and recovery](EARNINGS.md#scheduled-execution-and-recovery).
 This section describes the payout operations those settlements use.
 
+Public [`earnings.get` and `earnings.listCalculations`](EARNINGS.md#earnings-detail-and-calculation-history-reads)
+read a deliverable's agreement and calculation history. Their model is in
+`models/earningsHistory.ts`, separate from settlement writes. Access comes from
+the agreement's stored ownership, so history survives deleted parents. Calculation
+increments are not payment confirmations; unresolved and covered rows add no
+payable amount. The existing payout reads provide review and payment status.
+
 `payouts` records individual finalized earning obligations. Every payout identifies
 one post and its assignment; both an assignment and a post can have several payouts.
 An earning period is optional. Ownership is stored on the payout so historical reads

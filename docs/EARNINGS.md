@@ -209,6 +209,51 @@ Replacement and verification-change holds never clear automatically; any future
 resolution operation must revalidate the retained view evidence before releasing
 variable earnings.
 
+## Earnings detail and calculation history reads
+
+Two public queries provide the read contract for earnings pages:
+
+| Query                       | Inputs and result                                                                                                                                                  |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `earnings.get`              | `{ assignmentId, deliverableId }`: stored agreement identity, fixed fee, CPM rate, cap, currency, verification window, cutoff/hold context, and scheduling status. |
+| `earnings.listCalculations` | `{ assignmentId, deliverableId, paginationOpts }`: a native cursor page of calculation components, newest period first, then newest creation within the period.    |
+
+Both authorize against the agreement's stored creator/company ownership. Creators
+see their agreements, company members and admins see their company's agreements,
+and operators can see all. Missing, mismatched, and inaccessible agreements return
+the same `not_found` error with resource `deliverable_earnings`. A deliverable
+without an initialized agreement has no earnings detail yet. Reads never initialize
+an agreement, create a schedule, settle a period, or update a payout.
+
+`get` preserves the original `startedAt` and `endsAt`. Its `window` is either
+`{ status: "known", effectiveEndsAt }`, using the earliest original end, removal
+cutoff, or cancellation time, or `{ status: "needsAttention" }` when timing cannot
+be established. Missing assignment context, mismatched parent ownership, unknown
+cancellation timing, and invalid stored boundaries do not become an assumed full
+window. Historical terms and calculation records remain readable after parent
+deletion. This projection uses stored timestamps, not the current wall clock.
+
+`schedule` is `null` when no scheduling record exists; otherwise it exposes only
+`status` and optional `nextCheckAt`. A next check is a scheduler retry/boundary,
+not a promised payment date. Execution errors and retry counters remain internal.
+The finite agreement `variableHoldReason` is exposed when present.
+
+Calculation rows expose period boundaries, component/status, optional cumulative
+eligible views, and **incremental** `newFixedCents`, `newVariableCents`, and
+`newPayoutCents` only when recorded. They retain payout and coverage links:
+
+- `pendingMetrics` and `needsAttention` leave payable amounts absent, not zero.
+- `covered` points to `coveredByCalculationId`; it is not another payable increment.
+- A recorded zero increment is explicitly zero and has no payout.
+- A positive recorded increment links to its actual obligation through `payoutId`;
+  approval and payment progress come from the existing payout reads.
+
+The response excludes internal source keys, raw reason strings, snapshot IDs, and
+cumulative monetary totals. No page or agreement total is computed here. Native
+pagination metadata is preserved; continue with the same scope and cursor.
+Tests exercise authorization, missing parents, cutoffs, delayed/covered metrics,
+zero increments, private-field omission, pagination, and unchanged financial records.
+
 ## Scheduling state
 
 [`earningsSchedules`](../convex/schemas/earningsSchedules.schema.ts) has one row

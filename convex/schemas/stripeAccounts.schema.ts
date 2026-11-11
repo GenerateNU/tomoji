@@ -3,7 +3,7 @@ import { v } from "convex/values";
 
 /**
  * A creator's Stripe Connect Express account. Onboarding status is derived
- * from the two flags rather than stored; only the `account.updated` webhook
+ * from the three flags rather than stored; only the `account.updated` webhook
  * changes them.
  */
 export const stripeAccountsTable = defineTable({
@@ -13,6 +13,9 @@ export const stripeAccountsTable = defineTable({
   detailsSubmitted: v.boolean(),
   // Stripe has verified them and they can receive money.
   payoutsEnabled: v.boolean(),
+  // Stripe is waiting on the creator: its `requirements.currently_due` list is
+  // not empty. False after submission means Stripe is still verifying.
+  requirementsDue: v.boolean(),
   // When Stripe produced the stored state, in Unix ms. Stripe does not deliver
   // webhooks in order, so older events are skipped against this.
   stripeUpdatedAt: v.number(),

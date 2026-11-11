@@ -9,6 +9,7 @@ import { getLatestSubmission } from "./submissions";
 import { getXAccountByCreatorId } from "./xAccountLookup";
 import { postCaptionCheck } from "../schemas/posts.schema";
 import { normalizeCaption, type getXPostForCaptionCheck } from "../lib/xApi";
+import { holdPostEarnings, initializePostEarnings, recordPostViewSnapshot } from "./earningSources";
 
 /** The creator-supplied fields of a new post. */
 export const postCreate = v.object({
@@ -228,6 +229,7 @@ export async function replacePost(
   const { url, xPostId } = requirePostUrl(fields.url);
   if (xPostId === post.xPostId) return post;
   await requirePostUnused(ctx, xPostId, post.submissionId);
+  await holdPostEarnings(ctx, postId, "post_replaced");
   await ctx.db.patch("posts", postId, { isActive: false });
   const newPostId = await ctx.db.insert("posts", {
     submissionId: post.submissionId,
@@ -236,6 +238,7 @@ export async function replacePost(
     xPostId,
     isActive: true,
     isVerified: false,
+    ...(post.earningsTimingUnknown ? { earningsTimingUnknown: true } : {}),
   });
   return (await ctx.db.get("posts", newPostId))!;
 }
@@ -264,11 +267,23 @@ export async function verifyPost(
   if (post.isVerified) {
     throw apiError("invalid_state", { reason: "post_already_verified" });
   }
+  if (post.removedAt !== undefined) {
+    throw apiError("invalid_state", { reason: "post_removed" });
+  }
   if (!Number.isSafeInteger(postedAt) || postedAt < 0 || postedAt > Date.now()) {
     throw apiError("invalid_state", { reason: "invalid_posted_at" });
   }
-  await ctx.db.patch("posts", postId, { isVerified: true, postedAt });
-  return { ...post, isVerified: true, postedAt };
+  const firstVerifiedAt = post.earningsTimingUnknown
+    ? undefined
+    : (post.firstVerifiedAt ?? Date.now());
+  if (firstVerifiedAt !== undefined) await initializePostEarnings(ctx, postId, firstVerifiedAt);
+  const patch = {
+    isVerified: true,
+    postedAt,
+    ...(firstVerifiedAt === undefined ? {} : { firstVerifiedAt }),
+  };
+  await ctx.db.patch("posts", postId, patch);
+  return { ...post, ...patch };
 }
 
 /**
@@ -284,6 +299,7 @@ export async function unverifyPost(ctx: MutationCtx, postId: Id<"posts">): Promi
   if (!post.isVerified) {
     throw apiError("invalid_state", { reason: "post_not_verified" });
   }
+  await holdPostEarnings(ctx, postId, "verification_changed");
   await ctx.db.patch("posts", postId, {
     isVerified: false,
     postedAt: undefined,
@@ -320,6 +336,12 @@ export async function updatePostViews(
   requireActive(post);
   requireCount(views, "invalid_views");
   const patch = { views, viewsUpdatedAt: Date.now() };
+  await recordPostViewSnapshot(ctx, {
+    postId,
+    observedAt: patch.viewsUpdatedAt,
+    views,
+    sourceKey: `metrics:${patch.viewsUpdatedAt}`,
+  });
   await ctx.db.patch("posts", postId, patch);
   return { ...post, ...patch };
 }

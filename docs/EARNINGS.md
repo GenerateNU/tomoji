@@ -3,8 +3,8 @@
 This is the implementation contract for Tomoji's earnings calculator, scheduler,
 and Stripe integration. The existing [payout operations](BACKEND.md#payout-records)
 record and review earned obligations. Pure earnings arithmetic and period boundaries
-are implemented; measurement records, settlement, scheduled earnings creation,
-and Stripe collection are follow-up work.
+are implemented, along with verification state and immutable measurement evidence.
+Settlement, scheduled earnings creation, and Stripe collection are follow-up work.
 
 ## Agreed payout rules
 
@@ -118,24 +118,43 @@ The calculator must retain enough evidence to reproduce each obligation:
 | Prior obligations  | Recorded fixed/variable components and linked payout IDs, independent of collection success.                                                                |
 | Calculation result | Eligible view count, fixed/variable breakdown, rounding/cap application, resulting increment, and stable earning identity.                                  |
 
-These are requirements for the next implementation, not newly available fields:
+The implementation stores one `deliverableEarnings` agreement per assignment and
+deliverable, with snapshotted compensation, ownership, the original post, and the
+verification window. `postViewSnapshots` preserves view counts, actual observation
+times, source keys, and receipt times.
 
-- [Posts](../convex/schemas/posts.schema.ts) currently have `isVerified` and
-  `postedAt`. `postedAt` is publication time, not verification time. The
-  [verification operation](../convex/models/posts.ts) does not yet preserve a
-  verification timestamp.
-- Posts store only the latest counts and `metricsUpdatedAt`, not a historical
-  baseline or cutoff series. X configuration alone does not supply that history.
-- [Assignments](../convex/schemas/assignments.schema.ts) already store the
-  compensation terms, but cancellation does not record a cutoff timestamp.
-  Posts also lack a removal timestamp.
-- Payouts link to a post and assignment; the post's submission identifies its
-  deliverable. Calculation records must preserve that context for reconciliation.
+The [verification operation](../convex/models/posts.ts) stores `firstVerifiedAt`
+and initializes the agreement in the same transaction. `postedAt` remains the
+publication time. [Cancellation](../convex/models/assignments.ts) stores
+`cancelledAt`; confirmed removal records `removedAt` and its source key. Neither
+operation cancels previously earned obligations. Reverification and replacement
+preserve the original agreement, fixed fee, cap, and clock; uncertain attribution
+holds variable earnings for reconciliation.
 
-Record missing timestamps/evidence explicitly during rollout. Do not backfill
-verification time from publication time or infer historical view counts from
-today's total. Preserve records needed to settle an outstanding obligation even
-when the assignment is cancelled or the external post is removed.
+Existing records may lack these optional timestamps. Reverification of a legacy
+post with unknown timing does not start a new window. Do not infer verification
+from publication time or historical view counts from today's total. No automatic
+backfill or data migration is performed.
+
+Calculation records and direct payout linkage are added by the next stacked PR.
+
+## Internal operations
+
+These server-only operations persist trusted evidence:
+
+- `internal.earningSources.recordViews({ postId, observedAt, views, sourceKey })`
+  records an immutable observation. Identical retries return the original snapshot;
+  changed evidence under the same key or a competing key at the same timestamp
+  conflicts. Delayed observations do not rewind the post's latest metrics.
+- `internal.earningSources.recordRemoval({ postId, removedAt, sourceKey })`
+  records a confirmed removal cutoff. A failed metrics request alone does not
+  establish removal.
+
+The existing `posts.updateMetrics` operation also records a snapshot at server
+receipt time. A collector that knows the actual observation time should use
+`recordViews`, especially for delayed evidence. Regressing counts within the
+eligible window hold variable earnings for reconciliation. Live X collection must
+supply verification and cutoff evidence; fixture tests do not prove its availability.
 
 Before enabling automatic earnings for these legacy posts, a Tomoji admin must
 review the available evidence and record the reviewer, source evidence, and
@@ -233,6 +252,8 @@ The pure calculator is covered by unit tests for fixed fees, cumulative CPM, cap
 rounding, missing metrics, invalid inputs, and period boundaries. Run `just ci`
 for type checking, linting, formatting, and the full test suite.
 
-The next two stacked PRs add lifecycle/metric evidence and transactional
-settlement records. Scheduling and Stripe processing remain follow-up work.
+Lifecycle transaction tests also cover verification, replacement, cancellation,
+removal, immutable retries, delayed metrics, and regressing counts. The next
+stacked PR adds transactional settlement records. Scheduling and Stripe
+processing remain follow-up work.
 No payment-provider configuration or live charges are introduced here.

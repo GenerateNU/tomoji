@@ -307,9 +307,10 @@ the caller's applications with its opportunity brief (`creatorOpportunity`, incl
 
 The [earnings rules and payment contract](EARNINGS.md) defines the
 calculator's verification clock, fixed/variable earnings, cutoffs, and handoff to
-Stripe collection. The pure calculator is implemented; measurement records and
-settlement follow in separate stacked PRs. This section describes the existing
-payout operations.
+Stripe collection. The calculator and verification/measurement records are
+implemented. Its [internal operations](EARNINGS.md#internal-operations) persist
+trusted evidence; settlement follows in the next stacked PR. This section
+describes the existing payout operations.
 
 `payouts` records individual finalized earning obligations. Every payout identifies
 one post and its assignment; both an assignment and a post can have several payouts.

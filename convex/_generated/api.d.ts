@@ -41,6 +41,7 @@ import type * as lib_identity from "../lib/identity.js";
 import type * as lib_mediaUploadPolicy from "../lib/mediaUploadPolicy.js";
 import type * as lib_pagination from "../lib/pagination.js";
 import type * as lib_s3 from "../lib/s3.js";
+import type * as lib_stripe from "../lib/stripe.js";
 import type * as lib_urls from "../lib/urls.js";
 import type * as lib_validation from "../lib/validation.js";
 import type * as lib_workos from "../lib/workos.js";
@@ -143,6 +144,7 @@ declare const fullApi: ApiFromModules<{
   "lib/mediaUploadPolicy": typeof lib_mediaUploadPolicy;
   "lib/pagination": typeof lib_pagination;
   "lib/s3": typeof lib_s3;
+  "lib/stripe": typeof lib_stripe;
   "lib/urls": typeof lib_urls;
   "lib/validation": typeof lib_validation;
   "lib/workos": typeof lib_workos;

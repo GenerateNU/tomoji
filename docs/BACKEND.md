@@ -305,7 +305,11 @@ the caller's applications with its opportunity brief (`creatorOpportunity`, incl
 
 ## Payout records
 
-`payouts` records individual finalized earnings payments. Every payout identifies
+The [earnings rules and payment contract](EARNINGS.md) defines the upcoming
+calculator's verification clock, fixed/variable earnings, cutoffs, and handoff to
+Stripe collection. This section describes the existing payout operations.
+
+`payouts` records individual finalized earning obligations. Every payout identifies
 one post and its assignment; both an assignment and a post can have several payouts.
 An earning period is optional. Ownership is stored on the payout so historical reads
 do not depend on an assignment, campaign, or post remaining active or present.
@@ -368,11 +372,11 @@ the earned amount and deciding when it is final.
   still reconcile after related records have been deleted.
 
 Source-key generation belongs to the future earnings-calculation workflow, which
-has not been implemented yet. Illustrative formats are `post:<postId>:fixed-fee`
-for a post's fixed fee or `views:<postId>:<periodStart>:<periodEnd>` for one finalized
-measurement period. The final format depends on the agreed earning rules. Keys
-must identify the earning itself, not the attempt: a fresh random key on each
-retry would allow duplicate payouts.
+has not been implemented yet. The [earnings handoff](EARNINGS.md#earnings-to-payment-handoff)
+defines identity at the assignment/deliverable, period, and component level so a
+replacement post cannot reset the fixed fee or cap. Keys must identify the earning
+itself, not the attempt: a fresh random key on each retry would allow duplicate
+payouts. The exact key encoding belongs to that implementation.
 
 This operation records obligations; it does not calculate fixed fees or view-based
 earnings, approve payouts, or schedule payments.

@@ -313,9 +313,11 @@ the caller's applications with its opportunity brief (`creatorOpportunity`, incl
 The [earnings rules and payment contract](EARNINGS.md) defines the calculator's
 verification clock, fixed/variable earnings, cutoffs, and handoff to Stripe
 collection. Its [internal operations](EARNINGS.md#internal-operations) record
-measurement evidence and settle one due period; automatic scheduling is separate.
+measurement evidence and settle one due period.
 Its [scheduling state](EARNINGS.md#scheduling-state) tracks due work through
-verification and cutoffs; the recurring earnings runner is not enabled yet.
+verification and cutoffs. The minute cron discovers due work in pages of 25;
+isolated workers settle missed periods, retry missing evidence, and park failures
+for attention. See [execution and recovery](EARNINGS.md#scheduled-execution-and-recovery).
 This section describes the payout operations those settlements use.
 
 `payouts` records individual finalized earning obligations. Every payout identifies

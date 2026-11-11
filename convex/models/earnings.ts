@@ -223,7 +223,7 @@ async function saveCalculation(
   return (await ctx.db.get("earningCalculations", id))!;
 }
 
-/** One trusted, unscheduled settlement. All evidence, accounting and payout writes share its transaction. */
+/** One trusted period settlement. All evidence, accounting and payout writes share its transaction. */
 export async function settleEarnings(
   ctx: MutationCtx,
   args: EarningSettlement,

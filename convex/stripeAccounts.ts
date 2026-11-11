@@ -56,29 +56,34 @@ export const onboardingLink = creatorAction({
       creatorId: ctx.creatorId,
     });
     if (account === null) {
+      const params: Stripe.AccountCreateParams = {
+        // Payouts are USD only, and Stripe cannot change an account's country later.
+        country: "US",
+        email: ctx.user.email,
+        // Stripe's replacement for `type: "standard"`, chosen over Express to avoid its
+        // per-account costs: the creator uses the full Stripe Dashboard, pays Stripe's
+        // fees, and Stripe covers negative balances and collects requirements.
+        controller: {
+          stripe_dashboard: { type: "full" },
+          fees: { payer: "account" },
+          losses: { payments: "stripe" },
+          requirement_collection: "stripe",
+        },
+        // No `capabilities`: Stripe chooses them by country for Standard accounts and
+        // rejects a request for `transfers` alone.
+        metadata: { creatorId: ctx.creatorId },
+      };
       let created: Stripe.Account;
       try {
-        created = await stripe.accounts.create(
-          {
-            // Payouts are USD only, and Stripe cannot change an account's country later.
-            country: "US",
-            email: ctx.user.email,
-            // Stripe's replacement for `type: "standard"`, chosen over Express to avoid its
-            // per-account costs: the creator uses the full Stripe Dashboard, pays Stripe's
-            // fees, and Stripe covers negative balances and collects requirements.
-            controller: {
-              stripe_dashboard: { type: "full" },
-              fees: { payer: "account" },
-              losses: { payments: "stripe" },
-              requirement_collection: "stripe",
-            },
-            capabilities: { transfers: { requested: true } },
-            metadata: { creatorId: ctx.creatorId },
-          },
-          // Concurrent clicks get the same account back instead of two accounts.
-          { idempotencyKey: `stripe-account:${ctx.creatorId}` },
-        );
-      } catch {
+        created = await stripe.accounts.create(params, {
+          // Concurrent clicks send identical requests, so they share a key and get one
+          // account back. Stripe keeps a key's first response for 24 hours and refuses
+          // it for different parameters, so the key covers the parameters too: a new
+          // email or a deploy that changes them must not lock the creator out.
+          idempotencyKey: `stripe-account:${ctx.creatorId}:${await fingerprint(params)}`,
+        });
+      } catch (error) {
+        console.error("Stripe refused to create the account", stripeErrorDetails(error));
         throw apiError("upstream_failure", { reason: "stripe_account_failed" });
       }
       // Saved before requesting the link, so a failed link never orphans the account.
@@ -97,8 +102,29 @@ export const onboardingLink = creatorAction({
         refresh_url: refreshUrl,
       });
       return { url: accountLink.url };
-    } catch {
+    } catch (error) {
+      console.error("Stripe refused the onboarding link", stripeErrorDetails(error));
       throw apiError("upstream_failure", { reason: "stripe_link_failed" });
     }
   },
 });
+
+/** The first 16 hex digits of the SHA-256 of `value`'s JSON; stable for equal objects built the same way. */
+async function fingerprint(value: unknown): Promise<string> {
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(JSON.stringify(value)),
+  );
+  return Array.from(new Uint8Array(digest).slice(0, 8), (byte) =>
+    byte.toString(16).padStart(2, "0"),
+  ).join("");
+}
+
+/** Stripe's reason for a failed request, for the logs. Stripe errors carry no secrets. */
+function stripeErrorDetails(error: unknown): Record<string, string | undefined> {
+  if (error instanceof Error) {
+    const { type, code } = error as Partial<Stripe.errors.StripeError>;
+    return { type, code, message: error.message };
+  }
+  return { message: String(error) };
+}

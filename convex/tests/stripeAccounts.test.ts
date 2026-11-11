@@ -96,8 +96,10 @@ describe("onboardingLink", () => {
     const link = await asCreator.action(api.stripeAccounts.onboardingLink, {});
 
     expect(link).toEqual({ url: "https://connect.stripe.com/setup/e/acct_new/link" });
+    // Exact, because Stripe rejects Standard accounts that request `transfers`
+    // on its own; it picks their capabilities by country.
     expect(stripe.createAccount).toHaveBeenCalledWith(
-      expect.objectContaining({
+      {
         country: "US",
         email: "stripe_onboard_new@example.com",
         controller: {
@@ -106,10 +108,13 @@ describe("onboardingLink", () => {
           losses: { payments: "stripe" },
           requirement_collection: "stripe",
         },
-        capabilities: { transfers: { requested: true } },
         metadata: { creatorId },
-      }),
-      { idempotencyKey: `stripe-account:${creatorId}` },
+      },
+      {
+        idempotencyKey: expect.stringMatching(
+          new RegExp(`^stripe-account:${creatorId}:[0-9a-f]{16}$`),
+        ),
+      },
     );
     expect(stripe.createAccountLink).toHaveBeenCalledWith({
       account: "acct_new",
@@ -171,6 +176,70 @@ describe("onboardingLink", () => {
       "stripe_account_failed",
     );
     expect(await asCreator.query(api.stripeAccounts.me, {})).toEqual({ status: "notStarted" });
+  });
+
+  // A double click must reach Stripe with one key, so it returns one account.
+  test("retries an identical request under the same idempotency key", async () => {
+    const t = convexTest(schema, modules);
+    const { asCreator } = await seedCreator(t, "stripe_onboard_retry");
+    stripe.createAccount.mockRejectedValueOnce(new Error("Stripe is down"));
+
+    await expectApiError(
+      () => asCreator.action(api.stripeAccounts.onboardingLink, {}),
+      "upstream_failure",
+      "stripe_account_failed",
+    );
+    await asCreator.action(api.stripeAccounts.onboardingLink, {});
+
+    const [first, second] = stripe.createAccount.mock.calls.map(
+      ([, options]) => (options as Stripe.RequestOptions).idempotencyKey,
+    );
+    expect(second).toBe(first);
+  });
+
+  // Stripe refuses a reused key with different parameters for 24 hours, which
+  // would lock the creator out after a settings change or an email change.
+  test("uses a new idempotency key when the request changes", async () => {
+    const t = convexTest(schema, modules);
+    const { asCreator } = await seedCreator(t, "stripe_onboard_changed");
+    stripe.createAccount.mockRejectedValueOnce(new Error("Stripe is down"));
+
+    await expectApiError(
+      () => asCreator.action(api.stripeAccounts.onboardingLink, {}),
+      "upstream_failure",
+      "stripe_account_failed",
+    );
+    await t.run(async (ctx) => {
+      const user = await ctx.db
+        .query("users")
+        .withIndex("by_email", (q) => q.eq("email", "stripe_onboard_changed@example.com"))
+        .unique();
+      await ctx.db.patch("users", user!._id, { email: "renamed@example.com" });
+    });
+    await asCreator.action(api.stripeAccounts.onboardingLink, {});
+
+    const [first, second] = stripe.createAccount.mock.calls.map(
+      ([, options]) => (options as Stripe.RequestOptions).idempotencyKey,
+    );
+    expect(second).not.toBe(first);
+  });
+
+  // The caller only sees `stripe_account_failed`; the log keeps Stripe's reason.
+  test("logs Stripe's reason when it refuses the account", async () => {
+    const t = convexTest(schema, modules);
+    const { asCreator } = await seedCreator(t, "stripe_onboard_refused");
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+    stripe.createAccount.mockRejectedValue(new Error("You cannot request `transfers`"));
+
+    await expectApiError(
+      () => asCreator.action(api.stripeAccounts.onboardingLink, {}),
+      "upstream_failure",
+      "stripe_account_failed",
+    );
+    expect(logged).toHaveBeenCalledWith(
+      "Stripe refused to create the account",
+      expect.objectContaining({ message: "You cannot request `transfers`" }),
+    );
   });
 
   // The account exists now, so the next click must reuse it rather than

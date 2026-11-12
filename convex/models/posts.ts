@@ -285,63 +285,70 @@ export async function unverifyPost(ctx: MutationCtx, postId: Id<"posts">): Promi
   return (await ctx.db.get("posts", postId))!;
 }
 
-/** A snapshot of a post's counts, as fetched from X. */
-export const postMetrics = v.object({
-  likes: v.number(),
-  comments: v.number(),
-  reposts: v.number(),
-  views: v.number(),
-});
-export type PostMetrics = Infer<typeof postMetrics>;
+/** Throws unless `count` is a nonnegative whole number. */
+function requireCount(count: number, reason: string, field?: string) {
+  if (!Number.isSafeInteger(count) || count < 0) {
+    throw apiError("invalid_state", { reason, ...(field === undefined ? {} : { field }) });
+  }
+}
 
 /**
- * Stores a fresh snapshot of the post's counts. Only server code calls this,
- * so creators can't inflate the numbers their payout is based on. Works for
- * any active post, including after its assignment ends.
+ * Stores the post's current view count and when it was fetched. Views are what
+ * payouts use, so only server code calls this and creators can't inflate them.
+ * Works for any active post, including after its assignment ends.
  *
  * @throws `not_found` if the post doesn't exist.
- * @throws `invalid_state` if the post was replaced, or with `invalid_metrics`
- * if a count isn't a nonnegative whole number.
+ * @throws `invalid_state` if the post was replaced, or with `invalid_views` if
+ * the count isn't a nonnegative whole number.
  */
-export async function updatePostMetrics(
+export async function updatePostViews(
   ctx: MutationCtx,
   postId: Id<"posts">,
-  metrics: PostMetrics,
+  views: number,
 ): Promise<Doc<"posts">> {
   const post = await ctx.db.get("posts", postId);
   if (post === null) throw apiError("not_found", { resource: "post" });
   requireActive(post);
-  for (const field of ["likes", "comments", "reposts", "views"] as const) {
-    if (!Number.isSafeInteger(metrics[field]) || metrics[field] < 0) {
-      throw apiError("invalid_state", { reason: "invalid_metrics", field });
-    }
-  }
-  const patch = { ...metrics, metricsUpdatedAt: Date.now() };
+  requireCount(views, "invalid_views");
+  const patch = { views, viewsUpdatedAt: Date.now() };
   await ctx.db.patch("posts", postId, patch);
   return { ...post, ...patch };
 }
 
+/** Engagement counts from X. Any can be left out; a left-out count keeps its stored value. */
+export const postEngagement = v.object({
+  likes: v.optional(v.number()),
+  comments: v.optional(v.number()),
+  reposts: v.optional(v.number()),
+  quotes: v.optional(v.number()),
+});
+export type PostEngagement = Infer<typeof postEngagement>;
+
 /**
- * Stores the post's quote-post count. Kept apart from `updatePostMetrics` so
- * quotes never hold back or change the counts payouts use.
+ * Stores whichever engagement counts are given, for analytics. Kept apart from
+ * `updatePostViews` so these counts never hold back or change what payouts use.
  *
  * @throws `not_found` if the post doesn't exist.
- * @throws `invalid_state` if the post was replaced, or with `invalid_quotes`
- * if the count isn't a nonnegative whole number.
+ * @throws `invalid_state` if the post was replaced, or with `invalid_engagement`
+ * and the `field` if a given count isn't a nonnegative whole number.
  */
-export async function updatePostQuotes(
+export async function updatePostEngagement(
   ctx: MutationCtx,
   postId: Id<"posts">,
-  quotes: number,
+  engagement: PostEngagement,
 ): Promise<Doc<"posts">> {
   const post = await ctx.db.get("posts", postId);
   if (post === null) throw apiError("not_found", { resource: "post" });
   requireActive(post);
-  if (!Number.isSafeInteger(quotes) || quotes < 0) {
-    throw apiError("invalid_state", { reason: "invalid_quotes" });
+  const patch: PostEngagement = {};
+  for (const field of ["likes", "comments", "reposts", "quotes"] as const) {
+    const count = engagement[field];
+    if (count === undefined) continue;
+    requireCount(count, "invalid_engagement", field);
+    patch[field] = count;
   }
-  await ctx.db.patch("posts", postId, { quotes });
-  return { ...post, quotes };
+  await ctx.db.patch("posts", postId, patch);
+  return { ...post, ...patch };
 }
 
 /**

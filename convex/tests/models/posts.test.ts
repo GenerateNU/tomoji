@@ -8,8 +8,8 @@ import {
   replacePost,
   requirePost,
   unverifyPost,
-  updatePostMetrics,
-  updatePostQuotes,
+  updatePostEngagement,
+  updatePostViews,
   verifyPost,
 } from "../../models/posts";
 import { listOpportunityDeliverables } from "../../models/deliverableDrafts";
@@ -615,7 +615,8 @@ describe("listPosts filters", () => {
 });
 
 const NEW_URL = "https://x.com/driftwood_dev/status/1843000000000000009";
-const METRICS = { likes: 120, comments: 14, reposts: 9, views: 48_000 };
+const VIEWS = 48_000;
+const ENGAGEMENT = { likes: 120, comments: 14, reposts: 9, quotes: 3 };
 /** When the post went live on X, as an operator reads it off the post. */
 const POSTED_AT = new Date("2026-10-07T09:30:00Z").getTime();
 
@@ -631,7 +632,10 @@ describe("replacePost", () => {
   test("keeps the old post as an inactive record and creates a new active one", async () => {
     const t = convexTest(schema, modules);
     const { fixture, postId } = await seedFixturePost(t);
-    await t.run(async (ctx) => await updatePostMetrics(ctx, postId, METRICS));
+    await t.run(async (ctx) => {
+      await updatePostViews(ctx, postId, VIEWS);
+      await updatePostEngagement(ctx, postId, ENGAGEMENT);
+    });
     const old = await t.run(async (ctx) => await ctx.db.get("posts", postId));
 
     const result = await t.run(
@@ -842,70 +846,17 @@ describe("verifyPost", () => {
   });
 });
 
-describe("updatePostMetrics", () => {
-  test("refuses a replaced post", async () => {
-    const t = convexTest(schema, modules);
-    const { fixture, postId } = await seedFixturePost(t);
-    await replaceFixturePost(t, fixture, postId);
-    const before = await storedPosts(t);
-
-    await expect(
-      t.run(async (ctx) => await updatePostMetrics(ctx, postId, METRICS)),
-    ).rejects.toMatchObject({ data: { code: "invalid_state", reason: "post_inactive" } });
-    expect(await storedPosts(t)).toEqual(before);
-  });
-
-  test("stores the counts and when they were fetched", async () => {
+describe("updatePostViews", () => {
+  test("stores the views and when they were fetched, leaving engagement alone", async () => {
     const t = convexTest(schema, modules);
     const { postId } = await seedFixturePost(t);
+    await t.run(async (ctx) => await updatePostEngagement(ctx, postId, ENGAGEMENT));
 
-    const result = await t.run(async (ctx) => await updatePostMetrics(ctx, postId, METRICS));
+    const result = await t.run(async (ctx) => await updatePostViews(ctx, postId, VIEWS));
 
     const stored = await t.run(async (ctx) => await ctx.db.get("posts", postId));
     expect(result).toEqual(stored);
-    expect(stored).toMatchObject({ ...METRICS, metricsUpdatedAt: Date.now() });
-  });
-
-  test.each([
-    ["a negative count", { ...METRICS, views: -1 }],
-    ["a fractional count", { ...METRICS, likes: 1.5 }],
-    ["a non-finite count", { ...METRICS, reposts: Number.POSITIVE_INFINITY }],
-  ])("refuses %s without writing", async (_label, metrics) => {
-    const t = convexTest(schema, modules);
-    const { postId } = await seedFixturePost(t);
-    const before = await storedPosts(t);
-
-    await expect(
-      t.run(async (ctx) => await updatePostMetrics(ctx, postId, metrics)),
-    ).rejects.toMatchObject({ data: { code: "invalid_state", reason: "invalid_metrics" } });
-    expect(await storedPosts(t)).toEqual(before);
-  });
-
-  test("reports a missing post as not found", async () => {
-    const t = convexTest(schema, modules);
-    const { postId } = await seedFixturePost(t);
-    await t.run(async (ctx) => await ctx.db.delete("posts", postId));
-
-    await expectApiError(
-      () => t.run(async (ctx) => await updatePostMetrics(ctx, postId, METRICS)),
-      "not_found",
-    );
-  });
-});
-
-describe("updatePostQuotes", () => {
-  test("stores the quote count without touching the metrics", async () => {
-    const t = convexTest(schema, modules);
-    const { postId } = await seedFixturePost(t);
-    await t.run(async (ctx) => await updatePostMetrics(ctx, postId, METRICS));
-    const before = await t.run(async (ctx) => await ctx.db.get("posts", postId));
-    vi.setSystemTime(Date.now() + 1000);
-
-    const result = await t.run(async (ctx) => await updatePostQuotes(ctx, postId, 6));
-
-    const stored = await t.run(async (ctx) => await ctx.db.get("posts", postId));
-    expect(result).toEqual(stored);
-    expect(stored).toEqual({ ...before, quotes: 6 });
+    expect(stored).toMatchObject({ ...ENGAGEMENT, views: VIEWS, viewsUpdatedAt: Date.now() });
   });
 
   test("refuses a replaced post", async () => {
@@ -915,7 +866,7 @@ describe("updatePostQuotes", () => {
     const before = await storedPosts(t);
 
     await expect(
-      t.run(async (ctx) => await updatePostQuotes(ctx, postId, 6)),
+      t.run(async (ctx) => await updatePostViews(ctx, postId, VIEWS)),
     ).rejects.toMatchObject({ data: { code: "invalid_state", reason: "post_inactive" } });
     expect(await storedPosts(t)).toEqual(before);
   });
@@ -924,14 +875,14 @@ describe("updatePostQuotes", () => {
     ["a negative count", -1],
     ["a fractional count", 1.5],
     ["a non-finite count", Number.POSITIVE_INFINITY],
-  ])("refuses %s without writing", async (_label, quotes) => {
+  ])("refuses %s without writing", async (_label, views) => {
     const t = convexTest(schema, modules);
     const { postId } = await seedFixturePost(t);
     const before = await storedPosts(t);
 
     await expect(
-      t.run(async (ctx) => await updatePostQuotes(ctx, postId, quotes)),
-    ).rejects.toMatchObject({ data: { code: "invalid_state", reason: "invalid_quotes" } });
+      t.run(async (ctx) => await updatePostViews(ctx, postId, views)),
+    ).rejects.toMatchObject({ data: { code: "invalid_state", reason: "invalid_views" } });
     expect(await storedPosts(t)).toEqual(before);
   });
 
@@ -941,7 +892,74 @@ describe("updatePostQuotes", () => {
     await t.run(async (ctx) => await ctx.db.delete("posts", postId));
 
     await expectApiError(
-      () => t.run(async (ctx) => await updatePostQuotes(ctx, postId, 6)),
+      () => t.run(async (ctx) => await updatePostViews(ctx, postId, VIEWS)),
+      "not_found",
+    );
+  });
+});
+
+describe("updatePostEngagement", () => {
+  test("stores the counts without touching views or when they were fetched", async () => {
+    const t = convexTest(schema, modules);
+    const { postId } = await seedFixturePost(t);
+    await t.run(async (ctx) => await updatePostViews(ctx, postId, VIEWS));
+    const before = await t.run(async (ctx) => await ctx.db.get("posts", postId));
+    vi.setSystemTime(Date.now() + 1000);
+
+    const result = await t.run(async (ctx) => await updatePostEngagement(ctx, postId, ENGAGEMENT));
+
+    const stored = await t.run(async (ctx) => await ctx.db.get("posts", postId));
+    expect(result).toEqual(stored);
+    expect(stored).toEqual({ ...before, ...ENGAGEMENT });
+  });
+
+  test("saves only the counts it is given, keeping the others", async () => {
+    const t = convexTest(schema, modules);
+    const { postId } = await seedFixturePost(t);
+    await t.run(async (ctx) => await updatePostEngagement(ctx, postId, ENGAGEMENT));
+
+    await t.run(async (ctx) => await updatePostEngagement(ctx, postId, { likes: 150 }));
+
+    const stored = await t.run(async (ctx) => await ctx.db.get("posts", postId));
+    expect(stored).toMatchObject({ ...ENGAGEMENT, likes: 150 });
+  });
+
+  test("refuses a replaced post", async () => {
+    const t = convexTest(schema, modules);
+    const { fixture, postId } = await seedFixturePost(t);
+    await replaceFixturePost(t, fixture, postId);
+    const before = await storedPosts(t);
+
+    await expect(
+      t.run(async (ctx) => await updatePostEngagement(ctx, postId, ENGAGEMENT)),
+    ).rejects.toMatchObject({ data: { code: "invalid_state", reason: "post_inactive" } });
+    expect(await storedPosts(t)).toEqual(before);
+  });
+
+  test.each([
+    ["a negative count", { ...ENGAGEMENT, quotes: -1 }, "quotes"],
+    ["a fractional count", { ...ENGAGEMENT, likes: 1.5 }, "likes"],
+    ["a non-finite count", { ...ENGAGEMENT, reposts: Number.POSITIVE_INFINITY }, "reposts"],
+  ])("refuses %s without writing any count", async (_label, engagement, field) => {
+    const t = convexTest(schema, modules);
+    const { postId } = await seedFixturePost(t);
+    const before = await storedPosts(t);
+
+    await expect(
+      t.run(async (ctx) => await updatePostEngagement(ctx, postId, engagement)),
+    ).rejects.toMatchObject({
+      data: { code: "invalid_state", reason: "invalid_engagement", field },
+    });
+    expect(await storedPosts(t)).toEqual(before);
+  });
+
+  test("reports a missing post as not found", async () => {
+    const t = convexTest(schema, modules);
+    const { postId } = await seedFixturePost(t);
+    await t.run(async (ctx) => await ctx.db.delete("posts", postId));
+
+    await expectApiError(
+      () => t.run(async (ctx) => await updatePostEngagement(ctx, postId, ENGAGEMENT)),
       "not_found",
     );
   });

@@ -1,6 +1,6 @@
 import type { ConvexError } from "convex/values";
 import { apiError, type ApiErrorData } from "./errors";
-import type { PostMetrics } from "../models/posts";
+import type { PostEngagement } from "../models/posts";
 
 /**
  * Days a post keeps earning after it goes live - number of days the metrics are tracked on the X post.
@@ -86,11 +86,11 @@ export async function xJson(response: Response): Promise<Record<string, unknown>
 }
 
 /**
- * One post's counts. `metrics` is what `updatePostMetrics` stores. `quotes` is
- * kept apart, never added to `reposts`, and left out when X's quote count is
- * unusable, so it can never hold back a post's metrics.
+ * One post's counts. `views` is what payouts use (`updatePostViews`).
+ * `engagement` is for analytics (`updatePostEngagement`): each unusable count
+ * is left out on its own, so it never holds back the views or the other counts.
  */
-export type XPostResult = { xPostId: string; metrics: PostMetrics; quotes?: number };
+export type XPostResult = { xPostId: string; views: number; engagement: PostEngagement };
 
 /**
  * Why a requested post has no counts. `invalid_id` was never sent because X
@@ -114,7 +114,7 @@ const xPostIdPattern = /^[1-9]\d{0,18}$/;
 /**
  * Looks up current public counts for up to 100 posts with the app-only token.
  * One unusable post never fails the batch: ids X would reject, posts X leaves
- * out, and posts with unusable counts come back in `missing` with a reason.
+ * out, and posts without usable views come back in `missing` with a reason.
  *
  * @throws `invalid_state` for an empty, oversized, or duplicated id list, which
  *   is a bug in the caller.
@@ -204,22 +204,26 @@ function missingReasons(value: unknown): Map<string, XMissingReason> {
   return reasons;
 }
 
-/** The post's counts, or `undefined` if any metric is missing or not a non-negative integer. */
+/**
+ * The post's counts, or `undefined` if its views are missing or not a
+ * nonnegative whole number. Unusable engagement counts are left out instead.
+ */
 function postResult(xPostId: string, value: unknown): XPostResult | undefined {
   if (value === null || typeof value !== "object" || Array.isArray(value)) return undefined;
   const metrics = value as Record<string, unknown>;
-  const likes = count(metrics.like_count);
-  const comments = count(metrics.reply_count);
-  const reposts = count(metrics.retweet_count);
   const views = count(metrics.impression_count);
-  if (likes === undefined || comments === undefined || reposts === undefined || views === undefined)
-    return undefined;
-  const quotes = count(metrics.quote_count);
-  return {
-    xPostId,
-    metrics: { likes, comments, reposts, views },
-    ...(quotes === undefined ? {} : { quotes }),
-  };
+  if (views === undefined) return undefined;
+  const engagement: PostEngagement = {};
+  for (const [field, xField] of [
+    ["likes", "like_count"],
+    ["comments", "reply_count"],
+    ["reposts", "retweet_count"],
+    ["quotes", "quote_count"],
+  ] as const) {
+    const value = count(metrics[xField]);
+    if (value !== undefined) engagement[field] = value;
+  }
+  return { xPostId, views, engagement };
 }
 
 function count(value: unknown): number | undefined {

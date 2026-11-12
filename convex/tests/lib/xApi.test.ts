@@ -1,7 +1,7 @@
 import type { ConvexError, Value } from "convex/values";
 import { afterEach, expect, test, vi } from "vitest";
 import { getXPostMetrics, readXMetricsConfig } from "../../lib/xApi";
-import type { PostMetrics } from "../../models/posts";
+import type { PostEngagement } from "../../models/posts";
 import { expectApiError } from "../helpers";
 
 afterEach(() => vi.unstubAllGlobals());
@@ -25,12 +25,18 @@ function xPost(id: string, metrics: Record<string, unknown> = {}) {
   };
 }
 
-/** What `getXPostMetrics` reports for an `xPost` fixture; `quotes: null` means left out. */
-function found(xPostId: string, metrics: Partial<PostMetrics> = {}, quotes: number | null = 1) {
+/**
+ * What `getXPostMetrics` reports for an `xPost` fixture. Pass an engagement count
+ * as `undefined` to expect it left out.
+ */
+function found(
+  xPostId: string,
+  { views = 1250, ...engagement }: { views?: number } & PostEngagement = {},
+) {
   return {
     xPostId,
-    metrics: { likes: 38, comments: 3, reposts: 7, views: 1250, ...metrics },
-    ...(quotes === null ? {} : { quotes }),
+    views,
+    engagement: { likes: 38, comments: 3, reposts: 7, quotes: 1, ...engagement },
   };
 }
 
@@ -199,15 +205,15 @@ test("caller bugs in the id list are rejected before calling X", async () => {
   expect(fetch).not.toHaveBeenCalled();
 });
 
-test("a post with unusable counts is malformed without failing the batch", async () => {
+test("a post without usable views is malformed without failing the batch", async () => {
   stubX({
     data: [
       xPost("1"),
       // JSON drops undefined, so X's response has no impression_count at all.
       xPost("2", { impression_count: undefined }),
-      xPost("3", { like_count: -1 }),
-      xPost("4", { impression_count: 1.5 }),
-      xPost("5", { reply_count: "3" }),
+      xPost("3", { impression_count: 1.5 }),
+      xPost("4", { impression_count: -1 }),
+      xPost("5", { impression_count: "1250" }),
       { id: "6", text: "post" },
     ],
   });
@@ -278,26 +284,32 @@ test("a rate limit says when X will accept requests again", async () => {
   }
 });
 
-test("quotes are reported apart from the metrics and never count as reposts", async () => {
+test("an unusable engagement count drops only that count, never the views", async () => {
   stubX({
     data: [
-      xPost("1", { quote_count: 4 }),
-      // An unusable quote count drops only the quotes, never the post's metrics.
-      xPost("2", { quote_count: undefined }),
-      xPost("3", { quote_count: -1 }),
-      xPost("4", { quote_count: "4" }),
-      // A valid quote count can't rescue unusable metrics either.
-      xPost("5", { like_count: -1, quote_count: 4 }),
+      xPost("1", { like_count: -1 }),
+      xPost("2", { reply_count: "3" }),
+      xPost("3", { retweet_count: 1.5 }),
+      xPost("4", { quote_count: undefined }),
+      xPost("5", { like_count: -1, reply_count: -1, retweet_count: -1, quote_count: -1 }),
     ],
   });
   const result = await getXPostMetrics(token, ["1", "2", "3", "4", "5"]);
   expect(result.found).toEqual([
-    found("1", {}, 4),
-    found("2", {}, null),
-    found("3", {}, null),
-    found("4", {}, null),
+    found("1", { likes: undefined }),
+    found("2", { comments: undefined }),
+    found("3", { reposts: undefined }),
+    found("4", { quotes: undefined }),
+    found("5", { likes: undefined, comments: undefined, reposts: undefined, quotes: undefined }),
   ]);
-  expect(result.missing).toEqual([{ xPostId: "5", reason: "malformed" }]);
+  // Dropped counts are absent, not undefined, so they can't overwrite a stored value.
+  expect(Object.keys(result.found[0]!.engagement).sort()).toEqual([
+    "comments",
+    "quotes",
+    "reposts",
+  ]);
+  expect(result.found[4]!.engagement).toStrictEqual({});
+  expect(result.missing).toEqual([]);
 });
 
 test("problem types X doesn't document are logged so a format change gets noticed", async () => {

@@ -17,11 +17,16 @@ export const postsTable = defineTable({
   // Submission time is `_creationTime`.
   postedAt: v.optional(v.number()), // Unix milliseconds.
   isVerified: v.boolean(),
+  // What payouts are based on, kept apart from engagement so analytics-only
+  // counts can never hold it back.
+  views: v.optional(v.number()),
+  viewsUpdatedAt: v.optional(v.number()), // Unix milliseconds.
+  // Engagement from X, for analytics only. Quote posts are their own count,
+  // never added to `reposts`.
   likes: v.optional(v.number()),
   comments: v.optional(v.number()),
   reposts: v.optional(v.number()),
-  views: v.optional(v.number()),
-  metricsUpdatedAt: v.optional(v.number()), // Unix milliseconds.
+  quotes: v.optional(v.number()),
 })
   .index("by_submissionId_and_isActive", ["submissionId", "isActive"])
   .index("by_campaignId_and_isActive", ["campaignId", "isActive"])

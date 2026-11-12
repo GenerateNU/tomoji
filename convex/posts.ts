@@ -12,13 +12,14 @@ import {
   listPosts,
   postCreate,
   postListFilters,
-  postMetrics,
+  postEngagement,
   postReplacement,
   postVerification,
   replacePost,
   requirePost,
   unverifyPost,
-  updatePostMetrics,
+  updatePostEngagement,
+  updatePostViews,
   verifyPost,
 } from "./models/posts";
 import { requireCallerCreatorId } from "./models/users";
@@ -127,11 +128,20 @@ export const unverify = operatorMutation({
   },
 });
 
-/** Stores a fresh snapshot of a post's counts. For the future X API metrics job. */
-export const updateMetrics = internalMutation({
-  args: { postId: v.id("posts"), ...postMetrics.fields },
+/** Stores a post's current view count, which payouts use. For the X metrics sync. */
+export const updateViews = internalMutation({
+  args: { postId: v.id("posts"), views: v.number() },
   returns: schema.doc("posts"),
-  handler: async (ctx, { postId, ...metrics }) => {
-    return await updatePostMetrics(ctx, postId, metrics);
+  handler: async (ctx, { postId, views }) => {
+    return await updatePostViews(ctx, postId, views);
+  },
+});
+
+/** Stores a post's engagement counts, apart from its views. For the X metrics sync. */
+export const updateEngagement = internalMutation({
+  args: { postId: v.id("posts"), ...postEngagement.fields },
+  returns: schema.doc("posts"),
+  handler: async (ctx, { postId, ...engagement }) => {
+    return await updatePostEngagement(ctx, postId, engagement);
   },
 });

@@ -294,14 +294,25 @@ describe("posts.unverify", () => {
   });
 });
 
-describe("posts.updateMetrics", () => {
-  test("stores metrics for server-side callers", async () => {
+describe("posts.updateViews", () => {
+  test("stores views for server-side callers", async () => {
     const t = convexTest(schema, modules);
     const { postId } = await seedPost(t);
-    const metrics = { likes: 120, comments: 14, reposts: 9, views: 48_000 };
 
-    const post = await t.mutation(internal.posts.updateMetrics, { postId, ...metrics });
+    const post = await t.mutation(internal.posts.updateViews, { postId, views: 48_000 });
 
-    expect(post).toMatchObject(metrics);
+    expect(post).toMatchObject({ views: 48_000 });
+  });
+});
+
+describe("posts.updateEngagement", () => {
+  test("stores engagement counts for server-side callers", async () => {
+    const t = convexTest(schema, modules);
+    const { postId } = await seedPost(t);
+    const engagement = { likes: 120, comments: 14, reposts: 9, quotes: 3 };
+
+    const post = await t.mutation(internal.posts.updateEngagement, { postId, ...engagement });
+
+    expect(post).toMatchObject(engagement);
   });
 });

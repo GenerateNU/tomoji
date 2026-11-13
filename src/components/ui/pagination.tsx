@@ -40,13 +40,25 @@ const itemClassName = cn(
   focusRing,
 );
 
+// Native `disabled` only exists on buttons; anything else is a link, which is
+// disabled with aria-disabled, no href and no tab stop.
+function disabledProps(disabled: boolean | undefined, render: React.ReactElement | unknown) {
+  if (!disabled) return {};
+  const isButton = React.isValidElement(render) && render.type === "button";
+  return isButton
+    ? { disabled: true }
+    : { "aria-disabled": true as const, href: undefined, tabIndex: -1 };
+}
+
 /**
  * A page number. Pass `render={<Link href="..." />}` for routed pages or
- * `render={<button type="button" />}` for client-side paging; `disabled` is for
- * the button form.
+ * `render={<button type="button" />}` for client-side paging. Pass `disabled`
+ * for either form: buttons get the native attribute, links get `aria-disabled`,
+ * lose their `href` and leave the tab order.
  */
 function PaginationLink({
   isActive = false,
+  disabled,
   className,
   render,
   ...props
@@ -60,24 +72,29 @@ function PaginationLink({
           itemClassName,
           isActive
             ? "bg-gray-50 text-gray-950"
-            : "not-disabled:hover:bg-gray-25 not-disabled:hover:text-gray-950",
+            : "not-disabled:not-aria-disabled:hover:bg-gray-25 not-disabled:not-aria-disabled:hover:text-gray-950",
           className,
         ),
       },
       props,
+      disabledProps(disabled, render),
     ),
     render,
     state: { slot: "pagination-link", active: isActive },
   });
 }
 
-/** Previous or next page. Set `aria-disabled` at the ends. */
+/** Previous or next page. Pass `disabled` at the ends. */
 function PaginationArrow({
   direction,
+  disabled,
   className,
   render,
   ...props
-}: useRender.ComponentProps<"a"> & { direction: "previous" | "next"; disabled?: boolean }) {
+}: useRender.ComponentProps<"a"> & {
+  direction: "previous" | "next";
+  disabled?: boolean;
+}) {
   return useRender({
     defaultTagName: "a",
     props: mergeProps<"a">(
@@ -96,6 +113,7 @@ function PaginationArrow({
           ),
       },
       props,
+      disabledProps(disabled, render),
     ),
     render,
     state: { slot: `pagination-${direction}` },
@@ -130,16 +148,23 @@ function PaginationEllipsis({ className, ...props }: React.ComponentProps<"span"
 }
 
 // Always the first and last page and the current one with a neighbour each
-// side; near either end the window grows so it keeps five numbers. Gaps of
-// more than one page become an ellipsis.
-function pageWindow(pageCount: number, page: number): (number | "ellipsis")[] {
-  const pages = new Set([1, pageCount, page - 1, page, page + 1]);
-  if (page <= 2) pages.add(3);
-  if (page >= pageCount - 1) pages.add(pageCount - 2);
+// side; near either end the window grows so it keeps five numbers. A gap of a
+// single page shows that page (an ellipsis would hide no more than a number
+// would); wider gaps become an ellipsis.
+export function pageWindow(pageCount: number, page: number): (number | "ellipsis")[] {
+  if (pageCount < 1) return [];
+  const current = Math.min(Math.max(page, 1), pageCount);
+  const pages = new Set([1, pageCount, current - 1, current, current + 1]);
+  if (current <= 2) pages.add(3);
+  if (current >= pageCount - 1) pages.add(pageCount - 2);
   const sorted = [...pages].filter((p) => p >= 1 && p <= pageCount).sort((a, b) => a - b);
   const items: (number | "ellipsis")[] = [];
   sorted.forEach((p, index) => {
-    if (index > 0 && p - sorted[index - 1] > 1) items.push("ellipsis");
+    if (index > 0) {
+      const gap = p - sorted[index - 1];
+      if (gap === 2) items.push(p - 1);
+      else if (gap > 2) items.push("ellipsis");
+    }
     items.push(p);
   });
   return items;
@@ -164,7 +189,7 @@ function PaginationControl({
   onPageChange?: (page: number) => void;
 }) {
   const [internalPage, setInternalPage] = React.useState(defaultPage);
-  const current = page ?? internalPage;
+  const current = Math.min(Math.max(page ?? internalPage, 1), Math.max(pageCount, 1));
   const go = (next: number) => {
     if (page === undefined) setInternalPage(next);
     onPageChange?.(next);

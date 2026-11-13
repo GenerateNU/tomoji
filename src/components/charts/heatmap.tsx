@@ -3,7 +3,7 @@
 import { useState, type ComponentProps, type KeyboardEvent } from "react";
 import { cn } from "@/lib/utils";
 import { ChartTooltip, defaultFormat, tooltipAlign } from "./chart-tooltip";
-import { heatStep } from "./paths";
+import { heatStep, positiveMax } from "./paths";
 
 // Step 0 is empty; 1–3 are blue at 15, 35 and 60%; 4 is full blue.
 const SCALE = [
@@ -55,19 +55,24 @@ export function Heatmap({
   "aria-label": ariaLabel,
   ...props
 }: HeatmapProps) {
-  const top = max ?? Math.max(...values.flat(), 1);
+  const top = max ?? positiveMax(values.flat());
   const [active, setActive] = useState<[number, number] | null>(null);
+  const cellAt = (row: number, column: number): number | undefined => values[row]?.[column];
+  const isEmpty = rows.length === 0 || columns.length === 0 || values.length === 0;
   const columnName = (index: number) => columnNames?.[index] || columns[index] || `#${index + 1}`;
   const axisText = "text-body-xs font-normal text-gray-400";
-  const template = { gridTemplateColumns: `repeat(${columns.length}, minmax(0, 1fr))` };
+  const template = {
+    gridTemplateColumns: `repeat(${columns.length}, minmax(0, 1fr))`,
+  };
 
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (isEmpty) return;
     const move = MOVES[event.key];
     if (move) {
       setActive((current) => {
         const [row, column] = current ?? [0, 0];
         return [
-          Math.min(Math.max(row + move[0], 0), rows.length - 1),
+          Math.min(Math.max(row + move[0], 0), Math.min(rows.length, values.length) - 1),
           Math.min(Math.max(column + move[1], 0), columns.length - 1),
         ];
       });
@@ -98,7 +103,9 @@ export function Heatmap({
           tabIndex={0}
           aria-label={`${ariaLabel ?? "Heatmap"}. Use the arrow keys to read values.`}
           onKeyDown={onKeyDown}
-          onFocus={() => setActive((current) => current ?? [0, 0])}
+          onFocus={() => {
+            if (!isEmpty) setActive((current) => current ?? [0, 0]);
+          }}
           onBlur={() => setActive(null)}
           onPointerLeave={() => setActive(null)}
           className="relative grid gap-0.5 rounded-xs outline-none focus-visible:ring-4 focus-visible:ring-blue-primary/25"
@@ -119,10 +126,15 @@ export function Heatmap({
               />
             )),
           )}
-          {active && (
+          {active && cellAt(active[0], active[1]) !== undefined && (
             <ChartTooltip
               title={`${rows[active[0]]}, ${columnName(active[1])}`}
-              rows={[{ label: seriesLabel, value: format(values[active[0]][active[1]]) }]}
+              rows={[
+                {
+                  label: seriesLabel,
+                  value: format(cellAt(active[0], active[1]) as number),
+                },
+              ]}
               left={`${((active[1] + 0.5) / columns.length) * 100}%`}
               top={`${(active[0] / rows.length) * 100}%`}
               align={tooltipAlign((active[1] + 0.5) / columns.length)}

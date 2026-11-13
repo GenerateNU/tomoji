@@ -3,6 +3,7 @@
 import { useState, type ComponentProps } from "react";
 import { cn } from "@/lib/utils";
 import { ChartTooltip, defaultFormat } from "./chart-tooltip";
+import { positiveMax } from "./paths";
 
 type BarListProps = Omit<ComponentProps<"figure">, "children"> & {
   /** Rows top to bottom, largest first. */
@@ -33,7 +34,7 @@ export function BarList({
   ...props
 }: BarListProps) {
   const [active, setActive] = useState<number | null>(null);
-  const top = max ?? Math.max(...items.map((item) => item.value), 1);
+  const top = max ?? positiveMax(items.map((item) => item.value));
   const total = items.reduce((sum, item) => sum + item.value, 0) || 1;
 
   return (
@@ -73,7 +74,9 @@ export function BarList({
                     emphasized ? "bg-blue-primary" : "bg-gray-50",
                     active !== null && active !== index && "opacity-60",
                   )}
-                  style={{ width: `calc(${percent}% - ${(percent / 100) * 64}px)` }}
+                  style={{
+                    width: `calc(${percent}% - ${(percent / 100) * 64}px)`,
+                  }}
                 />
                 <span className="shrink-0 text-body-sm font-medium text-gray-950 tabular-nums">
                   {format(item.value)}
@@ -84,7 +87,10 @@ export function BarList({
                   title={item.label}
                   rows={[
                     { label: seriesLabel, value: format(item.value) },
-                    { label: "of total", value: `${Math.round((item.value / total) * 100)}%` },
+                    {
+                      label: "of total",
+                      value: `${Math.round((item.value / total) * 100)}%`,
+                    },
                   ]}
                   left={`calc(9rem + 12px + (100% - 9rem - 12px - 64px) * ${percent / 100})`}
                   top="6px"

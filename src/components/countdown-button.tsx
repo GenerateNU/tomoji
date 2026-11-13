@@ -11,7 +11,7 @@ type CountdownButtonProps = ComponentProps<"button"> & {
   seconds?: number;
   /** Shows the seconds left after the label. */
   showTime?: boolean;
-  /** Holds the timer where it is. */
+  /** Holds the timer where it is. `disabled` holds it too. */
   paused?: boolean;
 };
 
@@ -26,6 +26,7 @@ export function CountdownButton({
   seconds = 5,
   showTime = true,
   paused = false,
+  disabled,
   children = "Done",
   className,
   ...props
@@ -36,6 +37,7 @@ export function CountdownButton({
   // lets a press and the timer both complete, and a pause resumes in place.
   const elapsed = useRef(0);
   const completed = useRef(false);
+  const [done, setDone] = useState(false);
   const onCompleteRef = useRef(onComplete);
   useEffect(() => {
     onCompleteRef.current = onComplete;
@@ -44,13 +46,14 @@ export function CountdownButton({
   const complete = () => {
     if (completed.current) return;
     completed.current = true;
+    setDone(true);
     onCompleteRef.current?.();
   };
 
   // Driven every frame so the fill grows smoothly; a CSS transition per second
   // would step instead.
   useEffect(() => {
-    if (paused || completed.current) return;
+    if (paused || disabled || done) return;
     let frame = 0;
     let last = performance.now();
     const tick = (now: number) => {
@@ -68,11 +71,12 @@ export function CountdownButton({
     };
     frame = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(frame);
-  }, [paused, seconds]);
+  }, [paused, disabled, done, seconds]);
 
   return (
     <button
       type="button"
+      disabled={disabled}
       onClick={(event) => {
         onClick?.(event);
         complete();

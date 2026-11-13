@@ -62,7 +62,8 @@ export function Chart({
   ...props
 }: ChartProps) {
   const count = values.length;
-  const all = compare ? [...values, ...compare.values] : values;
+  const compareValues = compare?.values.slice(0, count);
+  const all = compareValues ? [...values, ...compareValues] : values;
   const domainMin = min ?? (type === "bar" ? 0 : Math.min(...all));
   const range = (max ?? Math.max(...all)) - domainMin || 1;
   const y = (value: number) => 100 - ((value - domainMin) / range) * 100;
@@ -71,6 +72,9 @@ export function Chart({
   const today = Math.min(Math.max(todayIndex ?? count - 1, 0), count - 1);
   const pointLabel = (index: number) => pointLabels?.[index] || labels[index] || `#${index + 1}`;
   const [active, setActive] = useState<number | null>(null);
+  // `values` can shrink while a point is active.
+  const current = active !== null && active < count ? active : null;
+  const compareAt = (index: number) => compare?.values[index];
   const clamp = (index: number) => Math.min(Math.max(index, 0), count - 1);
   const isProjected = (index: number) =>
     type === "line" && todayIndex !== undefined && index > today;
@@ -85,8 +89,13 @@ export function Chart({
         series,
       },
     ];
-    if (compare) {
-      rows.push({ label: compare.label, value: format(compare.values[index]), series: "context" });
+    const compared = compareAt(index);
+    if (compare && compared !== undefined) {
+      rows.push({
+        label: compare.label,
+        value: format(compared),
+        series: "context",
+      });
     }
     return rows;
   };
@@ -95,7 +104,7 @@ export function Chart({
   if (type === "line" && count > 1) {
     const points: PlotPoint[] = values.map((value, index) => [x(index), y(value)]);
     const tangents = monotoneTangents(points);
-    const compareSeries = compare?.values.map((value, index): PlotPoint => [x(index), y(value)]);
+    const compareSeries = compareValues?.map((value, index): PlotPoint => [x(index), y(value)]);
     const stroke = {
       fill: "none",
       vectorEffect: "non-scaling-stroke",
@@ -161,8 +170,9 @@ export function Chart({
   }
 
   let crosshair: ReactNode = null;
-  if (type === "line" && active !== null) {
-    const left = x(active);
+  if (type === "line" && current !== null) {
+    const left = x(current);
+    const compared = compareAt(current);
     const dot = (value: number, color: string) => (
       <span
         className={cn(
@@ -180,14 +190,14 @@ export function Chart({
           style={{ left: `${left}%` }}
         />
         <span aria-hidden className="pointer-events-none">
-          {compare && dot(compare.values[active], "bg-gray-300")}
-          {dot(values[active], isProjected(active) ? "bg-gray-400" : "bg-blue-primary")}
+          {compared !== undefined && dot(compared, "bg-gray-300")}
+          {dot(values[current], isProjected(current) ? "bg-gray-400" : "bg-blue-primary")}
         </span>
         <ChartTooltip
-          title={pointLabel(active)}
-          rows={rowsAt(active)}
+          title={pointLabel(current)}
+          rows={rowsAt(current)}
           left={`${left}%`}
-          top={`${Math.min(y(values[active]), compare ? y(compare.values[active]) : 100)}%`}
+          top={`${Math.min(y(values[current]), compared !== undefined ? y(compared) : 100)}%`}
           align={tooltipAlign(left / 100)}
         />
       </>
@@ -195,8 +205,9 @@ export function Chart({
   }
 
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (count === 0) return;
     const step = { ArrowLeft: -1, ArrowRight: 1 }[event.key];
-    if (step) setActive((current) => clamp((current ?? today) + step));
+    if (step) setActive((prev) => clamp((prev ?? today) + step));
     else if (event.key === "Home") setActive(0);
     else if (event.key === "End") setActive(count - 1);
     else if (event.key === "Escape") setActive(null);
@@ -227,12 +238,14 @@ export function Chart({
           tabIndex={0}
           aria-label={`${ariaLabel ?? "Chart"}. Use the arrow keys to read values.`}
           onPointerMove={(event) => {
-            if (type !== "line") return;
+            if (type !== "line" || count === 0) return;
             const box = event.currentTarget.getBoundingClientRect();
             setActive(clamp(Math.round(((event.clientX - box.left) / box.width) * (count - 1))));
           }}
           onPointerLeave={() => setActive(null)}
-          onFocus={() => setActive((current) => current ?? today)}
+          onFocus={() => {
+            if (count > 0) setActive((prev) => prev ?? today);
+          }}
           onBlur={() => setActive(null)}
           onKeyDown={onKeyDown}
           className="relative h-34 min-w-0 flex-1 rounded-xs outline-none focus-visible:ring-4 focus-visible:ring-blue-primary/25"
@@ -259,19 +272,22 @@ export function Chart({
                   <div
                     className={cn(
                       "w-10 bg-blue-primary transition-opacity",
-                      active !== null && active !== index && "opacity-60",
+                      current !== null && current !== index && "opacity-60",
                     )}
                     style={{ height: `${100 - y(value)}%` }}
                   />
                 </div>
               ))}
-              {active !== null && (
+              {current !== null && (
                 <ChartTooltip
-                  title={pointLabel(active)}
-                  rows={rowsAt(active).map((row) => ({ ...row, series: undefined }))}
-                  left={`calc(${count > 1 ? active / (count - 1) : 0.5} * (100% - ${BAR_WIDTH}px) + ${BAR_WIDTH / 2}px)`}
-                  top={`${y(values[active])}%`}
-                  align={tooltipAlign(count > 1 ? active / (count - 1) : 0.5)}
+                  title={pointLabel(current)}
+                  rows={rowsAt(current).map((row) => ({
+                    ...row,
+                    series: undefined,
+                  }))}
+                  left={`calc(${count > 1 ? current / (count - 1) : 0.5} * (100% - ${BAR_WIDTH}px) + ${BAR_WIDTH / 2}px)`}
+                  top={`${y(values[current])}%`}
+                  align={tooltipAlign(count > 1 ? current / (count - 1) : 0.5)}
                 />
               )}
             </div>
@@ -328,7 +344,9 @@ export function Chart({
                 {format(value)}
                 {isProjected(index) ? " (projected)" : ""}
               </td>
-              {compare && <td>{format(compare.values[index])}</td>}
+              {compare && (
+                <td>{compareAt(index) === undefined ? "" : format(compareAt(index) as number)}</td>
+              )}
             </tr>
           ))}
         </tbody>

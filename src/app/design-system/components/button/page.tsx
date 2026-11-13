@@ -18,7 +18,7 @@ export default function Page() {
           "special almost never. It is genuinely special: mint is Tomoji's reserved color for a premium product or tier, if one ships. Think of how DoorDash is red and black everywhere, but DashPass members see blue on DashPass-specific screens. Use special only on those premium-specific screens and actions (upgrading, or a perk only that tier gets), never to make an ordinary action stand out.",
         ],
         do: [
-          "Use md for page and form actions, often full width; sm in toolbars, table rows and cards.",
+          "Use default for page and form actions, often full width; sm in toolbars, table rows and cards.",
           "Pair one solid button with subtle or ghost buttons so the main action is obvious.",
           "Use a leading icon to clarify the action (RiAddLine for create, RiDeleteBinLine for delete) and a trailing RiArrowRightLine for moving forward.",
         ],
@@ -41,10 +41,10 @@ export default function Page() {
             },
             {
               name: "size",
-              type: '"md" | "default" | "sm" | "icon" | "icon-sm"',
+              type: '"default" | "sm" | "icon" | "icon-sm"',
               default: '"default"',
               description:
-                "md and default are 16 × 12 padding (45px tall); sm is 12 × 6 (33px tall). Text is 16px in all. icon and icon-sm are square, for icon-only buttons.",
+                "default is 16 × 12 padding (45px tall); sm is 12 × 6 (33px tall). Text is 16px in all. icon and icon-sm are square, for icon-only buttons.",
             },
             {
               name: "icon",

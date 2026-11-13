@@ -9,22 +9,19 @@ type Box = { left: number; width: number };
 
 /**
  * Measures the direct child of `ref` matching `selector` (usually the selected
- * tab) so an absolutely positioned underline or pill can slide to it. `animate`
+ * tab) so an absolutely positioned underline or pill can slide to it. It
+ * re-measures when the container or its children resize, or when children or
+ * their `aria-selected` / `aria-checked` / `aria-current` change. `animate`
  * turns true one frame after the first measurement, so the indicator doesn't
- * slide in on first paint. Pass `deps` to re-measure when something other than
- * a render changes the layout. (Measurement already runs after every render, so
- * `deps` only documents what callers expect to trigger a re-measure.)
+ * slide in on first paint.
  */
 export function useSlidingIndicator(
   ref: RefObject<HTMLElement | null>,
   selector: string,
-  deps: readonly unknown[] = [],
 ): { style: CSSProperties | undefined; animate: boolean } {
   const [box, setBox] = useState<Box | null>(null);
   const [animate, setAnimate] = useState(false);
 
-  // Re-measure after every render, like the reference: the selected child can
-  // change without the container resizing.
   useLayoutEffect(() => {
     const container = ref.current;
     if (!container) return;
@@ -34,10 +31,28 @@ export function useSlidingIndicator(
       setBox((prev) => (prev?.left === next?.left && prev?.width === next?.width ? prev : next));
     };
     measure();
-    const observer = new ResizeObserver(measure);
-    observer.observe(container);
-    return () => observer.disconnect();
-  });
+    const resizeObserver = new ResizeObserver(measure);
+    const observeChildren = () => {
+      resizeObserver.disconnect();
+      resizeObserver.observe(container);
+      for (const child of container.children) resizeObserver.observe(child);
+    };
+    observeChildren();
+    const mutationObserver = new MutationObserver(() => {
+      observeChildren();
+      measure();
+    });
+    mutationObserver.observe(container, {
+      subtree: true,
+      childList: true,
+      attributes: true,
+      attributeFilter: ["aria-selected", "aria-checked", "aria-current"],
+    });
+    return () => {
+      resizeObserver.disconnect();
+      mutationObserver.disconnect();
+    };
+  }, [ref, selector]);
 
   useLayoutEffect(() => {
     if (!box || animate) return;
@@ -45,7 +60,6 @@ export function useSlidingIndicator(
     return () => cancelAnimationFrame(frame);
   }, [box, animate]);
 
-  void deps;
   return {
     style: box ? { width: box.width, translate: `${box.left}px 0` } : undefined,
     animate,

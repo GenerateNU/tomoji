@@ -24,6 +24,7 @@ export default function Page() {
         do: [
           "Keep the nav items fixed — set which one is active.",
           "Collapse to the 56px rail on narrow screens.",
+          'An item can own a secondary nav: render it in a SidebarPanel that is open only while that item is selected, mark the item active="parent", and collapse the main sidebar to its rail.',
         ],
         dont: [
           "Don't add custom items to the product navs; build a new sidebar from SidebarItem if you need one.",

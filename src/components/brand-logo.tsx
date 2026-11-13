@@ -54,7 +54,9 @@ const VIEW_BOX: Record<Brand, string> = {
 };
 
 const SIZE: Record<Brand, string> = {
-  stripe: "h-4.25 w-auto",
+  // `size-auto` opts out of Button's `[&_svg:not([class*='size-'])]:size-4`,
+  // which would otherwise squash the 39×17 wordmark into a 16px square.
+  stripe: "size-auto h-4.25 w-[39px]",
   x: "size-4",
   google: "size-4.5",
   apple: "size-4.5",

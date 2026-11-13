@@ -221,7 +221,7 @@ function ComboboxChips({
     <ComboboxPrimitive.Chips
       data-slot="combobox-chips"
       className={cn(
-        "flex min-h-11.75 flex-wrap items-center gap-1.5 rounded border border-gray-300 bg-gray-0 px-3 py-2 text-body transition-shadow focus-within:border-blue-primary focus-within:outline focus-within:-outline-offset-2 focus-within:outline-blue-primary focus-within:ring-4 focus-within:ring-blue-primary/25 has-aria-invalid:border-red-600 has-aria-invalid:bg-red-50 has-aria-invalid:outline has-aria-invalid:-outline-offset-2 has-aria-invalid:outline-red-600",
+        "flex min-h-11.75 flex-wrap items-center gap-1.5 rounded border border-gray-300 bg-gray-0 px-3 py-2 text-body transition-shadow focus-within:border-blue-primary focus-within:inset-ring focus-within:inset-ring-blue-primary focus-within:ring-4 focus-within:ring-blue-primary/25 has-aria-invalid:border-red-600 has-aria-invalid:bg-red-50 has-aria-invalid:inset-ring has-aria-invalid:inset-ring-red-600",
         className,
       )}
       {...props}

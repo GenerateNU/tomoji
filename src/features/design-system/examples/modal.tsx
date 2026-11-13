@@ -66,7 +66,7 @@ export function ModalExamples() {
   open={open}
   onOpenChange={setOpen}
   breadcrumbs={[
-    { label: "Anthropic", avatar: <CompanyAvatar size={24} />, href: "#" },
+    { label: "Anthropic", avatar: <CompanyAvatar size={24} />, href: "/companies/anthropic" },
     { label: "Claude Opus 5.5" },
   ]}
   title="How-To Tutorial: Writing UX Copy and Motion"
@@ -78,7 +78,7 @@ export function ModalExamples() {
         <Demo
           title="How-To Tutorial: Writing UX Copy and Motion"
           breadcrumbs={[
-            { label: "Anthropic", avatar: <CompanyAvatar size={24} />, href: "#" },
+            { label: "Anthropic", avatar: <CompanyAvatar size={24} />, onClick: () => {} },
             { label: "Claude Opus 5.5" },
           ]}
         />

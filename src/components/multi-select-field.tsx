@@ -143,10 +143,10 @@ export function MultiSelectField({
             hasValues ? "items-start py-2" : "items-center py-3",
             disabled ? "cursor-not-allowed" : "cursor-pointer",
             error
-              ? "border-red-600 bg-red-50 outline -outline-offset-2 outline-red-600"
+              ? "border-red-600 bg-red-50 inset-ring inset-ring-red-600"
               : open
-                ? "border-blue-primary bg-gray-0 outline -outline-offset-2 outline-blue-primary"
-                : "border-gray-300 bg-gray-0 focus-visible:border-blue-primary focus-visible:outline focus-visible:-outline-offset-2 focus-visible:outline-blue-primary",
+                ? "border-blue-primary bg-gray-0 inset-ring inset-ring-blue-primary"
+                : "border-gray-300 bg-gray-0 focus-visible:border-blue-primary focus-visible:inset-ring focus-visible:inset-ring-blue-primary",
           )}
         >
           {hasValues ? (

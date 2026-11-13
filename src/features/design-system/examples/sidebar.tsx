@@ -57,12 +57,32 @@ import { Example } from "@/features/design-system/components/docs/example";
 import { iconProps } from "@/lib/icons";
 import { cn } from "@/lib/utils";
 
-type NavEntry<Id extends string> = {
+type NavEntry<Id extends string, SubId extends string = string> = {
   id: Id;
   label: string;
   icon: RemixiconComponentType;
   activeIcon: RemixiconComponentType;
+  badge?: number;
+  /** A secondary nav this item owns; it shows only while the item is selected. */
+  subnav?: { label: string; items: readonly NavEntry<SubId>[] };
 };
+
+// The "Sidebar Item" demo: default, selected and badge states in one clickable nav.
+const itemDemoNavItems = [
+  { id: "home", label: "Home", icon: RiHome4Line, activeIcon: RiHome4Fill },
+  { id: "opportunities", label: "Opportunities", icon: RiSearchLine, activeIcon: RiSearchFill },
+  {
+    id: "applications",
+    label: "Applications",
+    icon: RiInboxLine,
+    activeIcon: RiInboxFill,
+    badge: 3,
+  },
+] as const satisfies readonly NavEntry<string>[];
+
+const collapsedDemoNavItems = [
+  { id: "home", label: "Home", icon: RiHome4Line, activeIcon: RiHome4Fill },
+] as const satisfies readonly NavEntry<string>[];
 
 export const creatorNavItems = [
   { id: "home", label: "Home", icon: RiHome4Line, activeIcon: RiHome4Fill },
@@ -105,6 +125,15 @@ export const campaignNavItems = [
 type CreatorNavId = (typeof creatorNavItems)[number]["id"];
 type CompanyNavId = (typeof companyNavItems)[number]["id"];
 type CampaignNavId = (typeof campaignNavItems)[number]["id"];
+
+// Inside a campaign, the Campaigns item owns the campaign's secondary nav.
+const campaignName = "Opus 5.5";
+const campaignCompanyNavItems: readonly NavEntry<CompanyNavId, CampaignNavId>[] =
+  companyNavItems.map((item) =>
+    item.id === "campaigns"
+      ? { ...item, subnav: { label: campaignName, items: campaignNavItems } }
+      : item,
+  );
 type AccountAction = "profile" | "settings";
 
 function NavItems<Id extends string>({
@@ -118,13 +147,15 @@ function NavItems<Id extends string>({
   muted?: boolean;
   onSelect?: (id: Id) => void;
 }) {
-  return items.map(({ id, label, icon: Icon, activeIcon: ActiveIcon }) => (
+  return items.map(({ id, label, icon: Icon, activeIcon: ActiveIcon, badge }) => (
     <SidebarItem
       key={id}
+      // Demo links: the click handler prevents navigation, so no "#" lands in the URL.
       href="#"
       active={id === selected ? (muted ? "parent" : true) : false}
       icon={<Icon {...iconProps} />}
       activeIcon={<ActiveIcon {...iconProps} />}
+      badge={badge}
       onClick={(event) => {
         event.preventDefault();
         onSelect?.(id);
@@ -212,14 +243,13 @@ function CompanySidebar({
   onCampaignSelect,
   companyName = "Anthropic",
   companyLogoSrc,
-  campaignName = "Opus 5.5",
   userName = "Bea T.",
   userAvatarSrc,
   onAccountAction,
   className,
 }: {
   mode?: "global" | "campaign";
-  /** Global: the rail. Campaign: hides the campaign panel. */
+  /** Global: the rail. Campaign: hides the selected item's secondary panel. */
   collapsed?: boolean;
   onCollapsedChange?: (collapsed: boolean) => void;
   selected?: CompanyNavId;
@@ -228,7 +258,6 @@ function CompanySidebar({
   onCampaignSelect?: (id: CampaignNavId) => void;
   companyName?: string;
   companyLogoSrc?: string;
-  campaignName?: string;
   userName?: string;
   userAvatarSrc?: string;
   onAccountAction?: (action: AccountAction) => void;
@@ -261,46 +290,59 @@ function CompanySidebar({
     );
   }
 
-  const panelOpen = !collapsed;
+  // The panel belongs to the selected item: the rail and panel appear only while it is selected.
+  const subnav = campaignCompanyNavItems.find((item) => item.id === selected)?.subnav;
+  const panelSubnav = campaignCompanyNavItems.find((item) => item.subnav)?.subnav;
+  const subnavOpen = !!subnav && !collapsed;
   return (
     <SidebarGroup className={className}>
-      <Sidebar collapsed peek={panelOpen ? "panel" : "page"} className="border-r border-gray-50">
+      <Sidebar
+        collapsed={!!subnav}
+        peek={subnavOpen ? "panel" : "page"}
+        className={subnav ? "border-r border-gray-50" : undefined}
+      >
         <SidebarContent>
           <SidebarHeader className="px-2">
-            {onCollapsedChange ? (
-              <button
-                type="button"
-                aria-label={panelOpen ? "Collapse campaign panel" : "Expand campaign panel"}
-                onClick={() => onCollapsedChange(panelOpen)}
-                className="flex shrink-0 rounded outline-none focus-visible:ring-4 focus-visible:ring-blue-primary/25"
-              >
-                {logo}
-              </button>
-            ) : (
-              logo
-            )}
-            <SidebarLabel className="flex-1">{companyName}</SidebarLabel>
+            <span className="flex min-w-0 items-center gap-2">
+              {subnav && onCollapsedChange ? (
+                <button
+                  type="button"
+                  aria-label={subnavOpen ? "Collapse campaign panel" : "Expand campaign panel"}
+                  onClick={() => onCollapsedChange(subnavOpen)}
+                  className="flex shrink-0 rounded outline-none focus-visible:ring-4 focus-visible:ring-blue-primary/25"
+                >
+                  {logo}
+                </button>
+              ) : (
+                logo
+              )}
+              <SidebarLabel>{companyName}</SidebarLabel>
+            </span>
           </SidebarHeader>
           <SidebarNav aria-label="Main">
             <NavItems
-              items={companyNavItems}
+              items={campaignCompanyNavItems}
               selected={selected}
-              muted={panelOpen}
+              muted={subnavOpen}
               onSelect={onSelect}
             />
           </SidebarNav>
         </SidebarContent>
         {account}
       </Sidebar>
-      <SidebarPanel open={panelOpen}>
-        <SidebarLabel className="block px-3">{campaignName}</SidebarLabel>
-        <SidebarNav aria-label={campaignName}>
-          <NavItems
-            items={campaignNavItems}
-            selected={campaignSelected}
-            onSelect={onCampaignSelect}
-          />
-        </SidebarNav>
+      <SidebarPanel open={subnavOpen}>
+        {panelSubnav ? (
+          <>
+            <SidebarLabel className="block px-3">{panelSubnav.label}</SidebarLabel>
+            <SidebarNav aria-label={panelSubnav.label}>
+              <NavItems
+                items={panelSubnav.items}
+                selected={campaignSelected}
+                onSelect={onCampaignSelect}
+              />
+            </SidebarNav>
+          </>
+        ) : null}
       </SidebarPanel>
     </SidebarGroup>
   );
@@ -352,12 +394,25 @@ function labelOf<Id extends string>(items: readonly NavEntry<Id>[], id: Id) {
 }
 
 export function SidebarExamples() {
+  const [itemSelected, setItemSelected] = useState<(typeof itemDemoNavItems)[number]["id"]>("home");
+  const [collapsedItemSelected, setCollapsedItemSelected] = useState<
+    (typeof collapsedDemoNavItems)[number]["id"] | "none"
+  >("none");
   const [creatorSelected, setCreatorSelected] = useState<CreatorNavId>("opportunities");
   const [creatorCollapsed, setCreatorCollapsed] = useState(false);
   const [companySelected, setCompanySelected] = useState<CompanyNavId>("campaigns");
   const [companyCollapsed, setCompanyCollapsed] = useState(false);
+  const [campaignMainSelected, setCampaignMainSelected] = useState<CompanyNavId>("campaigns");
   const [campaignSelected, setCampaignSelected] = useState<CampaignNavId>("overview");
   const [panelCollapsed, setPanelCollapsed] = useState(false);
+
+  const campaignSubnav = campaignCompanyNavItems.find(
+    (item) => item.id === campaignMainSelected,
+  )?.subnav;
+  const campaignTitle =
+    campaignSubnav && !panelCollapsed
+      ? labelOf(campaignSubnav.items, campaignSelected)
+      : labelOf(campaignCompanyNavItems, campaignMainSelected);
 
   return (
     <>
@@ -366,7 +421,6 @@ export function SidebarExamples() {
         description="Default, selected (blue bar, filled icon), with a badge, and collapsed. Hover shows a gray bar."
         canvasClassName="flex-col items-stretch"
         code={`<SidebarNav aria-label="Main">
-  <SidebarItem href="/home" icon={<RiHome4Line {...iconProps} />}>Home</SidebarItem>
   <SidebarItem
     href="/home"
     active
@@ -374,6 +428,9 @@ export function SidebarExamples() {
     activeIcon={<RiHome4Fill {...iconProps} />}
   >
     Home
+  </SidebarItem>
+  <SidebarItem href="/opportunities" icon={<RiSearchLine {...iconProps} />}>
+    Opportunities
   </SidebarItem>
   <SidebarItem href="/applications" badge={3} icon={<RiInboxLine {...iconProps} />}>
     Applications
@@ -389,26 +446,15 @@ export function SidebarExamples() {
       >
         <div className="flex w-50 flex-col gap-1">
           <SidebarNav aria-label="Sidebar item states">
-            <SidebarItem href="#" icon={<RiHome4Line {...iconProps} />}>
-              Home
-            </SidebarItem>
-            <SidebarItem
-              href="#"
-              active
-              icon={<RiHome4Line {...iconProps} />}
-              activeIcon={<RiHome4Fill {...iconProps} />}
-            >
-              Home
-            </SidebarItem>
-            <SidebarItem href="#" badge={3} icon={<RiInboxLine {...iconProps} />}>
-              Applications
-            </SidebarItem>
+            <NavItems items={itemDemoNavItems} selected={itemSelected} onSelect={setItemSelected} />
           </SidebarNav>
           <Sidebar collapsed className="h-auto bg-transparent">
             <SidebarNav aria-label="Collapsed sidebar item">
-              <SidebarItem href="#" icon={<RiHome4Line {...iconProps} />}>
-                Home
-              </SidebarItem>
+              <NavItems
+                items={collapsedDemoNavItems}
+                selected={collapsedItemSelected}
+                onSelect={setCollapsedItemSelected}
+              />
             </SidebarNav>
           </Sidebar>
         </div>
@@ -486,24 +532,29 @@ export function SidebarExamples() {
       </Example>
       <Example
         title="Company Sidebar — Campaign"
-        description="Inside a campaign: the rail's selected item turns gray while the campaign panel is open. Click the company logo to toggle the panel."
+        description="Campaigns owns a sub-nav that opens only while Campaigns is selected; the main nav folds to the rail and Campaigns turns gray. Pick another item and the panel closes while the sidebar expands. While Campaigns is selected, click the company logo to toggle the panel."
         canvasClassName="items-stretch"
         code={`<SidebarGroup>
-  <Sidebar collapsed peek={panelOpen ? "panel" : "page"} className="border-r border-gray-50">
-    {/* header with the company logo as a button that toggles the panel,
-        then nav items with active="parent" while the panel is open */}
+  <Sidebar collapsed={selected === "campaigns"} peek={panelOpen ? "panel" : "page"}>
+    {/* Nav items: the Campaigns item is active="parent" (gray bar) while its panel is open.
+        While Campaigns is selected, the company logo is a button that toggles the panel. */}
   </Sidebar>
-  <SidebarPanel open={panelOpen}>
+  <SidebarPanel open={selected === "campaigns"}>
     <SidebarLabel className="block px-3">Opus 5.5</SidebarLabel>
     <SidebarNav aria-label="Opus 5.5">{/* Overview, Opportunities, Creators… */}</SidebarNav>
   </SidebarPanel>
 </SidebarGroup>`}
       >
         <DemoWindow
-          title={labelOf(campaignNavItems, campaignSelected)}
+          title={campaignTitle}
           sidebar={
             <CompanySidebar
               mode="campaign"
+              selected={campaignMainSelected}
+              onSelect={(id) => {
+                setCampaignMainSelected(id);
+                setPanelCollapsed(false);
+              }}
               campaignSelected={campaignSelected}
               onCampaignSelect={setCampaignSelected}
               collapsed={panelCollapsed}

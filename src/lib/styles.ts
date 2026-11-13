@@ -21,13 +21,14 @@ export const overlayOnBlue12 =
 
 export const ghostFade = "enabled:hover:opacity-80 enabled:active:opacity-60";
 
-// The 1px border plus a 1px outline inset by 2px reads as a 2px border.
+// The 1px border plus a 1px inset ring reads as a 2px border. (An inset `outline` would be
+// hidden by `outline-none`, which sets --tw-outline-style to none in Tailwind 4.)
 export const fieldBox = "flex w-full rounded border transition-shadow";
 
 export function fieldBoxState(error?: boolean) {
   return error
-    ? "border-red-600 bg-red-50 outline -outline-offset-2 outline-red-600 focus-within:ring-4 focus-within:ring-blue-primary/25"
-    : "border-gray-300 bg-gray-0 focus-within:border-blue-primary focus-within:outline focus-within:-outline-offset-2 focus-within:outline-blue-primary focus-within:ring-4 focus-within:ring-blue-primary/25";
+    ? "border-red-600 bg-red-50 inset-ring inset-ring-red-600 focus-within:ring-4 focus-within:ring-blue-primary/25"
+    : "border-gray-300 bg-gray-0 focus-within:border-blue-primary focus-within:inset-ring focus-within:inset-ring-blue-primary focus-within:ring-4 focus-within:ring-blue-primary/25";
 }
 
 export const fieldLabel =

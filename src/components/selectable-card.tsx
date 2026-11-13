@@ -10,29 +10,28 @@ type SelectableCardProps = Omit<ComponentProps<typeof Checkbox>, "children" | "c
 
 /**
  * Figma "Selectable Card": a multi-select option, e.g. a reason for requesting
- * changes. The whole card toggles its checkbox; selected cards turn blue.
+ * changes. The whole card toggles its checkbox; selected cards turn blue-subtle
+ * with a blue-primary outline, and hovering an unchecked card previews the check.
  */
 export function SelectableCard({ title, description, className, ...props }: SelectableCardProps) {
   return (
     <label
       data-slot="selectable-card"
       className={cn(
-        "group/selectable-card flex cursor-pointer items-start gap-3 rounded-sm border border-transparent bg-background px-4 py-3 shadow-raised transition-colors",
-        "has-data-checked:border-primary has-data-checked:bg-blue-subtle has-data-checked:shadow-none",
-        "has-focus-visible:ring-4 has-focus-visible:ring-ring/25",
-        "has-disabled:cursor-not-allowed has-disabled:border-gray-100 has-disabled:opacity-40 has-disabled:shadow-none",
+        "group flex w-full cursor-pointer items-start gap-3 rounded-sm bg-gray-0 px-4 py-3 shadow-tile transition-[background-color,box-shadow] has-focus-visible:ring-4 has-focus-visible:ring-blue-primary/25",
+        "has-data-checked:bg-blue-subtle has-data-checked:shadow-[inset_0_0_0_1px_var(--color-blue-primary),0_0_25px_-5px_rgba(0,0,0,0.05)]",
+        "has-data-disabled:cursor-not-allowed has-data-disabled:opacity-40 has-data-disabled:shadow-[inset_0_0_0_1px_var(--color-gray-100)]",
         className,
       )}
     >
-      <span className="pt-1">
-        <Checkbox
-          className="group-hover/selectable-card:not-data-checked:not-data-disabled:border-gray-200 group-hover/selectable-card:not-data-checked:not-data-disabled:bg-gray-200 focus-visible:ring-0"
-          {...props}
-        />
+      <span className="flex pt-0.5">
+        <Checkbox previewOnHover className="focus-visible:ring-0" {...props} />
       </span>
-      <span className="flex min-w-0 flex-col gap-0.5">
-        <span className="text-body font-medium text-foreground">{title}</span>
-        {description && <span className="text-body-sm text-muted-foreground">{description}</span>}
+      <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+        <span className="text-body font-medium text-gray-950">{title}</span>
+        {description && (
+          <span className="text-body-sm font-normal text-gray-500">{description}</span>
+        )}
       </span>
     </label>
   );

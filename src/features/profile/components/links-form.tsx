@@ -83,7 +83,7 @@ export function LinksForm({
 
   return (
     <form onSubmit={save} noValidate className="space-y-6">
-      <div className="space-y-2">
+      <div className="group space-y-2">
         <Label htmlFor={`${id}-linkedin`}>LinkedIn profile URL</Label>
         <Input
           ref={linkedinRef}

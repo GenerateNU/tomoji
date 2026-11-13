@@ -1,7 +1,11 @@
+"use client";
+
 import * as React from "react";
 import { mergeProps } from "@base-ui/react/merge-props";
 import { useRender } from "@base-ui/react/use-render";
-import { ChevronLeftIcon, ChevronRightIcon, MoreHorizontalIcon } from "lucide-react";
+import { RiArrowLeftSLine, RiArrowRightSLine } from "@remixicon/react";
+import { iconProps } from "@/lib/icons";
+import { focusRing } from "@/lib/styles";
 import { cn } from "@/lib/utils";
 
 // Figma "Pagination": a row of 32px round items. The current page sits on a
@@ -31,19 +35,22 @@ function PaginationItem(props: React.ComponentProps<"li">) {
   return <li data-slot="pagination-item" {...props} />;
 }
 
-const itemClassName =
-  "inline-flex size-8 items-center justify-center rounded-full text-body-sm font-medium text-gray-700 transition-colors outline-none focus-visible:ring-4 focus-visible:ring-ring/25 aria-disabled:pointer-events-none aria-disabled:opacity-40 [&_svg]:size-4";
+const itemClassName = cn(
+  "inline-flex size-8 shrink-0 cursor-pointer items-center justify-center rounded-full text-body-sm font-medium text-gray-700 transition-colors disabled:cursor-not-allowed disabled:opacity-40 aria-disabled:pointer-events-none aria-disabled:opacity-40",
+  focusRing,
+);
 
 /**
  * A page number. Pass `render={<Link href="..." />}` for routed pages or
- * `render={<button type="button" />}` for client-side paging.
+ * `render={<button type="button" />}` for client-side paging; `disabled` is for
+ * the button form.
  */
 function PaginationLink({
   isActive = false,
   className,
   render,
   ...props
-}: useRender.ComponentProps<"a"> & { isActive?: boolean }) {
+}: useRender.ComponentProps<"a"> & { isActive?: boolean; disabled?: boolean }) {
   return useRender({
     defaultTagName: "a",
     props: mergeProps<"a">(
@@ -51,7 +58,9 @@ function PaginationLink({
         "aria-current": isActive ? "page" : undefined,
         className: cn(
           itemClassName,
-          "hover:bg-gray-25 hover:text-foreground aria-[current=page]:bg-gray-50 aria-[current=page]:text-foreground",
+          isActive
+            ? "bg-gray-50 text-gray-950"
+            : "not-disabled:hover:bg-gray-25 not-disabled:hover:text-gray-950",
           className,
         ),
       },
@@ -68,14 +77,23 @@ function PaginationArrow({
   className,
   render,
   ...props
-}: useRender.ComponentProps<"a"> & { direction: "previous" | "next" }) {
+}: useRender.ComponentProps<"a"> & { direction: "previous" | "next"; disabled?: boolean }) {
   return useRender({
     defaultTagName: "a",
     props: mergeProps<"a">(
       {
         "aria-label": direction === "previous" ? "Previous page" : "Next page",
-        className: cn(itemClassName, "hover:bg-gray-50 hover:text-foreground", className),
-        children: direction === "previous" ? <ChevronLeftIcon /> : <ChevronRightIcon />,
+        className: cn(
+          itemClassName,
+          "not-disabled:not-aria-disabled:hover:bg-gray-50 not-disabled:not-aria-disabled:hover:text-gray-950",
+          className,
+        ),
+        children:
+          direction === "previous" ? (
+            <RiArrowLeftSLine {...iconProps} />
+          ) : (
+            <RiArrowRightSLine {...iconProps} />
+          ),
       },
       props,
     ),
@@ -101,18 +119,98 @@ function PaginationEllipsis({ className, ...props }: React.ComponentProps<"span"
       aria-hidden
       data-slot="pagination-ellipsis"
       className={cn(
-        "flex size-8 items-center justify-center text-gray-500 [&_svg]:size-4",
+        "flex size-8 shrink-0 items-center justify-center text-body-sm font-medium text-gray-500",
         className,
       )}
       {...props}
     >
-      <MoreHorizontalIcon />
+      …
     </span>
+  );
+}
+
+// Always the first and last page and the current one with a neighbour each
+// side; near either end the window grows so it keeps five numbers. Gaps of
+// more than one page become an ellipsis.
+function pageWindow(pageCount: number, page: number): (number | "ellipsis")[] {
+  const pages = new Set([1, pageCount, page - 1, page, page + 1]);
+  if (page <= 2) pages.add(3);
+  if (page >= pageCount - 1) pages.add(pageCount - 2);
+  const sorted = [...pages].filter((p) => p >= 1 && p <= pageCount).sort((a, b) => a - b);
+  const items: (number | "ellipsis")[] = [];
+  sorted.forEach((p, index) => {
+    if (index > 0 && p - sorted[index - 1] > 1) items.push("ellipsis");
+    items.push(p);
+  });
+  return items;
+}
+
+/**
+ * Prev, a windowed set of page numbers, and next, as buttons. Controlled with
+ * `page`; leave it out and the control tracks the page itself, starting at
+ * `defaultPage`.
+ */
+function PaginationControl({
+  pageCount,
+  page,
+  defaultPage = 1,
+  onPageChange,
+  className,
+  ...props
+}: Omit<React.ComponentProps<"nav">, "onChange"> & {
+  pageCount: number;
+  page?: number;
+  defaultPage?: number;
+  onPageChange?: (page: number) => void;
+}) {
+  const [internalPage, setInternalPage] = React.useState(defaultPage);
+  const current = page ?? internalPage;
+  const go = (next: number) => {
+    if (page === undefined) setInternalPage(next);
+    onPageChange?.(next);
+  };
+  return (
+    <Pagination aria-label="Pagination" className={cn("inline-flex", className)} {...props}>
+      <PaginationContent>
+        <PaginationItem>
+          <PaginationPrevious
+            render={<button type="button" />}
+            disabled={current <= 1}
+            onClick={() => go(current - 1)}
+          />
+        </PaginationItem>
+        {pageWindow(pageCount, current).map((item, index) =>
+          item === "ellipsis" ? (
+            <PaginationItem key={`gap-${index}`}>
+              <PaginationEllipsis />
+            </PaginationItem>
+          ) : (
+            <PaginationItem key={item}>
+              <PaginationLink
+                render={<button type="button" />}
+                isActive={item === current}
+                onClick={() => go(item)}
+              >
+                {item}
+              </PaginationLink>
+            </PaginationItem>
+          ),
+        )}
+        <PaginationItem>
+          <PaginationNext
+            render={<button type="button" />}
+            disabled={current >= pageCount}
+            onClick={() => go(current + 1)}
+          />
+        </PaginationItem>
+      </PaginationContent>
+    </Pagination>
   );
 }
 
 export {
   Pagination,
+  PaginationControl,
   PaginationContent,
   PaginationItem,
   PaginationLink,

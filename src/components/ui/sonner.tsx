@@ -1,7 +1,7 @@
 "use client";
 
 import type { CSSProperties } from "react";
-import { CheckIcon, CircleAlertIcon, InfoIcon, TriangleAlertIcon } from "lucide-react";
+import { RiAlertFill } from "@remixicon/react";
 import { Toaster as Sonner, type ToasterProps } from "sonner";
 import { IconContainer } from "@/components/icon-container";
 
@@ -14,34 +14,18 @@ import { IconContainer } from "@/components/icon-container";
 export function Toaster({ style, toastOptions, ...props }: ToasterProps) {
   return (
     <Sonner
-      theme="system"
+      theme="light"
       closeButton
       icons={{
-        success: (
-          <IconContainer tone="success">
-            <CheckIcon />
-          </IconContainer>
-        ),
-        info: (
-          <IconContainer>
-            <InfoIcon />
-          </IconContainer>
-        ),
-        warning: (
-          <IconContainer tone="error">
-            <TriangleAlertIcon />
-          </IconContainer>
-        ),
-        error: (
-          <IconContainer tone="error">
-            <CircleAlertIcon />
-          </IconContainer>
-        ),
+        success: <IconContainer tone="success" />,
+        info: <IconContainer tone="neutral" />,
+        warning: <IconContainer tone="error" icon={RiAlertFill} />,
+        error: <IconContainer tone="error" />,
       }}
       style={
         {
-          "--normal-bg": "var(--popover)",
-          "--normal-text": "var(--popover-foreground)",
+          "--normal-bg": "var(--color-gray-0)",
+          "--normal-text": "var(--color-gray-950)",
           "--normal-border": "transparent",
           "--border-radius": "var(--radius)",
           ...style,
@@ -54,7 +38,7 @@ export function Toaster({ style, toastOptions, ...props }: ToasterProps) {
         ...toastOptions,
         classNames: {
           toast:
-            "w-max! max-w-[min(calc(100vw-2rem),44rem)]! gap-3! p-3! text-body! shadow-overlay!",
+            "w-max! max-w-[min(calc(100vw-2rem),44rem)]! gap-3! p-3! text-body! shadow-overlay! transition-none!",
           icon: "m-0! size-auto!",
           content: "min-w-0!",
           title: "truncate font-normal! text-gray-700! [&_.font-medium]:text-foreground",

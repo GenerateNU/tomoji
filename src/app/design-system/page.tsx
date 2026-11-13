@@ -1,72 +1,57 @@
+import { RiArrowRightLine } from "@remixicon/react";
 import type { Metadata } from "next";
-import {
-  ColorPreview,
-  RadiusPreview,
-  TypographyPreview,
-} from "@/features/design-system/components/foundations";
-import {
-  ButtonPreview,
-  ChoicePreview,
-  SelectPreview,
-  TextFieldPreview,
-} from "@/features/design-system/components/form-controls";
-import {
-  AvatarPreview,
-  IconContainerPreview,
-  NavigationPreview,
-  ProgressPreview,
-  TagPreview,
-} from "@/features/design-system/components/display";
-import {
-  LogoPreview,
-  PaginationPreview,
-  SidebarPreview,
-  TablePreview,
-} from "@/features/design-system/components/layout";
-import { MenuPreview, MultiSelectPreview } from "@/features/design-system/components/overlays";
-import {
-  ActionPreview,
-  BannerPreview,
-  ChartPreview,
-  ListPreview,
-  StatPreview,
-} from "@/features/design-system/components/patterns";
+import Link from "next/link";
+import { CodeBlock } from "@/features/design-system/components/docs/code-block";
+import { PageHeader } from "@/features/design-system/components/docs/page-header";
+import { DocSection } from "@/features/design-system/components/docs/section";
+import { COMPONENTS, INTRODUCTION } from "@/features/design-system/lib/registry";
+import { iconProps } from "@/lib/icons";
+import { focusRing } from "@/lib/styles";
+import { cn } from "@/lib/utils";
 
-export const metadata: Metadata = { title: "Design system · Tomoji" };
+export const metadata: Metadata = { description: INTRODUCTION.summary };
 
-/** Internal reference for the Figma mid-fi tokens and components. */
-export default function DesignSystemPage() {
+const IMPORT_CODE = `import { Button } from "@/components/ui/button";
+import { Avatar } from "@/components/ui/avatar";
+import { iconProps } from "@/lib/icons";`;
+
+export default function IntroductionPage() {
   return (
-    <main className="mx-auto w-full max-w-5xl space-y-16 px-4 py-8 sm:px-6 sm:py-12">
-      <div className="space-y-2">
-        <h1 className="text-heading-lg">Design system</h1>
-        <p className="text-body-sm text-muted-foreground">
-          Tokens and components from the Figma mid-fi library. Components live in src/components/ui.
-        </p>
-      </div>
-      <LogoPreview />
-      <ColorPreview />
-      <TypographyPreview />
-      <RadiusPreview />
-      <ButtonPreview />
-      <TextFieldPreview />
-      <SelectPreview />
-      <MultiSelectPreview />
-      <ChoicePreview />
-      <TagPreview />
-      <AvatarPreview />
-      <NavigationPreview />
-      <IconContainerPreview />
-      <ProgressPreview />
-      <MenuPreview />
-      <SidebarPreview />
-      <TablePreview />
-      <PaginationPreview />
-      <BannerPreview />
-      <StatPreview />
-      <ActionPreview />
-      <ListPreview />
-      <ChartPreview />
-    </main>
+    <div className="max-w-5xl">
+      <PageHeader
+        eyebrow="Tomoji Design System"
+        title={INTRODUCTION.name}
+        summary={INTRODUCTION.summary}
+      />
+      <DocSection title="Using it in a prototype">
+        <CodeBlock tone="import" code={IMPORT_CODE} />
+      </DocSection>
+      <DocSection id="components" title="Components">
+        <ul className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          {COMPONENTS.map((entry) => (
+            <li key={entry.slug} className="flex">
+              <Link
+                href={entry.href}
+                className={cn(
+                  "group flex w-full flex-col rounded-lg border border-gray-100 bg-gray-0 p-5 shadow-tile transition hover:border-gray-200 hover:shadow-tile-hover",
+                  focusRing,
+                )}
+              >
+                <span className="flex items-center justify-between text-body font-medium text-gray-950">
+                  {entry.name}
+                  <RiArrowRightLine
+                    {...iconProps}
+                    className="text-gray-300 transition-colors group-hover:text-blue-primary"
+                  />
+                </span>
+                <span className="mt-1.5 text-body-sm leading-[1.5] font-normal text-gray-500">
+                  {entry.summary}
+                </span>
+              </Link>
+            </li>
+          ))}
+        </ul>
+      </DocSection>
+    </div>
   );
 }

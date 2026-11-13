@@ -5,9 +5,10 @@ import { cva, type VariantProps } from "class-variance-authority";
 import { cn } from "@/lib/utils";
 
 // Figma "Switch" is the default size: a 48×28 track with a 24px thumb, gray
-// when off and blue when on. Hover darkens the track.
+// when off and blue when on. Hover darkens the track; the thumb slides 20px
+// over 150ms.
 const switchVariants = cva(
-  "peer group/switch relative inline-flex shrink-0 items-center rounded-full p-0.5 transition-colors outline-none group-has-[:focus-visible]/field-label:ring-0 after:absolute after:-inset-x-3 after:-inset-y-2 focus-visible:ring-4 focus-visible:ring-ring/25 aria-invalid:ring-4 aria-invalid:ring-destructive/20 data-checked:bg-primary data-checked:hover:bg-[color-mix(in_srgb,var(--primary),black_12%)] data-unchecked:bg-gray-300 data-unchecked:hover:bg-gray-400 data-disabled:cursor-not-allowed data-disabled:opacity-40",
+  "peer group/switch relative inline-flex shrink-0 items-center rounded-full p-0.5 cursor-pointer transition-colors outline-none group-has-[:focus-visible]/field-label:ring-0 after:absolute after:-inset-x-3 after:-inset-y-2 focus-visible:ring-4 focus-visible:ring-blue-primary/25 aria-invalid:ring-4 aria-invalid:ring-destructive/20 data-checked:bg-primary data-checked:not-data-disabled:hover:bg-[linear-gradient(rgba(0,0,0,0.12),rgba(0,0,0,0.12))] data-unchecked:bg-gray-300 data-unchecked:not-data-disabled:hover:bg-gray-400 data-disabled:cursor-not-allowed data-disabled:opacity-40 motion-reduce:transition-none",
   {
     variants: {
       size: {
@@ -35,7 +36,7 @@ function Switch({
     >
       <SwitchPrimitive.Thumb
         data-slot="switch-thumb"
-        className="pointer-events-none block rounded-full bg-background shadow-[0_0_20px_-5px_rgb(0_0_0/0.15)] transition-transform group-data-[size=default]/switch:size-6 group-data-[size=sm]/switch:size-4 data-unchecked:translate-x-0 group-data-[size=default]/switch:data-checked:translate-x-5 group-data-[size=sm]/switch:data-checked:translate-x-4"
+        className="pointer-events-none block rounded-full bg-background shadow-thumb transition-transform duration-150 ease-out motion-reduce:transition-none group-data-[size=default]/switch:size-6 group-data-[size=sm]/switch:size-4 data-unchecked:translate-x-0 group-data-[size=default]/switch:data-checked:translate-x-5 group-data-[size=sm]/switch:data-checked:translate-x-4"
       />
     </SwitchPrimitive.Root>
   );

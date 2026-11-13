@@ -80,7 +80,7 @@ export function DraftForm() {
           <fieldset disabled={pending} className="grid min-w-0 gap-6 sm:grid-cols-2">
             {Object.entries(briefFields).map(([name, label]) =>
               name === "description" ? (
-                <div key={name} className="grid gap-2 sm:col-span-2">
+                <div key={name} className="group grid gap-2 sm:col-span-2">
                   <Label htmlFor="campaign-description">{label}</Label>
                   <Textarea
                     id="campaign-description"

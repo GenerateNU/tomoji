@@ -53,7 +53,7 @@ export function GithubLinkForm({
 
   return (
     <form onSubmit={save} noValidate className="space-y-4">
-      <div className="space-y-2">
+      <div className="group space-y-2">
         <Label htmlFor={id}>GitHub profile URL</Label>
         <Input
           ref={inputRef}

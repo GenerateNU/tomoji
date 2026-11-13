@@ -16,7 +16,7 @@ type ApplicationModalProps = {
 export function ApplicationModal({ opportunityId, open, onOpenChange }: ApplicationModalProps) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[90vh] overflow-y-auto p-10 sm:max-w-2xl">
+      <DialogContent className="max-h-[90vh] overflow-y-auto p-10 text-sm sm:max-w-2xl">
         {/*If a creator shuts and opens it it goes back to the start - is this the desired behavior? */}
         {/* The key is on the boundary: unmounting is what clears a caught error,
             so reopening or switching opportunities retries the read. */}

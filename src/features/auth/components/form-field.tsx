@@ -19,7 +19,7 @@ export function FormField({ label, error, hint, labelAction, id, ...inputProps }
   const message = error ?? hint;
 
   return (
-    <div className="grid gap-2">
+    <div className="group grid gap-2">
       <div className="flex items-center justify-between gap-2">
         <Label htmlFor={inputId}>{label}</Label>
         {labelAction}

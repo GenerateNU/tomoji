@@ -45,7 +45,7 @@ export function CompanyCampaigns() {
           </Link>
         )}
       </header>
-      <div className="flex items-center gap-3 border-b pb-5">
+      <div className="group flex items-center gap-3 border-b pb-5">
         <Label htmlFor="campaign-status">Status</Label>
         <select
           id="campaign-status"

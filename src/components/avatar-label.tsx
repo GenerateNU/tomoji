@@ -1,55 +1,83 @@
 import type { ReactNode } from "react";
 import { mergeProps } from "@base-ui/react/merge-props";
 import { useRender } from "@base-ui/react/use-render";
-import { ChevronsUpDownIcon } from "lucide-react";
+import { RiExpandUpDownLine } from "@remixicon/react";
+import { Avatar, getInitials } from "@/components/ui/avatar";
+import { iconProps } from "@/lib/icons";
+import { focusRing } from "@/lib/styles";
 import { cn } from "@/lib/utils";
 
 type AvatarLabelProps = useRender.ComponentProps<"div"> & {
-  /** Usually a small Avatar. */
-  avatar: ReactNode;
+  /** Defaults to a 24px initials Avatar made from `name`. */
+  avatar?: ReactNode;
   name: ReactNode;
   /** A second line, e.g. an email address. */
   secondary?: ReactNode;
   /** Shows an up/down chevron, for when this opens a menu. */
   chevron?: boolean;
+  /** Applied to the text and chevron, e.g. to fade them with a collapsing sidebar. */
+  textClassName?: string;
 };
 
-/** Figma "Avatar Label": an avatar beside a name. Render it as a button to open a menu. */
+/**
+ * Figma "Avatar Label": an avatar beside a name. Pass `onClick` or
+ * `render={<button />}` to make it a button with a hover fill; the chevron then
+ * shows on hover, focus and while its menu is open.
+ */
 export function AvatarLabel({
   avatar,
   name,
   secondary,
   chevron = false,
+  textClassName,
   className,
   render,
   ...props
 }: AvatarLabelProps) {
+  const interactive = render != null || props.onClick != null;
   return useRender({
     defaultTagName: "div",
+    render: render ?? (props.onClick ? <button type="button" /> : undefined),
     props: mergeProps<"div">(
       {
         className: cn(
-          "inline-flex items-center gap-2 rounded-sm px-2 py-1.5 text-left outline-none focus-visible:ring-4 focus-visible:ring-ring/25",
+          "group/label inline-flex items-center gap-2 rounded px-2 py-1.5 text-left",
+          interactive &&
+            cn(
+              "transition-colors hover:bg-gray-25 aria-expanded:bg-gray-25 data-popup-open:bg-gray-25",
+              focusRing,
+            ),
           className,
         ),
         children: (
           <>
-            {avatar}
-            <span className="flex min-w-0 flex-col">
-              <span className="truncate text-body-sm font-medium text-foreground">{name}</span>
-              {secondary && (
-                <span className="truncate text-body-xs text-muted-foreground">{secondary}</span>
-              )}
+            <span className="flex min-w-0 flex-1 items-center gap-2">
+              {avatar ??
+                (typeof name === "string" ? (
+                  <Avatar size={24} initials={getInitials(name)} />
+                ) : null)}
+              <span className={cn("flex min-w-0 flex-col", textClassName)}>
+                <span className="truncate text-body-sm font-medium text-gray-950">{name}</span>
+                {secondary && (
+                  <span className="truncate text-body-xs font-normal text-gray-500">
+                    {secondary}
+                  </span>
+                )}
+              </span>
             </span>
             {chevron && (
-              <ChevronsUpDownIcon aria-hidden className="size-4 shrink-0 text-muted-foreground" />
+              <span className={cn("flex shrink-0", textClassName)}>
+                <RiExpandUpDownLine
+                  {...iconProps}
+                  className="text-gray-500 opacity-0 transition-opacity group-hover/label:opacity-100 group-focus-visible/label:opacity-100 group-aria-expanded/label:opacity-100 group-data-popup-open/label:opacity-100"
+                />
+              </span>
             )}
           </>
         ),
       },
       props,
     ),
-    render,
     state: { slot: "avatar-label" },
   });
 }

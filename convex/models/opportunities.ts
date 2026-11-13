@@ -11,6 +11,7 @@ import { requireMembership } from "./companyUsers";
 import {
   deliverableCreate,
   hasDeliverables,
+  requireAiReviewCriteria,
   insertDeliverables,
   listOpportunityDeliverables,
 } from "./deliverableDrafts";
@@ -309,6 +310,9 @@ export async function resumeOpportunity(
   if (opportunity.deadline <= Date.now()) {
     throw apiError("invalid_state", { reason: "invalid_deadline" });
   }
+  if (opportunity.usesAiReviewDefault) {
+    requireAiReviewCriteria(true, await listOpportunityDeliverables(ctx, opportunityId));
+  }
   await ctx.db.patch("opportunities", opportunityId, { status: "open" });
   return { ...opportunity, status: "open" };
 }
@@ -333,6 +337,9 @@ export async function publishOpportunity(
   const normalized = validateOpportunityFields({ ...opportunity, status: "open" });
   if (campaign.endsAt !== undefined && opportunity.deadline > campaign.endsAt) {
     throw apiError("invalid_state", { reason: "deadline_after_campaign_end" });
+  }
+  if (opportunity.usesAiReviewDefault) {
+    requireAiReviewCriteria(true, await listOpportunityDeliverables(ctx, opportunityId));
   }
   await ctx.db.patch("opportunities", opportunityId, { status: "open", ...normalized });
   return { ...opportunity, status: "open", ...normalized };
@@ -415,6 +422,9 @@ export async function updateOpportunity(
         : requireUrl(updates.productAccessLink, { reason: "invalid_product_access_link" });
   }
   const updated = { ...opportunity, ...patch };
+  if (updated.usesAiReviewDefault) {
+    requireAiReviewCriteria(true, await listOpportunityDeliverables(ctx, opportunityId));
+  }
   const normalized = validateOpportunityFields(updated);
   if (campaign.endsAt !== undefined && updated.deadline > campaign.endsAt) {
     throw apiError("invalid_state", { reason: "deadline_after_campaign_end" });
@@ -549,6 +559,7 @@ export async function createOpportunity(
   }
   const { title, description } = validateOpportunityFields(fields);
   const { deliverables = [], ...brief } = fields;
+  requireAiReviewCriteria(fields.usesAiReviewDefault, deliverables);
   if (fields.status === "open" && deliverables.length === 0) {
     throw apiError("invalid_state", { reason: "deliverables_required" });
   }

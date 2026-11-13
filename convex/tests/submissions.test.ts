@@ -17,6 +17,12 @@ import {
   seedSubmission,
   seedUser,
   seedWrongOrgCaller,
+  seedSubmissionVideo,
+  seedCreatorId,
+  seedAssignment,
+  seedAiReviewFixture,
+  requireSeededUser,
+  seedOpportunity,
   storedSubmission,
   storedSubmissions,
   withoutReviewerIdentity,
@@ -25,6 +31,106 @@ import {
 } from "./helpers";
 
 const modules = import.meta.glob("../**/*.ts");
+
+test("media drafts expose only the owned media ID, not private storage keys or review internals", async () => {
+  const t = convexTest(schema, modules);
+  const fixture = await seedAiReviewFixture(t);
+  const result = await fixture.asCreator.query(api.submissions.get, {
+    submissionId: fixture.submissionId,
+  });
+  expect(result.mediaId).toBe(fixture.mediaId);
+  expect(result).not.toHaveProperty("draftUrl");
+  expect(result).not.toHaveProperty("permanentKey");
+  expect(result).not.toHaveProperty("context");
+  expect(result).not.toHaveProperty("transcription");
+});
+
+test("rejects another creator's uploaded video even when its assignment matches", async () => {
+  const t = convexTest(schema, modules);
+  const fixture = await seedAssignmentFixture(t);
+  await seedCreatorId(t, "video-intruder");
+  const other = await requireSeededUser(t, "video-intruder");
+  const mediaId = await seedSubmissionVideo(t, fixture, { ownerUserId: other._id });
+  await expectApiError(
+    () => fixture.asCreator.mutation(api.submissions.create, submissionArgs(fixture, { mediaId })),
+    "not_found",
+  );
+});
+
+test("rejects a video bound to another assignment of the same creator", async () => {
+  const t = convexTest(schema, modules);
+  const fixture = await seedAssignmentFixture(t);
+  const other = await seedOpportunity(t, {
+    subject: "other-video-company",
+    orgId: "org_other_video",
+  });
+  const otherAssignmentId = await seedAssignment(t, {
+    creatorId: fixture.creatorId,
+    opportunityId: other.opportunityId,
+    status: "active",
+  });
+  const mediaId = await seedSubmissionVideo(t, fixture, { assignmentId: otherAssignmentId });
+  await expectApiError(
+    () => fixture.asCreator.mutation(api.submissions.create, submissionArgs(fixture, { mediaId })),
+    "not_found",
+  );
+});
+
+test("rejects a pending video even when its permanent key is valid", async () => {
+  const t = convexTest(schema, modules);
+  const fixture = await seedAssignmentFixture(t);
+  const mediaId = await seedSubmissionVideo(t, fixture, { status: "pending" });
+  await expectApiError(
+    () => fixture.asCreator.mutation(api.submissions.create, submissionArgs(fixture, { mediaId })),
+    "invalid_state",
+    "video_not_complete",
+  );
+});
+
+test("rejects a completed video without an immutable storage key", async () => {
+  const t = convexTest(schema, modules);
+  const fixture = await seedAssignmentFixture(t);
+  const mediaId = await seedSubmissionVideo(t, fixture, {
+    permanentKey: undefined,
+  });
+  await expectApiError(
+    () => fixture.asCreator.mutation(api.submissions.create, submissionArgs(fixture, { mediaId })),
+    "invalid_state",
+    "video_not_complete",
+  );
+});
+
+test("rejects profile pictures as submission videos", async () => {
+  const t = convexTest(schema, modules);
+  const fixture = await seedAssignmentFixture(t);
+  const mediaId = await seedSubmissionVideo(t, fixture, { kind: "profile-picture" });
+  await expectApiError(
+    () => fixture.asCreator.mutation(api.submissions.create, submissionArgs(fixture, { mediaId })),
+    "not_found",
+  );
+});
+
+test("rejects a submission without an uploaded video", async () => {
+  const t = convexTest(schema, modules);
+  const fixture = await seedAssignmentFixture(t);
+  const draft = {
+    assignmentId: fixture.assignmentId,
+    deliverableId: fixture.deliverableId,
+    draftDescription: "A product demo.",
+  };
+  await expect(
+    fixture.asCreator.mutation(api.submissions.create, draft as never),
+  ).rejects.toThrow();
+  expect(await t.run((ctx) => ctx.db.query("submissions").collect())).toEqual([]);
+});
+
+test("rejects the removed external draft URL argument", async () => {
+  const t = convexTest(schema, modules);
+  const fixture = await seedAssignmentFixture(t);
+  const args = { ...submissionArgs(fixture), draftUrl: "https://example.com/draft.mp4" };
+  await expect(fixture.asCreator.mutation(api.submissions.create, args)).rejects.toThrow();
+  expect(await t.run((ctx) => ctx.db.query("submissions").collect())).toEqual([]);
+});
 
 function pageArgs(fixture: AssignmentFixture) {
   return {

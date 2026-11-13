@@ -3,17 +3,18 @@ import { v, type Infer } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { apiError } from "../lib/errors";
-import { requireUrl } from "../lib/urls";
 import { optionalNonBlank, requireNonBlank } from "../lib/validation";
 import { submissionShapes } from "../schemas/submissions.schema";
 import { requireAssignment, requireActiveAssignment, type AssignmentViewer } from "./assignments";
 import { creatorName, notifyCompanyUser, notifyCreator } from "./notifications";
+import { requireSubmissionVideo } from "./media";
+import { createAiReviewAttempt } from "./aiReviewAttempts";
 
 /** The creator-supplied fields of a new submission. */
 export const submissionDraft = v.object({
   assignmentId: v.id("assignments"),
   deliverableId: v.id("deliverables"),
-  draftUrl: v.string(),
+  mediaId: v.id("mediaUploads"),
   draftDescription: v.string(),
 });
 
@@ -50,7 +51,6 @@ export type SubmissionViewer = AssignmentViewer;
 
 // Limits on free text after trimming. `.length` counts UTF-16 units, so an emoji counts as two.
 const MAX_LENGTH = {
-  draftUrl: 2048,
   draftDescription: 5000,
   reviewNote: 2000,
 } as const;
@@ -65,17 +65,6 @@ function optionalText(
   field: keyof typeof MAX_LENGTH,
 ): string | undefined {
   return optionalNonBlank(value, field, MAX_LENGTH[field]);
-}
-
-/** Returns the URL in its parsed form, so reviewers open exactly the link that was checked. */
-function requireDraftUrl(value: string): string {
-  // Drafts live on whatever host the creator already uses, including http ones.
-  return requireUrl(requireText(value, "draftUrl"), {
-    reason: "draftUrl_invalid",
-    allowHttp: true,
-    maxLength: MAX_LENGTH.draftUrl,
-    tooLongReason: "draftUrl_too_long",
-  });
 }
 
 /**
@@ -140,7 +129,7 @@ function toCreatorView(
     _creationTime: submission._creationTime,
     assignmentId: submission.assignmentId,
     deliverableId: submission.deliverableId,
-    draftUrl: submission.draftUrl,
+    mediaId: submission.mediaId,
     draftDescription: submission.draftDescription,
     usesAiReview: submission.usesAiReview,
     closedWithoutReview,
@@ -232,14 +221,17 @@ export async function createSubmission(
     throw apiError("invalid_state", { reason: "already_approved" });
   }
 
+  await requireSubmissionVideo(ctx, assignment, draft.mediaId);
+
   const submissionId = await ctx.db.insert("submissions", {
     assignmentId: assignment._id,
     deliverableId: deliverable._id,
-    draftUrl: requireDraftUrl(draft.draftUrl),
+    mediaId: draft.mediaId,
     draftDescription: requireText(draft.draftDescription, "draftDescription"),
     status: "pending",
     usesAiReview: assignment.usesAiReview,
   });
+  if (assignment.usesAiReview) await createAiReviewAttempt(ctx, submissionId);
   const opportunity = await ctx.db.get("opportunities", assignment.opportunityId);
   if (opportunity !== null) {
     // A draft after a change request is the creator's response to that review.

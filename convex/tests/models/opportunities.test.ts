@@ -3093,3 +3093,105 @@ describe("opportunity niches", () => {
     ).rejects.toMatchObject({ data: { code: "invalid_state", reason: "invalid_niche" } });
   });
 });
+
+test("AI opportunities reject a deliverable without confirmed criteria", async () => {
+  const t = convexTest(schema, modules);
+  const owner = await seedCampaign(t, { subject: "ai-criteria-owner" });
+  await expectApiError(
+    () =>
+      t.run((ctx) =>
+        createOpportunity(
+          ctx,
+          owner.membership,
+          opportunityArgs(owner.campaignId, {
+            usesAiReviewDefault: true,
+            deliverables: [
+              deliverableArgs({
+                reviewCriteria: [{ id: "product", description: "Mention the product." }],
+              }),
+              deliverableArgs({ reviewCriteria: [] }),
+            ],
+          }),
+        ),
+      ),
+    "invalid_state",
+    "ai_review_criteria_required",
+  );
+  expect(await t.run((ctx) => ctx.db.query("opportunities").collect())).toEqual([]);
+});
+
+test("enabling AI requires criteria on every existing deliverable", async () => {
+  const t = convexTest(schema, modules);
+  const owner = await seedOpportunity(
+    t,
+    { subject: "enable-ai-criteria" },
+    {
+      usesAiReviewDefault: false,
+      deliverables: [deliverableArgs(), deliverableArgs({ reviewCriteria: undefined })],
+    },
+  );
+  await expectApiError(
+    () =>
+      t.run((ctx) =>
+        updateOpportunity(ctx, owner.membership, owner.opportunityId, {
+          usesAiReviewDefault: true,
+        }),
+      ),
+    "invalid_state",
+    "ai_review_criteria_required",
+  );
+  expect(await t.run((ctx) => ctx.db.get("opportunities", owner.opportunityId))).toMatchObject({
+    usesAiReviewDefault: false,
+  });
+});
+
+test("AI publication rejects missing criteria even on an invalid stored draft", async () => {
+  const t = convexTest(schema, modules);
+  const owner = await seedOpportunity(
+    t,
+    { subject: "publish-ai-criteria" },
+    {
+      status: "draft",
+      usesAiReviewDefault: false,
+      deliverables: [deliverableArgs({ reviewCriteria: undefined })],
+    },
+  );
+  // Simulate a preexisting invalid row; regular writes now reject this state.
+  await t.run((ctx) =>
+    ctx.db.patch("opportunities", owner.opportunityId, { usesAiReviewDefault: true }),
+  );
+  await expectApiError(
+    () => t.run((ctx) => publishOpportunity(ctx, owner.membership, owner.opportunityId)),
+    "invalid_state",
+    "ai_review_criteria_required",
+  );
+  expect(await t.run((ctx) => ctx.db.get("opportunities", owner.opportunityId))).toMatchObject({
+    status: "draft",
+  });
+});
+
+test("AI resume rejects missing criteria without reopening the opportunity", async () => {
+  const t = convexTest(schema, modules);
+  const owner = await seedOpportunity(
+    t,
+    { subject: "resume-ai-criteria" },
+    {
+      usesAiReviewDefault: false,
+      deliverables: [deliverableArgs({ reviewCriteria: undefined })],
+    },
+  );
+  await t.run((ctx) =>
+    ctx.db.patch("opportunities", owner.opportunityId, {
+      status: "paused",
+      usesAiReviewDefault: true,
+    }),
+  );
+  await expectApiError(
+    () => t.run((ctx) => resumeOpportunity(ctx, owner.membership, owner.opportunityId)),
+    "invalid_state",
+    "ai_review_criteria_required",
+  );
+  expect(await t.run((ctx) => ctx.db.get("opportunities", owner.opportunityId))).toMatchObject({
+    status: "paused",
+  });
+});

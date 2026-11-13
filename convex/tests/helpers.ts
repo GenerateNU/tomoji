@@ -1,12 +1,12 @@
 import type { TestConvex as ConvexTest } from "convex-test";
-import type { UserIdentity, WithoutSystemFields, FunctionArgs } from "convex/server";
+import type { UserIdentity, WithoutSystemFields } from "convex/server";
 import type { Infer } from "convex/values";
 import { expect } from "vitest";
 import type { Doc, Id } from "../_generated/dataModel";
-import type { api } from "../_generated/api";
 import type { DeliverableCreate } from "../models/deliverableDrafts";
-import type { SubmissionDraft } from "../models/submissions";
+import { createSubmission, type SubmissionDraft } from "../models/submissions";
 import type { ApiErrorCode } from "../lib/errors";
+import type { Transcription } from "../lib/ai/assemblyAi";
 import { companyContext } from "../lib/functions";
 import { getCreatorByUserId } from "../models/creators";
 import { upsertXAccount, type XAccountLink } from "../models/xAccounts";
@@ -20,6 +20,39 @@ import type schema from "../schema";
 import type { submissionStatus } from "../schemas/submissions.schema";
 
 export type TestConvex = ConvexTest<typeof schema>;
+
+/** Builds a completed transcription response using synthetic speech and millisecond timestamps. */
+export function assemblyTranscriptResponse(overrides: Record<string, unknown> = {}): Response {
+  return Response.json({
+    id: "transcript-1",
+    status: "completed",
+    text: "Try Driftwood.",
+    words: [
+      { text: "Try", start: 100, end: 300 },
+      { text: "Driftwood.", start: 300, end: 900 },
+    ],
+    audio_duration: 2,
+    speech_model_used: "universal-2",
+    ...overrides,
+  });
+}
+
+/** Builds a single-criterion Jev response without invoking a live model. */
+export function jevReviewResponse(overrides: Record<string, unknown> = {}): Response {
+  return Response.json({
+    model: "jev-1.14.0",
+    answers: {
+      criterion_0: {
+        type: "choice",
+        choice: "uncertain",
+        confidence: 0.3,
+        probabilities: { met: 0.3, not_met: 0.3, uncertain: 0.4 },
+      },
+    },
+    usage: { input_tokens: 200, output_tokens: 10 },
+    ...overrides,
+  });
+}
 
 /** Reads a seeded user for direct model tests. */
 export async function requireSeededUser(t: TestConvex, subject: string) {
@@ -315,7 +348,13 @@ export type SeedCampaignOptions = {
   status?: Doc<"campaigns">["status"];
 };
 
-type CampaignArgs = FunctionArgs<typeof api.campaigns.create>;
+// Derive fixtures from the model without routing their types back through the generated API.
+type CampaignArgs = Omit<
+  Parameters<typeof createCampaign>[1],
+  "companyId" | "createdBy" | "status"
+> & {
+  status: "draft" | "open";
+};
 
 /** Builds client-editable campaign fields; raw fixtures add owner/state overrides separately. */
 export function campaignArgs(overrides: Partial<CampaignArgs> = {}): CampaignArgs {
@@ -353,6 +392,7 @@ export async function seedCampaign(t: TestConvex, options: SeedCampaignOptions) 
 /** A company-supplied deliverable. */
 export function deliverableArgs(overrides: Partial<DeliverableCreate> = {}): DeliverableCreate {
   return {
+    reviewCriteria: [{ id: "product", description: "Mention the product." }],
     title: "Launch video",
     description: "A 30-second vertical video showing the moisturizer in your morning routine.",
     ...overrides,
@@ -474,6 +514,7 @@ export async function seedMembership(
 
 export type AssignmentFixture = {
   assignmentId: Id<"assignments">;
+  mediaId: Id<"mediaUploads">;
   /** The seeded opportunity's only deliverable. */
   deliverableId: Id<"deliverables">;
   creatorId: Id<"creators">;
@@ -484,17 +525,16 @@ export type AssignmentFixture = {
 };
 
 export const submissionDraftFields = {
-  draftUrl: "https://drive.example.com/drafts/driftwood-first-deploy",
   draftDescription: "60-second walkthrough: install, `driftwood init`, first deploy at 0:45.",
-} satisfies Omit<SubmissionDraft, "assignmentId" | "deliverableId">;
+} satisfies Omit<SubmissionDraft, "assignmentId" | "deliverableId" | "mediaId">;
 
 /** Builds a creator-supplied draft while allowing each test to override its scenario. */
 export function submissionArgs(
-  fixture: Pick<AssignmentFixture, "assignmentId" | "deliverableId">,
+  fixture: Pick<AssignmentFixture, "assignmentId" | "deliverableId" | "mediaId">,
   overrides: Partial<SubmissionDraft> = {},
 ): SubmissionDraft {
-  const { assignmentId, deliverableId } = fixture;
-  return { assignmentId, deliverableId, ...submissionDraftFields, ...overrides };
+  const { assignmentId, deliverableId, mediaId } = fixture;
+  return { assignmentId, deliverableId, mediaId, ...submissionDraftFields, ...overrides };
 }
 
 // Subjects the assignment fixture seeds. Every test gets a fresh database and
@@ -509,21 +549,23 @@ const FIXTURE_OPERATOR = "fixture-operator";
  */
 export async function seedAssignmentFixture(
   t: TestConvex,
-  assignment: Partial<Pick<Doc<"assignments">, "status" | "usesAiReview">> = {},
+  options: Partial<Pick<Doc<"assignments">, "status" | "usesAiReview">> & {
+    opportunity?: Partial<OpportunityCreate>;
+  } = {},
   companyRoleForFixture: Infer<typeof companyRole> = "member",
 ): Promise<AssignmentFixture> {
-  const { asCompany, membership, opportunityId } = await seedOpportunity(t, {
-    subject: FIXTURE_COMPANY,
-    orgId: "org_fixture",
-    role: companyRoleForFixture,
-  });
+  const { asCompany, membership, opportunityId } = await seedOpportunity(
+    t,
+    { subject: FIXTURE_COMPANY, orgId: "org_fixture", role: companyRoleForFixture },
+    options.opportunity,
+  );
   const creatorId = await seedCreatorId(t, FIXTURE_CREATOR);
   const assignmentId = await seedAssignment(t, {
     opportunityId,
     creatorId,
-    status: assignment.status ?? "active",
+    status: options.status ?? "active",
   });
-  const usesAiReview = assignment.usesAiReview ?? false;
+  const usesAiReview = options.usesAiReview ?? false;
   const { creatorUserId, deliverableId } = await t.run(async (ctx) => {
     await ctx.db.patch("assignments", assignmentId, { usesAiReview });
     const user = await getUserByWorkosId(ctx, FIXTURE_CREATOR);
@@ -536,7 +578,9 @@ export async function seedAssignmentFixture(
     return { creatorUserId: user._id, deliverableId: deliverable._id };
   });
 
+  const mediaId = await seedSubmissionVideo(t, { assignmentId, creatorUserId });
   return {
+    mediaId,
     assignmentId,
     deliverableId,
     creatorId,
@@ -545,6 +589,87 @@ export async function seedAssignmentFixture(
     asCreator: t.withIdentity(workosIdentity({ subject: FIXTURE_CREATOR })),
     asCompany,
   };
+}
+
+/** Builds normalized provider output for persistence tests, independently of provider parsing. */
+export function aiTranscriptionArgs(
+  overrides: Partial<Extract<Transcription, { status: "completed" }>> = {},
+): Extract<Transcription, { status: "completed" }> {
+  return {
+    id: "job-1",
+    status: "completed",
+    text: "Driftwood.",
+    words: [{ text: "Driftwood.", startMs: 0, endMs: 900 }],
+    durationSeconds: 1,
+    model: "universal-2",
+    ...overrides,
+  };
+}
+
+/** Seeds a completed private video; overrides intentionally model invalid media in authorization tests. */
+export async function seedSubmissionVideo(
+  t: TestConvex,
+  fixture: Pick<AssignmentFixture, "creatorUserId" | "assignmentId">,
+  overrides: Partial<WithoutSystemFields<Doc<"mediaUploads">>> = {},
+): Promise<Id<"mediaUploads">> {
+  return await t.run((ctx) =>
+    ctx.db.insert("mediaUploads", {
+      ownerUserId: fixture.creatorUserId,
+      assignmentId: fixture.assignmentId,
+      kind: "video-submission",
+      status: "complete",
+      contentType: "video/mp4",
+      stagingKey: "staging/video-submission/test",
+      permanentKey: "media/video-submission/test",
+      sizeBytes: 1024,
+      grantExpiresAt: Date.now() + 60_000,
+      ...overrides,
+    }),
+  );
+}
+
+/** Seeds a media-backed AI draft with confirmed requirements and a ready attempt. */
+export async function seedAiReviewFixture(
+  t: TestConvex,
+  reviewCriteria: NonNullable<DeliverableCreate["reviewCriteria"]> = [
+    { id: "product", description: "Mention Driftwood." },
+  ],
+): Promise<
+  AssignmentFixture & {
+    mediaId: Id<"mediaUploads">;
+    submissionId: Id<"submissions">;
+    attempt: Doc<"aiReviewAttempts">;
+  }
+> {
+  const fixture = await seedAssignmentFixture(t, {
+    usesAiReview: true,
+    opportunity: {
+      title: "Driftwood launch demo",
+      description: "Demonstrate a first deployment using Driftwood CLI.",
+      contentRequirements: "Explain how Driftwood simplifies deployment.",
+      prohibitedClaims: "Do not promise zero downtime.",
+      disclosureRequirements: "Disclose the paid partnership.",
+      deliverables: [
+        deliverableArgs({
+          title: "CLI demo",
+          description: "Introduce Driftwood and explain a first deployment.",
+          reviewCriteria,
+        }),
+      ],
+    },
+  });
+  const mediaId = fixture.mediaId;
+  const submissionId = await t.run((ctx) =>
+    createSubmission(ctx, fixture.creatorId, submissionArgs(fixture, { mediaId })),
+  );
+  const attempt = await t.run((ctx) =>
+    ctx.db
+      .query("aiReviewAttempts")
+      .withIndex("by_submissionId", (q) => q.eq("submissionId", submissionId))
+      .unique(),
+  );
+  if (!attempt) throw new Error("expected seeded AI review attempt");
+  return { ...fixture, mediaId, submissionId, attempt };
 }
 
 /**
@@ -579,7 +704,7 @@ export async function seedSubmission(
     const draft = {
       assignmentId: fixture.assignmentId,
       deliverableId: fixture.deliverableId,
-      draftUrl: "https://drive.example.com/drafts/driftwood-cli-screencast",
+      mediaId: fixture.mediaId,
       draftDescription: "Screencast: installing the Driftwood CLI and running a first deploy.",
       usesAiReview: assignment.usesAiReview,
     };
@@ -616,7 +741,7 @@ export async function seedOneSubmission(
 
 /** Seeds a verified post and approved submission for an existing assignment. */
 export async function seedPost(t: TestConvex, assignmentId: Id<"assignments">) {
-  return await t.run(async (ctx) => {
+  const { assignment, deliverable, creator } = await t.run(async (ctx) => {
     const assignment = await ctx.db.get("assignments", assignmentId);
     if (assignment === null) throw new Error("expected seeded assignment");
     const deliverable = await ctx.db
@@ -624,8 +749,14 @@ export async function seedPost(t: TestConvex, assignmentId: Id<"assignments">) {
       .withIndex("by_opportunityId", (q) => q.eq("opportunityId", assignment.opportunityId))
       .first();
     if (deliverable === null) throw new Error("expected seeded deliverable");
+    const creator = await ctx.db.get("creators", assignment.creatorId);
+    if (creator === null) throw new Error("expected seeded creator");
+    return { assignment, deliverable, creator };
+  });
+  const mediaId = await seedSubmissionVideo(t, { assignmentId, creatorUserId: creator.userId });
+  return await t.run(async (ctx) => {
     const submissionId = await ctx.db.insert("submissions", {
-      ...submissionArgs({ assignmentId, deliverableId: deliverable._id }),
+      ...submissionArgs({ assignmentId, deliverableId: deliverable._id, mediaId }),
       usesAiReview: true,
       status: "approved",
       reviewerType: "ai",
@@ -735,7 +866,7 @@ export async function seedOverriddenSubmission(t: TestConvex) {
     return await ctx.db.insert("submissions", {
       assignmentId: fixture.assignmentId,
       deliverableId: fixture.deliverableId,
-      draftUrl: "https://drive.example.com/drafts/driftwood-cli-screencast",
+      mediaId: fixture.mediaId,
       draftDescription: "Screencast: installing the Driftwood CLI and running a first deploy.",
       usesAiReview: false,
       status: "approved",

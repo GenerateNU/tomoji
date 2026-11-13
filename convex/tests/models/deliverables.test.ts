@@ -17,6 +17,8 @@ import {
   opportunityArgs,
   requireSeededUser,
   seedAssignment,
+  seedAiReviewFixture,
+  seedMembership,
   seedCampaign,
   seedCreatorId,
   seedOpportunity,
@@ -173,6 +175,7 @@ describe("createDeliverable", () => {
       createDeliverable(ctx, owner.membership, owner.opportunityId, {
         title: " Follow-up thread ",
         description: " Three posts on results. ",
+        reviewCriteria: [{ id: "results", description: "Describe the results." }],
       }),
     );
 
@@ -475,6 +478,7 @@ describe("listDeliverables", () => {
         opportunityId: owner.opportunityId,
         title: stored.title,
         description: stored.description,
+        reviewCriteria: stored.reviewCriteria,
       },
     ]);
   });
@@ -503,4 +507,127 @@ describe("listDeliverables", () => {
       "not_found",
     );
   });
+});
+
+test("companies can confirm criteria before assignments but not edit another company's deliverable", async () => {
+  const t = convexTest(schema, modules);
+  const { membership, opportunityId } = await seedOpportunity(t, { subject: "criteria-owner" });
+  const id = await t.run((ctx) =>
+    createDeliverable(ctx, membership, opportunityId, {
+      title: "Demo",
+      description: "Introduce Driftwood.",
+      reviewCriteria: [{ id: " product ", description: " Mention Driftwood. " }],
+    }),
+  );
+  expect(await t.run((ctx) => ctx.db.get("deliverables", id))).toMatchObject({
+    reviewCriteria: [{ id: "product", description: "Mention Driftwood." }],
+  });
+  const other = await seedMembership(t, "criteria-intruder");
+  await expectApiError(
+    () => t.run((ctx) => updateDeliverable(ctx, other.membership, id, { reviewCriteria: [] })),
+    "not_found",
+  );
+});
+
+test("assignment locking also protects the confirmed criteria", async () => {
+  const t = convexTest(schema, modules);
+  const fixture = await seedAiReviewFixture(t);
+  await expectApiError(
+    () =>
+      t.run((ctx) =>
+        updateDeliverable(ctx, fixture.membership, fixture.deliverableId, { reviewCriteria: [] }),
+      ),
+    "invalid_state",
+    "opportunity_has_assignments",
+  );
+});
+
+test("editing criteria preserves the deliverable text and an empty array clears them", async () => {
+  const t = convexTest(schema, modules);
+  const { membership, opportunityId } = await seedOpportunity(
+    t,
+    { subject: "criteria-editor" },
+    { usesAiReviewDefault: false },
+  );
+  const [deliverable] = await storedDeliverables(t, opportunityId);
+  const updated = await t.run((ctx) =>
+    updateDeliverable(ctx, membership, deliverable._id, {
+      reviewCriteria: [{ id: "disclosure", description: " State the sponsorship. " }],
+    }),
+  );
+  expect(updated).toEqual({
+    ...deliverable,
+    reviewCriteria: [{ id: "disclosure", description: "State the sponsorship." }],
+  });
+  const cleared = await t.run((ctx) =>
+    updateDeliverable(ctx, membership, deliverable._id, { reviewCriteria: [] }),
+  );
+  expect(cleared).toEqual({ ...deliverable, reviewCriteria: [] });
+  expect(await storedDeliverables(t, opportunityId)).toEqual([cleared]);
+});
+
+test("AI opportunities reject adding a deliverable without criteria", async () => {
+  const t = convexTest(schema, modules);
+  const owner = await seedOpportunity(t, { subject: "ai-add-criteria" });
+  await expectApiError(
+    () =>
+      t.run((ctx) =>
+        createDeliverable(
+          ctx,
+          owner.membership,
+          owner.opportunityId,
+          deliverableArgs({ reviewCriteria: undefined }),
+        ),
+      ),
+    "invalid_state",
+    "ai_review_criteria_required",
+  );
+  expect(await storedDeliverables(t, owner.opportunityId)).toHaveLength(1);
+});
+
+test("AI opportunities cannot clear confirmed criteria", async () => {
+  const t = convexTest(schema, modules);
+  const owner = await seedOpportunity(t, { subject: "ai-clear-criteria" });
+  const [before] = await storedDeliverables(t, owner.opportunityId);
+  await expectApiError(
+    () =>
+      t.run((ctx) => updateDeliverable(ctx, owner.membership, before._id, { reviewCriteria: [] })),
+    "invalid_state",
+    "ai_review_criteria_required",
+  );
+  expect(await storedDeliverables(t, owner.opportunityId)).toEqual([before]);
+});
+
+test("creator deliverables normalize criteria and return an empty array when absent", async () => {
+  const t = convexTest(schema, modules);
+  const owner = await seedOpportunity(
+    t,
+    { subject: "manual-criteria" },
+    {
+      usesAiReviewDefault: false,
+      deliverables: [
+        deliverableArgs({ reviewCriteria: undefined }),
+        deliverableArgs({
+          reviewCriteria: [{ id: "product", description: "Mention the product." }],
+        }),
+      ],
+    },
+  );
+  const stored = await storedDeliverables(t, owner.opportunityId);
+  // Model writes already normalize; this row exercises the read boundary independently.
+  await t.run((ctx) =>
+    ctx.db.patch("deliverables", stored[1]._id, {
+      reviewCriteria: [{ id: " product ", description: " Mention the product. " }],
+    }),
+  );
+  await seedCreatorId(t, "criteria-reader");
+  const user = await requireSeededUser(t, "criteria-reader");
+  const rows = await t.run((ctx) =>
+    listDeliverables(ctx, { user, orgId: null }, owner.opportunityId),
+  );
+  expect(rows.map((row) => row.reviewCriteria)).toEqual([
+    [],
+    [{ id: "product", description: "Mention the product." }],
+  ]);
+  expect(rows[0]).not.toHaveProperty("createdBy");
 });

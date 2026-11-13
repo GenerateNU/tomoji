@@ -22,6 +22,7 @@ import { updateOpportunitySkills } from "./models/opportunitySkills";
 const OWNED_TABLES = [
   "notifications",
   "disputes",
+  "aiReviewAttempts",
   "submissions",
   "posts",
   "assignments",
@@ -41,11 +42,12 @@ function halfHourFromNow(days: number): number {
   return Math.ceil((Date.now() + days * DAY) / HALF_HOUR_MS) * HALF_HOUR_MS;
 }
 
+/** Clears seed-owned records, including review attempts attached to submissions. */
 async function clearOwnedTables(ctx: MutationCtx): Promise<number> {
   let removed = 0;
   for (const table of OWNED_TABLES) {
     for await (const row of ctx.db.query(table)) {
-      await ctx.db.delete(row._id);
+      await ctx.db.delete(table, row._id);
       removed += 1;
     }
   }

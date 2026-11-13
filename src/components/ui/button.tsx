@@ -29,6 +29,8 @@ const buttonVariants = cva(
       size: {
         sm: "h-8.25 px-3 text-body",
         default: "h-11.25 px-4 text-body",
+        // Alias of default, for callers who think in sm/md.
+        md: "h-11.25 px-4 text-body",
         "icon-sm": "size-8.25",
         icon: "size-11.25",
       },

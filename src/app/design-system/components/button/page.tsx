@@ -41,10 +41,10 @@ export default function Page() {
             },
             {
               name: "size",
-              type: '"default" | "sm" | "icon" | "icon-sm"',
+              type: '"default" | "md" | "sm" | "icon" | "icon-sm"',
               default: '"default"',
               description:
-                "default is 16 × 12 padding (45px tall); sm is 12 × 6 (33px tall). Text is 16px in all. icon and icon-sm are square, for icon-only buttons.",
+                "default is 16 × 12 padding (45px tall), and md is an alias of it; sm is 12 × 6 (33px tall). Text is 16px in all. icon and icon-sm are square, for icon-only buttons.",
             },
             {
               name: "icon",

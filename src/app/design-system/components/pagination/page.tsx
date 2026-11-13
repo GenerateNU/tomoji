@@ -59,7 +59,8 @@ export default function Page() {
               name: "disabled",
               type: "boolean",
               default: "false",
-              description: "Fades the item. Buttons only.",
+              description:
+                "Fades the item. Buttons get the native attribute; links get aria-disabled, lose their href and leave the tab order.",
             },
             { name: "children", type: "ReactNode", description: "The page number." },
           ],
@@ -71,7 +72,8 @@ export default function Page() {
               name: "disabled",
               type: "boolean",
               default: "false",
-              description: "Fades the arrow, e.g. prev on page 1. Use aria-disabled on links.",
+              description:
+                "Fades the arrow, e.g. prev on page 1. Links get aria-disabled and lose their href.",
             },
           ],
         },

@@ -147,27 +147,20 @@ function PaginationEllipsis({ className, ...props }: React.ComponentProps<"span"
   );
 }
 
-// Always the first and last page and the current one with a neighbour each
-// side; near either end the window grows so it keeps five numbers. A gap of a
-// single page shows that page (an ellipsis would hide no more than a number
-// would); wider gaps become an ellipsis.
+// Always returns 7 items once there are more than 7 pages, so the row keeps a
+// constant width and the arrows stay put while paging. First and last page are
+// always shown; near either end the window holds five consecutive numbers, in
+// the middle it holds the current page and a neighbour each side. An ellipsis
+// therefore never hides a single page.
 export function pageWindow(pageCount: number, page: number): (number | "ellipsis")[] {
   if (pageCount < 1) return [];
   const current = Math.min(Math.max(page, 1), pageCount);
-  const pages = new Set([1, pageCount, current - 1, current, current + 1]);
-  if (current <= 2) pages.add(3);
-  if (current >= pageCount - 1) pages.add(pageCount - 2);
-  const sorted = [...pages].filter((p) => p >= 1 && p <= pageCount).sort((a, b) => a - b);
-  const items: (number | "ellipsis")[] = [];
-  sorted.forEach((p, index) => {
-    if (index > 0) {
-      const gap = p - sorted[index - 1];
-      if (gap === 2) items.push(p - 1);
-      else if (gap > 2) items.push("ellipsis");
-    }
-    items.push(p);
-  });
-  return items;
+  if (pageCount <= 7) return Array.from({ length: pageCount }, (_, i) => i + 1);
+  if (current <= 4) return [1, 2, 3, 4, 5, "ellipsis", pageCount];
+  if (current >= pageCount - 3) {
+    return [1, "ellipsis", pageCount - 4, pageCount - 3, pageCount - 2, pageCount - 1, pageCount];
+  }
+  return [1, "ellipsis", current - 1, current, current + 1, "ellipsis", pageCount];
 }
 
 /**

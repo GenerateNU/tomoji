@@ -8,6 +8,9 @@
  * @module
  */
 
+import type * as aiReview from "../aiReview.js";
+import type * as aiReviewActions from "../aiReviewActions.js";
+import type * as aiReviewInternal from "../aiReviewInternal.js";
 import type * as applications from "../applications.js";
 import type * as assignments from "../assignments.js";
 import type * as auth from "../auth.js";
@@ -22,6 +25,13 @@ import type * as deliverables from "../deliverables.js";
 import type * as disputes from "../disputes.js";
 import type * as http from "../http.js";
 import type * as invites from "../invites.js";
+import type * as lib_ai_aiProvider from "../lib/ai/aiProvider.js";
+import type * as lib_ai_assemblyAi from "../lib/ai/assemblyAi.js";
+import type * as lib_ai_jev from "../lib/ai/jev.js";
+import type * as lib_ai_providerStep from "../lib/ai/providerStep.js";
+import type * as lib_ai_reviewPolicy from "../lib/ai/reviewPolicy.js";
+import type * as lib_ai_validation from "../lib/ai/validation.js";
+import type * as lib_ai_workflow from "../lib/ai/workflow.js";
 import type * as lib_authz from "../lib/authz.js";
 import type * as lib_birthdate from "../lib/birthdate.js";
 import type * as lib_errors from "../lib/errors.js";
@@ -42,6 +52,7 @@ import type * as migrations_2026_10_07_remove_user_profile_pictures from "../mig
 import type * as migrations_2026_10_25_backfill_creator_niches from "../migrations/2026_10_25_backfill_creator_niches.js";
 import type * as migrations_2026_10_25_backfill_opportunity_niches from "../migrations/2026_10_25_backfill_opportunity_niches.js";
 import type * as migrations_runner from "../migrations/runner.js";
+import type * as models_aiReviewAttempts from "../models/aiReviewAttempts.js";
 import type * as models_applications from "../models/applications.js";
 import type * as models_assignments from "../models/assignments.js";
 import type * as models_campaigns from "../models/campaigns.js";
@@ -91,6 +102,9 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  aiReview: typeof aiReview;
+  aiReviewActions: typeof aiReviewActions;
+  aiReviewInternal: typeof aiReviewInternal;
   applications: typeof applications;
   assignments: typeof assignments;
   auth: typeof auth;
@@ -105,6 +119,13 @@ declare const fullApi: ApiFromModules<{
   disputes: typeof disputes;
   http: typeof http;
   invites: typeof invites;
+  "lib/ai/aiProvider": typeof lib_ai_aiProvider;
+  "lib/ai/assemblyAi": typeof lib_ai_assemblyAi;
+  "lib/ai/jev": typeof lib_ai_jev;
+  "lib/ai/providerStep": typeof lib_ai_providerStep;
+  "lib/ai/reviewPolicy": typeof lib_ai_reviewPolicy;
+  "lib/ai/validation": typeof lib_ai_validation;
+  "lib/ai/workflow": typeof lib_ai_workflow;
   "lib/authz": typeof lib_authz;
   "lib/birthdate": typeof lib_birthdate;
   "lib/errors": typeof lib_errors;
@@ -125,6 +146,7 @@ declare const fullApi: ApiFromModules<{
   "migrations/2026_10_25_backfill_creator_niches": typeof migrations_2026_10_25_backfill_creator_niches;
   "migrations/2026_10_25_backfill_opportunity_niches": typeof migrations_2026_10_25_backfill_opportunity_niches;
   "migrations/runner": typeof migrations_runner;
+  "models/aiReviewAttempts": typeof models_aiReviewAttempts;
   "models/applications": typeof models_applications;
   "models/assignments": typeof models_assignments;
   "models/campaigns": typeof models_campaigns;
@@ -197,4 +219,5 @@ export declare const internal: FilterApi<
 export declare const components: {
   workOSAuthKit: import("@convex-dev/workos-authkit/_generated/component.js").ComponentApi<"workOSAuthKit">;
   migrations: import("@convex-dev/migrations/_generated/component.js").ComponentApi<"migrations">;
+  workflow: import("@convex-dev/workflow/_generated/component.js").ComponentApi<"workflow">;
 };

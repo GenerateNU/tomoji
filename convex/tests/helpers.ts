@@ -6,6 +6,12 @@ import type { Doc, Id } from "../_generated/dataModel";
 import type { DeliverableCreate } from "../models/deliverableDrafts";
 import { createSubmission, type SubmissionDraft } from "../models/submissions";
 import type { ApiErrorCode } from "../lib/errors";
+import {
+  claimAiReviewAttempt,
+  recordAiTranscriptionJob,
+  saveAiTranscription,
+} from "../models/aiReviewAttempts";
+import type { aiReviewResult } from "../lib/ai/validation";
 import type { Transcription } from "../lib/ai/assemblyAi";
 import { companyContext } from "../lib/functions";
 import { getCreatorByUserId } from "../models/creators";
@@ -957,4 +963,36 @@ export async function storedSubmissions(t: TestConvex) {
 /** Reads every dispute in the test's database, oldest first. */
 export async function storedDisputes(t: TestConvex) {
   return await t.run(async (ctx) => await ctx.db.query("disputes").collect());
+}
+
+/** Builds normalized review evidence independently of provider response parsing. */
+export function aiReviewResultArgs(
+  overrides: Partial<Infer<typeof aiReviewResult>> = {},
+): Infer<typeof aiReviewResult> {
+  return {
+    model: "jev-1.14.0",
+    inputTokens: 200,
+    outputTokens: 0,
+    results: [
+      {
+        criterionId: "product",
+        outcome: "met",
+        confidence: 0.9,
+        probabilities: { met: 0.95, not_met: 0.03, uncertain: 0.02 },
+      },
+    ],
+    ...overrides,
+  };
+}
+
+/** Moves an existing fixture through the normal model operations to evaluation. */
+export async function prepareAiReviewEvaluation(
+  t: TestConvex,
+  attemptId: Id<"aiReviewAttempts">,
+): Promise<void> {
+  await t.run(async (ctx) => {
+    await claimAiReviewAttempt(ctx, attemptId);
+    await recordAiTranscriptionJob(ctx, attemptId, "job-1");
+    await saveAiTranscription(ctx, attemptId, aiTranscriptionArgs());
+  });
 }

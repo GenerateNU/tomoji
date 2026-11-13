@@ -10,6 +10,7 @@
         "@aws-sdk/s3-request-presigner": "^3.1145.0",
         "@base-ui/react": "^1.8.0",
         "@convex-dev/migrations": "^0.3.6",
+        "@convex-dev/workflow": "0.4.8",
         "@convex-dev/workos-authkit": "^0.2.9",
         "@workos-inc/authkit-nextjs": "^4.3.1",
         "@workos-inc/node": "^10.13.0",

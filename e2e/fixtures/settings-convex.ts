@@ -168,7 +168,6 @@ function operation(reference: FunctionReference<"mutation" | "action">) {
           ...("countryOfResidence" in args
             ? { countryOfResidence: (args.countryOfResidence as string | null) ?? undefined }
             : {}),
-          ...(args.isPrivate !== undefined ? { isPrivate: args.isPrivate as boolean } : {}),
         };
         notify();
         return profile;

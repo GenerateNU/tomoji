@@ -7,10 +7,8 @@ import { getUserByWorkosId } from "../models/users";
 import schema from "../schema";
 import {
   expectApiError,
-  seedAssignment,
   seedCreatorId,
   seedOperator,
-  seedOpportunity,
   seedProfilePictureUpload,
   seedUser,
   seedXAccount,

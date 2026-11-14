@@ -12,6 +12,9 @@ export const mediaLimits = {
   "company-banner": 5 * 1024 * 1024,
   // Video submissions: 250 MiB maximum.
   "video-submission": 250 * 1024 * 1024,
+  // Supporting documents: images or a PDF, 10 MiB maximum.
+  "deliverable-example": 10 * 1024 * 1024,
+  "dispute-evidence": 10 * 1024 * 1024,
 } as const satisfies Record<MediaKind, number>;
 
 export type MediaConfig = { bucket: string; region: string };
@@ -20,11 +23,15 @@ const uploadGrantTtlSeconds = 15 * 60;
 
 const imageContentTypes = ["image/jpeg", "image/png", "image/webp"] as const;
 
+const documentContentTypes = [...imageContentTypes, "application/pdf"] as const;
+
 const allowedContentTypes: Record<MediaKind, readonly string[]> = {
   "profile-picture": imageContentTypes,
   "company-profile-picture": imageContentTypes,
   "company-banner": imageContentTypes,
   "video-submission": ["video/mp4", "video/quicktime", "video/webm"],
+  "deliverable-example": documentContentTypes,
+  "dispute-evidence": documentContentTypes,
 };
 
 /** Loads deployment-specific S3 settings. AWS credentials come from the SDK provider chain. */

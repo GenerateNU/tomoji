@@ -82,8 +82,35 @@ export async function authorizeMediaUpload(
     return { companyId: await requireUploadCompanyId(ctx, assignmentId) };
   }
 
+  // Brief reference material: any member of the company writing the brief, not
+  // only an admin, and never scoped to an assignment.
+  if (kind === "deliverable-example") {
+    if (assignmentId !== undefined)
+      throw apiError("invalid_state", { reason: "unexpected_assignment" });
+    const { membership } = await companyContext(ctx);
+    return { companyId: membership.companyId };
+  }
+
   if (assignmentId === undefined)
     throw apiError("invalid_state", { reason: "assignment_required" });
+
+  // Dispute evidence is the one assignment-scoped kind either side may upload,
+  // since both of them have claims that only a file can support.
+  if (kind === "dispute-evidence") {
+    if (user.role === "creator") {
+      const creatorId = await requireCallerCreatorId(ctx, user);
+      await requireAssignment(ctx, { role: "creator", creatorId }, assignmentId);
+      return {};
+    }
+    const { membership } = await companyContext(ctx);
+    await requireAssignment(
+      ctx,
+      { role: "company", companyId: membership.companyId },
+      assignmentId,
+    );
+    return { companyId: membership.companyId };
+  }
+
   if (user.role !== "creator") throw apiError("forbidden", { requiredRole: "creator" });
 
   const creatorId = await requireCallerCreatorId(ctx, user);

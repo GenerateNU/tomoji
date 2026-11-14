@@ -163,9 +163,13 @@ copies each setting that is filled in and rejects `X_METRICS_SYNC_ENABLED=true` 
 token, but it never clears a deployment value. To turn an enabled deployment off, run
 `bunx convex env set X_METRICS_SYNC_ENABLED false`.
 
-`X_POST_EARNING_DAYS` (30) is a placeholder for how long a post keeps earning after it
-goes live, pending product confirmation. Payouts run weekly, so a post is paid through
-the end of the week its last earning day falls in.
+`X_POST_EARNING_DAYS` (30) is the default duration from the original live-post
+verification, not publication. The stored earnings agreement determines the actual
+window; cancellation or confirmed removal can shorten it. Earnings are calculated
+every seven days, with a final partial period ending exactly at day 30 rather than
+the end of that week. Collectors must use the agreement's verification baseline
+and period/cutoff timestamps, and retain delayed evidence needed to settle earlier
+earnings. See [Earnings rules](EARNINGS.md) for the calculation and evidence contract.
 
 `getXPostMetrics` looks up at most 100 post IDs per call through `GET /2/tweets` with
 `tweet.fields=public_metrics`. Each post's counts come back in two parts, stored

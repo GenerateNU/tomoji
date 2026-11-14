@@ -1,6 +1,6 @@
 import { apiError } from "./errors";
+import { DAY_MS } from "./time";
 
-const DAY_MS = 24 * 60 * 60 * 1000;
 export const MINIMUM_AGE = 18;
 
 /**

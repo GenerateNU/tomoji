@@ -12,6 +12,7 @@ import {
   seedCreatorId,
   seedOperator,
   seedOpportunity,
+  seedOneSubmission,
   seedUser,
   seedWrongOrgCaller,
   type TestConvex,
@@ -926,6 +927,32 @@ describe("creator assignment workspace", () => {
       assignment: { _id: assignmentId, status: "completed" },
       brief: { description: expect.any(String) },
     });
+  });
+
+  test("updates tab counts and moves a draft into changes needed after review", async () => {
+    const t = convexTest(schema, modules);
+    const { fixture, submissionId } = await seedOneSubmission(t);
+    const initial = await fixture.asCreator.query(api.assignments.listMineFilterOptions, {});
+    expect(initial.counts).toEqual({ notStarted: 0, review: 1, changesNeeded: 0, approved: 0 });
+
+    await fixture.asCompany.mutation(api.submissions.review, {
+      submissionId,
+      review: { status: "changesRequested", reviewNote: "Add the sponsorship disclosure." },
+    });
+
+    const filters = await fixture.asCreator.query(api.assignments.listMineFilterOptions, {});
+    const changes = await fixture.asCreator.query(api.assignments.listMineSummaries, {
+      phase: "current",
+      queue: "changesNeeded",
+      paginationOpts: { cursor: null, numItems: 10 },
+    });
+    expect(filters.counts).toEqual({ notStarted: 0, review: 0, changesNeeded: 1, approved: 0 });
+    expect(changes.page).toMatchObject([
+      {
+        _id: fixture.assignmentId,
+        next: { id: fixture.deliverableId, status: "changesRequested" },
+      },
+    ]);
   });
 
   test("orders filter options by assignment creation across statuses", async () => {

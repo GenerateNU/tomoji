@@ -12,7 +12,12 @@ import {
 import { listOpportunityDeliverables } from "./deliverableDrafts";
 import { getLatestSubmission } from "./submissions";
 
-export const assignmentQueue = v.union(v.literal("todo"), v.literal("review"), v.literal("posted"));
+export const assignmentQueue = v.union(
+  v.literal("notStarted"),
+  v.literal("review"),
+  v.literal("changesNeeded"),
+  v.literal("approved"),
+);
 
 export const creatorAssignmentSummaryFilters = creatorAssignmentListFilters.extend({
   queue: v.optional(assignmentQueue),
@@ -26,6 +31,7 @@ export const creatorAssignmentSummary = creatorAssignment
   .pick("_id", "_creationTime", "status", "companyId", "opportunityId")
   .extend({
     title: v.union(v.string(), v.null()),
+    opportunityTitle: v.union(v.string(), v.null()),
     companyName: v.union(v.string(), v.null()),
     companyPictureId: v.optional(v.id("mediaUploads")),
     queue: assignmentQueue,
@@ -39,7 +45,7 @@ export const creatorAssignmentSummary = creatorAssignment
   });
 
 export const creatorAssignmentFilterOptions = v.object({
-  companies: v.array(v.object({ id: v.id("companies"), label: v.string() })),
+  counts: v.union(v.record(assignmentQueue, v.number()), v.null()),
   opportunities: v.array(v.object({ id: v.id("opportunities"), label: v.string() })),
 });
 
@@ -47,6 +53,7 @@ export const creatorAssignmentDetails = v.object({
   assignment: creatorAssignment,
   title: creatorAssignmentSummary.fields.title,
   companyName: creatorAssignmentSummary.fields.companyName,
+  companyPictureId: creatorAssignmentSummary.fields.companyPictureId,
   brief: v.union(
     schema.doc("opportunities").pick("description", "contentRequirements", "reviewPolicy"),
     v.null(),
@@ -65,7 +72,7 @@ export const creatorAssignmentDetails = v.object({
 async function getAssignmentProgress(ctx: QueryCtx, assignment: Doc<"assignments">) {
   const deliverables = await listOpportunityDeliverables(ctx, assignment.opportunityId);
   const progress = await Promise.all(
-    deliverables.map(async ({ _id }) => {
+    deliverables.map(async ({ _id, title }) => {
       const latest = await getLatestSubmission(ctx, assignment._id, _id);
       const post =
         latest?.status === "approved"
@@ -76,21 +83,36 @@ async function getAssignmentProgress(ctx: QueryCtx, assignment: Doc<"assignments
               )
               .first()
           : null;
-      return { id: _id, status: latest?.status ?? "unsubmitted", posted: post !== null } as const;
+      return {
+        id: _id,
+        title,
+        status: latest?.status ?? "unsubmitted",
+        posted: post !== null,
+      } as const;
     }),
   );
-  const next =
-    progress.find((row) => row.status === "changesRequested") ??
-    progress.find((row) => row.status === "unsubmitted") ??
-    progress.find((row) => row.status === "approved" && !row.posted);
-  let queue: Infer<typeof assignmentQueue> = "todo";
-  if (!next && progress.some((row) => row.status === "pending")) queue = "review";
-  if (progress.length > 0 && progress.every((row) => row.posted)) queue = "posted";
-  return { queue, next: next ? { id: next.id, status: next.status } : null };
+  const changesNeeded = progress.find((row) => row.status === "changesRequested");
+  const unsubmitted = progress.find((row) => row.status === "unsubmitted");
+  const inReview = progress.find((row) => row.status === "pending");
+  const approved = progress.find((row) => row.status === "approved" && !row.posted);
+  const next = changesNeeded ?? unsubmitted ?? inReview ?? approved;
+  const queue: Infer<typeof assignmentQueue> = changesNeeded
+    ? "changesNeeded"
+    : unsubmitted || progress.length === 0
+      ? "notStarted"
+      : inReview
+        ? "review"
+        : "approved";
+  return {
+    queue,
+    title: (next ?? progress[0])?.title ?? null,
+    next: next ? { id: next.id, status: next.status } : null,
+  };
 }
 
 const maxSummaryRowsRead = 60;
 const maxFilterAssignments = 120;
+const workspaceStatuses = ["termsPending", "active", "completed", "cancelled"] as const;
 
 /** Filters before pagination so queue and search results include all matching assignments. */
 export async function listCreatorAssignmentSummaries(
@@ -99,12 +121,11 @@ export async function listCreatorAssignmentSummaries(
   options: Infer<typeof creatorAssignmentSummaryFilters>,
 ) {
   const search = options.search?.trim().toLowerCase();
-  const statuses =
-    options.queue === "posted"
-      ? (["active", "completed"] as const)
-      : options.phase === "current"
-        ? (["termsPending", "active"] as const)
-        : (["completed", "cancelled"] as const);
+  const statuses = options.queue
+    ? workspaceStatuses
+    : options.phase === "current"
+      ? (["termsPending", "active"] as const)
+      : (["completed", "cancelled"] as const);
   return await creatorAssignmentsByTime(ctx, creatorId, statuses, options.order ?? "desc")
     .map(async (assignment) => {
       if (options.companyId && assignment.companyId !== options.companyId) return null;
@@ -113,21 +134,23 @@ export async function listCreatorAssignmentSummaries(
         ctx.db.get("opportunities", assignment.opportunityId),
         ctx.db.get("companies", assignment.companyId),
       ]);
+      const progress = await getAssignmentProgress(ctx, assignment);
+      if (options.queue && progress.queue !== options.queue) return null;
       if (
         search &&
-        ![opportunity?.title, company?.name].some((label) => label?.toLowerCase().includes(search))
+        ![progress.title, opportunity?.title, company?.name].some((label) =>
+          label?.toLowerCase().includes(search),
+        )
       ) {
         return null;
       }
-      const progress = await getAssignmentProgress(ctx, assignment);
-      if (options.queue && progress.queue !== options.queue) return null;
       return {
         _id: assignment._id,
         _creationTime: assignment._creationTime,
         status: assignment.status,
         companyId: assignment.companyId,
         opportunityId: assignment.opportunityId,
-        title: opportunity?.title ?? null,
+        opportunityTitle: opportunity?.title ?? null,
         companyName: company?.name ?? null,
         companyPictureId: company?.profilePictureMediaId,
         ...progress,
@@ -166,23 +189,23 @@ export async function listCreatorAssignmentFilterOptions(ctx: QueryCtx, creatorI
   const assignments = await creatorAssignmentsByTime(
     ctx,
     creatorId,
-    ["termsPending", "active", "completed", "cancelled"],
+    workspaceStatuses,
     "desc",
-  ).take(maxFilterAssignments);
-  const [companies, opportunities] = await Promise.all([
-    Promise.all(
-      [...new Set(assignments.map((row) => row.companyId))].map((id) =>
-        ctx.db.get("companies", id),
-      ),
+  ).take(maxFilterAssignments + 1);
+  const recent = assignments.slice(0, maxFilterAssignments);
+  const opportunities = await Promise.all(
+    [...new Set(recent.map((row) => row.opportunityId))].map((id) =>
+      ctx.db.get("opportunities", id),
     ),
-    Promise.all(
-      [...new Set(assignments.map((row) => row.opportunityId))].map((id) =>
-        ctx.db.get("opportunities", id),
-      ),
-    ),
-  ]);
+  );
+  let counts = null;
+  if (assignments.length <= maxFilterAssignments) {
+    const progress = await Promise.all(recent.map((row) => getAssignmentProgress(ctx, row)));
+    counts = { notStarted: 0, review: 0, changesNeeded: 0, approved: 0 };
+    for (const { queue } of progress) counts[queue]++;
+  }
   return {
-    companies: companies.flatMap((row) => (row ? [{ id: row._id, label: row.name }] : [])),
+    counts,
     opportunities: opportunities.flatMap((row) => (row ? [{ id: row._id, label: row.title }] : [])),
   };
 }
@@ -206,6 +229,7 @@ export async function getCreatorAssignmentDetails(
     assignment: toCreatorAssignment(assignment),
     title: opportunity?.title ?? null,
     companyName: company?.name ?? null,
+    companyPictureId: company?.profilePictureMediaId,
     brief: opportunity && {
       description: opportunity.description,
       contentRequirements: opportunity.contentRequirements,

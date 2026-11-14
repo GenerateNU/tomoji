@@ -2,7 +2,7 @@
 
 import { api } from "@convex/_generated/api";
 import type { Id } from "@convex/_generated/dataModel";
-import { RiSearchLine } from "@remixicon/react";
+import { RiExpandUpDownLine, RiSearchLine } from "@remixicon/react";
 import { usePaginatedQuery, useQuery } from "convex/react";
 import Link from "next/link";
 import { useEffect, useId, useState } from "react";
@@ -18,7 +18,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tabs, TabsContent, TabsCount, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { RequireAccount } from "@/features/users/components/require-account";
 import { cn } from "@/lib/utils";
 import { assignmentStatusLabel } from "./assignment-status";
@@ -26,10 +26,10 @@ import { AssignmentCompany } from "./assignment-company";
 
 const PAGE_SIZE = 12;
 const queues = [
-  { value: "todo", label: "To-do" },
-  { value: "review", label: "In Review" },
-  { value: "posted", label: "Posted" },
-  { value: "past", label: "Past" },
+  { value: "notStarted", label: "Not started" },
+  { value: "review", label: "In review" },
+  { value: "changesNeeded", label: "Changes needed" },
+  { value: "approved", label: "Approved" },
 ] as const;
 type Queue = (typeof queues)[number]["value"];
 type Stage = "detail" | "draft" | "post";
@@ -37,44 +37,65 @@ type Stage = "detail" | "draft" | "post";
 /** Lists creator assignments by the current submission and posting state. */
 export function AssignmentsView({ stage = "detail" }: { stage?: Stage }) {
   return (
-    <section className="flex w-full flex-col gap-8 px-4 pt-10 pb-12 sm:px-8 lg:px-[clamp(2rem,8.333vw,7.5rem)] lg:pt-30">
+    <section className="flex w-full flex-col gap-8 px-4 pt-8 pb-12 sm:px-8 lg:px-16 lg:pt-16">
       <RequireAccount
         role="creator"
         next="/assignments"
         wrongRole="Assignments are available to creators."
       >
-        <h1 className="text-4xl leading-tight font-medium tracking-tight">Assignments</h1>
-        <Tabs defaultValue="todo" className="gap-8">
-          <TabsList aria-label="Assignment status" className="overflow-x-auto">
-            {queues.map(({ value, label }) => (
-              <TabsTrigger key={value} value={value}>
-                {label}
-              </TabsTrigger>
-            ))}
-          </TabsList>
-          {queues.map(({ value }) => (
-            <TabsContent key={value} value={value}>
-              <AssignmentList queue={value} stage={stage} />
-            </TabsContent>
-          ))}
-        </Tabs>
+        <h1 className="text-[28px] leading-tight font-medium">Assignments</h1>
+        <AssignmentTabs stage={stage} />
       </RequireAccount>
     </section>
   );
 }
 
+/** Loads status counts and opportunity choices for the workspace. */
+function AssignmentTabs({ stage }: { stage: Stage }) {
+  const options = useQuery(api.assignments.listMineFilterOptions);
+  return (
+    <Tabs defaultValue="notStarted" className="gap-10">
+      <TabsList
+        aria-label="Assignment status"
+        className="w-fit max-w-full gap-5 overflow-x-auto md:gap-7"
+      >
+        {queues.map(({ value, label }) => (
+          <TabsTrigger key={value} value={value}>
+            {label}
+            {options?.counts && <TabsCount>{options.counts[value]}</TabsCount>}
+          </TabsTrigger>
+        ))}
+      </TabsList>
+      {queues.map(({ value }) => (
+        <TabsContent key={value} value={value}>
+          <AssignmentList
+            queue={value}
+            stage={stage}
+            opportunities={options?.opportunities ?? []}
+          />
+        </TabsContent>
+      ))}
+    </Tabs>
+  );
+}
+
 type Filters = {
   search: string;
-  companyId?: Id<"companies">;
   opportunityId?: Id<"opportunities">;
-  order: "asc" | "desc";
 };
 
 /** Keeps filters in the toolbar and resets the cursor when criteria change. */
-function AssignmentList({ queue, stage }: { queue: Queue; stage: Stage }) {
-  const [filters, setFilters] = useState<Filters>({ search: "", order: "desc" });
+function AssignmentList({
+  queue,
+  stage,
+  opportunities,
+}: {
+  queue: Queue;
+  stage: Stage;
+  opportunities: { id: Id<"opportunities">; label: string }[];
+}) {
+  const [filters, setFilters] = useState<Filters>({ search: "" });
   const [search, setSearch] = useState("");
-  const options = useQuery(api.assignments.listMineFilterOptions);
   const id = useId();
   useEffect(() => {
     const timer = setTimeout(
@@ -84,8 +105,8 @@ function AssignmentList({ queue, stage }: { queue: Queue; stage: Stage }) {
     return () => clearTimeout(timer);
   }, [search]);
   return (
-    <div className="space-y-8">
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-[1.4fr_1fr_1fr_1fr]">
+    <div className="space-y-10">
+      <div className="grid max-w-[576px] gap-3 sm:grid-cols-[1.28fr_1fr]">
         <div className="grid gap-2">
           <label htmlFor={id} className="text-body-sm text-gray-500">
             Search
@@ -106,16 +127,8 @@ function AssignmentList({ queue, stage }: { queue: Queue; stage: Stage }) {
           </div>
         </div>
         <AssignmentSelect
-          label="Company"
-          options={[{ id: "", label: "All companies" }, ...(options?.companies ?? [])]}
-          value={filters.companyId ?? ""}
-          onChange={(companyId) =>
-            setFilters({ ...filters, companyId: (companyId || undefined) as Filters["companyId"] })
-          }
-        />
-        <AssignmentSelect
           label="Opportunity"
-          options={[{ id: "", label: "All opportunities" }, ...(options?.opportunities ?? [])]}
+          options={[{ id: "", label: "Select opportunities" }, ...opportunities]}
           value={filters.opportunityId ?? ""}
           onChange={(opportunityId) =>
             setFilters({
@@ -124,22 +137,13 @@ function AssignmentList({ queue, stage }: { queue: Queue; stage: Stage }) {
             })
           }
         />
-        <AssignmentSelect
-          label="Sort by"
-          options={[
-            { id: "desc", label: "Newest first" },
-            { id: "asc", label: "Oldest first" },
-          ]}
-          value={filters.order}
-          onChange={(order) => setFilters({ ...filters, order: order === "asc" ? "asc" : "desc" })}
-        />
       </div>
       <AssignmentRows key={JSON.stringify(filters)} filters={filters} queue={queue} stage={stage} />
     </div>
   );
 }
 
-/** Uses the shared select treatment for the three assignment filters. */
+/** Uses the shared select treatment for the opportunity filter. */
 function AssignmentSelect({
   label,
   options,
@@ -175,7 +179,7 @@ function AssignmentSelect({
 }
 
 const columns =
-  "grid gap-x-5 lg:grid-cols-[minmax(0,2.55fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(13.5rem,1.5fr)]";
+  "grid gap-x-4 lg:grid-cols-[minmax(0,3fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(8rem,1.2fr)_8rem]";
 const date = new Intl.DateTimeFormat("en-US", {
   month: "long",
   day: "numeric",
@@ -194,28 +198,67 @@ function AssignmentRows({
   stage: Stage;
 }) {
   const [page, setPage] = useState(1);
+  const [sort, setSort] = useState<{
+    field: "title" | "companyName" | "opportunityTitle" | "date";
+    direction: "asc" | "desc";
+  }>({ field: "date", direction: "desc" });
+  const sortColumns = [
+    { field: "title", label: "Name" },
+    { field: "companyName", label: "Company" },
+    { field: "opportunityTitle", label: "Opportunity" },
+    { field: "date", label: "Assigned" },
+  ] as const;
   const { results, status, loadMore } = usePaginatedQuery(
     api.assignments.listMineSummaries,
     {
       ...filters,
-      phase: queue === "past" ? "past" : "current",
-      queue: queue === "past" ? undefined : queue,
+      order: sort.field === "date" ? sort.direction : "desc",
+      phase: "current",
+      queue,
     },
     { initialNumItems: PAGE_SIZE },
   );
   const loadedPages = Math.max(1, Math.ceil(results.length / PAGE_SIZE));
   const currentPage = Math.min(page, loadedPages);
   const visible = results.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
+  if (sort.field !== "date") {
+    const { field, direction } = sort;
+    visible.sort(
+      (a, b) => (a[field] ?? "").localeCompare(b[field] ?? "") * (direction === "asc" ? 1 : -1),
+    );
+  }
   const hasMore = status === "CanLoadMore" || status === "LoadingMore";
 
   if (status === "LoadingFirstPage")
     return <Skeleton aria-label="Loading assignments" className="h-32 w-full" />;
   return (
-    <div className="space-y-8">
-      <div className={cn(columns, "hidden py-2 text-body-sm text-gray-500 lg:grid")} aria-hidden>
-        <span>Name</span>
-        <span>Company</span>
-        <span>Assigned</span>
+    <div className="space-y-5">
+      <h2 className="text-body-lg font-medium">
+        Assignments ({results.length}
+        {hasMore ? "+" : ""})
+      </h2>
+      <div className={cn(columns, "hidden py-2 text-body-sm text-gray-500 lg:grid")}>
+        {sortColumns.map(({ field, label }) => (
+          <button
+            key={field}
+            type="button"
+            className="flex w-fit items-center gap-1 rounded-xs hover:text-gray-950"
+            aria-label={
+              field === "date"
+                ? "Sort by assignment date"
+                : `Sort this page by ${label.toLowerCase()}`
+            }
+            onClick={() => {
+              if (field === "date") setPage(1);
+              setSort({
+                field,
+                direction: sort.field === field && sort.direction === "asc" ? "desc" : "asc",
+              });
+            }}
+          >
+            {label} <RiExpandUpDownLine className="size-3.5" aria-hidden />
+          </button>
+        ))}
       </div>
       {visible.length === 0 && (
         <p className="py-4 text-body-sm text-gray-500">No assignments match this view.</p>
@@ -225,7 +268,7 @@ function AssignmentRows({
           const href = `/assignments/${row._id}`;
           const status = row.next?.status;
           const action =
-            row.status === "active" && queue === "todo"
+            row.status === "active"
               ? status === "changesRequested"
                 ? "Resubmit"
                 : status === "approved"
@@ -255,23 +298,27 @@ function AssignmentRows({
               <div className="col-start-1 row-start-2 lg:col-start-auto lg:row-start-auto">
                 <AssignmentCompany name={row.companyName} mediaId={row.companyPictureId} />
               </div>
+              <span className="col-start-1 row-start-3 truncate text-body-sm text-gray-700 lg:col-start-auto lg:row-start-auto lg:text-body lg:font-medium">
+                {row.opportunityTitle ?? "—"}
+              </span>
               <time
                 dateTime={new Date(row._creationTime).toISOString()}
-                className="col-start-1 row-start-3 text-body-sm text-gray-700 lg:col-start-auto lg:row-start-auto lg:text-body lg:whitespace-nowrap"
+                className="col-start-1 row-start-4 text-body-sm text-gray-700 lg:col-start-auto lg:row-start-auto lg:text-body lg:whitespace-nowrap"
               >
                 {date.format(row._creationTime)}
               </time>
-              <div className="col-start-2 row-span-2 row-start-2 flex flex-wrap items-center justify-end gap-2 lg:col-start-auto lg:row-span-1 lg:row-start-auto">
-                {status === "changesRequested" && <Badge tone="destructive">Changes needed</Badge>}
-                {status === "approved" && <Badge tone="primary">Approved</Badge>}
-                {row.queue === "review" && <Badge tone="primary">In review</Badge>}
-                {row.queue === "posted" && <Badge tone="primary">Posted</Badge>}
+              <div className="col-start-2 row-span-3 row-start-2 flex flex-wrap items-center justify-end gap-2 lg:col-start-auto lg:row-span-1 lg:row-start-auto">
+                {row.queue === "approved" && !row.next && <Badge>Posted</Badge>}
+                {row.queue === "review" && row.status === "active" && <Badge>In review</Badge>}
                 {row.status !== "active" && <Badge>{assignmentStatusLabel[row.status]}</Badge>}
                 <Link
                   href={task && row.next ? `${href}?task=${task}&deliverable=${row.next.id}` : href}
                   className={buttonVariants({
                     size: "sm",
-                    variant: action === "Add post link" ? "primary" : "secondary-subtle",
+                    variant:
+                      action === "Add post link" || action === "Resubmit"
+                        ? "primary"
+                        : "secondary-subtle",
                   })}
                 >
                   {action}

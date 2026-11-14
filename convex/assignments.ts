@@ -127,7 +127,7 @@ export const listMineSummaries = creatorQuery({
   },
 });
 
-/** Lists companies and opportunities the creator can filter their assignments by. */
+/** Lists opportunity options and counts for the creator's assignment workspace. */
 export const listMineFilterOptions = creatorQuery({
   args: {},
   returns: creatorAssignmentFilterOptions,

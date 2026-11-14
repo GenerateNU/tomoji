@@ -5,8 +5,16 @@ import type { FunctionReturnType } from "convex/server";
 import { useQuery } from "convex/react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { AssignmentsView } from "./assignments-view";
+import { AssignmentCompany } from "./assignment-company";
+import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { RequireAccount } from "@/features/users/components/require-account";
@@ -42,20 +50,39 @@ function AssignmentDetail({ assignmentId }: { assignmentId: string }) {
         if (!open) router.replace("/assignments");
       }}
     >
-      <DialogContent className="max-w-[792px] content-start gap-0 overflow-y-auto rounded-2xl px-5 py-8 shadow-2xl sm:px-[76px] sm:py-[72px]">
-        <DialogTitle className="text-[26px] leading-tight">
-          {details?.title ?? (details === null ? "Assignment unavailable" : "Assignment")}
-        </DialogTitle>
-        <DialogDescription className="sr-only">Assignment brief and submissions</DialogDescription>
-        {details === undefined && (
-          <Skeleton aria-label="Loading assignment" className="mt-6 h-48 w-full" />
-        )}
-        {details === null && (
-          <Link href="/assignments" className="mt-4 text-sm underline">
-            All assignments
-          </Link>
-        )}
-        {details && <AssignmentWorkspace details={details} />}
+      <DialogContent
+        className="max-w-[742px] gap-0 overflow-hidden rounded-lg shadow-2xl"
+        overlayClassName="bg-gray-950/20 backdrop-blur-[2px]"
+      >
+        <div className="max-h-[calc(100dvh-110px)] overflow-y-auto px-5 py-8 sm:px-8">
+          {details && (
+            <div className="mb-4 flex flex-wrap items-center gap-2 text-body-sm">
+              <AssignmentCompany name={details.companyName} mediaId={details.companyPictureId} />
+              {details.title && <span className="text-gray-500">/</span>}
+              {details.title && <span className="font-medium">{details.title}</span>}
+            </div>
+          )}
+          <DialogTitle className="text-[26px] leading-tight">
+            {details?.deliverables[0]?.title ??
+              details?.title ??
+              (details === null ? "Assignment unavailable" : "Assignment")}
+          </DialogTitle>
+          <DialogDescription className="sr-only">
+            Assignment brief and submissions
+          </DialogDescription>
+          {details === undefined && (
+            <Skeleton aria-label="Loading assignment" className="mt-6 h-48 w-full" />
+          )}
+          {details === null && (
+            <Link href="/assignments" className="mt-4 text-sm underline">
+              All assignments
+            </Link>
+          )}
+          {details && <AssignmentWorkspace details={details} />}
+        </div>
+        <div className="flex justify-end border-t bg-gray-0 px-5 py-4 sm:px-8">
+          <DialogClose render={<Button variant="secondary-subtle" />}>Close</DialogClose>
+        </div>
       </DialogContent>
     </Dialog>
   );
@@ -63,14 +90,45 @@ function AssignmentDetail({ assignmentId }: { assignmentId: string }) {
 
 /** Shows the creator's current terms and the latest state of each deliverable. */
 function AssignmentWorkspace({ details }: { details: AssignmentDetails }) {
-  const { assignment, brief, companyName, deliverables } = details;
+  const { assignment, brief, deliverables } = details;
+  const assignedOn = new Intl.DateTimeFormat("en-US", {
+    month: "long",
+    day: "numeric",
+    timeZone: "UTC",
+  }).format(assignment._creationTime);
   return (
     <>
-      <div className="mt-3 flex flex-wrap items-center gap-3 text-body-sm text-gray-700">
-        {companyName && <span>{companyName}</span>}
-        <Badge>{assignmentStatusLabel[assignment.status]}</Badge>
-      </div>
+      <p className="mt-4 text-body-sm text-gray-500">Assigned {assignedOn}</p>
+      {assignment.status !== "active" && (
+        <Badge className="mt-2">{assignmentStatusLabel[assignment.status]}</Badge>
+      )}
       <div className="mt-8 space-y-7">
+        <section>
+          <h2 className="mb-2 text-body-sm font-medium text-gray-500">Content requirements</h2>
+          {brief ? (
+            <>
+              <p className="mb-4 text-sm break-words whitespace-pre-wrap">{brief.description}</p>
+              <dl className="space-y-3 text-sm">
+                {[
+                  ["Deliverable guidelines", brief.contentRequirements],
+                  ["Review policy", brief.reviewPolicy],
+                ].map(
+                  ([label, value]) =>
+                    value && (
+                      <div key={label}>
+                        <dt className="font-medium">{label}</dt>
+                        <dd className="break-words whitespace-pre-wrap text-muted-foreground">
+                          {value}
+                        </dd>
+                      </div>
+                    ),
+                )}
+              </dl>
+            </>
+          ) : (
+            <p className="text-sm text-muted-foreground">Brief unavailable.</p>
+          )}
+        </section>
         <section className="border-t pt-7">
           <h2 className="mb-4 text-body-lg font-medium">Your submissions</h2>
           {deliverables.length === 0 && (
@@ -89,32 +147,6 @@ function AssignmentWorkspace({ details }: { details: AssignmentDetails }) {
               </li>
             ))}
           </ul>
-        </section>
-        <section className="border-t pt-7">
-          <h2 className="mb-4 text-body-sm font-medium text-gray-500">Assignment</h2>
-          {brief ? (
-            <>
-              <p className="mb-4 text-sm break-words whitespace-pre-wrap">{brief.description}</p>
-              <dl className="space-y-3 text-sm">
-                {[
-                  ["Content requirements", brief.contentRequirements],
-                  ["Review policy", brief.reviewPolicy],
-                ].map(
-                  ([label, value]) =>
-                    value && (
-                      <div key={label}>
-                        <dt className="font-medium">{label}</dt>
-                        <dd className="break-words whitespace-pre-wrap text-muted-foreground">
-                          {value}
-                        </dd>
-                      </div>
-                    ),
-                )}
-              </dl>
-            </>
-          ) : (
-            <p className="text-sm text-muted-foreground">Brief unavailable.</p>
-          )}
         </section>
         <section>
           <h2 className="mb-2 text-body-sm font-medium text-gray-500">Payment</h2>

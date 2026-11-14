@@ -14,6 +14,9 @@ import { assignmentStatus } from "../schemas/assignments.schema";
 import { creatorName, notifyCompanyUser, notifyCreator } from "./notifications";
 import { recordAssignmentEarningsCancellation } from "./earningSources";
 import { bringForwardAssignmentEarningsSchedules } from "./earningsSchedules";
+import { describeMatch, getCreatorSignals } from "./opportunityMatch";
+import { listOpportunityNiches } from "./opportunityNiches";
+import { listOpportunitySkills } from "./opportunitySkills";
 
 /**
  * Creates a creator's assignment on an open, ungated opportunity.
@@ -47,6 +50,22 @@ export async function claimAssignment(
   // Gated opportunities are joined by accepting an offer on an application.
   if (opportunity.isGated) {
     throw apiError("invalid_state", { reason: "opportunity_gated" });
+  }
+  // An open spot is taken on the spot, with no company review, so the creator
+  // must meet the follower minimum and have every skill. Applying never checks this.
+  const creator = await ctx.db.get("creators", creatorId);
+  if (creator === null) throw apiError("not_found", { resource: "creator" });
+  const [niches, skills] = await Promise.all([
+    listOpportunityNiches(ctx, opportunity._id),
+    listOpportunitySkills(ctx, opportunity._id),
+  ]);
+  const match = describeMatch(await getCreatorSignals(ctx, creator), {
+    niches,
+    skills,
+    minFollowerRange: opportunity.minFollowerRange,
+  });
+  if (!match.isEligible) {
+    throw apiError("invalid_state", { reason: "not_eligible" });
   }
   const assignmentId = await createAssignment(ctx, opportunity, campaign, creatorId);
   // Only claims notify here; an accepted offer is reported by `acceptApplication`.

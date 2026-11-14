@@ -18,13 +18,19 @@ import {
 } from "./deliverableDrafts";
 import { notifyCompanyUser, notifyCreator } from "./notifications";
 import { requireNiche } from "./niches";
+import { requireSkill } from "./skills";
+import { describeMatch, getCreatorSignals, type CreatorSignals } from "./opportunityMatch";
 import {
   hasOpportunityNiche,
   listOpportunityNiches,
   updateOpportunityNiches,
 } from "./opportunityNiches";
 import { listOpportunityLanguages, updateOpportunityLanguages } from "./opportunityLanguages";
-import { listOpportunitySkills, updateOpportunitySkills } from "./opportunitySkills";
+import {
+  hasOpportunitySkill,
+  listOpportunitySkills,
+  updateOpportunitySkills,
+} from "./opportunitySkills";
 import schema from "../schema";
 import { followerRange } from "../schemas/creators.schema";
 
@@ -82,9 +88,13 @@ export const creatorOpportunity = schema
     "paymentCapCents",
     "contentRequirements",
     "reviewPolicy",
+    "minFollowerRange",
   )
   .extend({
     companyName: v.string(),
+    // Shown on feed cards; fetched through `media.getCompanyMedia`.
+    companyLogoMediaId: v.optional(v.id("mediaUploads")),
+    companyBannerMediaId: v.optional(v.id("mediaUploads")),
     niches: v.array(v.string()),
     skills: v.array(v.string()),
     languages: v.array(v.string()),
@@ -114,10 +124,23 @@ export function toCreatorOpportunity(
     paymentCapCents: opportunity.paymentCapCents,
     contentRequirements: opportunity.contentRequirements,
     reviewPolicy: opportunity.reviewPolicy,
+    minFollowerRange: opportunity.minFollowerRange,
     companyName: company.name,
     niches: selections.niches,
     skills: selections.skills,
     languages: selections.languages,
+  };
+}
+
+/** Adds the company's logo and banner IDs, when it has them, for feed cards. */
+function withCompanyMedia(
+  brief: CreatorOpportunity,
+  company: Doc<"companies">,
+): CreatorOpportunity {
+  return {
+    ...brief,
+    ...(company.profilePictureMediaId && { companyLogoMediaId: company.profilePictureMediaId }),
+    ...(company.bannerMediaId && { companyBannerMediaId: company.bannerMediaId }),
   };
 }
 
@@ -135,7 +158,10 @@ export async function getOpportunity(
   if (company === null) {
     throw apiError("not_found", { resource: "opportunity" });
   }
-  return toCreatorOpportunity(opportunity, company, await getOpportunityView(ctx, opportunity));
+  return withCompanyMedia(
+    toCreatorOpportunity(opportunity, company, await getOpportunityView(ctx, opportunity)),
+    company,
+  );
 }
 
 // Deliverables change through the `deliverables` routes.
@@ -496,9 +522,22 @@ export const opportunityList = schema
     paginationOpts: paginationOptsValidator,
   });
 
-export const opportunityDiscover = opportunityList
-  .pick("paginationOpts")
-  .extend({ niche: v.optional(v.string()) });
+/**
+ * Discovery filters. Within niches or skills a brief needs any one of them;
+ * across filters it needs all. `isGated` picks briefs that need an
+ * application (true) or let creators claim a spot (false). `applied` keeps
+ * only briefs the caller has applied to, and `eligible` only briefs whose
+ * follower minimum and skills the caller meets. `search` matches title words, best
+ * match first, instead of deadline order.
+ */
+export const opportunityDiscover = opportunityList.pick("paginationOpts").extend({
+  search: v.optional(v.string()),
+  niches: v.optional(v.array(v.string())),
+  skills: v.optional(v.array(v.string())),
+  isGated: v.optional(v.boolean()),
+  applied: v.optional(v.boolean()),
+  eligible: v.optional(v.boolean()),
+});
 
 /**
  * Returns the creator-facing brief if creators may see the opportunity: it's
@@ -511,7 +550,10 @@ export async function getVisibleCreatorOpportunity(
   const company = await getVisibleOpportunityCompany(ctx, opportunity);
   return company === null
     ? null
-    : toCreatorOpportunity(opportunity, company, await getOpportunityView(ctx, opportunity));
+    : withCompanyMedia(
+        toCreatorOpportunity(opportunity, company, await getOpportunityView(ctx, opportunity)),
+        company,
+      );
 }
 
 /**
@@ -577,10 +619,102 @@ async function hasOpportunityScore(
   return score !== null;
 }
 
+async function hasApplied(
+  ctx: QueryCtx,
+  creatorId: Id<"creators">,
+  opportunityId: Id<"opportunities">,
+): Promise<boolean> {
+  const application = await ctx.db
+    .query("applications")
+    .withIndex("by_opportunityId_and_creatorId", (q) =>
+      q.eq("opportunityId", opportunityId).eq("creatorId", creatorId),
+    )
+    .first();
+  return application !== null;
+}
+
 /**
- * Discovers open briefs across active companies. With a creator, briefs that
- * match their profile come first, best match first; the rest follow by
- * deadline. Without one, every brief is in deadline order.
+ * Builds the check a brief must pass to appear in discovery: visible to
+ * creators and matching every filter. Returns the creator-facing brief, or
+ * `null` to leave it out.
+ */
+function discoverFilter(
+  ctx: QueryCtx,
+  options: Infer<typeof opportunityDiscover>,
+  creatorId?: Id<"creators">,
+  signals?: CreatorSignals,
+): (opportunity: Doc<"opportunities">) => Promise<CreatorOpportunity | null> {
+  const niches = options.niches?.map(requireNiche) ?? [];
+  const skills = options.skills?.map(requireSkill) ?? [];
+  return async (opportunity) => {
+    if (options.isGated !== undefined && opportunity.isGated !== options.isGated) return null;
+    if (
+      niches.length > 0 &&
+      !(await anyAsync(niches, (name) => hasOpportunityNiche(ctx, opportunity._id, name)))
+    ) {
+      return null;
+    }
+    if (
+      skills.length > 0 &&
+      !(await anyAsync(skills, (name) => hasOpportunitySkill(ctx, opportunity._id, name)))
+    ) {
+      return null;
+    }
+    if (options.applied === true) {
+      if (creatorId === undefined || !(await hasApplied(ctx, creatorId, opportunity._id))) {
+        return null;
+      }
+    }
+    const brief = await getVisibleCreatorOpportunity(ctx, opportunity);
+    if (brief !== null && options.eligible === true) {
+      if (signals === undefined || !describeMatch(signals, brief).isEligible) return null;
+    }
+    return brief;
+  };
+}
+
+async function anyAsync<T>(items: T[], check: (item: T) => Promise<boolean>): Promise<boolean> {
+  for (const item of items) if (await check(item)) return true;
+  return false;
+}
+
+/** Search results read per query; enough for a feed, well under Convex's 1,024 cap. */
+const MAX_SEARCH_RESULTS = 200;
+
+/**
+ * Pages through the best title matches. Search results can't be streamed, so
+ * this reads the top matches, filters them, and pages by position: the cursor
+ * is how many filtered results earlier pages returned.
+ */
+async function searchOpportunities(
+  ctx: QueryCtx,
+  search: string,
+  options: Infer<typeof opportunityDiscover>,
+  filter: (opportunity: Doc<"opportunities">) => Promise<CreatorOpportunity | null>,
+): Promise<PaginationResult<CreatorOpportunity>> {
+  const matches = await ctx.db
+    .query("opportunities")
+    .withSearchIndex("search_title", (q) => q.search("title", search).eq("status", "open"))
+    .take(MAX_SEARCH_RESULTS);
+  const briefs = (await Promise.all(matches.map(filter))).filter((brief) => brief !== null);
+  const { cursor, numItems } = options.paginationOpts;
+  const start = cursor === null ? 0 : Number(cursor);
+  if (!Number.isSafeInteger(start) || start < 0) {
+    throw apiError("invalid_state", { reason: "invalid_cursor" });
+  }
+  const end = start + numItems;
+  return {
+    page: briefs.slice(start, end),
+    isDone: end >= briefs.length,
+    continueCursor: String(Math.min(end, briefs.length)),
+  };
+}
+
+/**
+ * Discovers open briefs across active companies, narrowed by the discovery
+ * filters. With a creator, briefs that match their profile come first, best
+ * match first; the rest follow by deadline. Without one, every brief is in
+ * deadline order. A search orders by title relevance instead.
  *
  * Cursors, end cursors, and split cursors all name the section they belong
  * to, and each section's stream gets the caller's full pagination options. So
@@ -593,15 +727,18 @@ export async function discoverOpportunities(
   options: Infer<typeof opportunityDiscover>,
   creatorId?: Id<"creators">,
 ): Promise<PaginationResult<CreatorOpportunity>> {
-  const niche = options.niche === undefined ? undefined : requireNiche(options.niche);
+  // Eligibility compares each brief with the caller's profile, read once here.
+  const creator =
+    options.eligible === true && creatorId !== undefined
+      ? await ctx.db.get("creators", creatorId)
+      : null;
+  const signals = creator === null ? undefined : await getCreatorSignals(ctx, creator);
+  const filter = discoverFilter(ctx, options, creatorId, signals);
+  const search = options.search?.trim() ?? "";
+  if (search !== "") return await searchOpportunities(ctx, search, options, filter);
   const paginationOpts = withRowsReadCap(options.paginationOpts);
-  const visible = async (opportunity: Doc<"opportunities"> | null) => {
-    if (opportunity === null) return null;
-    if (niche !== undefined && !(await hasOpportunityNiche(ctx, opportunity._id, niche))) {
-      return null;
-    }
-    return await getVisibleCreatorOpportunity(ctx, opportunity);
-  };
+  const visible = async (opportunity: Doc<"opportunities"> | null) =>
+    opportunity === null ? null : await filter(opportunity);
   const rest = stream(ctx.db, schema)
     .query("opportunities")
     .withIndex("by_status_and_deadline", (q) => q.eq("status", "open"))

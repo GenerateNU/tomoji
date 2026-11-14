@@ -7,6 +7,7 @@ import schema from "../schema";
 import {
   expectApiError,
   requireSeededUser,
+  seedMembership,
   seedOperator,
   seedUser,
   workosIdentity,
@@ -227,6 +228,99 @@ describe("users.list", () => {
       }),
     ]);
     expect(secondPage.isDone).toBe(true);
+  });
+
+  test("matches a search term against names and email", async () => {
+    const t = convexTest(schema, modules);
+    const asOperator = await seedOperator(t, "search_operator");
+    await seedUser(t, {
+      subject: "search_ada",
+      firstName: "Ada",
+      lastName: "Lovelace",
+      email: "ada@example.com",
+    });
+    await seedUser(t, {
+      subject: "search_grace",
+      firstName: "Grace",
+      lastName: "Hopper",
+      email: "grace@navy.example.com",
+    });
+
+    const byFirstName = await asOperator.query(api.users.list, {
+      role: "creator",
+      search: "ada",
+      paginationOpts: { cursor: null, numItems: 10 },
+    });
+    expect(byFirstName.page.map((user) => user.workosId)).toEqual(["search_ada"]);
+
+    const byFullName = await asOperator.query(api.users.list, {
+      role: "creator",
+      search: "grace hopper",
+      paginationOpts: { cursor: null, numItems: 10 },
+    });
+    expect(byFullName.page.map((user) => user.workosId)).toEqual(["search_grace"]);
+
+    const byEmailDomain = await asOperator.query(api.users.list, {
+      role: "creator",
+      search: "NAVY",
+      paginationOpts: { cursor: null, numItems: 10 },
+    });
+    expect(byEmailDomain.page.map((user) => user.workosId)).toEqual(["search_grace"]);
+
+    const noMatch = await asOperator.query(api.users.list, {
+      role: "creator",
+      search: "turing",
+      paginationOpts: { cursor: null, numItems: 10 },
+    });
+    expect(noMatch.page).toEqual([]);
+  });
+
+  test("leaves deactivated accounts out of a search unless they are asked for", async () => {
+    const t = convexTest(schema, modules);
+    const asOperator = await seedOperator(t, "search_inactive_operator");
+    await seedUser(t, { subject: "search_retired", firstName: "Retired" });
+    await t.run(async (ctx) => {
+      const user = await getUserByWorkosId(ctx, "search_retired");
+      if (user === null) throw new Error("expected seeded user");
+      await ctx.db.patch("users", user._id, { isActive: false });
+    });
+
+    const hidden = await asOperator.query(api.users.list, {
+      search: "retired",
+      paginationOpts: { cursor: null, numItems: 10 },
+    });
+    expect(hidden.page).toEqual([]);
+
+    const shown = await asOperator.query(api.users.list, {
+      search: "retired",
+      includeInactive: true,
+      paginationOpts: { cursor: null, numItems: 10 },
+    });
+    expect(shown.page.map((user) => user.workosId)).toEqual(["search_retired"]);
+  });
+
+  test("joins the company a company user belongs to", async () => {
+    const t = convexTest(schema, modules);
+    const asOperator = await seedOperator(t, "join_operator");
+    await seedMembership(t, "join_member", "org_join", "admin");
+    await seedUser(t, { subject: "join_creator" });
+
+    const { page } = await asOperator.query(api.users.list, {
+      role: "company",
+      paginationOpts: { cursor: null, numItems: 10 },
+    });
+    expect(page).toHaveLength(1);
+    expect(page[0].company).toEqual({
+      companyId: expect.any(String),
+      name: "Acme",
+      role: "admin",
+    });
+
+    const creators = await asOperator.query(api.users.list, {
+      role: "creator",
+      paginationOpts: { cursor: null, numItems: 10 },
+    });
+    expect(creators.page.every((user) => user.company === undefined)).toBe(true);
   });
 
   test("optionally filters users by role", async () => {

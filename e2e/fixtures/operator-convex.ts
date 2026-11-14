@@ -127,6 +127,15 @@ let disputes: Dispute[] = [
   },
 ];
 
+const overview = {
+  companies: { value: 3, capped: false },
+  activeCompanies: { value: 2, capped: false },
+  activeCreators: { value: 2, capped: false },
+  openDisputes: { value: 2, capped: false },
+  openOpportunities: { value: 14, capped: false },
+  activeAssignments: { value: 9, capped: false },
+};
+
 let version = 0;
 const listeners = new Set<() => void>();
 const update = () => {
@@ -172,12 +181,15 @@ export function useQuery(reference: FunctionReference<"query">, args: unknown) {
   if (name === "users:me") {
     return {
       synced: true,
-      userId: "user-operator" as Id<"users">,
+      userId: "user-5" as Id<"users">,
       role: "operator",
       firstName: "Robin",
       lastName: "Shaw",
       email: "robin@ohani.com",
     };
+  }
+  if (name === "operators:overview") {
+    return fixture.mode === "loading" ? undefined : overview;
   }
   if (name === "disputes:get") {
     const { disputeId } = args as { disputeId: string };

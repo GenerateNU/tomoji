@@ -58,6 +58,24 @@ does not run it.
 
 Our routes should describe the resource being accessed rather than the role of the person accessing it, so keep URLs independent of user roles. For example, `/opportunities` serves as the discovery feed for creators and the company's opportunity list for company users. The page determines which component to render based on the current user.
 
+### The operator dashboard
+
+Tomoji staff get their own nav (`operatorNavItems`) over four routes: `/` (platform
+counts, the open dispute queue, and two trend widgets), `/users`,
+`/companies`, and `/disputes`. `/` and `/disputes` are shared routes that pick their
+component from `users.me`; `/users` and `/companies` are operator-only and say so
+through `RequireAccount`.
+
+Everything operator-specific lives in `features/operator/`. Rows open a modal rather
+than a detail route, `useTablePage` slices fixed-size pages out of a Convex paginated
+query, and `directory-chrome.tsx` holds the header, search box, skeleton rows, and
+pager the three directories share.
+
+Two home widgets — signups over time and companies by activity — read their figures
+from `lib/analytics-data.ts` rather than the database, because neither has a backing
+query yet: signup history needs a time-bucketed read, and ranking companies needs a
+per-company rollup. Swap each constant for its query once those exist.
+
 ## Component Design
 
 We want components to be reusable, consistent, and easy to maintain. These conventions should help us avoid unnecessary duplication while keeping the frontend flexible as designs evolve.

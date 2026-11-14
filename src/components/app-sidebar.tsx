@@ -82,7 +82,13 @@ export const creatorNavItems = [
   },
   { id: "posts", label: "Posts", icon: RiPlayLargeLine, activeIcon: RiPlayLargeFill },
   { id: "earnings", label: "Earnings", icon: RiWallet3Line, activeIcon: RiWallet3Fill },
-  { id: "disputes", label: "Disputes", icon: RiAuctionLine, activeIcon: RiAuctionFill },
+  {
+    id: "disputes",
+    label: "Disputes",
+    icon: RiAuctionLine,
+    activeIcon: RiAuctionFill,
+    href: "/disputes",
+  },
 ] as const satisfies readonly NavEntry<string>[];
 
 export const companyNavItems = [

@@ -1,8 +1,10 @@
 import { createRoot } from "react-dom/client";
 import { CampaignDashboard } from "@/features/company-opportunities/components/campaign-dashboard";
+import { CreateOpportunityFlow } from "@/features/company-opportunities/components/create-opportunity-flow";
 
 const screens = {
   campaign: () => <CampaignDashboard campaignId="campaign1" />,
+  "create-opportunity": () => <CreateOpportunityFlow campaignId="campaign1" />,
 };
 
 const name = (new URLSearchParams(location.search).get("screen") ??

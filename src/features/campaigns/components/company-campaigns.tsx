@@ -20,6 +20,7 @@ import {
 import { useMe } from "@/features/users/hooks/use-me";
 import { formatMoney } from "@/lib/money";
 import { CAMPAIGN_TABS, campaignTiming, type CampaignTab } from "../lib/campaign-status";
+import { CampaignActions } from "./campaign-actions";
 import { PerformanceCard } from "./performance-card";
 
 const PAGE_SIZE = 12;
@@ -94,6 +95,7 @@ export function CompanyCampaigns() {
               id={campaign._id}
               title={campaign.title}
               subtitle={campaignTiming(campaign, now)}
+              menu={<CampaignActions campaign={campaign} isAdmin={isAdmin} />}
             />
           ))}
         </div>

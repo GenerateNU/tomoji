@@ -29,5 +29,6 @@ const css = await postcss([tailwindcss()]).process(await readFile(cssPath, "utf8
 });
 await writeFile(
   resolve(outputDirectory, "opportunity-feed.css"),
-  `${css.css}\n:root { --font-inter: Arial, sans-serif; }`,
+  // The app loads Host Grotesk through next/font, which a fixture page skips.
+  `@import url("https://fonts.googleapis.com/css2?family=Host+Grotesk:wght@400;500;600&display=swap");\n${css.css}\n:root { --font-host-grotesk: "Host Grotesk", sans-serif; }`,
 );

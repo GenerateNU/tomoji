@@ -336,7 +336,7 @@ export async function requireDispute(
 }
 
 /** Reports a missing dispute and someone else's the same way. */
-async function requireVisibleDispute(
+export async function requireVisibleDispute(
   ctx: QueryCtx,
   viewer: AssignmentViewer,
   disputeId: Id<"disputes">,

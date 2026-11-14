@@ -3,7 +3,9 @@ import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { apiError } from "../lib/errors";
 import { uploadCompletionGracePeriodMs } from "../lib/mediaUploadPolicy";
 import { isCompanyMediaKind, type MediaKind } from "../schemas/mediaUploads.schema";
-import { requireAssignment, requireActiveAssignment } from "./assignments";
+import { requireAssignment, requireActiveAssignment, type AssignmentViewer } from "./assignments";
+import { requireVisibleDispute } from "./disputes";
+import { requireOpportunity } from "./opportunities";
 import { companyAdminContext, companyContext } from "../lib/functions";
 import { requireCallerCreatorId } from "./users";
 
@@ -220,6 +222,54 @@ export async function requireReadableCompanyMedia(
       : company && company.bannerMediaId;
   if (!company || !company.isActive || current !== mediaId) {
     throw apiError("not_found", { resource: "companyMedia" });
+  }
+  return upload;
+}
+
+/**
+ * Restricts a deliverable's example file to whoever may read the brief that
+ * cites it. The caller names the deliverable because nothing indexes media
+ * back to its row; the file must still be listed on that deliverable, so an
+ * orphaned or replaced upload stops being readable.
+ */
+export async function requireReadableDeliverableExample(
+  ctx: QueryCtx,
+  caller: { user: Doc<"users">; orgId: string | null },
+  deliverableId: Id<"deliverables">,
+  mediaId: Id<"mediaUploads">,
+): Promise<Doc<"mediaUploads">> {
+  const deliverable = await ctx.db.get("deliverables", deliverableId);
+  if (deliverable === null || !deliverable.exampleMediaIds?.includes(mediaId)) {
+    throw apiError("not_found", { resource: "deliverableExample" });
+  }
+  // The brief's own visibility rule: its company, an operator, or a creator
+  // who can discover the opportunity.
+  await requireOpportunity(ctx, deliverable.opportunityId, caller);
+  const upload = await ctx.db.get("mediaUploads", mediaId);
+  if (upload?.kind !== "deliverable-example" || upload.status !== "complete") {
+    throw apiError("not_found", { resource: "deliverableExample" });
+  }
+  return upload;
+}
+
+/**
+ * Restricts a dispute's evidence to whoever may read the dispute that cites
+ * it, which is both sides and operators. Either side may have uploaded it, so
+ * ownership does not decide who reads it.
+ */
+export async function requireReadableDisputeEvidence(
+  ctx: QueryCtx,
+  viewer: AssignmentViewer,
+  disputeId: Id<"disputes">,
+  mediaId: Id<"mediaUploads">,
+): Promise<Doc<"mediaUploads">> {
+  const dispute = await requireVisibleDispute(ctx, viewer, disputeId);
+  if (!dispute.evidenceMediaIds?.includes(mediaId)) {
+    throw apiError("not_found", { resource: "disputeEvidence" });
+  }
+  const upload = await ctx.db.get("mediaUploads", mediaId);
+  if (upload?.kind !== "dispute-evidence" || upload.status !== "complete") {
+    throw apiError("not_found", { resource: "disputeEvidence" });
   }
   return upload;
 }

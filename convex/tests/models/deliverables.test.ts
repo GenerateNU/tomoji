@@ -9,6 +9,7 @@ import {
   removeDeliverable,
   updateDeliverable,
 } from "../../models/deliverables";
+import { requireReadableDeliverableExample } from "../../models/media";
 import { createOpportunity, publishOpportunity } from "../../models/opportunities";
 import schema from "../../schema";
 import {
@@ -20,6 +21,7 @@ import {
   seedAiReviewFixture,
   seedMembership,
   seedCampaign,
+  seedUser,
   seedCreatorId,
   seedOpportunity,
   type TestConvex,
@@ -44,6 +46,89 @@ async function storedDeliverables(t: TestConvex, opportunityId: Id<"opportunitie
 }
 
 describe("deliverable example files", () => {
+  test("a creator who can discover the brief reads its examples", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedCampaign(t, { subject: "example_read_owner" });
+    const example = await t.run((ctx) =>
+      ctx.db.insert("mediaUploads", {
+        ownerUserId: owner.membership.userId,
+        companyId: owner.membership.companyId,
+        kind: "deliverable-example" as const,
+        status: "complete" as const,
+        contentType: "image/png",
+        stagingKey: "staging/deliverable-example/read",
+        permanentKey: "media/deliverable-example/read",
+        sizeBytes: 2048,
+        grantExpiresAt: Date.now() + 60_000,
+      }),
+    );
+    const opportunityId = await t.run((ctx) =>
+      createOpportunity(
+        ctx,
+        owner.membership,
+        opportunityArgs(owner.campaignId, {
+          deliverables: [deliverableArgs({ exampleMediaIds: [example] })],
+        }),
+      ),
+    );
+    const [deliverable] = await t.run((ctx) => listOpportunityDeliverables(ctx, opportunityId));
+    await seedUser(t, { subject: "example_reader" });
+    const creator = await requireSeededUser(t, "example_reader");
+
+    const upload = await t.run((ctx) =>
+      requireReadableDeliverableExample(
+        ctx,
+        { user: creator, orgId: null },
+        deliverable._id,
+        example,
+      ),
+    );
+    expect(upload._id).toEqual(example);
+  });
+
+  test("an example the deliverable no longer lists stops being readable", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedCampaign(t, { subject: "example_unlinked_owner" });
+    const example = await t.run((ctx) =>
+      ctx.db.insert("mediaUploads", {
+        ownerUserId: owner.membership.userId,
+        companyId: owner.membership.companyId,
+        kind: "deliverable-example" as const,
+        status: "complete" as const,
+        contentType: "image/png",
+        stagingKey: "staging/deliverable-example/unlinked",
+        permanentKey: "media/deliverable-example/unlinked",
+        sizeBytes: 2048,
+        grantExpiresAt: Date.now() + 60_000,
+      }),
+    );
+    const opportunityId = await t.run((ctx) =>
+      createOpportunity(
+        ctx,
+        owner.membership,
+        opportunityArgs(owner.campaignId, {
+          deliverables: [deliverableArgs({ exampleMediaIds: [example] })],
+        }),
+      ),
+    );
+    const [deliverable] = await t.run((ctx) => listOpportunityDeliverables(ctx, opportunityId));
+    await t.run((ctx) => ctx.db.patch("deliverables", deliverable._id, { exampleMediaIds: [] }));
+    const user = await requireSeededUser(t, "example_unlinked_owner");
+
+    await expectApiError(
+      () =>
+        t.run((ctx) =>
+          requireReadableDeliverableExample(
+            ctx,
+            { user, orgId: "org_acme" },
+            deliverable._id,
+            example,
+          ),
+        ),
+      "not_found",
+    );
+  });
+
   test("stores the company member's examples, deduplicated", async () => {
     const t = convexTest(schema, modules);
     const owner = await seedCampaign(t, { subject: "examples_owner" });

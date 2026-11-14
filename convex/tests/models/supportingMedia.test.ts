@@ -2,9 +2,18 @@
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
 import type { Id } from "../../_generated/dataModel";
+import { createDispute } from "../../models/disputes";
+import { requireReadableDisputeEvidence } from "../../models/media";
 import { MAX_DELIVERABLE_EXAMPLES, requireSupportingMedia } from "../../models/supportingMedia";
 import schema from "../../schema";
-import { expectApiError, requireSeededUser, seedUser, type TestConvex } from "../helpers";
+import {
+  expectApiError,
+  requireSeededUser,
+  seedAssignmentFixture,
+  seedCreatorId,
+  seedUser,
+  type TestConvex,
+} from "../helpers";
 
 const modules = import.meta.glob("../../**/*.ts");
 
@@ -135,6 +144,106 @@ describe("requireSupportingMedia", () => {
         ),
       "invalid_state",
       "too_many_files",
+    );
+  });
+});
+
+describe("requireReadableDisputeEvidence", () => {
+  async function seedDisputeWithEvidence(t: TestConvex, uploader: "creator" | "company") {
+    const fixture = await seedAssignmentFixture(t);
+    const ownerUserId = uploader === "creator" ? fixture.creatorUserId : fixture.membership.userId;
+    const mediaId = await t.run((ctx) =>
+      ctx.db.insert("mediaUploads", {
+        ownerUserId,
+        assignmentId: fixture.assignmentId,
+        kind: "dispute-evidence" as const,
+        status: "complete" as const,
+        contentType: "image/png",
+        stagingKey: "staging/dispute-evidence/test",
+        permanentKey: "media/dispute-evidence/test",
+        sizeBytes: 1024,
+        grantExpiresAt: Date.now() + 60_000,
+      }),
+    );
+    const disputeId = await t.run((ctx) =>
+      createDispute(ctx, { role: "creator", creatorId: fixture.creatorId }, fixture.creatorUserId, {
+        assignmentId: fixture.assignmentId,
+        reason: "paymentNotReceived",
+        description: "The fixed fee never arrived.",
+        ...(uploader === "creator" ? { evidenceMediaIds: [mediaId] } : {}),
+      }),
+    );
+    if (uploader === "company") {
+      await t.run((ctx) => ctx.db.patch("disputes", disputeId, { evidenceMediaIds: [mediaId] }));
+    }
+    return { fixture, disputeId, mediaId };
+  }
+
+  test("the company reads evidence the creator uploaded", async () => {
+    const t = convexTest(schema, modules);
+    const { fixture, disputeId, mediaId } = await seedDisputeWithEvidence(t, "creator");
+
+    const upload = await t.run((ctx) =>
+      requireReadableDisputeEvidence(
+        ctx,
+        { role: "company", companyId: fixture.membership.companyId },
+        disputeId,
+        mediaId,
+      ),
+    );
+    expect(upload._id).toEqual(mediaId);
+  });
+
+  test("the creator reads evidence the company uploaded", async () => {
+    const t = convexTest(schema, modules);
+    const { fixture, disputeId, mediaId } = await seedDisputeWithEvidence(t, "company");
+
+    const upload = await t.run((ctx) =>
+      requireReadableDisputeEvidence(
+        ctx,
+        { role: "creator", creatorId: fixture.creatorId },
+        disputeId,
+        mediaId,
+      ),
+    );
+    expect(upload._id).toEqual(mediaId);
+  });
+
+  test("an unrelated creator reads nothing", async () => {
+    const t = convexTest(schema, modules);
+    const { disputeId, mediaId } = await seedDisputeWithEvidence(t, "creator");
+    const strangerId = await seedCreatorId(t, "evidence_stranger");
+
+    await expectApiError(
+      () =>
+        t.run((ctx) =>
+          requireReadableDisputeEvidence(
+            ctx,
+            { role: "creator", creatorId: strangerId },
+            disputeId,
+            mediaId,
+          ),
+        ),
+      "not_found",
+    );
+  });
+
+  test("a file the dispute no longer cites stops being readable", async () => {
+    const t = convexTest(schema, modules);
+    const { fixture, disputeId, mediaId } = await seedDisputeWithEvidence(t, "creator");
+    await t.run((ctx) => ctx.db.patch("disputes", disputeId, { evidenceMediaIds: [] }));
+
+    await expectApiError(
+      () =>
+        t.run((ctx) =>
+          requireReadableDisputeEvidence(
+            ctx,
+            { role: "creator", creatorId: fixture.creatorId },
+            disputeId,
+            mediaId,
+          ),
+        ),
+      "not_found",
     );
   });
 });

@@ -107,10 +107,16 @@ export const companyNavItems = [
   { id: "disputes", label: "Disputes", icon: RiAuctionLine, activeIcon: RiAuctionFill },
 ] as const satisfies readonly NavEntry<string>[];
 
-/** Operators have no pages of their own yet beyond home. */
-export const operatorNavItems: readonly NavEntry<string>[] = creatorNavItems.filter(
-  (item) => item.id === "home",
-);
+export const operatorNavItems = [
+  { id: "home", label: "Home", icon: RiHome4Line, activeIcon: RiHome4Fill, href: "/" },
+  {
+    id: "disputes",
+    label: "Disputes",
+    icon: RiAuctionLine,
+    activeIcon: RiAuctionFill,
+    href: "/disputes",
+  },
+] as const satisfies readonly NavEntry<string>[];
 
 /**
  * A nav of sidebar items. Items with an `href` are links and items without are

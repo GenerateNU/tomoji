@@ -1,16 +1,25 @@
 "use client";
 
-import { RiAlertLine, RiCloseLine, RiUploadCloud2Line } from "@remixicon/react";
+import {
+  RiAlertLine,
+  RiCheckLine,
+  RiCloseLine,
+  RiTimeLine,
+  RiUploadCloud2Line,
+} from "@remixicon/react";
 import { api } from "@convex/_generated/api";
 import type { Id } from "@convex/_generated/dataModel";
-import { useAction, useMutation } from "convex/react";
+import { useAction, useMutation, useQuery } from "convex/react";
+import type { FunctionReturnType } from "convex/server";
 import { useEffect, useId, useRef, useState, type FormEvent } from "react";
+import { ProgressRing } from "@/components/progress-ring";
 import { Button } from "@/components/ui/button";
 import { DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
 import { useMe } from "@/features/users/hooks/use-me";
 import { errorMessage } from "@/lib/errors";
 import { createMediaUpload, type MediaUploadPhase } from "@/lib/media-upload";
+import { aiReviewStatusLabel } from "./assignment-status";
 
 const VIDEO_TYPES = ["video/mp4", "video/quicktime", "video/webm"];
 const MAX_VIDEO_BYTES = 250 * 1024 * 1024;
@@ -22,6 +31,7 @@ type DraftComposerProps = {
   deliverableId: Id<"deliverables">;
   assignmentTitle: string;
   usesAiReview: boolean;
+  reviewId?: Id<"submissions">;
   previous?: {
     caption?: string;
     draftDescription: string;
@@ -29,7 +39,7 @@ type DraftComposerProps = {
     reviewNote?: string;
   };
   onCancel: () => void;
-  onSubmitted: () => void;
+  onSubmitted: (submissionId: Id<"submissions">) => void;
   onBusyChange: (busy: boolean) => void;
 };
 
@@ -40,6 +50,7 @@ export function DraftComposer({
   assignmentTitle,
   usesAiReview,
   previous,
+  reviewId,
   onCancel,
   onSubmitted,
   onBusyChange,
@@ -50,6 +61,13 @@ export function DraftComposer({
   const requestUpload = useAction(api.media.requestUpload);
   const completeUpload = useAction(api.media.completeUpload);
   const submit = useMutation(api.submissions.create);
+  const review = useQuery(api.submissions.get, reviewId ? { submissionId: reviewId } : "skip");
+  const reviewStage = review?.aiReview?.status;
+  const reviewing =
+    !review ||
+    (review.status === "pending" &&
+      !review.closedWithoutReview &&
+      (reviewStage === "ready" || reviewStage === "transcribing" || reviewStage === "evaluating"));
   const captionId = useId();
   const notesId = useId();
   const [caption, setCaption] = useState(previous?.caption ?? "");
@@ -61,6 +79,7 @@ export function DraftComposer({
   const [phase, setPhase] = useState<MediaUploadPhase | "submitting">();
   const upload = useRef<ReturnType<typeof createMediaUpload> | null>(null);
   const attempt = useRef<AbortController | null>(null);
+  const readOnly = phase !== undefined || reviewId !== undefined;
 
   useEffect(() => {
     return () => {
@@ -70,7 +89,7 @@ export function DraftComposer({
   useEffect(() => () => attempt.current?.abort(), []);
 
   function selectVideo(next?: File) {
-    if (!next || attempt.current) return;
+    if (!next || readOnly || attempt.current) return;
     if (!VIDEO_TYPES.includes(next.type) || next.size === 0 || next.size > MAX_VIDEO_BYTES) {
       setError("Choose a nonempty MP4, MOV, or WebM video up to 250 MiB.");
       return;
@@ -87,7 +106,7 @@ export function DraftComposer({
 
   async function submitDraft(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (attempt.current) return;
+    if (readOnly || attempt.current) return;
     const description = notes.trim();
     const text = caption.trim();
     const existingMedia = keepPreviousVideo ? previous?.mediaId : undefined;
@@ -107,14 +126,14 @@ export function DraftComposer({
         : existingMedia;
       controller.signal.throwIfAborted();
       setPhase("submitting");
-      await submit({
+      const submissionId = await submit({
         assignmentId,
         deliverableId,
         draftDescription: description,
         caption: text || undefined,
         mediaId,
       });
-      if (!controller.signal.aborted) onSubmitted();
+      if (!controller.signal.aborted) onSubmitted(submissionId);
     } catch (error) {
       if (!controller.signal.aborted) {
         setError(
@@ -160,7 +179,7 @@ export function DraftComposer({
             id={captionId}
             value={caption}
             maxLength={MAX_CAPTION_LENGTH}
-            disabled={!!phase}
+            disabled={readOnly}
             onChange={(event) => setCaption(event.target.value)}
             placeholder="Write the text you plan to post on X"
             className="min-h-[100px]"
@@ -183,7 +202,7 @@ export function DraftComposer({
             type="file"
             aria-label="Choose video file"
             accept={VIDEO_TYPES.join(",")}
-            disabled={!!phase}
+            disabled={readOnly}
             hidden
             onChange={(event) => {
               selectVideo(event.target.files?.[0]);
@@ -192,27 +211,30 @@ export function DraftComposer({
           />
           {file && previewUrl ? (
             <div className="relative">
-              <VideoPreview url={previewUrl} label="Selected video" />
-              <Button
-                type="button"
-                variant="secondary"
-                size="icon-sm"
-                aria-label="Remove video"
-                className="absolute top-2 right-2"
-                disabled={!!phase}
-                onClick={() => {
-                  setFile(null);
-                  setPreviewUrl(undefined);
-                  upload.current = null;
-                }}
-              >
-                <RiCloseLine aria-hidden />
-              </Button>
+              <div className={readOnly ? "opacity-50" : undefined}>
+                <VideoPreview url={previewUrl} label="Selected video" />
+              </div>
+              {!readOnly && (
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="icon-sm"
+                  aria-label="Remove video"
+                  className="absolute top-2 right-2"
+                  onClick={() => {
+                    setFile(null);
+                    setPreviewUrl(undefined);
+                    upload.current = null;
+                  }}
+                >
+                  <RiCloseLine aria-hidden />
+                </Button>
+              )}
             </div>
           ) : (
             <button
               type="button"
-              disabled={!!phase}
+              disabled={readOnly}
               onClick={() => fileInput.current?.click()}
               className="flex min-h-28 w-full flex-col items-center justify-center gap-1 rounded-md border border-dashed border-gray-300 p-4 hover:bg-gray-25"
             >
@@ -226,7 +248,7 @@ export function DraftComposer({
               <input
                 type="checkbox"
                 checked={keepPreviousVideo}
-                disabled={!!phase}
+                disabled={readOnly}
                 onChange={(event) => setKeepPreviousVideo(event.target.checked)}
               />
               Reuse the previous video
@@ -241,7 +263,7 @@ export function DraftComposer({
             id={notesId}
             value={notes}
             maxLength={MAX_NOTES_LENGTH}
-            disabled={!!phase}
+            disabled={readOnly}
             onChange={(event) => setNotes(event.target.value)}
             placeholder="Tell the reviewer what you’re submitting"
             required
@@ -255,11 +277,17 @@ export function DraftComposer({
         )}
         <div className="grid grid-cols-2 gap-4">
           <Button type="button" variant="secondary-subtle" onClick={onCancel} disabled={!!phase}>
-            Cancel
+            {reviewId ? "Back to assignment" : "Cancel"}
           </Button>
-          <Button type="submit" disabled={!!phase}>
-            {phase ? submitLabel[phase] : "Submit for review"}
-          </Button>
+          {reviewId ? (
+            <Button type="button" disabled>
+              {reviewing ? "Reviewing…" : "Submitted"}
+            </Button>
+          ) : (
+            <Button type="submit" disabled={!!phase}>
+              {phase ? submitLabel[phase] : "Submit for review"}
+            </Button>
+          )}
         </div>
       </div>
       <aside className="space-y-6 bg-gray-50 p-5 md:p-8" aria-label="Post preview">
@@ -281,8 +309,16 @@ export function DraftComposer({
             <p className="text-body-sm text-gray-500">Your caption and video will appear here.</p>
           )}
         </div>
-        <p className="text-center text-body-xs text-gray-500">Preview</p>
-        {previous?.reviewNote && (
+        {reviewId ? (
+          <DraftReviewProgress
+            review={review}
+            reviewing={reviewing}
+            hasVideo={Boolean(file || (keepPreviousVideo && previous?.mediaId))}
+          />
+        ) : (
+          <p className="text-center text-body-xs text-gray-500">Preview</p>
+        )}
+        {!reviewId && previous?.reviewNote && (
           <div className="space-y-3 rounded-xl bg-gray-0 p-5 text-body-sm">
             <div className="flex items-center gap-2 font-medium">
               <RiAlertLine size={20} className="text-red-700" aria-hidden />
@@ -295,6 +331,68 @@ export function DraftComposer({
         )}
       </aside>
     </form>
+  );
+}
+
+type SubmittedDraft = FunctionReturnType<typeof api.submissions.get>;
+
+/** Displays the reported review stage beneath the preview of the submitted draft. */
+function DraftReviewProgress({
+  review,
+  reviewing,
+  hasVideo,
+}: {
+  review: SubmittedDraft | undefined;
+  reviewing: boolean;
+  hasVideo: boolean;
+}) {
+  const card = useRef<HTMLDivElement>(null);
+  useEffect(() => card.current?.focus(), []);
+
+  const status = review?.aiReview?.status;
+  const steps = (review ? review.mediaId !== undefined : hasVideo) ? 3 : 2;
+  const step = status === "evaluating" ? steps : status === "transcribing" ? 2 : 1;
+  const text = reviewing
+    ? aiReviewStatusLabel[status ?? "ready"]
+    : review?.status === "approved"
+      ? "Draft approved"
+      : review?.status === "changesRequested"
+        ? "Changes needed"
+        : review?.closedWithoutReview
+          ? "Closed without review"
+          : aiReviewStatusLabel.manualReview;
+  const Icon =
+    review?.status === "approved"
+      ? RiCheckLine
+      : review?.status === "changesRequested"
+        ? RiAlertLine
+        : RiTimeLine;
+
+  return (
+    <div ref={card} tabIndex={-1} className="flex items-center gap-4 rounded-xl bg-gray-0 p-5">
+      {reviewing ? (
+        <ProgressRing
+          value={((step - 1) / steps) * 100}
+          label="AI review progress"
+          aria-valuetext={`Step ${step} of ${steps}`}
+        />
+      ) : (
+        <Icon size={24} className="shrink-0 text-gray-700" aria-hidden />
+      )}
+      <div role="status" className="min-w-0 space-y-0.5">
+        <p className="font-medium">{text}</p>
+        {reviewing && (
+          <p className="text-body-sm text-gray-500">
+            Step {step} of {steps}
+          </p>
+        )}
+        {review && review.status !== "pending" && review.reviewNote && (
+          <p className="text-body-sm break-words whitespace-pre-wrap text-gray-700">
+            {review.reviewNote}
+          </p>
+        )}
+      </div>
+    </div>
   );
 }
 

@@ -8,7 +8,7 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogTrigger } from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
-import { submissionStatusLabel } from "./assignment-status";
+import { aiReviewStatusLabel, submissionStatusLabel } from "./assignment-status";
 import { DraftComposer } from "./draft-composer";
 
 type Submission = FunctionReturnType<typeof api.submissions.get>;
@@ -22,14 +22,6 @@ type Props = {
   submissionId?: Id<"submissions">;
   active: boolean;
 };
-
-const aiStatus = {
-  ready: "Queued for AI review",
-  transcribing: "Transcribing video",
-  evaluating: "Checking the draft against the brief",
-  manualReview: "Waiting for a human reviewer",
-  completed: "AI review complete",
-} satisfies Record<NonNullable<Submission["aiReview"]>["status"], string>;
 
 /** Shows the latest review and the draft actions available for this deliverable. */
 export function DeliverableSubmissions({
@@ -45,23 +37,29 @@ export function DeliverableSubmissions({
   const [composing, setComposing] = useState(startDraft);
   const [draftInFlight, setDraftInFlight] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
-  const [submittedFrom, setSubmittedFrom] = useState<Id<"submissions"> | null>();
+  const [submitted, setSubmitted] = useState<{
+    id: Id<"submissions">;
+    replaces: Id<"submissions"> | undefined;
+  }>();
+  const reviewId = usesAiReview && composing ? submitted?.id : undefined;
   const busy = submissionId !== undefined && latest === undefined;
   const canSubmit =
     active &&
     !busy &&
-    submittedFrom !== (submissionId ?? null) &&
+    (!submitted || submitted.replaces !== submissionId) &&
     (!latest || latest.status === "changesRequested");
 
   return (
     <div className="mt-3 space-y-3">
       {busy && <Skeleton aria-label="Loading review" className="h-10 w-full" />}
       {latest && <SubmissionFeedback submission={latest} />}
-      {(canSubmit || draftInFlight) && (
+      {(canSubmit || draftInFlight || reviewId) && (
         <Dialog
           open={composing}
           onOpenChange={(next) => {
-            if (!draftInFlight) setComposing(next);
+            if (draftInFlight) return;
+            if (next) setSubmitted(undefined);
+            setComposing(next);
           }}
           disablePointerDismissal
         >
@@ -79,11 +77,12 @@ export function DeliverableSubmissions({
               assignmentTitle={assignmentTitle}
               usesAiReview={usesAiReview}
               previous={latest?.status === "changesRequested" ? latest : undefined}
+              reviewId={reviewId}
               onCancel={() => setComposing(false)}
               onBusyChange={setDraftInFlight}
-              onSubmitted={() => {
-                setSubmittedFrom(submissionId ?? null);
-                setComposing(false);
+              onSubmitted={(id) => {
+                setSubmitted({ id, replaces: submissionId });
+                if (!usesAiReview) setComposing(false);
               }}
             />
           </DialogContent>
@@ -120,7 +119,7 @@ function SubmissionFeedback({ submission }: { submission: Submission }) {
             {submission.closedWithoutReview
               ? "Closed without review"
               : aiReview
-                ? aiStatus[aiReview.status]
+                ? aiReviewStatusLabel[aiReview.status]
                 : "Waiting for a reviewer"}
           </p>
         )}

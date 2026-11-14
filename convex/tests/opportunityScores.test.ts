@@ -177,7 +177,7 @@ describe("opportunities.discover", () => {
 
   test("pinned pages keep every brief exactly once when scores change between loads", async () => {
     const t = convexTest(schema, modules);
-    const ids = [];
+    const ids: Id<"opportunities">[] = [];
     for (const subject of ["pinned_a", "pinned_b", "pinned_c"]) {
       ids.push((await seedOpportunity(t, { subject })).opportunityId);
     }

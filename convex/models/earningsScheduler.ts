@@ -1,8 +1,10 @@
-import { v, type Infer } from "convex/values";
+import { ConvexError, v, type Infer } from "convex/values";
+import { internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import type { MutationCtx } from "../_generated/server";
 import { EARNING_PERIOD_MS, getEarningPeriod } from "../lib/earningsCalculator";
 import { apiError } from "../lib/errors";
+import { DAY_MS } from "../lib/time";
 import { settleEarnings } from "./earnings";
 import { getEarningsScheduleTiming } from "./earningsSchedules";
 
@@ -13,10 +15,73 @@ export const earningsScheduleRun = v.object({
 export type EarningsScheduleRun = Infer<typeof earningsScheduleRun>;
 
 const METRIC_RETRY_MS = 60 * 60_000;
+const MAX_METRIC_RETRY_MS = DAY_MS;
+// Stop automatic polling after this grace period, not the outstanding obligation.
+const METRIC_RECOVERY_GRACE_MS = 7 * DAY_MS;
 const EXECUTION_RETRY_MS = 60_000;
 const MAX_EXECUTION_ATTEMPTS = 5;
 // The default window has five periods. Bound work even for malformed/imported windows.
 const MAX_PERIODS = 64;
+
+const SAFE_FAILURE_REASONS = new Set([
+  "earning_calculation_duplicate",
+  "earning_period_invalid",
+  "payout_source_conflict",
+  "earning_schedule_timing_changed",
+  "amount_invalid",
+  "currency_invalid",
+  "post_assignment_mismatch",
+]);
+const SAFE_MISSING_RESOURCES = new Set([
+  "assignment",
+  "post",
+  "submission",
+  "deliverable_earnings",
+]);
+
+/** Persist only recognized categories; error messages and arbitrary detail may contain private data. */
+function settlementFailureCode(error: unknown): string {
+  const data =
+    error instanceof ConvexError && typeof error.data === "object" && error.data !== null
+      ? (error.data as Record<string, unknown>)
+      : {};
+  if (typeof data.reason === "string" && SAFE_FAILURE_REASONS.has(data.reason)) {
+    return `settlement_${data.reason}`;
+  }
+  if (
+    data.code === "not_found" &&
+    typeof data.resource === "string" &&
+    SAFE_MISSING_RESOURCES.has(data.resource)
+  ) {
+    return `settlement_${data.resource}_missing`;
+  }
+  if (data.code === "conflict" || data.code === "invalid_state" || data.code === "not_found") {
+    return `settlement_${data.code}`;
+  }
+  return "settlement_execution_failed";
+}
+
+/** Queue and claim commit together. A backlogged live job must not be queued again. */
+export async function queueEarningsWorker(
+  ctx: MutationCtx,
+  args: EarningsScheduleRun,
+): Promise<void> {
+  const schedule = await ctx.db.get("earningsSchedules", args.scheduleId);
+  if (schedule?.status !== "scheduled" || schedule.nextCheckAt !== args.expectedNextCheckAt) return;
+  if (schedule.queuedWorker?.expectedNextCheckAt === args.expectedNextCheckAt) {
+    const job = await ctx.db.system.get("_scheduled_functions", schedule.queuedWorker.jobId);
+    if (job?.state.kind === "pending" || job?.state.kind === "inProgress") return;
+  }
+  // Terminal or missing jobs no longer own the claim, so the next sweep can recover them.
+  const jobId = await ctx.scheduler.runAfter(
+    Math.max(0, args.expectedNextCheckAt - Date.now()),
+    internal.earningsSchedules.run,
+    args,
+  );
+  await ctx.db.patch("earningsSchedules", schedule._id, {
+    queuedWorker: { jobId, expectedNextCheckAt: args.expectedNextCheckAt },
+  });
+}
 
 /** Rechecks queued work against current scheduling state before making any writes. */
 async function runnableSchedule(ctx: MutationCtx, args: EarningsScheduleRun) {
@@ -39,6 +104,7 @@ async function parkSchedule(
   await ctx.db.patch("earningsSchedules", scheduleId, {
     status: "needsAttention",
     nextCheckAt: undefined,
+    queuedWorker: undefined,
     scan: undefined,
     lastAttemptedAt: Date.now(),
     lastError: reason,
@@ -120,6 +186,7 @@ export async function processEarningsSchedule(
         await ctx.db.patch("earningsSchedules", schedule._id, {
           status: "scheduled",
           nextCheckAt,
+          queuedWorker: undefined,
           scan: { nextPeriodIndex: periodIndex + 1, pendingMetrics, cutoffAt: timing.cutoffAt },
           lastAttemptedAt: now,
           lastAttemptedPeriodIndex: periodIndex,
@@ -130,16 +197,32 @@ export async function processEarningsSchedule(
       }
     }
   }
+  const metricRetryCount = pendingMetrics ? Math.min((schedule.metricRetryCount ?? 0) + 1, 6) : 0;
+  const metricDeadline = timing.cutoffAt + METRIC_RECOVERY_GRACE_MS;
+  if (pendingMetrics && now >= metricDeadline) {
+    return await parkSchedule(
+      ctx,
+      schedule._id,
+      "metric_evidence_unavailable",
+      lastAttemptedPeriodIndex,
+    );
+  }
+  const metricRetryMs = Math.min(
+    METRIC_RETRY_MS * 2 ** (metricRetryCount - 1),
+    MAX_METRIC_RETRY_MS,
+  );
   const nextCheckAt = pendingMetrics
-    ? Math.min(now + METRIC_RETRY_MS, nextBoundary ?? Infinity)
+    ? Math.min(now + metricRetryMs, nextBoundary ?? Infinity, metricDeadline)
     : nextBoundary;
   await ctx.db.patch("earningsSchedules", schedule._id, {
     status: nextCheckAt === undefined ? "complete" : "scheduled",
     nextCheckAt,
+    queuedWorker: undefined,
     scan: undefined,
     lastAttemptedAt: now,
     ...(lastAttemptedPeriodIndex === undefined ? {} : { lastAttemptedPeriodIndex }),
     retryCount: 0,
+    metricRetryCount,
     lastError: pendingMetrics ? "metric_evidence_missing" : undefined,
   });
   return null;
@@ -149,6 +232,7 @@ export async function processEarningsSchedule(
 export async function recordEarningsScheduleFailure(
   ctx: MutationCtx,
   args: EarningsScheduleRun,
+  error?: unknown,
 ): Promise<void> {
   const schedule = await runnableSchedule(ctx, args);
   if (schedule === null) return;
@@ -157,9 +241,10 @@ export async function recordEarningsScheduleFailure(
   await ctx.db.patch("earningsSchedules", schedule._id, {
     status: exhausted ? "needsAttention" : "scheduled",
     nextCheckAt: exhausted ? undefined : Date.now() + EXECUTION_RETRY_MS * 2 ** (retryCount - 1),
+    queuedWorker: undefined,
     retryCount,
     lastAttemptedAt: Date.now(),
-    lastError: "settlement_execution_failed",
+    lastError: settlementFailureCode(error),
   });
 }
 
@@ -172,6 +257,7 @@ export async function retryEarningsSchedule(ctx: MutationCtx, scheduleId: Id<"ea
     nextCheckAt: Date.now(),
     scan: undefined,
     retryCount: 0,
+    metricRetryCount: 0,
   });
   return (await ctx.db.get("earningsSchedules", scheduleId))!;
 }

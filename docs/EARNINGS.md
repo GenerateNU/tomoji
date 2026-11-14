@@ -220,7 +220,7 @@ retries, reverification, and replacement preserve an existing schedule unchanged
 `status` is `scheduled`, `needsAttention`, or `complete`. A scheduled row has
 `nextCheckAt`; parked rows omit it. The sweep uses `by_nextCheckAt`
 with `0 <= nextCheckAt <= sweepCutoff` to exclude parked rows and bound due work.
-`lastAttemptedAt`, `lastAttemptedPeriodIndex`, `retryCount`, and `lastError` retain
+`lastAttemptedAt`, `lastAttemptedPeriodIndex`, `retryCount`, `metricRetryCount`, and `lastError` retain
 attempt diagnostics. These fields do not establish that an earning was settled:
 a fixed-fee-only payout can still leave variable earnings pending. Initialization
 sets `retryCount` to zero.
@@ -264,6 +264,13 @@ minute. Each sweep reads at most 25 due schedules, queues a worker for each, and
 queues a continuation using the same cutoff and the next cursor. Missing metrics
 or failed work at the start of the index cannot prevent later rows from running.
 
+Queueing a worker and storing its `queuedWorker` claim commit atomically. Sweeps
+reuse a pending or running scheduled job for the same due token, even during a
+long backlog. A canceled, failed, completed, or missing job releases that claim
+for recovery on the next sweep; elapsed time alone never expires a live job.
+Continuations use the same claim mechanism. Claims are internal scheduling data,
+not evidence that any earning was settled.
+
 Each worker rereads its schedule and compares `expectedNextCheckAt` with the
 current value. Stale, early, completed, or parked work is a no-op. Each worker
 settles at most one period, then queues a continuation in a fresh transaction
@@ -284,21 +291,32 @@ at 3,500 queries, 8,000 document reads, 8 MiB read, and 2,000 document writes to
 headroom for failure recording. Windows with more than 64 weekly periods park
 with `earning_window_too_large`; the default window has five periods.
 
-| Outcome                                     | Schedule behavior                                                                                                                                |
-| ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| More due periods in the current pass        | Commit this period and continue in a separate scheduled transaction; retain pending-metric state.                                                |
-| Due periods recorded, future period remains | Check at the next canonical boundary.                                                                                                            |
-| Missing metric evidence                     | Retry after one hour, or at the next boundary if sooner; continue beyond day 30. A later supported settlement can cover earlier pending periods. |
-| All eligible periods settled                | Mark `complete` and clear `nextCheckAt`; zero increments do not create payouts.                                                                  |
-| Reconciliation or invalid source data       | Park as `needsAttention` with the domain reason; retain existing obligations.                                                                    |
-| Unexpected execution failure                | Record `settlement_execution_failed`; retry after 1, 2, 4, and 8 minutes, then park on the fifth failure.                                        |
+| Outcome                                     | Schedule behavior                                                                                                                                                                                                                 |
+| ------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| More due periods in the current pass        | Commit this period and continue in a separate scheduled transaction; retain pending-metric state.                                                                                                                                 |
+| Due periods recorded, future period remains | Check at the next canonical boundary.                                                                                                                                                                                             |
+| Missing metric evidence                     | Retry after 1, 2, 4, 8, and 16 hours, then daily, or at the next boundary if sooner. Seven days after the effective final cutoff, park as `needsAttention` with `metric_evidence_unavailable`. Pending amounts remain unresolved. |
+| All eligible periods settled                | Mark `complete` and clear `nextCheckAt`; zero increments do not create payouts.                                                                                                                                                   |
+| Reconciliation or invalid source data       | Park as `needsAttention` with the domain reason; retain existing obligations.                                                                                                                                                     |
+| Unexpected execution failure                | Record an allowlisted `settlement_*` failure category (generic `settlement_execution_failed` for unknown errors); retry after 1, 2, 4, and 8 minutes, then park on the fifth failure.                                             |
 
 After correcting the source problem, a trusted operator can invoke
 `internal.earningsSchedules.retry({ scheduleId })` through the selected deployment's
-internal tooling. It requeues the schedule immediately and resets the retry
-counter and scan cursor, preserving the earning clock, obligations, and attempt diagnostics.
+internal tooling. It requeues the schedule immediately and resets both retry
+counters and the scan cursor, preserving the earning clock, obligations, and attempt diagnostics.
 Successful processing clears the last error. Retrying does not itself repair an
 accounting conflict or refund an existing payout.
+
+The seven-day metric grace period is an operational retry limit, not a deadline
+for the creator's earnings. After it expires, record the missing evidence and use
+the internal retry operation to settle the remaining amount. A retry with evidence
+still missing parks again; it does not extend the original accrual window or
+declare unknown earnings zero. No raw exception messages, stack traces, or
+arbitrary error details are stored in schedule diagnostics.
+The current Convex SDK exposes platform-limit failures as untyped errors, so they
+retain the generic code alongside unexpected bugs. Use the scheduled-function
+runtime logs to investigate those cases; do not infer categories from arbitrary
+exception text.
 
 This runner uses stored metric evidence; it does not fetch X metrics. Exact
 boundary evidence remains a prerequisite for variable earnings. After deployment,

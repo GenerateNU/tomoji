@@ -4,6 +4,7 @@ import { internalMutation } from "./_generated/server";
 import {
   earningsScheduleRun,
   processEarningsSchedule,
+  queueEarningsWorker,
   recordEarningsScheduleFailure,
   retryEarningsSchedule,
   type EarningsScheduleRun,
@@ -23,7 +24,7 @@ export const sweep = internalMutation({
         schedule.nextCheckAt !== undefined &&
         Number.isSafeInteger(schedule.nextCheckAt)
       ) {
-        await ctx.scheduler.runAfter(0, internal.earningsSchedules.run, {
+        await queueEarningsWorker(ctx, {
           scheduleId: schedule._id,
           expectedNextCheckAt: schedule.nextCheckAt,
         });
@@ -64,14 +65,10 @@ export const run = internalMutation({
         },
       );
       if (continuation !== null) {
-        await ctx.scheduler.runAfter(
-          Math.max(0, continuation.expectedNextCheckAt - Date.now()),
-          internal.earningsSchedules.run,
-          continuation,
-        );
+        await queueEarningsWorker(ctx, continuation);
       }
-    } catch {
-      await recordEarningsScheduleFailure(ctx, args);
+    } catch (error) {
+      await recordEarningsScheduleFailure(ctx, args, error);
     }
     return null;
   },

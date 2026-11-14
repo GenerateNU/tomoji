@@ -1,7 +1,7 @@
 /// <reference types="vite/client" />
 import { convexTest } from "convex-test";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
-import { processEarningsSchedule } from "../../models/earningsScheduler";
+import { processEarningsSchedule, retryEarningsSchedule } from "../../models/earningsScheduler";
 import { cancelAssignment } from "../../models/assignments";
 import { recordPostRemoval } from "../../models/earningSources";
 import schema from "../../schema";
@@ -106,6 +106,69 @@ test("missing final metrics remain recoverable after day thirty", async () => {
     10_000, 1_000,
   ]);
 });
+
+test("missing metrics back off without delaying the next canonical boundary", async () => {
+  const t = convexTest(schema, modules);
+  const fixture = await seedScheduledEarnings(t);
+  vi.setSystemTime(START + 7 * DAY);
+  let pending = await run(t, fixture);
+  expect(pending.nextCheckAt).toBe(Date.now() + 60 * 60_000);
+  vi.setSystemTime(pending.nextCheckAt!);
+  pending = await run(t, fixture);
+  expect(pending.nextCheckAt).toBe(Date.now() + 2 * 60 * 60_000);
+  for (const hours of [4, 8, 16, 24, 24]) {
+    vi.setSystemTime(pending.nextCheckAt!);
+    pending = await run(t, fixture);
+    expect(pending.nextCheckAt).toBe(Date.now() + hours * 60 * 60_000);
+  }
+  vi.setSystemTime(START + 14 * DAY - 1);
+  pending = await run(t, fixture);
+  expect(pending.nextCheckAt).toBe(START + 14 * DAY);
+});
+
+test.each([3, 30])(
+  "missing metrics park seven days after the day-%i cutoff and remain recoverable",
+  async (cutoffDay) => {
+    const t = convexTest(schema, modules);
+    const fixture = await seedScheduledEarnings(t);
+    await fixture.snapshot(0, 0);
+    vi.setSystemTime(START + cutoffDay * DAY);
+    if (cutoffDay < 30) {
+      await t.run((ctx) =>
+        recordPostRemoval(ctx, {
+          postId: fixture.postId,
+          removedAt: START + cutoffDay * DAY,
+          sourceKey: "confirmed-removal",
+        }),
+      );
+    }
+    await run(t, fixture);
+    const before = await t.run((ctx) => ctx.db.query("payouts").take(3));
+    expect(before.map((payout) => payout.amount)).toEqual([10_000]);
+    vi.setSystemTime(START + (cutoffDay + 7) * DAY);
+    const parked = await run(t, fixture);
+    expect(parked).toMatchObject({
+      status: "needsAttention",
+      lastError: "metric_evidence_unavailable",
+    });
+    expect(parked.nextCheckAt).toBeUndefined();
+    // Waiting longer does not discard or silently complete the pending calculation.
+    expect(await t.run((ctx) => ctx.db.query("payouts").take(3))).toEqual(before);
+    expect(
+      (await t.run((ctx) => ctx.db.query("earningCalculations").take(10))).some(
+        (calculation) => calculation.status === "pendingMetrics",
+      ),
+    ).toBe(true);
+    vi.setSystemTime(START + (cutoffDay + 10) * DAY);
+    await fixture.snapshot(cutoffDay, 100);
+    await t.run((ctx) => retryEarningsSchedule(ctx, fixture.scheduleId));
+    const recovered = await run(t, fixture);
+    expect(recovered.status).toBe("complete");
+    const payouts = await t.run((ctx) => ctx.db.query("payouts").take(3));
+    expect(payouts.map((payout) => payout.amount)).toEqual([10_000, 1_000]);
+    expect(payouts[0]).toEqual(before[0]);
+  },
+);
 
 test("cancellation settles the accrued partial period even when the earlier payout is unpaid", async () => {
   const t = convexTest(schema, modules);

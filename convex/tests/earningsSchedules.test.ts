@@ -4,6 +4,7 @@ import { afterEach, expect, test, vi } from "vitest";
 import { v } from "convex/values";
 import { internal } from "../_generated/api";
 import { internalMutation } from "../_generated/server";
+import { apiError } from "../lib/errors";
 import { getDueEarningsSchedules } from "../models/earningsSchedules";
 import schema from "../schema";
 import {
@@ -78,6 +79,11 @@ test("overlapping sweeps and stale queued workers preserve one obligation and it
     t.mutation(internal.earningsSchedules.sweep, {}),
     t.mutation(internal.earningsSchedules.sweep, {}),
   ]);
+  expect(
+    (await t.run((ctx) => ctx.db.system.query("_scheduled_functions").take(10))).filter(
+      (job) => job.name === "earningsSchedules:run",
+    ),
+  ).toHaveLength(1);
   await t.finishAllScheduledFunctions(vi.runAllTimers);
   const payouts = await t.run((ctx) => ctx.db.query("payouts").take(2));
   expect(payouts).toHaveLength(1);
@@ -94,6 +100,39 @@ test("overlapping sweeps and stale queued workers preserve one obligation and it
   expect(await t.run((ctx) => ctx.db.get("earningsSchedules", fixture.scheduleId))).toMatchObject({
     status: "complete",
     lastAttemptedPeriodIndex: 4,
+  });
+});
+
+test("repeated sweeps claim one queued worker while the scheduler is backlogged", async () => {
+  const t = convexTest(schema, modules);
+  vi.useFakeTimers();
+  vi.setSystemTime(START);
+  await seedScheduledEarnings(t, { cpmRateCents: 0 });
+  vi.setSystemTime(START + 7 * DAY);
+  await t.mutation(internal.earningsSchedules.sweep, {});
+  // A long scheduler backlog is not evidence that a pending job was abandoned.
+  vi.setSystemTime(START + 10 * DAY);
+  await t.mutation(internal.earningsSchedules.sweep, {});
+  const queued = await t.run((ctx) => ctx.db.system.query("_scheduled_functions").take(10));
+  expect(queued.filter((job) => job.name === "earningsSchedules:run")).toHaveLength(1);
+});
+
+test("a canceled claimed worker is recovered by the next sweep", async () => {
+  const t = convexTest(schema, modules);
+  vi.useFakeTimers();
+  vi.setSystemTime(START);
+  const fixture = await seedScheduledEarnings(t, { cpmRateCents: 0 });
+  vi.setSystemTime(START + 7 * DAY);
+  await t.mutation(internal.earningsSchedules.sweep, {});
+  const [abandoned] = await t.run((ctx) => ctx.db.system.query("_scheduled_functions").take(1));
+  await t.run((ctx) => ctx.scheduler.cancel(abandoned._id));
+  await t.mutation(internal.earningsSchedules.sweep, {});
+  const queued = await t.run((ctx) => ctx.db.system.query("_scheduled_functions").take(3));
+  expect(queued.filter((job) => job.state.kind === "pending")).toHaveLength(1);
+  await t.finishAllScheduledFunctions(vi.runAllTimers);
+  expect(await t.run((ctx) => ctx.db.query("payouts").take(2))).toHaveLength(1);
+  expect(await t.run((ctx) => ctx.db.get("earningsSchedules", fixture.scheduleId))).toMatchObject({
+    nextCheckAt: START + 14 * DAY,
   });
 });
 
@@ -159,6 +198,56 @@ test.each(["exception", "transaction limit", "query limit"])(
       lastError: expect.any(String),
     });
     expect(schedule!.nextCheckAt).toBeGreaterThan(Date.now());
+  },
+);
+
+test.each([
+  ["conflict", "settlement_payout_source_conflict"],
+  ["missing", "settlement_assignment_missing"],
+  ["unrecognized", "settlement_conflict"],
+  ["unexpected", "settlement_execution_failed"],
+] as const)(
+  "worker diagnostics classify %s errors without storing private details",
+  async (failure, expected) => {
+    vi.useFakeTimers();
+    vi.setSystemTime(START);
+    const t = convexTest({
+      schema,
+      modules: {
+        ...modules,
+        "../earningsSchedules.ts": async () => {
+          const original = await import("../earningsSchedules");
+          const { earningsScheduleRun, processEarningsSchedule } =
+            await import("../models/earningsScheduler");
+          return {
+            ...original,
+            process: internalMutation({
+              args: earningsScheduleRun.fields,
+              returns: v.union(earningsScheduleRun, v.null()),
+              handler: async (ctx, args) => {
+                await processEarningsSchedule(ctx, args);
+                const privateDetail = "private-account-details";
+                if (failure === "conflict")
+                  throw apiError("conflict", { reason: "payout_source_conflict", privateDetail });
+                if (failure === "missing")
+                  throw apiError("not_found", { resource: "assignment", privateDetail });
+                if (failure === "unrecognized")
+                  throw apiError("conflict", { reason: privateDetail });
+                throw new Error(privateDetail);
+              },
+            }),
+          };
+        },
+      },
+    });
+    const fixture = await seedScheduledEarnings(t, { cpmRateCents: 0 });
+    vi.setSystemTime(START + 7 * DAY);
+    await t.mutation(internal.earningsSchedules.sweep, {});
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    const schedule = await t.run((ctx) => ctx.db.get("earningsSchedules", fixture.scheduleId));
+    expect(schedule).toMatchObject({ status: "scheduled", retryCount: 1, lastError: expected });
+    expect(JSON.stringify(schedule)).not.toContain("private-account-details");
+    expect(await t.run((ctx) => ctx.db.query("payouts").take(1))).toEqual([]);
   },
 );
 

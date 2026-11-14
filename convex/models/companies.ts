@@ -1,8 +1,11 @@
+import { stream } from "convex-helpers/server/stream";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { apiError } from "../lib/errors";
 import { requireUrl } from "../lib/urls";
 import { requireCountry } from "./countries";
+import { withRowsReadCap } from "../lib/pagination";
 import { requireNonBlank } from "../lib/validation";
+import schema from "../schema";
 import { Doc, Id } from "../_generated/dataModel";
 import { PaginationOptions, PaginationResult } from "convex/server";
 
@@ -31,17 +34,30 @@ export async function requireCompany(
  */
 export async function listCompanies(
   ctx: QueryCtx,
-  options: { isActive?: boolean; paginationOpts: PaginationOptions },
+  options: { isActive?: boolean; search?: string; paginationOpts: PaginationOptions },
 ): Promise<PaginationResult<Doc<"companies">>> {
-  const isActive = options.isActive;
-  if (isActive === undefined) {
-    return await ctx.db.query("companies").paginate(options.paginationOpts);
+  const { isActive, paginationOpts } = options;
+  const search = options.search?.trim().toLowerCase();
+
+  // Unsearched, this paginates the index directly, so the cursor and `isDone`
+  // behave like any other feed; searching trades that for a capped scan.
+  if (search === undefined || search === "") {
+    const companies = ctx.db.query("companies");
+    return await (
+      isActive === undefined
+        ? companies
+        : companies.withIndex("by_isActive", (q) => q.eq("isActive", isActive))
+    ).paginate(paginationOpts);
   }
 
-  return await ctx.db
-    .query("companies")
-    .withIndex("by_isActive", (q) => q.eq("isActive", isActive))
-    .paginate(options.paginationOpts);
+  const companies = stream(ctx.db, schema).query("companies");
+  return await (
+    isActive === undefined
+      ? companies
+      : companies.withIndex("by_isActive", (q) => q.eq("isActive", isActive))
+  )
+    .map(async (company) => (company.name.toLowerCase().includes(search) ? company : null))
+    .paginate(withRowsReadCap(paginationOpts));
 }
 
 /**

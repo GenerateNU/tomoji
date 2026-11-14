@@ -2,9 +2,9 @@
 
 import { api } from "@convex/_generated/api";
 import type { Doc, Id } from "@convex/_generated/dataModel";
-import { useQuery } from "convex/react";
+import { usePaginatedQuery, useQuery } from "convex/react";
 import { RiArrowLeftLine, RiPencilLine } from "@remixicon/react";
-import { useState, type ComponentProps, type ReactNode } from "react";
+import { useState, type ComponentProps } from "react";
 import { Banner } from "@/components/banner";
 import { ErrorBoundary } from "@/components/error-boundary";
 import { Modal } from "@/components/modal";
@@ -16,10 +16,15 @@ import { useNow } from "@/hooks/use-now";
 import { errorCode } from "@/lib/errors";
 import { focusRing } from "@/lib/styles";
 import { cn } from "@/lib/utils";
+import { ApplicationsTab } from "./applications-tab";
+import { CreatorsTab } from "./creators-tab";
 import { DeliverableDetails } from "./deliverable-details";
 import { DeliverableForm } from "./deliverable-form";
 import { DeliverablesTab } from "./deliverables-tab";
 import { deliverableRules, type DeliverableRules } from "./lib/deliverable-rules";
+import { countLabel } from "./lib/status-labels";
+import { PAGE_SIZE, TabMessage } from "./paginated-table";
+import { SettingsTab } from "./settings-tab";
 
 export type CompanyOpportunityModalProps = {
   /** The opportunity to show. Null renders nothing and reads nothing. */
@@ -104,11 +109,19 @@ function OpportunityModalContent({
     opportunity ? { campaignId: opportunity.campaignId } : "skip",
   );
   const rows = useQuery(api.deliverables.list, { opportunityId });
-  // One row is enough to know whether a creator has ever joined, which locks edits.
-  const firstAssignment = useQuery(api.assignments.list, {
-    opportunityId,
-    paginationOpts: { numItems: 1, cursor: null },
-  });
+  // Backend assignments are creators' claims: the Creators tab, and whether
+  // any exist locks the opportunity's deliverables.
+  const creators = usePaginatedQuery(
+    api.assignments.list,
+    { opportunityId },
+    { initialNumItems: PAGE_SIZE },
+  );
+  const gated = opportunity?.isGated === true;
+  const applications = usePaginatedQuery(
+    api.applications.list,
+    gated ? { opportunityId } : "skip",
+    { initialNumItems: PAGE_SIZE },
+  );
   const now = useNow();
   const [view, setView] = useState<View>({ kind: "list" });
   const [tab, setTab] = useState("assignments");
@@ -152,7 +165,8 @@ function OpportunityModalContent({
     opportunityStatus: opportunity.status,
     campaignStatus: campaign.status,
     deadline: opportunity.deadline,
-    hasAssignments: firstAssignment === undefined ? undefined : firstAssignment.page.length > 0,
+    hasAssignments:
+      creators.status === "LoadingFirstPage" ? undefined : creators.results.length > 0,
     count: deliverables.length,
     now,
   });
@@ -242,6 +256,10 @@ function OpportunityModalContent({
   }
 
   const status = STATUS_TAG[opportunity.status];
+  const creatorCount = countLabel(creators.results.length, creators.status);
+  const applicationCount = opportunity.isGated
+    ? countLabel(applications.results.length, applications.status)
+    : undefined;
   return (
     <Modal
       {...common}
@@ -264,8 +282,14 @@ function OpportunityModalContent({
               Assignments <TabsCount>{deliverables.length}</TabsCount>
             </TabsTrigger>
             <TabsTrigger value="posting">Posting</TabsTrigger>
-            <TabsTrigger value="applications">Applications</TabsTrigger>
-            <TabsTrigger value="creators">Creators</TabsTrigger>
+            <TabsTrigger value="applications">
+              Applications
+              {applicationCount !== undefined ? <TabsCount>{applicationCount}</TabsCount> : null}
+            </TabsTrigger>
+            <TabsTrigger value="creators">
+              Creators
+              {creatorCount !== undefined ? <TabsCount>{creatorCount}</TabsCount> : null}
+            </TabsTrigger>
             <TabsTrigger value="settings">Settings</TabsTrigger>
           </TabsList>
           <TabPanel value="assignments">
@@ -281,16 +305,35 @@ function OpportunityModalContent({
             />
           </TabPanel>
           <TabPanel value="posting">
-            <ComingSoon>Posting arrives in a later update.</ComingSoon>
+            {/* Posts are listed per creator assignment or per campaign; there's no
+                per-opportunity list to show yet. */}
+            <TabMessage title="Posting is coming soon">
+              Posts from creators on this opportunity will show up here.
+            </TabMessage>
           </TabPanel>
           <TabPanel value="applications">
-            <ComingSoon>Applications arrive in a later update.</ComingSoon>
+            <ApplicationsTab
+              isGated={opportunity.isGated}
+              results={applications.results}
+              status={applications.status}
+              loadMore={() => applications.loadMore(PAGE_SIZE)}
+              now={now}
+            />
           </TabPanel>
           <TabPanel value="creators">
-            <ComingSoon>Creators arrive in a later update.</ComingSoon>
+            <CreatorsTab
+              results={creators.results}
+              status={creators.status}
+              loadMore={() => creators.loadMore(PAGE_SIZE)}
+            />
           </TabPanel>
           <TabPanel value="settings">
-            <ComingSoon>Settings arrive in a later update.</ComingSoon>
+            <SettingsTab
+              opportunity={opportunity}
+              campaignStatus={campaign.status}
+              onEdit={onEdit}
+              onRemoved={() => onOpenChange(false)}
+            />
           </TabPanel>
         </Tabs>
       </div>
@@ -310,10 +353,6 @@ function TabPanel({ className, ...props }: ComponentProps<typeof TabsContent>) {
       {...props}
     />
   );
-}
-
-function ComingSoon({ children }: { children: ReactNode }) {
-  return <p className="py-16 text-center text-body text-gray-500">{children}</p>;
 }
 
 function BackButton({ onClick, autoFocus }: { onClick: () => void; autoFocus: boolean }) {

@@ -5,8 +5,9 @@ import { useSyncExternalStore } from "react";
 /**
  * An in-memory stand-in for the company opportunity modal's backend; no
  * deployment involved. Mutations change the rows and re-render subscribers.
- * Query flags: ?loading, ?empty, ?locked (a creator has joined), ?ai (AI
- * review on), ?closed, ?missing (the opportunity read fails), ?fail (writes fail).
+ * Query flags: ?loading, ?empty, ?locked (creators have joined), ?gated (takes
+ * applications), ?ai (AI review on), ?draft, ?paused, ?closed, ?missing (the
+ * opportunity read fails), ?fail (writes fail).
  */
 const DAY = 86_400_000;
 const now = Date.now();
@@ -23,6 +24,8 @@ type Deliverable = {
   reviewCriteria?: Criterion[];
 };
 
+const STATUS = ["draft", "paused", "closed"].find((status) => flags.has(status)) ?? "open";
+
 const OPPORTUNITY = {
   _id: "opportunity1",
   _creationTime: now - 20 * DAY,
@@ -32,17 +35,18 @@ const OPPORTUNITY = {
   title: "Anthropic Opus 5.5 – Web Dev",
   description:
     "Join our Web Development opportunity to showcase how Claude Opus 5.5 can streamline building modern web applications. We're looking for developers and tech creators to build a functional web app using Claude, then share the process with their audience on X.",
-  isGated: false,
+  isGated: flags.has("gated"),
   usesAiReviewDefault: flags.has("ai"),
   maxSlots: 10,
-  numFilledSlots: flags.has("locked") ? 1 : 0,
+  numFilledSlots: flags.has("locked") ? 4 : 0,
   deadline: now + 30 * DAY,
-  status: flags.has("closed") ? "closed" : "open",
+  status: STATUS,
   fixedFeeCents: 50_000,
   cpmRateCents: 1_500,
   paymentCapCents: 300_000,
-  contentRequirements: "One original X post.",
-  reviewPolicy: "Must show the finished app.",
+  contentRequirements:
+    "1. Create an original X post or thread showcasing a functional web application built using Claude Opus 5.5.\n2. Highlight how Claude assisted with coding, debugging, UI design, or feature development.\n3. Include screenshots or a short demo video demonstrating the application's functionality.\n4. Tag @claudeai, include relevant hashtags, and disclose sponsored content appropriately.",
+  reviewPolicy: "The post must show the finished app and disclose the sponsorship.",
   niches: ["tech"],
   skills: ["coding"],
   languages: ["english"],
@@ -87,6 +91,68 @@ let deliverables: Deliverable[] = flags.has("empty")
       },
     ];
 
+const PEOPLE = [
+  ["Brittany", "Broski"],
+  ["Julia", "Rowniewski"],
+  ["Jake", "Shane"],
+  ["Marcus", "Lee"],
+  ["Priya", "Nair"],
+  ["Sam", "Ortiz"],
+] as const;
+const NOTES = [
+  "Building a website with Opus, start to finish",
+  "Portfolio building with Opus",
+  "How to Web Dev using Opus",
+  "Shipping a landing page in an afternoon",
+  undefined,
+  "Debugging live with Opus",
+];
+const APPLICATION_STATUSES = ["pending", "pending", "offered", "pending", "rejected", "accepted"];
+const HOURS = [1, 3, 48, 72, 96, 120];
+
+const APPLICATIONS = PEOPLE.map((_, index) => ({
+  _id: `application${index}`,
+  _creationTime: now - HOURS[index] * 3_600_000,
+  opportunityId: "opportunity1",
+  creatorId: `creator${index}`,
+  companyId: "company1",
+  note: NOTES[index],
+  status: APPLICATION_STATUSES[index],
+}));
+
+const ASSIGNMENT_STATUSES = ["active", "termsPending", "completed", "cancelled"];
+const ASSIGNMENTS = ASSIGNMENT_STATUSES.map((status, index) => ({
+  _id: `assignment${index}`,
+  _creationTime: now - (index + 1) * 2 * DAY,
+  opportunityId: "opportunity1",
+  creatorId: `creator${index}`,
+  companyId: "company1",
+  campaignId: "campaign1",
+  fixedFeeCents: index === 3 ? 40_000 : 50_000,
+  cpmRateCents: 1_500,
+  paymentCapCents: 300_000,
+  usesAiReview: false,
+  status,
+}));
+
+function creator(creatorId: string) {
+  const index = Number(creatorId.replace("creator", ""));
+  // One profile the company can't read, to show the row fallback.
+  if (index === 5 && flags.has("hidden")) throw new ConvexError({ code: "not_found" });
+  const [firstName, lastName] = PEOPLE[index];
+  return {
+    creatorId,
+    joinedAt: now - 100 * DAY,
+    firstName,
+    lastName,
+    email: `${firstName.toLowerCase()}@example.com`,
+    additionalLinks: [],
+    niches: [],
+    skills: [],
+    languages: [],
+  };
+}
+
 let version = 0;
 const listeners = new Set<() => void>();
 function changed() {
@@ -113,14 +179,9 @@ function read(name: string, args: Record<string, unknown>): unknown {
       return CAMPAIGN;
     case "deliverables:list":
       return deliverables;
-    case "assignments:list":
-      return {
-        page: flags.has("locked") ? [{ _id: "assignment1" }] : [],
-        isDone: true,
-        continueCursor: "",
-      };
+    case "creators:get":
+      return creator(args.creatorId as string);
     default:
-      void args;
       return undefined;
   }
 }
@@ -135,8 +196,20 @@ export function useQuery(reference: FunctionReference<"query">, args?: unknown) 
   return read(getFunctionName(reference), (args ?? {}) as Record<string, unknown>);
 }
 
-export function usePaginatedQuery() {
-  return { results: [], status: "Exhausted", loadMore() {} };
+export function usePaginatedQuery(reference: FunctionReference<"query">, args: unknown) {
+  useSyncExternalStore(subscribe, () => version);
+  if (args === "skip" || flags.has("loading")) {
+    return { results: [], status: "LoadingFirstPage", loadMore() {} };
+  }
+  const results =
+    getFunctionName(reference) === "assignments:list"
+      ? flags.has("locked")
+        ? ASSIGNMENTS
+        : []
+      : getFunctionName(reference) === "applications:list" && !flags.has("empty")
+        ? APPLICATIONS
+        : [];
+  return { results, status: "Exhausted", loadMore() {} };
 }
 
 export function useMutation(reference: FunctionReference<"mutation">) {
@@ -173,6 +246,18 @@ export function useMutation(reference: FunctionReference<"mutation">) {
         deliverables = deliverables.filter((row) => row._id !== args.deliverableId);
         changed();
         return null;
+      case "opportunities:pause":
+      case "opportunities:resume":
+      case "opportunities:publish":
+      case "opportunities:close":
+        OPPORTUNITY.status = {
+          "opportunities:pause": "paused",
+          "opportunities:resume": "open",
+          "opportunities:publish": "open",
+          "opportunities:close": "closed",
+        }[name];
+        changed();
+        return OPPORTUNITY;
       default:
         return null;
     }

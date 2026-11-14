@@ -9,7 +9,7 @@ import { submissionShapes } from "../schemas/submissions.schema";
 import { requireAssignment, requireActiveAssignment, type AssignmentViewer } from "./assignments";
 import { creatorName, notifyCompanyUser, notifyCreator } from "./notifications";
 import { requireSubmissionVideo } from "./media";
-import { criterionResult, type aiReviewResult } from "../lib/ai/validation";
+import { criterionResult, reviewCriterion, type aiReviewResult } from "../lib/ai/validation";
 import { decideAiReview, AI_REVIEW_MAX_DURATION_SECONDS } from "../lib/ai/reviewPolicy";
 import { env } from "../_generated/server";
 import {
@@ -56,6 +56,7 @@ export const submissionView = v.union(
       v.object({
         status: aiReviewAttemptsTable.validator.fields.status,
         results: v.array(criterionResult.pick("criterionId", "outcome")),
+        failedCriteria: v.optional(v.array(reviewCriterion)),
       }),
     ),
   }),
@@ -344,7 +345,7 @@ export async function listSubmissions(
   };
 }
 
-/** Projects processing state and criterion outcomes; raw provider evidence stays internal. */
+/** Projects processing state, outcomes, and the criteria the AI asked the creator to fix. */
 async function withAiReviewSummary(ctx: QueryCtx, view: SubmissionView): Promise<SubmissionView> {
   if (!view.usesAiReview) return view;
   const attempt = await ctx.db
@@ -353,17 +354,27 @@ async function withAiReviewSummary(ctx: QueryCtx, view: SubmissionView): Promise
     .order("desc")
     .first();
   if (!attempt) return view;
-  return {
-    ...view,
-    aiReview: {
-      status:
-        attempt.status !== "completed" && (env.AI_REVIEW_ENABLED !== "true" || !attempt.workflowId)
-          ? "manualReview"
-          : attempt.status,
-      results:
-        attempt.result?.results.map(({ criterionId, outcome }) => ({ criterionId, outcome })) ?? [],
-    },
+  const aiReview: NonNullable<SubmissionView["aiReview"]> = {
+    status:
+      attempt.status !== "completed" && (env.AI_REVIEW_ENABLED !== "true" || !attempt.workflowId)
+        ? "manualReview"
+        : attempt.status,
+    results:
+      attempt.result?.results.map(({ criterionId, outcome }) => ({ criterionId, outcome })) ?? [],
   };
+  if (
+    view.status === "changesRequested" &&
+    view.reviewerType === "ai" &&
+    attempt.status === "completed"
+  ) {
+    const failedIds = new Set(
+      aiReview.results
+        .filter(({ outcome }) => outcome === "not_met")
+        .map(({ criterionId }) => criterionId),
+    );
+    aiReview.failedCriteria = attempt.criteria.filter(({ id }) => failedIds.has(id));
+  }
+  return { ...view, aiReview };
 }
 
 type Reviewer =

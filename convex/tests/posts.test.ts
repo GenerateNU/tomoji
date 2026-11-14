@@ -446,3 +446,113 @@ describe("posts.checkCaption", () => {
     expect(fetch).not.toHaveBeenCalled();
   });
 });
+
+describe("posts.checkMyCaption", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+  });
+
+  async function seedCaptionPost(t: TestConvex, hasVideo: boolean) {
+    const { fixture, postId, submissionId } = await seedPost(t);
+    await t.run(async (ctx) => {
+      const submission = await ctx.db.get("submissions", submissionId);
+      if (!submission) throw new Error("Expected an approved submission");
+      await ctx.db.patch("submissions", submissionId, {
+        caption: "Café #ad\nhttps://example.com/launch",
+        mediaId: hasVideo ? submission.mediaId : undefined,
+      });
+      await ctx.db.insert("xAccounts", {
+        creatorId: fixture.creatorId,
+        xUserId: "100",
+        username: "driftwood_dev",
+        displayName: "Driftwood",
+        linkedAt: Date.now(),
+        updatedAt: Date.now(),
+        status: "connected",
+      });
+    });
+    return { fixture, postId };
+  }
+
+  function stubLookup(fields: Record<string, unknown> = {}) {
+    vi.stubEnv("X_BEARER_TOKEN", "fixture-token");
+    const lookup = vi.fn().mockResolvedValue(
+      Response.json({
+        data: {
+          id: POST_URL.split("/").at(-1),
+          text: "Cafe\u0301 #ad\r\nhttps://t.co/link",
+          entities: {
+            urls: [{ url: "https://t.co/link", expanded_url: "https://example.com/launch" }],
+          },
+          author_id: "100",
+          created_at: new Date(Math.floor(Date.now() / 1000) * 1000).toISOString(),
+          ...fields,
+        },
+      }),
+    );
+    vi.stubGlobal("fetch", lookup);
+    return lookup;
+  }
+
+  test("verifies an owned caption-only match once and records X's publish time", async () => {
+    const t = convexTest(schema, modules);
+    const { fixture, postId } = await seedCaptionPost(t, false);
+    const lookup = stubLookup();
+
+    expect(await fixture.asCreator.action(api.posts.checkMyCaption, { postId })).toEqual({
+      status: "match",
+    });
+    expect(await fixture.asCreator.action(api.posts.checkMyCaption, { postId })).toEqual({
+      status: "alreadyChecked",
+    });
+    const post = await fixture.asCreator.query(api.posts.get, { postId });
+    expect(post).toMatchObject({
+      isVerified: true,
+      captionCheck: "match",
+      postedAt: expect.any(Number),
+    });
+    expect(lookup).toHaveBeenCalledTimes(1);
+  });
+
+  test("keeps a matching video draft unverified", async () => {
+    const t = convexTest(schema, modules);
+    const { fixture, postId } = await seedCaptionPost(t, true);
+    stubLookup();
+
+    expect(await fixture.asCreator.action(api.posts.checkMyCaption, { postId })).toEqual({
+      status: "match",
+    });
+    expect(await fixture.asCreator.query(api.posts.get, { postId })).toMatchObject({
+      captionCheck: "match",
+      isVerified: false,
+    });
+  });
+
+  test("does not verify another X account's identical caption", async () => {
+    const t = convexTest(schema, modules);
+    const { fixture, postId } = await seedCaptionPost(t, false);
+    stubLookup({ author_id: "200" });
+
+    expect(await fixture.asCreator.action(api.posts.checkMyCaption, { postId })).toEqual({
+      status: "mismatch",
+      publishedCaption: "Café #ad\r\nhttps://example.com/launch",
+    });
+    expect(await fixture.asCreator.query(api.posts.get, { postId })).toMatchObject({
+      isVerified: false,
+    });
+  });
+
+  test("does not call X for someone else's post or for a video without a caption", async () => {
+    const t = convexTest(schema, modules);
+    const { fixture, postId } = await seedPost(t);
+    const other = await seedUser(t, { subject: "other-caption-caller" });
+    const lookup = stubLookup();
+
+    await expectApiError(() => other.action(api.posts.checkMyCaption, { postId }), "not_found");
+    expect(await fixture.asCreator.action(api.posts.checkMyCaption, { postId })).toEqual({
+      status: "manualReview",
+    });
+    expect(lookup).not.toHaveBeenCalled();
+  });
+});

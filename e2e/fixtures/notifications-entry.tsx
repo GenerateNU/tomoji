@@ -1,6 +1,7 @@
 import { Component, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { NotificationsInbox } from "@/features/notifications/components/notifications-inbox";
+import { NotificationBell } from "@/features/notifications/components/notifications-panel";
 import ProtectedError from "@/app/(protected)/error";
 import { fixture } from "./notifications-convex";
 
@@ -31,6 +32,12 @@ class Boundary extends Component<{ children: ReactNode }, { error: Error | null 
 }
 createRoot(document.getElementById("root")!).render(
   <Boundary>
-    <NotificationsInbox />
+    {new URLSearchParams(location.search).get("view") === "panel" ? (
+      <div className="flex justify-end p-4">
+        <NotificationBell />
+      </div>
+    ) : (
+      <NotificationsInbox />
+    )}
   </Boundary>,
 );

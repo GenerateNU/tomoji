@@ -11,7 +11,7 @@ import { cn } from "@/lib/utils";
 // the header and rows for a ruled table.
 type SortDirection = "ascending" | "descending";
 
-const cardClassName = "relative w-full overflow-x-auto rounded-lg bg-gray-0 p-6 shadow-card";
+const cardClassName = "relative w-full overflow-x-auto rounded-lg bg-gray-0 p-4 shadow-card md:p-6";
 
 /** A table inside a white card. Pass `bare` when a TableCard already supplies the card. */
 function Table({
@@ -35,25 +35,38 @@ function Table({
 
 /**
  * A white card with a title and count above a table, e.g. "Offers (4)".
- * `className` styles the card; other props go to the table.
+ * `className` styles the card; other props go to the table. `bare` drops the
+ * card's background, shadow, and padding, for a page that is already white.
  */
 function TableCard({
   title,
   count,
+  hideTitle = false,
+  bare = false,
   className,
   children,
   ...props
 }: Omit<React.ComponentProps<"table">, "title"> & {
+  /** Renders without the card treatment. */
+  bare?: boolean;
   title: React.ReactNode;
   /** Shown in gray after the title, as (4). */
   count?: number | string;
+  /** Keeps the title for screen readers only, when a tab or heading already names the table. */
+  hideTitle?: boolean;
 }) {
   const titleId = React.useId();
   return (
-    <div data-slot="table-card" className={cn("flex flex-col gap-4", cardClassName, className)}>
+    <div
+      data-slot="table-card"
+      className={cn("flex flex-col gap-4", !bare && cardClassName, className)}
+    >
       <div
         id={titleId}
-        className="flex items-center gap-1.5 text-body-lg font-medium text-gray-950"
+        className={cn(
+          "flex items-center gap-1.5 text-body-lg font-medium text-gray-950",
+          hideTitle && "sr-only",
+        )}
       >
         {title}
         {count !== undefined && <span className="text-gray-500">({count})</span>}

@@ -61,6 +61,15 @@ Company review is blocked while an enabled workflow is processing; fallback and
 disabled automation permit company review. Existing operator override
 behavior is unchanged.
 
+## Published X post check
+
+After approval, creators can save the published link. Tomoji compares the linked
+account and normalized caption through the X API. A matching caption-only post
+with no attached or referenced content may verify automatically. Video drafts
+and other posts that need content verification remain unverified until an operator
+reviews them. A lookup failure leaves the link saved and can be retried. Set
+`X_BEARER_TOKEN` on Convex to enable the lookup for connected accounts.
+
 ## Recovery and limits
 
 The workflow component permits five concurrent steps, not five concurrent provider

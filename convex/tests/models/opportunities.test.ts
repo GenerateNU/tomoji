@@ -195,11 +195,11 @@ describe("closeExpiredOpportunities", () => {
     const t = convexTest(schema, modules);
     const owner = await seedOpportunity(t, { subject: "deadline_owner" });
     vi.advanceTimersByTime(86_400_000);
-    expect(await t.run(async (ctx) => await closeExpiredOpportunities(ctx))).toBe(false);
+    expect((await t.run(async (ctx) => await closeExpiredOpportunities(ctx))).hasMore).toBe(false);
     const first = await t.run(
       async (ctx) => await ctx.db.get("opportunities", owner.opportunityId),
     );
-    expect(await t.run(async (ctx) => await closeExpiredOpportunities(ctx))).toBe(false);
+    expect((await t.run(async (ctx) => await closeExpiredOpportunities(ctx))).hasMore).toBe(false);
     expect(
       await t.run(async (ctx) => await ctx.db.get("opportunities", owner.opportunityId)),
     ).toEqual(first);
@@ -217,7 +217,7 @@ describe("closeExpiredOpportunities", () => {
         }),
     );
     vi.setSystemTime(deadline);
-    expect(await t.run(async (ctx) => await closeExpiredOpportunities(ctx))).toBe(false);
+    expect((await t.run(async (ctx) => await closeExpiredOpportunities(ctx))).hasMore).toBe(false);
     expect(
       await t.run(async (ctx) => await ctx.db.get("opportunities", owner.opportunityId)),
     ).toEqual({ ...updated, niches: undefined, skills: undefined, languages: undefined });
@@ -255,7 +255,7 @@ describe("closeExpiredOpportunities", () => {
     });
     vi.advanceTimersByTime(1_800_000);
 
-    expect(await t.run(async (ctx) => await closeExpiredOpportunities(ctx))).toBe(false);
+    expect((await t.run(async (ctx) => await closeExpiredOpportunities(ctx))).hasMore).toBe(false);
 
     expect(
       await t.run(async (ctx) => await ctx.db.get("opportunities", owner.opportunityId)),

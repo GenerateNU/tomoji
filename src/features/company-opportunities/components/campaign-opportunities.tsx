@@ -28,6 +28,7 @@ import {
   opportunityTiming,
   type OpportunityTab,
 } from "../lib/opportunity-status";
+import { CompanyOpportunityModal } from "../modal/opportunity-modal";
 import { EditOpportunityModal } from "./edit-opportunity-modal";
 import { OpportunityActions } from "./opportunity-actions";
 
@@ -48,12 +49,10 @@ const EMPTY_COPY: Record<OpportunityTab, string> = {
 export function CampaignOpportunities({
   campaignId,
   canCreate,
-  onOpen,
 }: {
   campaignId: Id<"campaigns">;
   /** False while the campaign loads, and once it has ended. */
   canCreate: boolean;
-  onOpen: (opportunityId: Id<"opportunities">) => void;
 }) {
   const [tab, setTab] = useState<OpportunityTab>("open");
   const [view, setView] = useState<"grid" | "list">("grid");
@@ -68,6 +67,13 @@ export function CampaignOpportunities({
   const [editing, setEditing] = useState<Id<"opportunities"> | null>(null);
   const edit = (opportunityId: Id<"opportunities">) => setEditing(opportunityId);
   const editingTitle = results.find((opportunity) => opportunity._id === editing)?.title ?? "";
+  // Kept after closing so the pop-up keeps its content while it animates out.
+  const [viewing, setViewing] = useState<Id<"opportunities"> | null>(null);
+  const [viewOpen, setViewOpen] = useState(false);
+  const onOpen = (opportunityId: Id<"opportunities">) => {
+    setViewing(opportunityId);
+    setViewOpen(true);
+  };
 
   return (
     <div className="flex min-w-0 flex-1 flex-col gap-8 px-4 py-10 sm:px-10 lg:px-12 lg:py-12">
@@ -191,6 +197,16 @@ export function CampaignOpportunities({
         </Button>
       )}
 
+      <CompanyOpportunityModal
+        opportunityId={viewing}
+        open={viewOpen}
+        onOpenChange={setViewOpen}
+        onEdit={() => {
+          // One dialog at a time: the editor replaces the pop-up.
+          setViewOpen(false);
+          setEditing(viewing);
+        }}
+      />
       <EditOpportunityModal
         opportunityId={editing}
         title={editingTitle}

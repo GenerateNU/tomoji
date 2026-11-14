@@ -91,8 +91,6 @@ function Dashboard({ campaignId }: { campaignId: Id<"campaigns"> }) {
         campaignId={campaignId}
         // Opportunities can only be added while the campaign takes them.
         canCreate={campaign !== undefined && campaign.status !== "closed"}
-        // TODO: open the opportunity detail modal (features/company-opportunities/modal).
-        onOpen={() => {}}
       />
     </div>
   );

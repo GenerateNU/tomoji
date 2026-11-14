@@ -78,6 +78,7 @@ export const creatorNavItems = [
     label: "Assignments",
     icon: RiCheckboxMultipleLine,
     activeIcon: RiCheckboxMultipleFill,
+    href: "/assignments",
   },
   { id: "posts", label: "Posts", icon: RiPlayLargeLine, activeIcon: RiPlayLargeFill },
   { id: "earnings", label: "Earnings", icon: RiWallet3Line, activeIcon: RiWallet3Fill },

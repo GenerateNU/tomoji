@@ -181,9 +181,24 @@ niche or skill (named, not numbered, so edits between batches don't misdirect th
 Both read candidates through the `by_name_and_*Id` selection indexes, so cost grows
 with matches, not with every creator or opportunity; a brief that only sets a
 follower minimum has no selections to look up and isn't scored. Both skip users who
-aren't active creators and clear scores once the opportunity or creator drops out of
-discovery. Nothing calls them on edits yet, and `discover` doesn't read scores yet;
-both come next.
+aren't active creators. Open and paused briefs keep their scores, so pausing and
+resuming a brief or campaign needs no rescoring; drafts and closed briefs have none.
+
+Routes schedule the jobs after the write commits:
+
+- `opportunities.create` (open, with niches or skills), `publish`, and `update` of
+  niches, skills, or `minFollowerRange` rescore the opportunity.
+- `opportunities.close` and the deadline cron clear a closed brief's scores, when it
+  has any.
+- `creators.update` of niches, skills, or `followerRange` rescores the creator.
+
+Briefs published before scoring existed are scored by the
+`2026_11_14_score_open_opportunities` migration.
+
+`opportunities.discover` lists the caller's matches first, best first, then every
+other open brief by deadline. Its cursor is a JSON `[section, cursor]` pair that
+names which list it continues. Visibility (paused briefs or campaigns, inactive
+companies) is checked as the feed is read, so stale scores never show.
 
 ## Opportunity deliverables
 

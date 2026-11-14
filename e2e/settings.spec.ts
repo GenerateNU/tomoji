@@ -166,8 +166,7 @@ const picture = {
   ),
 };
 
-// Profile picture uploads are off for now; re-enable with UPLOADS_ENABLED in profile-picture-section.tsx.
-test.skip("choosing and discarding a picture only changes its local preview", async ({ page }) => {
+test("choosing and discarding a picture only changes its local preview", async ({ page }) => {
   await openSettings(page);
   await page.getByLabel("Choose profile picture").setInputFiles(picture);
   await expect(page.getByAltText("New profile picture preview")).toBeVisible();
@@ -180,8 +179,7 @@ test.skip("choosing and discarding a picture only changes its local preview", as
   expect(await page.evaluate(() => window.settingsFixture.calls)).toEqual([]);
 });
 
-// Profile picture uploads are off for now; re-enable with UPLOADS_ENABLED in profile-picture-section.tsx.
-test.skip("saving a picture posts its signed fields before completion; completion retries reuse that upload", async ({
+test("saving a picture posts its signed fields before completion; completion retries reuse that upload", async ({
   page,
 }) => {
   let postBody = "";
@@ -218,18 +216,15 @@ test.skip("saving a picture posts its signed fields before completion; completio
   ]);
 });
 
-test("picture uploads are marked as coming soon and cannot be chosen", async ({ page }) => {
+test("picture uploads state what they accept and can be chosen", async ({ page }) => {
   await openSettings(page);
   const section = page.getByRole("region", { name: "Profile picture" });
-  await expect(section.getByText("Profile picture uploads are coming soon.")).toBeVisible();
-  await expect(section.getByRole("button", { name: "Choose picture" })).toBeDisabled();
-  await expect(page.getByLabel("Choose profile picture")).toBeDisabled();
+  await expect(section.getByText("JPEG, PNG, or WebP. Up to 2 MB.")).toBeVisible();
+  await expect(section.getByRole("button", { name: /picture/ })).toBeEnabled();
+  await expect(page.getByLabel("Choose profile picture")).toBeEnabled();
 });
 
-// Profile picture uploads are off for now; re-enable with UPLOADS_ENABLED in profile-picture-section.tsx.
-test.skip("unsupported and unreadable pictures are rejected without contacting S3", async ({
-  page,
-}) => {
+test("unsupported and unreadable pictures are rejected without contacting S3", async ({ page }) => {
   await openSettings(page);
   const fileInput = page.getByLabel("Choose profile picture");
   await fileInput.setInputFiles({

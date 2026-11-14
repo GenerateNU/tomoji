@@ -10,7 +10,7 @@ import { formatCompensation } from "@/lib/money";
 import { focusRing } from "@/lib/styles";
 import { cn } from "@/lib/utils";
 import type { ApplicationTab } from "../hooks/use-applications-table";
-import { formatRelativeTime } from "../lib/format";
+import { formatRelativeTime } from "@/lib/relative-time";
 import { ApplicationStatusBadge } from "./application-status-badge";
 import { OfferExpiry } from "./offer-expiry";
 import { StarToggle } from "./star-toggle";

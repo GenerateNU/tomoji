@@ -7,6 +7,7 @@ import { Button, buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { Skeleton } from "@/components/ui/skeleton";
 import { TeamLink } from "@/features/team/components/team-link";
+import { AssignmentsLink } from "@/features/assignments/components/assignments-link";
 
 /** Shows account actions, the inbox, and company-admin invitation navigation. */
 export function NavAuth() {
@@ -30,6 +31,7 @@ export function NavAuth() {
           Notifications
         </Link>
         <TeamLink />
+        <AssignmentsLink />
         <span className="hidden text-sm text-gray-600 sm:inline dark:text-gray-400">
           {user.email}
         </span>

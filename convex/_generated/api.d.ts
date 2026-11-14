@@ -77,6 +77,7 @@ import type * as models_deliverables from "../models/deliverables.js";
 import type * as models_disputes from "../models/disputes.js";
 import type * as models_earningSources from "../models/earningSources.js";
 import type * as models_earnings from "../models/earnings.js";
+import type * as models_earningsHistory from "../models/earningsHistory.js";
 import type * as models_earningsScheduler from "../models/earningsScheduler.js";
 import type * as models_earningsSchedules from "../models/earningsSchedules.js";
 import type * as models_followerRanges from "../models/followerRanges.js";
@@ -193,6 +194,7 @@ declare const fullApi: ApiFromModules<{
   "models/disputes": typeof models_disputes;
   "models/earningSources": typeof models_earningSources;
   "models/earnings": typeof models_earnings;
+  "models/earningsHistory": typeof models_earningsHistory;
   "models/earningsScheduler": typeof models_earningsScheduler;
   "models/earningsSchedules": typeof models_earningsSchedules;
   "models/followerRanges": typeof models_followerRanges;

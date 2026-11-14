@@ -133,13 +133,13 @@ function readCaption(post: Record<string, unknown>, xPostId: string): string {
   return restoreCaptionLinks(caption.text.trimEnd(), urls);
 }
 
-/** Reads the published caption and the metadata needed for creator verification. */
+/** Reads the published caption, verification metadata, and the post's current counts. */
 export async function getXPostForCaptionCheck(bearerToken: string, xPostId: string) {
   if (!xPostIdPattern.test(xPostId))
     throw apiError("invalid_state", { reason: "x_post_id_invalid" });
   const response = await xJson(
     await xRequest(
-      `tweets/${xPostId}?post.fields=note_post,entities,author_id,created_at,attachments,referenced_posts`,
+      `tweets/${xPostId}?post.fields=note_post,entities,author_id,created_at,attachments,referenced_posts,public_metrics`,
       { headers: { Authorization: `Bearer ${bearerToken}` } },
       rateLimited,
     ),
@@ -148,11 +148,15 @@ export async function getXPostForCaptionCheck(bearerToken: string, xPostId: stri
   const postedAt = typeof post.created_at === "string" ? Date.parse(post.created_at) : NaN;
   if (typeof post.author_id !== "string" || !Number.isFinite(postedAt))
     throw apiError("upstream_failure", { reason: "invalid_response" });
+  // Counts come from the same request at no extra cost. Unusable counts are left
+  // out so they can never block a caption check.
+  const counts = postResult(xPostId, post.public_metrics);
   return {
     text: readCaption(post, xPostId),
     authorId: post.author_id,
     postedAt,
     hasExtraContent: post.attachments !== undefined || post.referenced_posts !== undefined,
+    ...(counts === undefined ? {} : { views: counts.views, engagement: counts.engagement }),
   };
 }
 

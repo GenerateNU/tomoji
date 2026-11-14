@@ -525,6 +525,11 @@ export async function finishCreatorCaptionCheck(
     published.postedAt >= Math.floor(submission._creationTime / 1000) * 1000
   ) {
     await verifyPost(ctx, postId, { postedAt: published.postedAt });
+    // The reading at verification gives analytics day-zero counts and is the
+    // baseline earnings measure later views against.
+    if (published.views !== undefined) await updatePostViews(ctx, postId, published.views);
+    if (published.engagement !== undefined)
+      await updatePostEngagement(ctx, postId, published.engagement);
   }
   await ctx.db.patch("posts", postId, { captionCheck: status });
   return status;

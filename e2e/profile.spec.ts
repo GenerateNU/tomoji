@@ -596,6 +596,9 @@ test("niches summarize hidden selections without removing them from the dropdown
   }
   await page.getByRole("button", { name: "Done", exact: true }).click();
   await trigger.getByRole("button", { name: "Remove Backend Development", exact: true }).click();
+  await expect(
+    trigger.getByRole("button", { name: "Remove Generative AI & LLMs", exact: true }),
+  ).toBeFocused();
   await expect(trigger.getByText("Generative AI & LLMs", { exact: true })).toBeVisible();
   await expect(trigger.getByText("+2", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Save", exact: true }).click();

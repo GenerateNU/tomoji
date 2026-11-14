@@ -54,7 +54,7 @@ const navigation = [
   { label: "Home", href: "/", icon: RiHome4Line, activeIcon: RiHome4Fill },
   { label: "Opportunities", href: "/opportunities", icon: RiSearchLine, activeIcon: RiSearchFill },
   { label: "Applications", href: "/applications", icon: RiInboxLine, activeIcon: RiInboxFill },
-  { label: "Assignments", href: null, icon: RiCheckboxMultipleLine },
+  { label: "Assignments", href: "/assignments", icon: RiCheckboxMultipleLine },
   { label: "Posts", href: null, icon: RiPlayLargeLine },
   { label: "Earnings", href: null, icon: RiWallet3Line },
   { label: "Disputes", href: null, icon: RiAuctionLine },

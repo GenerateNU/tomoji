@@ -109,7 +109,10 @@ test("account menu links to Settings and missing routes are not exposed as worki
     "/settings",
   );
   await page.keyboard.press("Escape");
-  await expect(page.getByRole("link", { name: "Assignments", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "Assignments", exact: true })).toHaveAttribute(
+    "href",
+    "/assignments",
+  );
   await expect(page.getByRole("link", { name: "Earnings", exact: true })).toHaveCount(0);
 });
 

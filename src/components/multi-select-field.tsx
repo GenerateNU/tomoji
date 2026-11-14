@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { CheckboxIndicator } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { iconProps } from "@/lib/icons";
+import { useOverflowCount } from "@/hooks/use-overflow-count";
 import { cn } from "@/lib/utils";
 
 type MultiSelectFieldProps = {
@@ -71,6 +72,11 @@ export function MultiSelectField({
   const hasValues = selected.length > 0;
   const selectedTags = selected.slice(0, maxVisibleTags ?? selected.length);
   const hiddenTagCount = selected.length - selectedTags.length;
+  const tagRow = useRef<HTMLSpanElement>(null);
+  const overflow = useOverflowCount(tagRow, JSON.stringify([maxVisibleTags, selected]));
+  const [focused, setFocused] = useState(false);
+  // Without an explicit tag cap, focus/open expands the responsive overflow row.
+  const expanded = open || focused;
 
   function commit(next: string[]) {
     if (value === undefined) setInternal(next);
@@ -143,6 +149,13 @@ export function MultiSelectField({
           aria-invalid={error ? true : undefined}
           aria-disabled={disabled || undefined}
           onKeyDown={onTriggerKeyDown}
+          onFocus={() => setFocused(true)}
+          onBlur={(event) => {
+            // Focus moving between the tags' remove buttons stays inside.
+            if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+              setFocused(false);
+            }
+          }}
           className={cn(
             "flex w-full gap-2 rounded border px-3 transition-shadow outline-none focus-visible:ring-4 focus-visible:ring-blue-primary/25",
             hasValues ? "items-start py-2" : "items-center py-3",
@@ -155,38 +168,67 @@ export function MultiSelectField({
           )}
         >
           {hasValues ? (
-            <span
-              className={cn(
-                "flex min-w-0 flex-1 gap-1.5",
-                maxVisibleTags === undefined ? "flex-wrap" : "items-center",
-              )}
-            >
-              {selectedTags.map((item, index) => (
-                <Badge
-                  key={item}
-                  size="md"
-                  className={
-                    maxVisibleTags === undefined ? undefined : "min-w-0 shrink [&_button]:shrink-0"
-                  }
-                  removeLabel={`Remove ${labelOf(item)}`}
-                  onRemove={disabled ? undefined : () => remove(item, index)}
-                >
-                  {maxVisibleTags === undefined ? (
-                    labelOf(item)
-                  ) : (
+            maxVisibleTags !== undefined ? (
+              <span className="flex min-w-0 flex-1 items-center gap-1.5">
+                {selectedTags.map((item, index) => (
+                  <Badge
+                    key={item}
+                    size="md"
+                    className="min-w-0 shrink [&_button]:shrink-0"
+                    removeLabel={`Remove ${labelOf(item)}`}
+                    onRemove={disabled ? undefined : () => remove(item, index)}
+                  >
                     <span className="truncate">{labelOf(item)}</span>
-                  )}
-                </Badge>
-              ))}
-              {hiddenTagCount > 0 && (
+                  </Badge>
+                ))}
+                {hiddenTagCount > 0 && (
+                  <span
+                    className="shrink-0 text-body-sm text-gray-500"
+                    aria-label={`${hiddenTagCount} more selected`}
+                  >
+                    +{hiddenTagCount}
+                  </span>
+                )}
+              </span>
+            ) : (
+              <span className="relative min-w-0 flex-1">
                 <span
-                  className="shrink-0 text-body-sm text-gray-500"
-                  aria-label={`${hiddenTagCount} more selected`}
+                  ref={tagRow}
+                  className={cn(
+                    "flex flex-wrap gap-1.5",
+                    // Collapsed to one line at rest; expanded while it has focus
+                    // so every tag can be reached and removed.
+                    !expanded && "h-8 overflow-hidden",
+                  )}
                 >
-                  +{hiddenTagCount}
+                  {selected.map((item, index) => (
+                    <Badge
+                      key={item}
+                      size="md"
+                      className="h-8 shrink-0"
+                      removeLabel={`Remove ${labelOf(item)}`}
+                      onRemove={disabled ? undefined : () => remove(item, index)}
+                    >
+                      {labelOf(item)}
+                    </Badge>
+                  ))}
                 </span>
-              )}
-            </span>
+                {!expanded &&
+                  overflow.count > 0 && (
+                    // Spans to the right edge so it also hides the tag it displaces.
+                    <span
+                      aria-hidden
+                      style={{ left: overflow.left }}
+                      className={cn(
+                        "absolute inset-y-0 right-0 flex items-center pl-2 text-body-sm font-normal text-gray-500",
+                        error ? "bg-red-50" : "bg-gray-0",
+                      )}
+                    >
+                      +{overflow.count}
+                    </span>
+                  )}
+              </span>
+            )
           ) : (
             <span className="flex-1 truncate text-body font-normal text-gray-400">
               {placeholder}

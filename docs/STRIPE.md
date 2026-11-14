@@ -178,12 +178,15 @@ bunx convex run stripeAccounts:me '{}' --identity '{"subject":"<your workosId>"}
 
 `stripeCustomers.me` returns `{ status, card }`:
 
-| Status    | Meaning           | What the UI shows                                  |
-| --------- | ----------------- | -------------------------------------------------- |
-| `missing` | No card saved yet | "Add a card" button for admins; a note for members |
-| `ready`   | A card is on file | e.g. "Visa •••• 4242, expires 08/28" and "Replace" |
+| Status    | Meaning                                 | What the UI shows                                  |
+| --------- | --------------------------------------- | -------------------------------------------------- |
+| `missing` | No card saved yet                       | "Add a card" button for admins; a note for members |
+| `ready`   | A card is on file                       | e.g. "Visa •••• 4242, expires 08/28" and "Replace" |
+| `expired` | The saved card is past its expiry month | "Your card expired" and "Update card" for admins   |
 
-`card` is `null` when missing, otherwise `{ brand, last4, expMonth, expYear }`. `brand` is
+`card` is `null` when missing, otherwise `{ brand, last4, expMonth, expYear }`. A card works
+through the last day of its expiry month. When the bank renews a card, Stripe updates its expiry
+automatically (below), so `expired` usually means the bank didn't renew it. `brand` is
 Stripe's network code (`visa`, `mastercard`, `amex`, …), so map it to a display name. Card
 numbers never reach Tomoji.
 
@@ -222,7 +225,8 @@ Only `POST /stripe/webhook/platform` saves a card, checked against
   redelivers.
 - `payment_method.automatically_updated`: the card network renewed a card. It fetches the card
   from Stripe as it is now, because two updates in the same second can arrive in either order.
-  Only the company's current card is updated, so a replaced card never comes back.
+  Only the company's current card is updated, so a replaced card never comes back. A renewal updates the card's details only, never the time that orders
+  which card the company chose, so a late renewal can't make a newer card look stale.
 
 Events older than the saved card are skipped. The customer is saved before Checkout opens, so
 the webhook always finds the company a card belongs to.

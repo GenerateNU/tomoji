@@ -35,7 +35,10 @@ export const me = companyQuery({
   args: {},
   returns: paymentMethodStatus,
   handler: async (ctx) =>
-    toPaymentMethodStatus(await getStripeCustomerByCompanyId(ctx, ctx.membership.companyId)),
+    toPaymentMethodStatus(
+      await getStripeCustomerByCompanyId(ctx, ctx.membership.companyId),
+      Date.now(),
+    ),
 });
 
 /**
@@ -144,11 +147,6 @@ export const saveCard = internalMutation({
 /** Applies the card network's new details to the saved card. See `refreshCard`. */
 export const refreshSavedCard = internalMutation({
   args: { saved: savedPaymentMethod },
-  returns: v.union(
-    v.literal("updated"),
-    v.literal("stale"),
-    v.literal("replaced"),
-    v.literal("unknown"),
-  ),
+  returns: v.union(v.literal("updated"), v.literal("replaced"), v.literal("unknown")),
   handler: async (ctx, args) => await refreshCard(ctx, args.saved),
 });

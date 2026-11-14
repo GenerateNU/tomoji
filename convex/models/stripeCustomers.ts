@@ -8,10 +8,11 @@ import { requireCompany } from "./companies";
 /**
  * Whether approved payouts can be charged to the company: `missing` until a
  * company admin saves a card through Checkout, then `ready` with the card to
- * display. Stripe's payment method id stays on the server.
+ * display, or `expired` once that card is past its expiry and needs replacing.
+ * Stripe's payment method id stays on the server.
  */
 export const paymentMethodStatus = v.object({
-  status: v.union(v.literal("missing"), v.literal("ready")),
+  status: v.union(v.literal("missing"), v.literal("ready"), v.literal("expired")),
   card: v.union(
     v.object({ brand: v.string(), last4: v.string(), expMonth: v.number(), expYear: v.number() }),
     v.null(),
@@ -55,12 +56,29 @@ export async function getStripeCustomerByStripeId(
     .unique();
 }
 
+/**
+ * Whether a card is past its expiry at `now` (Unix ms). Cards work through the
+ * last day of their expiry month; UTC decides the month, which can differ from
+ * the cardholder's by a day at the turn of a month.
+ */
+export function isCardExpired(card: { expMonth: number; expYear: number }, now: number): boolean {
+  const today = new Date(now);
+  const year = today.getUTCFullYear();
+  const month = today.getUTCMonth() + 1;
+  return card.expYear < year || (card.expYear === year && card.expMonth < month);
+}
+
 export function toPaymentMethodStatus(
   customer: Doc<"stripeCustomers"> | null,
+  now: number,
 ): PaymentMethodStatus {
   if (customer?.card === undefined) return { status: "missing", card: null };
   const { brand, last4, expMonth, expYear } = customer.card;
-  return { status: "ready", card: { brand, last4, expMonth, expYear } };
+  return {
+    // An expired card would only be declined; the company needs to replace it.
+    status: isCardExpired(customer.card, now) ? "expired" : "ready",
+    card: { brand, last4, expMonth, expYear },
+  };
 }
 
 /**
@@ -113,16 +131,21 @@ export async function savePaymentMethod(
 }
 
 /**
- * Applies new card details the card network sent for a card already saved,
- * such as a renewed expiry. Stripe keeps updating cards a company has since
- * replaced, so only the current card changes; anything else is `replaced`.
+ * Applies new card details the card network sent for the company's current
+ * card, such as a renewed expiry. Stripe keeps updating cards a company has
+ * since replaced, so only the current card changes; anything else is `replaced`.
  */
 export async function refreshCard(
   ctx: MutationCtx,
   saved: SavedPaymentMethod,
-): Promise<"updated" | "stale" | "replaced" | "unknown"> {
+): Promise<"updated" | "replaced" | "unknown"> {
   const customer = await getStripeCustomerByStripeId(ctx, saved.stripeCustomerId);
   if (customer === null) return "unknown";
   if (customer.card?.paymentMethodId !== saved.card.paymentMethodId) return "replaced";
-  return await savePaymentMethod(ctx, saved);
+  // Only the card's details change, never `stripeUpdatedAt`, which orders the
+  // company's choice of card: a renewal stamped after a new card's Checkout
+  // would otherwise make that new card look stale. The webhook reads these
+  // details from Stripe as they are now, so they need no ordering of their own.
+  await ctx.db.patch("stripeCustomers", customer._id, { card: saved.card });
+  return "updated";
 }

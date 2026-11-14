@@ -43,25 +43,45 @@ async function seedCustomer(subject: string) {
 }
 
 describe("toPaymentMethodStatus", () => {
+  // Mid-November 2026, in UTC.
+  const NOW = Date.UTC(2026, 10, 14);
+
   test("is missing before the company has a Stripe customer", () => {
-    expect(toPaymentMethodStatus(null)).toEqual({ status: "missing", card: null });
+    expect(toPaymentMethodStatus(null, NOW)).toEqual({ status: "missing", card: null });
   });
 
   // The customer exists as soon as an admin opens Checkout, before any card.
   test("is missing while the customer has no saved card", () => {
     const row = { stripeCustomerId: "cus_company" } as Doc<"stripeCustomers">;
 
-    expect(toPaymentMethodStatus(row)).toEqual({ status: "missing", card: null });
+    expect(toPaymentMethodStatus(row, NOW)).toEqual({ status: "missing", card: null });
   });
 
   // Brand, last 4, and expiry let the company recognize the card; Stripe's id stays server-side.
   test("is ready with the card to display once one is saved", () => {
     const row = { ...visa } as Doc<"stripeCustomers">;
 
-    expect(toPaymentMethodStatus(row)).toEqual({
+    expect(toPaymentMethodStatus(row, NOW)).toEqual({
       status: "ready",
       card: { brand: "visa", last4: "4242", expMonth: 8, expYear: 2028 },
     });
+  });
+
+  // A saved card past its expiry would only be declined; the company needs to replace it.
+  test("is expired once the card's expiry month has passed", () => {
+    const row = { ...visa, card: { ...visa.card, expMonth: 10, expYear: 2026 } };
+
+    expect(toPaymentMethodStatus(row as Doc<"stripeCustomers">, NOW)).toEqual({
+      status: "expired",
+      card: { brand: "visa", last4: "4242", expMonth: 10, expYear: 2026 },
+    });
+  });
+
+  // Cards work through the last day of their expiry month.
+  test("is still ready during the card's expiry month", () => {
+    const row = { ...visa, card: { ...visa.card, expMonth: 11, expYear: 2026 } };
+
+    expect(toPaymentMethodStatus(row as Doc<"stripeCustomers">, NOW).status).toBe("ready");
   });
 });
 
@@ -195,7 +215,11 @@ describe("refreshCard", () => {
     await t.run((ctx) => savePaymentMethod(ctx, visa));
 
     expect(await t.run((ctx) => refreshCard(ctx, renewed))).toBe("updated");
-    expect(await customer()).toMatchObject(renewed);
+    expect(await customer()).toMatchObject({
+      card: renewed.card,
+      // A renewal changes the card's details, not which card was chosen or when.
+      stripeUpdatedAt: visa.stripeUpdatedAt,
+    });
   });
 
   // Stripe keeps updating a detached card; it must not come back as the company's card.
@@ -216,16 +240,27 @@ describe("refreshCard", () => {
     expect((await customer())?.card).toBeUndefined();
   });
 
-  test("skips an update older than the saved card", async () => {
-    const { t, customer } = await seedCustomer("refresh_stale");
+  // A renewal stamped after a new card's Checkout must not make that new card look stale.
+  test("does not stop a newer card from replacing the renewed one", async () => {
+    const { t, customer } = await seedCustomer("refresh_then_new");
     await t.run((ctx) => savePaymentMethod(ctx, visa));
+    await t.run((ctx) =>
+      refreshCard(ctx, { ...renewed, stripeUpdatedAt: visa.stripeUpdatedAt + 300_000 }),
+    );
+    const mastercard: SavedPaymentMethod = {
+      stripeCustomerId: "cus_company",
+      card: {
+        paymentMethodId: "pm_mastercard",
+        brand: "mastercard",
+        last4: "4444",
+        expMonth: 1,
+        expYear: 2030,
+      },
+      stripeUpdatedAt: visa.stripeUpdatedAt + 120_000,
+    };
 
-    expect(
-      await t.run((ctx) =>
-        refreshCard(ctx, { ...renewed, stripeUpdatedAt: visa.stripeUpdatedAt - 1 }),
-      ),
-    ).toBe("stale");
-    expect(await customer()).toMatchObject(visa);
+    expect(await t.run((ctx) => savePaymentMethod(ctx, mastercard))).toBe("updated");
+    expect((await customer())?.card?.paymentMethodId).toBe("pm_mastercard");
   });
 
   test("ignores a customer this deployment does not have", async () => {

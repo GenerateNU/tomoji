@@ -10,12 +10,12 @@ import {
 } from "@remixicon/react";
 import { api } from "@convex/_generated/api";
 import type { Id } from "@convex/_generated/dataModel";
-import { useAction, useMutation, useQuery } from "convex/react";
+import { useAction, useMutation, useQueries, useQuery, type RequestForQueries } from "convex/react";
 import type { FunctionReturnType } from "convex/server";
-import { useEffect, useId, useRef, useState, type FormEvent } from "react";
+import { useEffect, useId, useMemo, useRef, useState, type FormEvent } from "react";
+import { ProgressRing } from "@/components/progress-ring";
 import { Button } from "@/components/ui/button";
 import { DialogClose, DialogDescription, DialogTitle } from "@/components/ui/dialog";
-import { Progress, ProgressLabel } from "@/components/ui/progress";
 import { Textarea } from "@/components/ui/textarea";
 import { errorMessage } from "@/lib/errors";
 import { createMediaUpload, type MediaUploadPhase } from "@/lib/media-upload";
@@ -30,6 +30,7 @@ const MAX_NOTES_LENGTH = 5_000;
 
 type DraftComposerProps = {
   assignmentId: Id<"assignments">;
+  opportunityId: Id<"opportunities">;
   deliverableId: Id<"deliverables">;
   assignmentTitle: string;
   usesAiReview: boolean;
@@ -49,6 +50,7 @@ type DraftComposerProps = {
 /** Sends the draft for review, reusing a completed upload when submitting is retried. */
 export function DraftComposer({
   assignmentId,
+  opportunityId,
   deliverableId,
   assignmentTitle,
   usesAiReview,
@@ -64,6 +66,20 @@ export function DraftComposer({
   const completeUpload = useAction(api.media.completeUpload);
   const submit = useMutation(api.submissions.create);
   const review = useQuery(api.submissions.get, reviewId ? { submissionId: reviewId } : "skip");
+  const criteriaQuery = useMemo(
+    (): RequestForQueries =>
+      usesAiReview
+        ? { deliverables: { query: api.deliverables.list, args: { opportunityId } } }
+        : {},
+    [usesAiReview, opportunityId],
+  );
+  const {
+    deliverables,
+  }: { deliverables?: FunctionReturnType<typeof api.deliverables.list> | Error } =
+    useQueries(criteriaQuery);
+  const criteria = Array.isArray(deliverables)
+    ? deliverables.find(({ _id }) => _id === deliverableId)?.reviewCriteria
+    : undefined;
   const reviewStage = review?.aiReview?.status;
   const reviewing =
     !review ||
@@ -184,9 +200,10 @@ export function DraftComposer({
         <div className="w-full max-w-[446px] space-y-5">
           {preview}
           <DraftReviewProgress
+            key={reviewId}
             review={review}
             reviewing={reviewing}
-            hasVideo={Boolean(file || (keepPreviousVideo && previous?.mediaId))}
+            criteria={criteria}
           />
           {!reviewing && review?.status === "changesRequested" && (
             <Button type="button" size="sm" className="w-full" onClick={() => onRevise(reviewId)}>
@@ -384,23 +401,68 @@ export function DraftComposer({
 }
 
 type SubmittedDraft = FunctionReturnType<typeof api.submissions.get>;
+type ReviewCriteria = NonNullable<
+  FunctionReturnType<typeof api.deliverables.list>[number]["reviewCriteria"]
+>;
+const REVIEW_TICK_MS = 1_000;
+const TICKS_PER_CRITERION = 2;
+const INITIAL_REVIEW_PROGRESS = 16;
+const MAX_REVIEW_PROGRESS = 88;
+const REVIEW_PROGRESS_PER_TICK = 8;
+
+/** Cycles through the brief's criteria while the server evaluates the draft. */
+function ReviewingCriteria({ criteria }: { criteria?: ReviewCriteria }) {
+  const [ticks, setTicks] = useState(0);
+  const criterionCount = criteria?.length ?? 0;
+  const progressTicks = (MAX_REVIEW_PROGRESS - INITIAL_REVIEW_PROGRESS) / REVIEW_PROGRESS_PER_TICK;
+  const lastTick = Math.max(progressTicks, criterionCount * TICKS_PER_CRITERION);
+
+  useEffect(() => {
+    if (ticks >= lastTick) return;
+    const timer = window.setTimeout(() => setTicks(ticks + 1), REVIEW_TICK_MS);
+    return () => window.clearTimeout(timer);
+  }, [ticks, lastTick]);
+
+  // The backend reports the evaluation stage, so the ring represents waiting time.
+  const progress = Math.min(
+    MAX_REVIEW_PROGRESS,
+    INITIAL_REVIEW_PROGRESS + ticks * REVIEW_PROGRESS_PER_TICK,
+  );
+  const criterion = criteria?.[Math.floor(ticks / TICKS_PER_CRITERION)];
+  return (
+    <div className="flex items-center gap-4">
+      <ProgressRing
+        size="md"
+        value={progress}
+        label="Reviewing submission"
+        aria-valuenow={undefined}
+      />
+      <div className="min-w-0">
+        <p className="text-body font-medium">Reviewing submission</p>
+        {criterion && (
+          <p className="max-h-20 overflow-y-auto text-body-sm wrap-anywhere text-gray-700">
+            {criterion.description}
+          </p>
+        )}
+      </div>
+    </div>
+  );
+}
 
 /** Displays the reported review stage beneath the preview of the submitted draft. */
 function DraftReviewProgress({
   review,
   reviewing,
-  hasVideo,
+  criteria,
 }: {
   review: SubmittedDraft | undefined;
   reviewing: boolean;
-  hasVideo: boolean;
+  criteria?: ReviewCriteria;
 }) {
   const card = useRef<HTMLDivElement>(null);
   useEffect(() => card.current?.focus(), []);
 
   const status = review?.aiReview?.status;
-  const steps = (review ? review.mediaId !== undefined : hasVideo) ? 3 : 2;
-  const step = status === "evaluating" ? steps : status === "transcribing" ? 2 : 1;
   const text = reviewing
     ? aiReviewStatusLabel[status ?? "ready"]
     : review?.status === "approved"
@@ -418,15 +480,22 @@ function DraftReviewProgress({
         : RiTimeLine;
 
   return (
-    <div ref={card} tabIndex={-1} className="rounded-lg bg-gray-0 p-5">
+    <div ref={card} tabIndex={-1} className="rounded-lg bg-gray-0 p-4">
       {reviewing ? (
-        <Progress
-          value={((step - 1) / steps) * 100}
-          aria-valuetext={`Step ${step} of ${steps}`}
-          className="[&_[data-slot=progress-indicator]]:bg-gray-950 [&_[data-slot=progress-track]]:h-3"
-        >
-          <ProgressLabel className="font-normal text-gray-500">{text}</ProgressLabel>
-        </Progress>
+        status === "evaluating" ? (
+          <ReviewingCriteria criteria={criteria} />
+        ) : (
+          <div className="flex items-center gap-4">
+            <ProgressRing
+              size="md"
+              value={status === "transcribing" ? INITIAL_REVIEW_PROGRESS : 0}
+              showLabel={false}
+              label={text}
+              aria-valuenow={undefined}
+            />
+            <p className="text-body font-medium">{text}</p>
+          </div>
+        )
       ) : (
         <div className="flex items-start gap-3" role="status">
           <Icon

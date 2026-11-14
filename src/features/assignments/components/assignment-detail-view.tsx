@@ -189,6 +189,7 @@ function AssignmentWorkspace({
                 )}
                 <DeliverableSubmissions
                   assignmentId={assignment._id}
+                  opportunityId={assignment.opportunityId}
                   deliverableId={_id}
                   assignmentTitle={title}
                   usesAiReview={assignment.usesAiReview}

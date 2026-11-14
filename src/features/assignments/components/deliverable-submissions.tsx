@@ -16,6 +16,7 @@ type Submission = FunctionReturnType<typeof api.submissions.get>;
 
 type Props = {
   assignmentId: Id<"assignments">;
+  opportunityId: Id<"opportunities">;
   deliverableId: Id<"deliverables">;
   assignmentTitle: string;
   usesAiReview: boolean;
@@ -29,6 +30,7 @@ type Props = {
 /** Shows the latest review and the draft actions available for this deliverable. */
 export function DeliverableSubmissions({
   assignmentId,
+  opportunityId,
   deliverableId,
   assignmentTitle,
   usesAiReview,
@@ -91,6 +93,7 @@ export function DeliverableSubmissions({
               <DraftComposer
                 key={revising ?? "draft"}
                 assignmentId={assignmentId}
+                opportunityId={opportunityId}
                 deliverableId={deliverableId}
                 assignmentTitle={assignmentTitle}
                 usesAiReview={usesAiReview}

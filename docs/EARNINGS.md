@@ -3,8 +3,9 @@
 This is the implementation contract for Tomoji's earnings calculator, scheduler,
 and Stripe integration. The calculator and internal settlement operation record
 earned obligations through the existing [payout operations](BACKEND.md#payout-records).
-The weekly scheduler and Stripe collection are follow-up work. Creating or
-approving an obligation does not charge a company or pay a bank account.
+Scheduling state and lifecycle hooks are implemented; the recurring earnings
+runner and Stripe collection are follow-up work. Creating or approving an
+obligation does not charge a company or pay a bank account.
 
 ## Agreed payout rules
 
@@ -120,6 +121,7 @@ record:
 | `deliverableEarnings` | One agreement per assignment/deliverable: original post, ownership, compensation, policy version, verification start, window end, and any view-attribution hold or removal cutoff. |
 | `postViewSnapshots`   | Immutable view counts with the actual observation time, source key, and receipt time.                                                                                              |
 | `earningCalculations` | Period/component inputs and results, pending or reconciliation reasons, and linked payout or covering calculation. A pending calculation is not an additional obligation.          |
+| `earningsSchedules`   | Mutable due time and attempt diagnostics for one agreement; calculation records remain authoritative for settled and pending periods.                                              |
 | `payouts`             | The earned obligation and its review/payment progress. New records also retain the deliverable ID derived from the source post's submission.                                       |
 
 The [verification operation](../convex/models/posts.ts) stores `firstVerifiedAt`
@@ -155,6 +157,16 @@ their history is reviewed, because the old records cannot distinguish them from
 posts unverified before tracking began. The initialization operation enforces the
 same guard. Do not infer verification from publication time or historical view
 counts from today's total. No automatic backfill or data migration is performed.
+
+Before enabling automatic earnings for these legacy posts, a Tomoji admin must
+review the available evidence and record the reviewer, source evidence, and
+determination of the original verification time, including any unresolved gaps.
+A separately approved, evidence-backed conversion plan must establish the earning
+window and first due settlement using the rules above. If the original time
+cannot be established, leave the case unresolved for a product decision; do not
+substitute publication time or a new verification date. Preserve existing
+obligations throughout. This contract does not introduce a correction endpoint
+or authorize an automatic historical backfill.
 
 ## Internal operations
 
@@ -197,15 +209,52 @@ Replacement and verification-change holds never clear automatically; any future
 resolution operation must revalidate the retained view evidence before releasing
 variable earnings.
 
-Before enabling automatic earnings for these legacy posts, a Tomoji admin must
-review the available evidence and record the reviewer, source evidence, and
-determination of the original verification time, including any unresolved gaps.
-A separately approved, evidence-backed conversion plan must establish the earning
-window and first due settlement using the rules above. If the original time
-cannot be established, leave the case unresolved for a product decision; do not
-substitute publication time or a new verification date. Preserve existing
-obligations throughout. This contract does not introduce a correction endpoint
-or authorize an automatic historical backfill.
+## Scheduling state
+
+[`earningsSchedules`](../convex/schemas/earningsSchedules.schema.ts) has one row
+per agreement, enforced transactionally through `by_earningsId`. Verification
+initializes it in the same mutation as the agreement, due at the first weekly
+boundary or earlier cutoff. The stored start and end are reused; initialization
+retries, reverification, and replacement preserve an existing schedule unchanged.
+
+`status` is `scheduled`, `needsAttention`, or `complete`. A scheduled row has
+`nextCheckAt`; parked rows omit it. The future worker will use `by_nextCheckAt`
+with `0 <= nextCheckAt <= sweepCutoff` to exclude parked rows and bound due work.
+`lastAttemptedAt`, `lastAttemptedPeriodIndex`, `retryCount`, and `lastError` retain
+attempt diagnostics. These fields do not establish that an earning was settled:
+a fixed-fee-only payout can still leave variable earnings pending. This layer
+initializes `retryCount` to zero; worker transitions and retry policy belong to
+the execution PR.
+
+Cancellation and confirmed removal bring the schedule forward in the cutoff
+transaction, preserving an earlier outstanding check and attempt diagnostics.
+A shortened window can wake a previously completed or parked schedule. The
+same applies when an identical removal retry clears an obsolete metric-regression
+hold; a retry that changes neither cutoff nor hold preserves schedule progress. The
+worker must reconsider calculation records against the current cutoff rather
+than skip to the last attempted period. If the effective cutoff remains the
+stored window end, the schedule is unchanged. Cancellation checks every agreement within
+the 20-deliverable limit and rejects inconsistent overflow instead of skipping rows.
+
+Known cancellation or removal prevents a new live-post verification. If late evidence
+instead places a cutoff before an existing agreement's verification, its schedule is
+parked as `needsAttention` with `cutoff_precedes_verification`. This contradicts the
+stored earning history and needs reconciliation; it is not an automatic zero-dollar
+completion or reversal of a fixed-fee obligation. Existing payouts and review deadlines
+stay unchanged. A cutoff exactly at verification remains eligible for the earned fixed
+fee and is scheduled immediately.
+
+The [schedule backfill](MIGRATIONS.md#backfill-earnings-schedules) adds
+missing schedules in batches from existing agreements, including ones older than
+30 days. It preserves existing schedules and obligations. Invalid timing or a
+missing assignment parks the new schedule with an explicit reason; legacy posts
+without an earnings agreement do not acquire an invented verification date.
+Initial due dates can be in the past: the future worker will reconcile existing
+calculations idempotently before creating any additional obligation.
+
+This layer does not enqueue settlement jobs or register an earnings cron. Pending
+metrics remain eligible for later reconciliation beyond day 30; automatic retry,
+completion, and recovery execution are part of the next PR.
 
 ## Earnings-to-payment handoff
 
@@ -292,8 +341,10 @@ deliverables following this example earn $600 total, each on its own clock.
 The calculator/records implementation covers the policy above with pure arithmetic
 tests and Convex transaction tests, including retries, missing evidence, and
 cutoff handling. Run `just ci` for type checking, linting, formatting, and the full
-test suite. The scheduling PR will create due obligations automatically using the
-same settlement operation and existing review workflow.
+test suite. Scheduling-state tests cover lifecycle timing, atomic cancellation,
+and migration batching/idempotency. The scheduling execution PR will create due
+obligations automatically using the same settlement operation and existing
+review workflow.
 
 Stripe processing and bank-payout reconciliation remain in the separate Stripe
 stack, followed by integration tests across both stacks. This implementation

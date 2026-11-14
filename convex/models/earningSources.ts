@@ -6,6 +6,7 @@ import { apiError } from "../lib/errors";
 import { requireNonBlank } from "../lib/validation";
 import type { earningsVariableHoldReason } from "../schemas/deliverableEarnings.schema";
 import { MAX_DELIVERABLES } from "./deliverableDrafts";
+import { bringForwardEarningsSchedule, ensureEarningsSchedule } from "./earningsSchedules";
 
 /** One durable agreement per assigned deliverable, independent of post replacement. */
 export async function getDeliverableEarnings(
@@ -63,6 +64,7 @@ export async function initializePostEarnings(
   const { post, submission, assignment } = await requirePostContext(ctx, postId);
   const existing = await getDeliverableEarnings(ctx, assignment._id, submission.deliverableId);
   if (existing !== null) {
+    await ensureEarningsSchedule(ctx, existing._id);
     if (existing.postId !== postId && existing.variableHoldReason !== "post_replaced") {
       await ctx.db.patch("deliverableEarnings", existing._id, {
         variableHoldReason: "post_replaced",
@@ -107,6 +109,7 @@ export async function initializePostEarnings(
     startedAt,
     endsAt,
   });
+  await ensureEarningsSchedule(ctx, earningsId);
   return (await ctx.db.get("deliverableEarnings", earningsId))!;
 }
 
@@ -313,7 +316,8 @@ export async function recordPostRemoval(
   if (post.removedAt === undefined) await ctx.db.patch("posts", args.postId, patch);
   const earnings = await getDeliverableEarnings(ctx, assignment._id, submission.deliverableId);
   if (earnings !== null && earnings.postId === args.postId) {
-    if (earnings.cutoffAt === undefined || args.removedAt < earnings.cutoffAt) {
+    const cutoffChanged = earnings.cutoffAt === undefined || args.removedAt < earnings.cutoffAt;
+    if (cutoffChanged) {
       await ctx.db.patch("deliverableEarnings", earnings._id, {
         cutoffAt: args.removedAt,
         cutoffReason: "removed",
@@ -321,7 +325,7 @@ export async function recordPostRemoval(
     }
     // A delayed removal can exclude the decline that originally caused the hold.
     // Recheck retries too, so a cutoff recorded before this check can be reconciled.
-    await clearMetricRegressionHold(
+    const holdCleared = await clearMetricRegressionHold(
       ctx,
       earnings,
       Math.min(
@@ -331,6 +335,7 @@ export async function recordPostRemoval(
         assignment.cancelledAt ?? Infinity,
       ),
     );
+    if (cutoffChanged || holdCleared) await bringForwardEarningsSchedule(ctx, earnings._id);
   }
   return { ...post, ...patch };
 }

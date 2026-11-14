@@ -13,6 +13,7 @@ import schema from "../schema";
 import { assignmentStatus } from "../schemas/assignments.schema";
 import { creatorName, notifyCompanyUser, notifyCreator } from "./notifications";
 import { recordAssignmentEarningsCancellation } from "./earningSources";
+import { bringForwardAssignmentEarningsSchedules } from "./earningsSchedules";
 
 /**
  * Creates a creator's assignment on an open, ungated opportunity.
@@ -649,6 +650,7 @@ export async function cancelAssignment(
   const cancelledAt = Date.now();
   await ctx.db.patch("assignments", assignment._id, { status: "cancelled", cancelledAt });
   await recordAssignmentEarningsCancellation(ctx, assignment._id, cancelledAt);
+  await bringForwardAssignmentEarningsSchedules(ctx, assignment._id);
   const opportunity = await ctx.db.get("opportunities", current.opportunityId);
   if (opportunity !== null && opportunity.numFilledSlots > 0) {
     await ctx.db.patch("opportunities", opportunity._id, {

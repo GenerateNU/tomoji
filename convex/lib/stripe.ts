@@ -29,6 +29,30 @@ export function siteUrl(path: string): string {
 }
 
 /**
+ * The first 16 hex digits of the SHA-256 of `value`'s JSON; stable for equal
+ * objects built the same way. Idempotency keys include it because Stripe keeps
+ * a key's first response for 24 hours and refuses it for different parameters.
+ */
+export async function fingerprint(value: unknown): Promise<string> {
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(JSON.stringify(value)),
+  );
+  return Array.from(new Uint8Array(digest).slice(0, 8), (byte) =>
+    byte.toString(16).padStart(2, "0"),
+  ).join("");
+}
+
+/** Stripe's reason for a failed request, for the logs. Stripe errors carry no secrets. */
+export function stripeErrorDetails(error: unknown): Record<string, string | undefined> {
+  if (error instanceof Error) {
+    const { type, code } = error as Partial<Stripe.errors.StripeError>;
+    return { type, code, message: error.message };
+  }
+  return { message: String(error) };
+}
+
+/**
  * What a Stripe account says about onboarding. `updatedAt` is when Stripe
  * produced it, in Unix ms: the account's creation time, or a webhook event's.
  */

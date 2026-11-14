@@ -1,7 +1,7 @@
 import Stripe from "stripe";
 import { internal } from "./_generated/api";
 import { env, httpAction } from "./_generated/server";
-import { toStripeAccountState } from "./lib/stripe";
+import { stripeClient, stripeErrorDetails, toStripeAccountState } from "./lib/stripe";
 
 /**
  * Receives Stripe's Connect events. Only events whose signature matches
@@ -9,8 +9,8 @@ import { toStripeAccountState } from "./lib/stripe";
  *
  * Every verified event gets a 200, including types it ignores and accounts
  * this deployment does not own, because anything else makes Stripe retry for
- * days. A 500 is reserved for a missing secret, so Stripe keeps the events
- * until it is set.
+ * days. A 500 is reserved for failures worth retrying, such as a missing
+ * secret or Stripe being unreachable, so Stripe keeps the events until fixed.
  */
 export const stripeWebhook = httpAction(async (ctx, request) => {
   const secret = env.STRIPE_WEBHOOK_SECRET;
@@ -36,8 +36,25 @@ export const stripeWebhook = httpAction(async (ctx, request) => {
   }
 
   if (event.type === "account.updated") {
-    const account = event.data.object;
-    const result = await ctx.runMutation(internal.stripeAccountsInternal.update, {
+    // Two updates in one second share a timestamp and can arrive in either order,
+    // so the account is read from Stripe as it is now rather than from the event.
+    let account: Stripe.Account;
+    try {
+      account = await stripeClient().accounts.retrieve(event.data.object.id);
+    } catch (error) {
+      if (error instanceof Stripe.errors.StripePermissionError) {
+        // The creator disconnected Tomoji; `account.application.deauthorized`
+        // records that. Retrying would fail the same way for days.
+        console.log("Stripe account no longer accessible", {
+          eventId: event.id,
+          stripeAccountId: event.data.object.id,
+        });
+        return new Response(null, { status: 200 });
+      }
+      console.error("Stripe refused the account", stripeErrorDetails(error));
+      return new Response("Could not fetch the account", { status: 500 });
+    }
+    const result = await ctx.runMutation(internal.stripeAccounts.update, {
       // Stripe's event time, not ours, decides which state is newer.
       state: toStripeAccountState(account, event.created * 1000),
       taggedCreatorId: account.metadata?.creatorId,
@@ -47,6 +64,20 @@ export const stripeWebhook = httpAction(async (ctx, request) => {
         eventId: event.id,
         stripeAccountId: account.id,
         result,
+      });
+    }
+  }
+
+  if (event.type === "account.application.deauthorized" && event.account !== undefined) {
+    // The connected account is `event.account`; `data.object` is Tomoji's application.
+    const result = await ctx.runMutation(internal.stripeAccounts.disconnect, {
+      stripeAccountId: event.account,
+      disconnectedAt: event.created * 1000,
+    });
+    if (result !== "unknown") {
+      console.log("Stripe account disconnected", {
+        eventId: event.id,
+        stripeAccountId: event.account,
       });
     }
   }

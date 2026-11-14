@@ -3,7 +3,12 @@ import { convexTest } from "convex-test";
 import Stripe from "stripe";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { api } from "../_generated/api";
-import { createStripeAccount, type StripeAccountState } from "../models/stripeAccounts";
+import {
+  createStripeAccount,
+  disconnectStripeAccount,
+  type StripeAccountState,
+} from "../models/stripeAccounts";
+import type { Id } from "../_generated/dataModel";
 import schema from "../schema";
 import { expectApiError, seedCreatorId, seedOperator, seedUser, type TestConvex } from "./helpers";
 
@@ -28,13 +33,37 @@ function stripeAccount(overrides: Partial<Stripe.Account> = {}) {
   } as Stripe.Account;
 }
 
+/** What `accounts.list` resolves to: iterable across pages, as the SDK's list is. */
+function listOf(items: Stripe.Account[]) {
+  return {
+    async *[Symbol.asyncIterator]() {
+      yield* items;
+    },
+  };
+}
+
 function stubStripe() {
   return {
     createAccount: vi.spyOn(accounts, "create").mockResolvedValue(stripeAccount() as never),
+    listAccounts: vi.spyOn(accounts, "list").mockReturnValue(listOf([]) as never),
     createAccountLink: vi
       .spyOn(accountLinks, "create")
       .mockResolvedValue({ url: "https://connect.stripe.com/setup/e/acct_new/link" } as never),
   };
+}
+
+const controller = {
+  stripe_dashboard: { type: "full" },
+  fees: { payer: "account" },
+  losses: { payments: "stripe" },
+  requirement_collection: "stripe",
+};
+
+/** The keys Stripe received for each account creation, in order. */
+function idempotencyKeys() {
+  return stripe.createAccount.mock.calls.map(
+    ([, options]) => (options as Stripe.RequestOptions).idempotencyKey,
+  );
 }
 
 let stripe: ReturnType<typeof stubStripe>;
@@ -58,11 +87,26 @@ const submitted: StripeAccountState = {
   stripeUpdatedAt: 1_700_000_000_000,
 };
 
-/** Seeds a creator, optionally with a stored Stripe account, and signs in as them. */
-async function seedCreator(t: TestConvex, subject: string, state?: StripeAccountState) {
+/**
+ * Seeds a creator living in `country` (none if null), optionally with a stored
+ * Stripe account, and signs in as them.
+ */
+async function seedCreator(
+  t: TestConvex,
+  subject: string,
+  state?: StripeAccountState,
+  country: string | null = "US",
+) {
   const creatorId = await seedCreatorId(t, subject);
+  await setCountry(t, creatorId, country);
   if (state) await t.run((ctx) => createStripeAccount(ctx, creatorId, state));
   return { creatorId, asCreator: await seedUser(t, { subject }) };
+}
+
+async function setCountry(t: TestConvex, creatorId: Id<"creators">, country: string | null) {
+  await t.run((ctx) =>
+    ctx.db.patch("creators", creatorId, { countryOfResidence: country ?? undefined }),
+  );
 }
 
 describe("me", () => {
@@ -78,6 +122,14 @@ describe("me", () => {
     const { asCreator } = await seedCreator(t, "stripe_me_ready", submitted);
 
     expect(await asCreator.query(api.stripeAccounts.me, {})).toEqual({ status: "ready" });
+  });
+
+  test("reports disconnected once the creator removes Tomoji in Stripe", async () => {
+    const t = convexTest(schema, modules);
+    const { asCreator } = await seedCreator(t, "stripe_me_gone", submitted);
+    await t.run((ctx) => disconnectStripeAccount(ctx, "acct_existing", 1_700_000_100_000));
+
+    expect(await asCreator.query(api.stripeAccounts.me, {})).toEqual({ status: "disconnected" });
   });
 
   test("refuses a company user", async () => {
@@ -97,25 +149,18 @@ describe("onboardingLink", () => {
 
     expect(link).toEqual({ url: "https://connect.stripe.com/setup/e/acct_new/link" });
     // Exact, because Stripe rejects Standard accounts that request `transfers`
-    // on its own; it picks their capabilities by country.
+    // on its own; it picks their capabilities by country. No email: nothing that
+    // can change between a failed attempt and its retry.
     expect(stripe.createAccount).toHaveBeenCalledWith(
-      {
-        country: "US",
-        email: "stripe_onboard_new@example.com",
-        controller: {
-          stripe_dashboard: { type: "full" },
-          fees: { payer: "account" },
-          losses: { payments: "stripe" },
-          requirement_collection: "stripe",
-        },
-        metadata: { creatorId },
-      },
+      { country: "US", controller, metadata: { creatorId } },
       {
         idempotencyKey: expect.stringMatching(
-          new RegExp(`^stripe-account:${creatorId}:[0-9a-f]{16}$`),
+          new RegExp(`^stripe-account:${creatorId}:[^:]+:[0-9a-f]{16}$`),
         ),
       },
     );
+    // A first attempt has nothing to recover.
+    expect(stripe.listAccounts).not.toHaveBeenCalled();
     expect(stripe.createAccountLink).toHaveBeenCalledWith({
       account: "acct_new",
       type: "account_onboarding",
@@ -191,17 +236,15 @@ describe("onboardingLink", () => {
     );
     await asCreator.action(api.stripeAccounts.onboardingLink, {});
 
-    const [first, second] = stripe.createAccount.mock.calls.map(
-      ([, options]) => (options as Stripe.RequestOptions).idempotencyKey,
-    );
+    const [first, second] = idempotencyKeys();
     expect(second).toBe(first);
   });
 
-  // Stripe refuses a reused key with different parameters for 24 hours, which
-  // would lock the creator out after a settings change or an email change.
-  test("uses a new idempotency key when the request changes", async () => {
+  // Stripe may have created the account before the first attempt failed. A
+  // different request would make it create a second one.
+  test("retries with the original country even if the profile changed", async () => {
     const t = convexTest(schema, modules);
-    const { asCreator } = await seedCreator(t, "stripe_onboard_changed");
+    const { creatorId, asCreator } = await seedCreator(t, "stripe_onboard_moved");
     stripe.createAccount.mockRejectedValueOnce(new Error("Stripe is down"));
 
     await expectApiError(
@@ -209,19 +252,111 @@ describe("onboardingLink", () => {
       "upstream_failure",
       "stripe_account_failed",
     );
-    await t.run(async (ctx) => {
-      const user = await ctx.db
-        .query("users")
-        .withIndex("by_email", (q) => q.eq("email", "stripe_onboard_changed@example.com"))
-        .unique();
-      await ctx.db.patch("users", user!._id, { email: "renamed@example.com" });
-    });
+    await setCountry(t, creatorId, "CA");
     await asCreator.action(api.stripeAccounts.onboardingLink, {});
 
-    const [first, second] = stripe.createAccount.mock.calls.map(
-      ([, options]) => (options as Stripe.RequestOptions).idempotencyKey,
+    const [first, second] = stripe.createAccount.mock.calls;
+    expect(second[0]).toEqual(first[0]);
+    expect(second[1]).toEqual(first[1]);
+  });
+
+  // Stripe forgets idempotency keys after 24 hours, so a late retry would make a
+  // second account; the one it already made carries our creator tag.
+  test("recovers the account Stripe made before a failed save instead of creating another", async () => {
+    const t = convexTest(schema, modules);
+    const { creatorId, asCreator } = await seedCreator(t, "stripe_onboard_recover");
+    stripe.createAccount.mockRejectedValueOnce(new Error("Network dropped"));
+    await expectApiError(
+      () => asCreator.action(api.stripeAccounts.onboardingLink, {}),
+      "upstream_failure",
+      "stripe_account_failed",
     );
-    expect(second).not.toBe(first);
+    stripe.listAccounts.mockReturnValue(
+      listOf([
+        stripeAccount({ id: "acct_someone_else", metadata: { creatorId: "k57other" } }),
+        stripeAccount({ id: "acct_made_earlier", metadata: { creatorId } }),
+      ]) as never,
+    );
+
+    await asCreator.action(api.stripeAccounts.onboardingLink, {});
+
+    expect(stripe.createAccount).toHaveBeenCalledTimes(1);
+    expect(stripe.listAccounts).toHaveBeenCalledWith({
+      created: { gte: expect.any(Number), lte: expect.any(Number) },
+      limit: 100,
+    });
+    expect(stripe.createAccountLink).toHaveBeenCalledWith(
+      expect.objectContaining({ account: "acct_made_earlier" }),
+    );
+  });
+
+  test("creates the account in the creator's country", async () => {
+    const t = convexTest(schema, modules);
+    const { asCreator } = await seedCreator(t, "stripe_onboard_ca", undefined, "CA");
+
+    await asCreator.action(api.stripeAccounts.onboardingLink, {});
+
+    expect(stripe.createAccount).toHaveBeenCalledWith(
+      expect.objectContaining({ country: "CA" }),
+      expect.anything(),
+    );
+  });
+
+  // Stripe fixes an account's country forever, so it is never guessed.
+  test("refuses a creator without a country before calling Stripe", async () => {
+    const t = convexTest(schema, modules);
+    const { asCreator } = await seedCreator(t, "stripe_onboard_nowhere", undefined, null);
+
+    await expectApiError(
+      () => asCreator.action(api.stripeAccounts.onboardingLink, {}),
+      "invalid_state",
+      "country_required",
+    );
+    expect(stripe.createAccount).not.toHaveBeenCalled();
+  });
+
+  test("reports a country Stripe does not support and lets the creator change it", async () => {
+    const t = convexTest(schema, modules);
+    const { creatorId, asCreator } = await seedCreator(t, "stripe_onboard_ng", undefined, "NG");
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    stripe.createAccount.mockRejectedValueOnce(
+      new Stripe.errors.StripeInvalidRequestError({
+        type: "invalid_request_error",
+        code: "country_unsupported",
+        param: "country",
+        message: "NG is not currently supported by Stripe.",
+      }),
+    );
+
+    await expectApiError(
+      () => asCreator.action(api.stripeAccounts.onboardingLink, {}),
+      "invalid_state",
+      "stripe_country_unsupported",
+    );
+    await setCountry(t, creatorId, "GB");
+    await asCreator.action(api.stripeAccounts.onboardingLink, {});
+
+    expect(stripe.createAccount).toHaveBeenLastCalledWith(
+      expect.objectContaining({ country: "GB" }),
+      expect.anything(),
+    );
+  });
+
+  // The old account is gone for good; reconnecting means a new one.
+  test("creates a new account for a creator who disconnected Tomoji", async () => {
+    const t = convexTest(schema, modules);
+    const { asCreator } = await seedCreator(t, "stripe_onboard_reconnect", submitted);
+    await t.run((ctx) => disconnectStripeAccount(ctx, "acct_existing", 1_700_000_100_000));
+
+    await asCreator.action(api.stripeAccounts.onboardingLink, {});
+
+    expect(stripe.createAccount).toHaveBeenCalledTimes(1);
+    expect(stripe.createAccountLink).toHaveBeenCalledWith(
+      expect.objectContaining({ account: "acct_new" }),
+    );
+    expect(await asCreator.query(api.stripeAccounts.me, {})).toEqual({
+      status: "actionRequired",
+    });
   });
 
   // The caller only sees `stripe_account_failed`; the log keeps Stripe's reason.

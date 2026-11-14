@@ -2,7 +2,10 @@
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
 import {
+  abandonAccountCreation,
+  beginAccountCreation,
   createStripeAccount,
+  disconnectStripeAccount,
   getStripeAccountByCreatorId,
   getStripeAccountByStripeId,
   toStripeAccountStatus,
@@ -77,6 +80,72 @@ describe("toStripeAccountStatus", () => {
       ),
     ).toBe("ready");
   });
+
+  // Stripe's last flags still say payouts are on, but Tomoji can no longer use the account.
+  test("is disconnected once the creator removes Tomoji from their Stripe account", () => {
+    const disconnected = {
+      ...created,
+      detailsSubmitted: true,
+      payoutsEnabled: true,
+      requirementsDue: false,
+      disconnectedAt: 1_700_000_100_000,
+    } as Doc<"stripeAccounts">;
+
+    expect(toStripeAccountStatus(disconnected)).toBe("disconnected");
+  });
+});
+
+describe("beginAccountCreation", () => {
+  test("records the attempt with the creator's country before Stripe is called", async () => {
+    const t = convexTest(schema, modules);
+    const creatorId = await seedCreatorId(t, "attempt_new");
+
+    const { attempt, retry } = await t.run((ctx) => beginAccountCreation(ctx, creatorId, "CA"));
+
+    expect(retry).toBe(false);
+    expect(attempt).toMatchObject({ creatorId, country: "CA" });
+  });
+
+  // The retry must repeat the first request exactly, so Stripe returns the same
+  // account instead of creating a second one in the new country.
+  test("returns the pending attempt unchanged on a retry, even if the country changed", async () => {
+    const t = convexTest(schema, modules);
+    const creatorId = await seedCreatorId(t, "attempt_retry");
+    const first = await t.run((ctx) => beginAccountCreation(ctx, creatorId, "CA"));
+
+    const again = await t.run((ctx) => beginAccountCreation(ctx, creatorId, "GB"));
+
+    expect(again.retry).toBe(true);
+    expect(again.attempt._id).toBe(first.attempt._id);
+    expect(again.attempt.country).toBe("CA");
+  });
+
+  // Stripe fixes an account's country forever, so it must never be guessed.
+  test("refuses a creator with no country before anything is recorded", async () => {
+    const t = convexTest(schema, modules);
+    const creatorId = await seedCreatorId(t, "attempt_no_country");
+
+    await expectApiError(
+      () => t.run((ctx) => beginAccountCreation(ctx, creatorId, undefined)),
+      "invalid_state",
+      "country_required",
+    );
+    await t.run(async (ctx) => {
+      expect(await ctx.db.query("stripeAccountCreations").first()).toBeNull();
+    });
+  });
+
+  test("lets the creator start over once an attempt is abandoned", async () => {
+    const t = convexTest(schema, modules);
+    const creatorId = await seedCreatorId(t, "attempt_abandon");
+    await t.run((ctx) => beginAccountCreation(ctx, creatorId, "NG"));
+
+    await t.run((ctx) => abandonAccountCreation(ctx, creatorId));
+    const { attempt, retry } = await t.run((ctx) => beginAccountCreation(ctx, creatorId, "CA"));
+
+    expect(retry).toBe(false);
+    expect(attempt.country).toBe("CA");
+  });
 });
 
 describe("createStripeAccount", () => {
@@ -137,6 +206,107 @@ describe("createStripeAccount", () => {
     );
     await t.run(async (ctx) => {
       expect(await ctx.db.query("stripeAccounts").first()).toBeNull();
+    });
+  });
+
+  test("closes the creator's pending attempt once the account is saved", async () => {
+    const t = convexTest(schema, modules);
+    const creatorId = await seedCreatorId(t, "stripe_attempt_done");
+    await t.run((ctx) => beginAccountCreation(ctx, creatorId, "US"));
+
+    await t.run((ctx) => createStripeAccount(ctx, creatorId, created));
+
+    await t.run(async (ctx) => {
+      expect(await ctx.db.query("stripeAccountCreations").first()).toBeNull();
+    });
+  });
+
+  // Reconnecting after a disconnect needs a new account; the old one is gone for good.
+  test("replaces a disconnected account with the new one", async () => {
+    const t = convexTest(schema, modules);
+    const creatorId = await seedCreatorId(t, "stripe_reconnect");
+    await t.run((ctx) => createStripeAccount(ctx, creatorId, { ...created, payoutsEnabled: true }));
+    await t.run((ctx) => disconnectStripeAccount(ctx, "acct_creator", 1_700_000_100_000));
+
+    const replacement = { ...created, stripeAccountId: "acct_replacement" };
+    await t.run((ctx) => createStripeAccount(ctx, creatorId, replacement));
+
+    await t.run(async (ctx) => {
+      const account = await getStripeAccountByCreatorId(ctx, creatorId);
+      expect(account).toMatchObject(replacement);
+      expect(account?.disconnectedAt).toBeUndefined();
+      expect(await getStripeAccountByStripeId(ctx, "acct_creator")).toBeNull();
+    });
+  });
+});
+
+describe("disconnectStripeAccount", () => {
+  test("marks the account disconnected", async () => {
+    const t = convexTest(schema, modules);
+    const creatorId = await seedCreatorId(t, "stripe_disconnect");
+    await t.run((ctx) => createStripeAccount(ctx, creatorId, created));
+
+    expect(
+      await t.run((ctx) => disconnectStripeAccount(ctx, "acct_creator", 1_700_000_100_000)),
+    ).toBe("disconnected");
+
+    await t.run(async (ctx) => {
+      expect(await getStripeAccountByCreatorId(ctx, creatorId)).toMatchObject({
+        disconnectedAt: 1_700_000_100_000,
+      });
+    });
+  });
+
+  // Stripe redelivers events; the first disconnect time is the one that happened.
+  test("keeps the first disconnect time when the event repeats", async () => {
+    const t = convexTest(schema, modules);
+    const creatorId = await seedCreatorId(t, "stripe_disconnect_again");
+    await t.run((ctx) => createStripeAccount(ctx, creatorId, created));
+    await t.run((ctx) => disconnectStripeAccount(ctx, "acct_creator", 1_700_000_100_000));
+
+    await t.run((ctx) => disconnectStripeAccount(ctx, "acct_creator", 1_700_000_200_000));
+
+    await t.run(async (ctx) => {
+      expect((await getStripeAccountByCreatorId(ctx, creatorId))?.disconnectedAt).toBe(
+        1_700_000_100_000,
+      );
+    });
+  });
+
+  // After reconnecting, a late disconnect for the old account must not touch the new one.
+  test("ignores an account this deployment does not have", async () => {
+    const t = convexTest(schema, modules);
+    const creatorId = await seedCreatorId(t, "stripe_disconnect_unknown");
+    await t.run((ctx) => createStripeAccount(ctx, creatorId, created));
+
+    expect(await t.run((ctx) => disconnectStripeAccount(ctx, "acct_old", 1_700_000_100_000))).toBe(
+      "unknown",
+    );
+
+    await t.run(async (ctx) => {
+      expect((await getStripeAccountByCreatorId(ctx, creatorId))?.disconnectedAt).toBeUndefined();
+    });
+  });
+
+  // An update can arrive after the disconnect; Stripe's flags must not reconnect it.
+  test("stays disconnected when a later update arrives", async () => {
+    const t = convexTest(schema, modules);
+    const creatorId = await seedCreatorId(t, "stripe_disconnect_late");
+    await t.run((ctx) => createStripeAccount(ctx, creatorId, created));
+    await t.run((ctx) => disconnectStripeAccount(ctx, "acct_creator", 1_700_000_100_000));
+
+    await t.run((ctx) =>
+      updateStripeAccount(ctx, {
+        ...created,
+        payoutsEnabled: true,
+        stripeUpdatedAt: 1_700_000_200_000,
+      }),
+    );
+
+    await t.run(async (ctx) => {
+      expect(toStripeAccountStatus(await getStripeAccountByCreatorId(ctx, creatorId))).toBe(
+        "disconnected",
+      );
     });
   });
 });
@@ -244,6 +414,7 @@ describe("updateStripeAccount adopting an unsaved account", () => {
   test("records the account for our creator who has none", async () => {
     const t = convexTest(schema, modules);
     const creatorId = await seedCreatorId(t, "stripe_adopt");
+    await t.run((ctx) => beginAccountCreation(ctx, creatorId, "US"));
 
     const result = await t.run((ctx) => updateStripeAccount(ctx, created, creatorId));
 
@@ -253,6 +424,8 @@ describe("updateStripeAccount adopting an unsaved account", () => {
         creatorId,
         ...created,
       });
+      // The attempt is finished; a later reconnect must not reuse its country.
+      expect(await ctx.db.query("stripeAccountCreations").first()).toBeNull();
     });
   });
 

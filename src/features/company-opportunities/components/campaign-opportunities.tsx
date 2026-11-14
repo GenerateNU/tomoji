@@ -7,6 +7,7 @@ import { usePaginatedQuery } from "convex/react";
 import Link from "next/link";
 import { useState } from "react";
 import { EmptyState } from "@/components/empty-state";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Segment, SegmentedControl } from "@/components/ui/segmented-control";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -27,6 +28,8 @@ import {
   opportunityTiming,
   type OpportunityTab,
 } from "../lib/opportunity-status";
+import { EditOpportunityModal } from "./edit-opportunity-modal";
+import { OpportunityActions } from "./opportunity-actions";
 
 const PAGE_SIZE = 12;
 const date = new Intl.DateTimeFormat("en-US", { dateStyle: "medium" });
@@ -62,6 +65,9 @@ export function CampaignOpportunities({
     { initialNumItems: PAGE_SIZE },
   );
   const newHref = `/campaigns/${campaignId}/opportunities/new`;
+  const [editing, setEditing] = useState<Id<"opportunities"> | null>(null);
+  const edit = (opportunityId: Id<"opportunities">) => setEditing(opportunityId);
+  const editingTitle = results.find((opportunity) => opportunity._id === editing)?.title ?? "";
 
   return (
     <div className="flex min-w-0 flex-1 flex-col gap-8 px-4 py-10 sm:px-10 lg:px-12 lg:py-12">
@@ -128,6 +134,12 @@ export function CampaignOpportunities({
               title={opportunity.title}
               subtitle={opportunityTiming(opportunity, now)}
               onOpen={() => onOpen(opportunity._id)}
+              menu={
+                <div className="flex items-center gap-2">
+                  {opportunity.status === "paused" && <Badge>Paused</Badge>}
+                  <OpportunityActions opportunity={opportunity} now={now} onEdit={edit} />
+                </div>
+              }
             />
           ))}
         </div>
@@ -138,6 +150,9 @@ export function CampaignOpportunities({
             <TableHead className="w-40">Deadline</TableHead>
             <TableHead className="w-28">Slots</TableHead>
             <TableHead className="w-40">Pay</TableHead>
+            <TableHead className="w-12">
+              <span className="sr-only">Actions</span>
+            </TableHead>
           </TableHeader>
           <TableBody>
             {results.map((opportunity) => (
@@ -156,6 +171,9 @@ export function CampaignOpportunities({
                   {opportunity.numFilledSlots}/{opportunity.maxSlots}
                 </TableCell>
                 <TableCell>{formatCompensation(opportunity, { variant: "compact" })}</TableCell>
+                <TableCell type="custom">
+                  <OpportunityActions opportunity={opportunity} now={now} onEdit={edit} />
+                </TableCell>
               </TableRow>
             ))}
           </TableBody>
@@ -172,6 +190,12 @@ export function CampaignOpportunities({
           {status === "LoadingMore" ? "Loading…" : "Load more"}
         </Button>
       )}
+
+      <EditOpportunityModal
+        opportunityId={editing}
+        title={editingTitle}
+        onClose={() => setEditing(null)}
+      />
     </div>
   );
 }

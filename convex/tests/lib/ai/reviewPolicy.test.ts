@@ -26,7 +26,7 @@ test("requests changes for a confident failure", () => {
   ).toEqual({ status: "changesRequested", failedCriterionIds: ["product"] });
 });
 
-test("uncertainty takes precedence over a confident failure", () => {
+test("requests changes for the confident failure when another criterion is uncertain", () => {
   expect(
     decideAiReview([
       { ...met, outcome: "not_met", probabilities: { met: 0.02, not_met: 0.96, uncertain: 0.02 } },
@@ -37,7 +37,26 @@ test("uncertainty takes precedence over a confident failure", () => {
         probabilities: { met: 0.01, not_met: 0.01, uncertain: 0.98 },
       },
     ]),
-  ).toEqual({ status: "manualReview" });
+  ).toEqual({ status: "changesRequested", failedCriterionIds: ["product"] });
+});
+
+test("only reports confident failures when the caption and video both fail", () => {
+  expect(
+    decideAiReview([
+      {
+        ...met,
+        criterionId: "figma_in_caption",
+        outcome: "not_met",
+        probabilities: { met: 0.02, not_met: 0.97, uncertain: 0.01 },
+      },
+      {
+        ...met,
+        criterionId: "lasso_dropdown_in_speech",
+        outcome: "not_met",
+        probabilities: { met: 0, not_met: 0.63, uncertain: 0.37 },
+      },
+    ]),
+  ).toEqual({ status: "changesRequested", failedCriterionIds: ["figma_in_caption"] });
 });
 
 test("low probability does not become automatic approval", () => {

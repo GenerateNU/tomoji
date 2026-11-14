@@ -13,21 +13,22 @@ export type AiReviewDecision =
   | { status: "changesRequested"; failedCriterionIds: string[] }
   | { status: "manualReview" };
 
-/** Uncertainty wins over rejection; only complete, confident evidence permits an automatic decision. */
+/** Requests changes for confirmed failures and approves only when every criterion is confidently met. */
 export function decideAiReview(results: CriterionResult[]): AiReviewDecision {
-  if (
-    results.length === 0 ||
-    results.some(
+  const failedCriterionIds = results
+    .filter(
       (result) =>
-        result.outcome === "uncertain" ||
-        !(result.probabilities[result.outcome] >= AI_REVIEW_MIN_PROBABILITY),
+        result.outcome === "not_met" && result.probabilities.not_met >= AI_REVIEW_MIN_PROBABILITY,
+    )
+    .map((result) => result.criterionId);
+  if (failedCriterionIds.length > 0) return { status: "changesRequested", failedCriterionIds };
+
+  if (
+    results.length > 0 &&
+    results.every(
+      (result) => result.outcome === "met" && result.probabilities.met >= AI_REVIEW_MIN_PROBABILITY,
     )
   )
-    return { status: "manualReview" };
-  const failedCriterionIds = results
-    .filter((result) => result.outcome === "not_met")
-    .map((result) => result.criterionId);
-  return failedCriterionIds.length
-    ? { status: "changesRequested", failedCriterionIds }
-    : { status: "approved" };
+    return { status: "approved" };
+  return { status: "manualReview" };
 }

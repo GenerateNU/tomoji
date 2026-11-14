@@ -41,20 +41,20 @@ needs a live test.
 
 Convex applies the policy in `convex/lib/ai/reviewPolicy.ts`:
 
-| Evidence                                                                              | Outcome                                    |
-| ------------------------------------------------------------------------------------- | ------------------------------------------ |
-| Every criterion is `met` with selected probability >= 0.80                            | Approve                                    |
-| At least one `not_met` >= 0.80, with no uncertainty/low probabilities                 | Request changes, naming unmet requirements |
-| Uncertain, low probability, no usable evidence, invalid response, or provider failure | Leave pending for company review           |
+| Evidence                                                                 | Outcome                                     |
+| ------------------------------------------------------------------------ | ------------------------------------------- |
+| Every criterion is `met` with selected probability >= 0.80               | Approve                                     |
+| At least one `not_met` >= 0.80                                           | Request changes, naming only those failures |
+| Other results, no usable evidence, invalid response, or provider failure | Leave pending for company review            |
 
 A selected `met` or `not_met` below the cutoff is recorded as `low_probability`;
 `uncertain` means the classifier actually selected that option. Neither fallback
 changes the submission out of pending. The cutoff uses the selected option's
 probability, not Jev's separate `confidence` statistic.
 
-The selected-probability cutoff is now 0.80. Explicit `uncertain` answers still
-require manual review at any probability. This is an operating policy, not
-measured accuracy. Company and AI
+The selected-probability cutoff is 0.80. A confident failure is sufficient to
+request changes even when another criterion is uncertain. This is an operating
+policy, not measured accuracy. Company and AI
 reviews share the decision/notification operation. Evidence, decision, and creator
 notification commit together. Duplicate or stale completion cannot notify twice.
 Company review is blocked while an enabled workflow is processing; fallback and

@@ -86,7 +86,7 @@ export function DeliverableSubmissions({
             startOpen={startPost}
             post={post}
             active={active}
-            approvedVideo={latest.mediaId && <SubmittedVideo mediaId={latest.mediaId} />}
+            mediaId={latest.mediaId}
           />
         ))}
       {(canSubmit || draftInFlight || reviewId || revising) && (

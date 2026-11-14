@@ -3,7 +3,8 @@
 import { api } from "@convex/_generated/api";
 import type { Doc, Id } from "@convex/_generated/dataModel";
 import { useAction, useMutation } from "convex/react";
-import { useId, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { useId, useRef, useState, type FormEvent } from "react";
+import { ConvexError } from "convex/values";
 import { RiCheckLine, RiCloseLine, RiTimeLine } from "@remixicon/react";
 import { Button } from "@/components/ui/button";
 import {
@@ -15,8 +16,10 @@ import {
 } from "@/components/ui/dialog";
 import { Progress, ProgressLabel } from "@/components/ui/progress";
 import { Input } from "@/components/ui/input";
-import { useMe } from "@/features/users/hooks/use-me";
-import { errorMessage } from "@/lib/errors";
+import { errorCode, errorMessage } from "@/lib/errors";
+import { cn } from "@/lib/utils";
+import { SubmissionPreview } from "./submission-preview";
+import { SubmittedVideo } from "./submitted-video";
 
 type PublishedPostProps = {
   submissionId: Id<"submissions">;
@@ -24,7 +27,7 @@ type PublishedPostProps = {
   startOpen: boolean;
   post: Doc<"posts"> | undefined;
   active: boolean;
-  approvedVideo?: ReactNode;
+  mediaId?: Id<"mediaUploads">;
 };
 
 /** Saves the published link and exposes the caption check separately from video verification. */
@@ -33,7 +36,7 @@ export function PublishedPost({
   caption,
   post,
   active,
-  approvedVideo,
+  mediaId,
   startOpen,
 }: PublishedPostProps) {
   const create = useMutation(api.posts.create);
@@ -43,7 +46,10 @@ export function PublishedPost({
   const [open, setOpen] = useState(startOpen);
   const [editing, setEditing] = useState(false);
   const [url, setUrl] = useState("");
+  const [invalidUrl, setInvalidUrl] = useState(false);
+  const [showRevisionNote, setShowRevisionNote] = useState(false);
   const [error, setError] = useState<string>();
+  const [comparison, setComparison] = useState<{ postId: Id<"posts">; caption: string }>();
   const [checkingPost, setCheckingPost] = useState<Id<"posts">>();
   const [phase, setPhase] = useState<"saving" | "checking">();
   const submitting = useRef(false);
@@ -52,7 +58,10 @@ export function PublishedPost({
     setCheckingPost(postId);
     setPhase("checking");
     try {
-      if ((await check({ postId })) === "inProgress") {
+      const result = await check({ postId });
+      if (result.publishedCaption !== undefined)
+        setComparison({ postId, caption: result.publishedCaption });
+      if (result.status === "inProgress") {
         setError("Your link is saved. A check was started recently. Try again in a moment.");
       }
     } catch {
@@ -72,6 +81,12 @@ export function PublishedPost({
     }
   }
 
+  function changeUrl(value: string) {
+    setUrl(value);
+    setInvalidUrl(false);
+    setError(undefined);
+  }
+
   async function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     await run(async () => {
@@ -83,16 +98,23 @@ export function PublishedPost({
           ? (await replace({ postId: post._id, url: input }))._id
           : await create({ submissionId, url: input });
       } catch (failure) {
+        if (
+          errorCode(failure) === "invalid_state" &&
+          failure instanceof ConvexError &&
+          (failure.data as { reason?: string }).reason === "url_invalid"
+        ) {
+          setInvalidUrl(true);
+          return;
+        }
         setError(
           errorMessage(failure, {
-            invalid_state:
-              "Use a link to an individual post on X. Check the link or refresh the assignment.",
             conflict: "This link is already in use, or a link was just saved for this draft.",
           }),
         );
         return;
       }
       setEditing(false);
+      setShowRevisionNote(false);
       await checkPost(postId);
     });
   }
@@ -103,6 +125,7 @@ export function PublishedPost({
   const showForm = active && !post?.isVerified && (!post || editing) && !checking;
   const needsReview = post?.captionCheck === "match" || post?.captionCheck === "manualReview";
   const showMismatch = mismatch && !showForm && !phase;
+  const publishedCaption = comparison?.postId === post?._id ? comparison?.caption : undefined;
 
   let title = "Add post link";
   let description = "Publish your approved draft on X, then paste the link here.";
@@ -111,7 +134,7 @@ export function PublishedPost({
       post.captionCheck === "match"
         ? "It’s a match. Your post has been verified."
         : "Your post has been verified.";
-    description = approvedVideo ? "Review is complete." : "You can view the verified post on X.";
+    description = "You can view the verified post on X.";
   } else if (showMismatch) {
     title = "This post doesn’t match your submission";
     description =
@@ -124,7 +147,7 @@ export function PublishedPost({
   } else if (post && !showForm) {
     title = "Post link saved";
     description =
-      post.captionCheck === "match" && approvedVideo
+      post.captionCheck === "match" && mediaId
         ? "The caption matches. A reviewer will verify the published video."
         : needsReview
           ? "A reviewer will finish verifying your post."
@@ -133,8 +156,7 @@ export function PublishedPost({
 
   function editLink() {
     if (!post) return;
-    setUrl(post.url);
-    setError(undefined);
+    changeUrl(post.url);
     setEditing(true);
   }
 
@@ -147,6 +169,8 @@ export function PublishedPost({
         if (!next) {
           setEditing(false);
           setError(undefined);
+          setInvalidUrl(false);
+          setShowRevisionNote(false);
         }
       }}
     >
@@ -156,37 +180,48 @@ export function PublishedPost({
         {post ? "View published post" : "Add post link"}
       </DialogTrigger>
       <DialogContent
-        className="max-w-[1186px] content-center overflow-y-auto rounded-lg bg-gray-50 px-5 py-14 shadow-2xl sm:px-10 md:min-h-[min(79.4dvh,780px)]"
+        initialFocus={false}
+        className="max-w-[1186px] [align-content:safe_center] overflow-y-auto rounded-lg bg-gray-50 px-5 py-14 shadow-2xl sm:px-10 md:min-h-[min(79.4dvh,780px)]"
         overlayClassName="bg-gray-950/20 backdrop-blur-[2px]"
       >
         <div className="mx-auto w-full max-w-[912px] space-y-5">
-          {showMismatch || checking ? (
-            <div className="grid gap-5 sm:grid-cols-2">
-              <div className="space-y-4">
-                <ApprovedCaption caption={caption}>{approvedVideo}</ApprovedCaption>
+          <div className={cn("grid gap-5", (showMismatch || checking) && "sm:grid-cols-2")}>
+            <div
+              className={cn(
+                "relative min-w-0 space-y-4",
+                !showMismatch && !checking && "mx-auto w-full max-w-[446px]",
+              )}
+            >
+              <SubmissionPreview caption={caption}>
+                {mediaId && <SubmittedVideo mediaId={mediaId} eager />}
+              </SubmissionPreview>
+              {(showMismatch || checking) && (
                 <p className="text-center text-body-sm text-gray-500">The content you submitted</p>
-              </div>
-              <div className="space-y-4">
+              )}
+              {post?.isVerified && <ResultIcon />}
+            </div>
+            {(showMismatch || checking) && (
+              <div className="min-w-0 space-y-4">
                 <div className="relative space-y-4 rounded-lg bg-gray-0 p-4">
                   {showMismatch && <ResultIcon mismatch />}
                   <div className="flex items-center gap-3">
                     <span className="size-8 shrink-0 rounded-full bg-gray-100" aria-hidden />
                     <p className="text-body-sm font-medium">Published post</p>
                   </div>
-                  {post && <XLink url={post.url} />}
-                  {(approvedVideo || checking) && (
-                    <div className="aspect-video rounded-md bg-gray-50" aria-hidden />
+                  {publishedCaption !== undefined && !checking && (
+                    <p className="text-body-sm break-words whitespace-pre-wrap">
+                      {publishedCaption || "This post has no caption."}
+                    </p>
                   )}
+                  {post && <XLink url={post.url} />}
+                  {checking && <div className="aspect-video rounded-md bg-gray-50" aria-hidden />}
                 </div>
-                <p className="text-center text-body-sm text-gray-500">Post from the URL</p>
+                <p className="text-center text-body-sm text-gray-500">
+                  What we pulled from the URL
+                </p>
               </div>
-            </div>
-          ) : (
-            <div className="relative mx-auto max-w-[446px]">
-              <ApprovedCaption caption={caption}>{approvedVideo}</ApprovedCaption>
-              {post?.isVerified && <ResultIcon />}
-            </div>
-          )}
+            )}
+          </div>
 
           {checking ? (
             <div className="mx-auto mt-10 max-w-[446px] rounded-lg bg-gray-0 p-5">
@@ -207,6 +242,7 @@ export function PublishedPost({
             <form
               className="mx-auto max-w-[446px] space-y-5 rounded-lg bg-gray-0 p-5"
               onSubmit={save}
+              noValidate
             >
               <div className="flex items-start gap-3">
                 <span
@@ -219,7 +255,7 @@ export function PublishedPost({
                   <DialogTitle className="sr-only">{title}</DialogTitle>
                   <DialogDescription className="text-gray-950">
                     Your submission has been approved. Publish it on X and submit the link here.
-                    {approvedVideo && " A reviewer will verify the posted video."}
+                    {mediaId && " A reviewer will verify the posted video."}
                   </DialogDescription>
                 </div>
               </div>
@@ -235,17 +271,55 @@ export function PublishedPost({
                   value={url}
                   placeholder="https://x.com/username/status/…"
                   disabled={!!phase}
-                  onChange={(event) => setUrl(event.target.value)}
+                  aria-invalid={invalidUrl || undefined}
+                  aria-describedby={invalidUrl ? `${inputId}-error` : undefined}
+                  onChange={(event) => changeUrl(event.target.value)}
+                  onBlur={(event) => {
+                    if (event.target.value.trim() && !event.target.validity.valid)
+                      setInvalidUrl(true);
+                  }}
                 />
+                {invalidUrl && (
+                  <p id={`${inputId}-error`} role="alert" className="text-body-sm text-red-700">
+                    Enter a valid URL for an X post.
+                  </p>
+                )}
               </div>
               {error && (
                 <p role="alert" className="text-body-sm text-red-700">
                   {error}
                 </p>
               )}
-              <Button type="submit" className="w-full" disabled={!!phase || !url.trim()}>
-                {phase ? "Saving…" : post ? "Save new link" : "Check post link"}
-              </Button>
+              <div className="space-y-2.5">
+                <Button
+                  type="submit"
+                  size="sm"
+                  className="w-full"
+                  disabled={!!phase || invalidUrl || !url.trim()}
+                >
+                  {phase ? "Saving…" : "Submit"}
+                </Button>
+                {!post && (
+                  <>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="secondary-ghost"
+                      className="w-full"
+                      aria-expanded={showRevisionNote}
+                      onClick={() => setShowRevisionNote(!showRevisionNote)}
+                    >
+                      I want to change something
+                    </Button>
+                    {showRevisionNote && (
+                      <p className="text-body-sm text-gray-700">
+                        Contact the campaign team before publishing if you need to change the
+                        approved draft.
+                      </p>
+                    )}
+                  </>
+                )}
+              </div>
             </form>
           ) : (
             <div className="mx-auto max-w-lg space-y-3 pt-4 text-center">
@@ -306,35 +380,6 @@ export function PublishedPost({
         </div>
       </DialogContent>
     </Dialog>
-  );
-}
-
-/** Shows the original approved text for comparison against the public post. */
-function ApprovedCaption({
-  caption,
-  children,
-}: {
-  caption: string | undefined;
-  children?: ReactNode;
-}) {
-  const me = useMe();
-  const creator = me?.synced ? [me.firstName, me.lastName].filter(Boolean).join(" ") : "You";
-  return (
-    <div className="space-y-4 rounded-lg bg-gray-0 p-4">
-      <div className="flex items-center gap-3">
-        <span
-          className="grid size-8 shrink-0 place-items-center rounded-full bg-gray-100 text-gray-700"
-          aria-hidden
-        >
-          {creator[0]}
-        </span>
-        <p className="text-body-sm font-medium">{creator}</p>
-      </div>
-      <p className="text-body-sm break-words whitespace-pre-wrap">
-        {caption || "No caption was submitted."}
-      </p>
-      {children}
-    </div>
   );
 }
 

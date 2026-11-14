@@ -500,10 +500,12 @@ describe("posts.checkMyCaption", () => {
     const { fixture, postId } = await seedCaptionPost(t, false);
     const lookup = stubLookup();
 
-    expect(await fixture.asCreator.action(api.posts.checkMyCaption, { postId })).toBe("match");
-    expect(await fixture.asCreator.action(api.posts.checkMyCaption, { postId })).toBe(
-      "alreadyChecked",
-    );
+    expect(await fixture.asCreator.action(api.posts.checkMyCaption, { postId })).toEqual({
+      status: "match",
+    });
+    expect(await fixture.asCreator.action(api.posts.checkMyCaption, { postId })).toEqual({
+      status: "alreadyChecked",
+    });
     const post = await fixture.asCreator.query(api.posts.get, { postId });
     expect(post).toMatchObject({
       isVerified: true,
@@ -518,7 +520,9 @@ describe("posts.checkMyCaption", () => {
     const { fixture, postId } = await seedCaptionPost(t, true);
     stubLookup();
 
-    expect(await fixture.asCreator.action(api.posts.checkMyCaption, { postId })).toBe("match");
+    expect(await fixture.asCreator.action(api.posts.checkMyCaption, { postId })).toEqual({
+      status: "match",
+    });
     expect(await fixture.asCreator.query(api.posts.get, { postId })).toMatchObject({
       captionCheck: "match",
       isVerified: false,
@@ -530,7 +534,10 @@ describe("posts.checkMyCaption", () => {
     const { fixture, postId } = await seedCaptionPost(t, false);
     stubLookup({ author_id: "200" });
 
-    expect(await fixture.asCreator.action(api.posts.checkMyCaption, { postId })).toBe("mismatch");
+    expect(await fixture.asCreator.action(api.posts.checkMyCaption, { postId })).toEqual({
+      status: "mismatch",
+      publishedCaption: "Café #ad\r\nhttps://example.com/launch",
+    });
     expect(await fixture.asCreator.query(api.posts.get, { postId })).toMatchObject({
       isVerified: false,
     });
@@ -543,9 +550,9 @@ describe("posts.checkMyCaption", () => {
     const lookup = stubLookup();
 
     await expectApiError(() => other.action(api.posts.checkMyCaption, { postId }), "not_found");
-    expect(await fixture.asCreator.action(api.posts.checkMyCaption, { postId })).toBe(
-      "manualReview",
-    );
+    expect(await fixture.asCreator.action(api.posts.checkMyCaption, { postId })).toEqual({
+      status: "manualReview",
+    });
     expect(lookup).not.toHaveBeenCalled();
   });
 });

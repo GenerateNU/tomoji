@@ -217,21 +217,28 @@ export const saveCaptionCheck = internalMutation({
   },
 });
 
+const creatorCaptionResult = v.object({
+  status: creatorCaptionCheck,
+  publishedCaption: v.optional(v.string()),
+});
+
 /** Checks the published X caption for an approved draft from the calling creator. */
 export const checkMyCaption = action({
   args: { postId: v.id("posts") },
-  returns: creatorCaptionCheck,
-  handler: async (ctx, { postId }): Promise<Infer<typeof creatorCaptionCheck>> => {
+  returns: creatorCaptionResult,
+  handler: async (ctx, { postId }): Promise<Infer<typeof creatorCaptionResult>> => {
     await requireIdentity(ctx);
     const input = await ctx.runMutation(internal.posts.beginCaptionCheck, { postId });
-    if (input.status !== "lookup") return input.status;
+    if (input.status !== "lookup") return { status: input.status };
     const token = env.X_BEARER_TOKEN?.trim();
     if (!token) throw apiError("misconfigured", { reason: "x_bearer_token_missing" });
     const published = await getXPostForCaptionCheck(token, input.xPostId);
-    return await ctx.runMutation(internal.posts.saveCaptionCheck, {
+    const status = await ctx.runMutation(internal.posts.saveCaptionCheck, {
       postId,
       startedAt: input.startedAt,
       published,
     });
+    // Only return the public text after the write rechecks the caller and the active link.
+    return status === "mismatch" ? { status, publishedCaption: published.text } : { status };
   },
 });

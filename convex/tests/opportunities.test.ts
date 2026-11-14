@@ -8,6 +8,8 @@ import {
   expectApiError,
   opportunityArgs,
   seedCampaign,
+  seedAssignment,
+  seedCreatorId,
   seedOperator,
   seedOpportunity,
   seedUser,
@@ -802,6 +804,43 @@ describe("opportunities.update", () => {
 });
 
 describe("opportunities.discover", () => {
+  test("includes only the caller's own application and assignment", async () => {
+    const t = convexTest(schema, modules);
+    const applied = await seedOpportunity(t, { subject: "progress_applied" });
+    const claimed = await seedOpportunity(t, { subject: "progress_claimed" });
+    const asCreator = await seedUser(t, { subject: "progress_creator" });
+    const creatorId = await seedCreatorId(t, "progress_creator");
+    const otherId = await seedCreatorId(t, "progress_other");
+    const applicationId = await t.run(
+      async (ctx) =>
+        await ctx.db.insert("applications", {
+          opportunityId: applied.opportunityId,
+          creatorId,
+          companyId: applied.membership.companyId,
+          status: "pending",
+        }),
+    );
+    const assignmentId = await seedAssignment(t, {
+      opportunityId: claimed.opportunityId,
+      creatorId,
+    });
+    await seedAssignment(t, { opportunityId: applied.opportunityId, creatorId: otherId });
+
+    const result = await asCreator.query(api.opportunities.discover, {
+      paginationOpts: { numItems: 10, cursor: null },
+    });
+
+    const byId = new Map(result.page.map((brief) => [brief._id, brief]));
+    expect(byId.get(applied.opportunityId)).toMatchObject({
+      application: { _id: applicationId, status: "pending" },
+      assignment: null,
+    });
+    expect(byId.get(claimed.opportunityId)).toMatchObject({
+      application: null,
+      assignment: { _id: assignmentId, status: "termsPending" },
+    });
+  });
+
   test("returns public briefs with company names to a creator", async () => {
     const t = convexTest(schema, modules);
     const owner = await seedOpportunity(
@@ -831,6 +870,8 @@ describe("opportunities.discover", () => {
         "_creationTime",
         "companyName",
         "isStarred",
+        "application",
+        "assignment",
         "niches",
         "skills",
         "languages",
@@ -1329,6 +1370,8 @@ describe("opportunities.get", () => {
         "_creationTime",
         "companyName",
         "isStarred",
+        "application",
+        "assignment",
         "niches",
         "skills",
         "languages",

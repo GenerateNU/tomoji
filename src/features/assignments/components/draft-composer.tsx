@@ -1,7 +1,6 @@
 "use client";
 
 import {
-  RiAlertLine,
   RiCheckLine,
   RiCloseLine,
   RiTimeLine,
@@ -22,7 +21,11 @@ import { createMediaUpload, type MediaUploadPhase } from "@/lib/media-upload";
 import { cn } from "@/lib/utils";
 import { aiReviewStatusLabel } from "./assignment-status";
 import { SubmissionPreview } from "./submission-preview";
-import { SubmissionRejection } from "./submission-rejection";
+import {
+  SubmissionRejection,
+  SubmissionRejectionFeedback,
+  type RejectedSubmission,
+} from "./submission-rejection";
 import { VideoPreview } from "./video-preview";
 
 const VIDEO_TYPES = ["video/mp4", "video/quicktime", "video/webm"];
@@ -37,11 +40,7 @@ type DraftComposerProps = {
   assignmentTitle: string;
   usesAiReview: boolean;
   reviewId?: Id<"submissions">;
-  previous?: {
-    caption?: string;
-    draftDescription: string;
-    reviewNote?: string;
-  };
+  previous?: RejectedSubmission;
   onCancel: () => void;
   onRevise: (id: Id<"submissions">) => void;
   onSubmitted: (submissionId: Id<"submissions">) => void;
@@ -371,17 +370,7 @@ export function DraftComposer({
       >
         <p className="text-center text-body-sm text-gray-500">Preview</p>
         {preview}
-        {previous?.reviewNote && (
-          <div className="space-y-3 rounded-xl bg-gray-0 p-5 text-body-sm">
-            <div className="flex items-center gap-2 font-medium">
-              <RiAlertLine size={20} className="text-red-700" aria-hidden />
-              <h3>Changes needed</h3>
-            </div>
-            <p className="border-t pt-3 break-words whitespace-pre-wrap text-gray-700">
-              {previous.reviewNote}
-            </p>
-          </div>
-        )}
+        {previous && <SubmissionRejectionFeedback submission={previous} />}
       </aside>
     </form>
   );

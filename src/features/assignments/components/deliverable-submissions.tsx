@@ -50,7 +50,8 @@ export function DeliverableSubmissions({
     api.submissions.get,
     revising ? { submissionId: revising } : "skip",
   );
-  const previous = rejectedDraft ?? (latest?.status === "changesRequested" ? latest : undefined);
+  const previous = revising ? rejectedDraft : latest;
+  const rejectedSubmission = previous?.status === "changesRequested" ? previous : undefined;
   const busy = submissionId !== undefined && latest === undefined;
   const canSubmit =
     active &&
@@ -97,7 +98,7 @@ export function DeliverableSubmissions({
                 deliverableId={deliverableId}
                 assignmentTitle={assignmentTitle}
                 usesAiReview={usesAiReview}
-                previous={previous}
+                previous={rejectedSubmission}
                 reviewId={reviewId}
                 onCancel={closeComposer}
                 onRevise={(id) => {

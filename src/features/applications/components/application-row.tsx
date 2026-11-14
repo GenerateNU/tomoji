@@ -93,7 +93,7 @@ export function OfferTitleButton({
 
 /**
  * One application as a table row. Everything it shows comes with the row; it runs no queries.
- * On the Offers tab the title opens the offer, and so does a click anywhere else on the row.
+ * On the Offers and Accepted tabs the title opens the offer, and so does a click anywhere else on the row.
  */
 export function ApplicationRow({
   row,
@@ -136,16 +136,30 @@ export function ApplicationRow({
           {displayCompanyName(row)}
         </span>
       </TableCell>
-      {tab === "offers" ? (
+      {tab === "accepted" ? (
         <TableCell>
-          <OfferExpiry status={row.status} offerExpiresAt={row.offerExpiresAt} now={now} />
+          {row.offerAcceptedAt === undefined ? (
+            "—"
+          ) : (
+            <span className="first-letter:uppercase">
+              {formatRelativeTime(row.offerAcceptedAt, now)}
+            </span>
+          )}
         </TableCell>
       ) : (
-        <TableCell type="custom">
-          <ApplicationStatusBadge status={row.status} />
-        </TableCell>
+        <>
+          {tab === "offers" ? (
+            <TableCell>
+              <OfferExpiry status={row.status} offerExpiresAt={row.offerExpiresAt} now={now} />
+            </TableCell>
+          ) : (
+            <TableCell type="custom">
+              <ApplicationStatusBadge status={row.status} />
+            </TableCell>
+          )}
+          <TableCell>{formatRelativeTime(row.submittedAt, now)}</TableCell>
+        </>
       )}
-      <TableCell>{formatRelativeTime(row.submittedAt, now)}</TableCell>
       <TableCell>
         <ApplicationCompensation row={row} />
       </TableCell>

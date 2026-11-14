@@ -7,12 +7,11 @@ import { cn } from "@/lib/utils";
 import type { ApplicationsTable } from "../hooks/use-applications-table";
 
 /**
- * Keyword search plus the Starred and Hide rejected toggles. The Offers tab has
- * no visible label, only an accessible one, and no Hide rejected: declined
- * offers are part of that tab.
+ * Keyword search plus the Starred and Hide rejected toggles. The Offers and Accepted
+ * tabs have no visible label, only an accessible one, and no Hide rejected.
  */
 export function ApplicationFilters({ table }: { table: ApplicationsTable }) {
-  const isOffers = table.tab === "offers";
+  const isOffers = table.tab !== "applications";
   return (
     <div
       className={cn(
@@ -22,7 +21,13 @@ export function ApplicationFilters({ table }: { table: ApplicationsTable }) {
     >
       <TextField
         label={isOffers ? undefined : "Search"}
-        aria-label={isOffers ? "Search offers" : undefined}
+        aria-label={
+          isOffers
+            ? table.tab === "accepted"
+              ? "Search accepted offers"
+              : "Search offers"
+            : undefined
+        }
         icon={RiSearchLine}
         placeholder="Search by keyword"
         type="search"

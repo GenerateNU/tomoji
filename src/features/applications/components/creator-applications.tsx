@@ -53,7 +53,7 @@ function ApplicationTabs({
     <Tabs
       value={tab}
       onValueChange={(next) => {
-        if (next === "applications" || next === "offers") onTabChange(next);
+        if (next === "applications" || next === "offers" || next === "accepted") onTabChange(next);
       }}
       className="gap-6 md:gap-8"
     >
@@ -68,11 +68,9 @@ function ApplicationTabs({
             Offers
             {counts && <TabsCount>{formatTabCount(counts.offers)}</TabsCount>}
           </TabsTrigger>
-          {/* Accepted offers arrive later; the count is real already. */}
-          <TabsTrigger value="accepted" disabled>
+          <TabsTrigger value="accepted">
             Accepted
             {counts && <TabsCount>{formatTabCount(counts.accepted)}</TabsCount>}
-            <span className="sr-only">(coming soon)</span>
           </TabsTrigger>
         </TabsList>
       </div>
@@ -97,11 +95,104 @@ function ApplicationsError({ onRetry, onClear }: { onRetry: () => void; onClear:
   );
 }
 
-const NOUNS = {
-  applications: "applications",
-  offers: "offers",
-  accepted: "offers",
-} as const;
+type TableColumn = { label: string; sortKey: ApplicationSortKey; className?: string };
+
+type TabConfig = {
+  noun: string;
+  tableTitle: string;
+  /** The Offers and Accepted tabs are named by their tab, so the table has no heading of its own. */
+  hideTitle: boolean;
+  /** Whether a row opens the offer. */
+  opensModal: boolean;
+  columns: TableColumn[];
+};
+
+const NAME_COLUMN = { label: "Name", sortKey: "name" } as const;
+const COMPANY_COLUMN = { label: "Company", sortKey: "company" } as const;
+const COMPENSATION_COLUMN = { label: "Compensation", sortKey: "compensation" } as const;
+const SUBMITTED_COLUMN = { label: "Submitted", sortKey: "submitted", className: "w-28" } as const;
+
+const TAB_CONFIG: Record<ApplicationTab, TabConfig> = {
+  applications: {
+    noun: "applications",
+    tableTitle: "Applications",
+    hideTitle: false,
+    opensModal: false,
+    columns: [
+      { ...NAME_COLUMN, className: "w-[32%]" },
+      { ...COMPANY_COLUMN, className: "w-[20%]" },
+      { label: "Status", sortKey: "status", className: "w-32" },
+      SUBMITTED_COLUMN,
+      COMPENSATION_COLUMN,
+    ],
+  },
+  // The Offers tab's third column is when the offer ends, not where it stands.
+  offers: {
+    noun: "offers",
+    tableTitle: "Offers",
+    hideTitle: true,
+    opensModal: true,
+    columns: [
+      { ...NAME_COLUMN, className: "w-[30%]" },
+      { ...COMPANY_COLUMN, className: "w-[20%]" },
+      { label: "Expiration date", sortKey: "expires", className: "w-36" },
+      SUBMITTED_COLUMN,
+      COMPENSATION_COLUMN,
+    ],
+  },
+  accepted: {
+    noun: "accepted offers",
+    tableTitle: "Accepted offers",
+    hideTitle: true,
+    opensModal: true,
+    columns: [
+      { ...NAME_COLUMN, className: "w-[40%]" },
+      { ...COMPANY_COLUMN, className: "w-[22%]" },
+      { label: "Accepted", sortKey: "accepted", className: "w-36" },
+      COMPENSATION_COLUMN,
+    ],
+  },
+};
+
+function NeverHadState({
+  tab,
+  onSwitchTab,
+}: {
+  tab: ApplicationTab;
+  onSwitchTab: (tab: ApplicationTab) => void;
+}) {
+  if (tab === "offers") {
+    return (
+      <EmptyState className="flex flex-col items-center gap-3">
+        <p className="font-medium text-gray-950">No offers yet.</p>
+        <p>When a company sends you an offer, it appears here. Offers usually last 48 hours.</p>
+        <Button variant="secondary-subtle" onClick={() => onSwitchTab("applications")}>
+          View applications
+        </Button>
+      </EmptyState>
+    );
+  }
+  if (tab === "accepted") {
+    return (
+      <EmptyState className="flex flex-col items-center gap-3">
+        <p className="font-medium text-gray-950">No accepted offers yet.</p>
+        <p>Offers you accept appear here.</p>
+        <Button variant="secondary-subtle" onClick={() => onSwitchTab("offers")}>
+          View offers
+        </Button>
+      </EmptyState>
+    );
+  }
+  return (
+    <EmptyState className="flex flex-col items-center gap-3">
+      <p className="font-medium text-gray-950">You haven&apos;t applied to anything yet.</p>
+      <p>When you apply to an opportunity, you can follow its status here.</p>
+      <Link href="/opportunities" className={buttonVariants({ variant: "secondary-subtle" })}>
+        Browse opportunities
+      </Link>
+    </EmptyState>
+  );
+}
 
 function ApplicationsContent({ table }: { table: ApplicationsTable }) {
   const isWide = useMediaQuery("(min-width: 768px)");
@@ -114,8 +205,7 @@ function ApplicationsContent({ table }: { table: ApplicationsTable }) {
   const { data: latest, isStale } = useStableQuery(api.applications.searchMine, table.args);
   // Rows of the other tab have different columns, so they are never shown under this tab's headers.
   const data = latest?.tab === table.tab ? latest : undefined;
-  const isOffers = table.tab === "offers";
-  const noun = NOUNS[table.tab];
+  const { noun, tableTitle, hideTitle, opensModal, columns } = TAB_CONFIG[table.tab];
 
   // The server clamps a page past the end, e.g. after rows were removed.
   const { page, setPage } = table;
@@ -129,7 +219,7 @@ function ApplicationsContent({ table }: { table: ApplicationsTable }) {
     resultsRef.current?.focus();
   }
 
-  const openOffer = isOffers
+  const openOffer = opensModal
     ? (applicationId: Id<"applications">) => {
         setOpenApplicationId(applicationId);
         setModalOpen(true);
@@ -153,24 +243,6 @@ function ApplicationsContent({ table }: { table: ApplicationsTable }) {
 
   const neverHad = data !== undefined && data.counts[table.tab].count === 0 && !table.hasFilters;
 
-  // The Offers tab's third column is when the offer ends, not where it stands.
-  const columns = isOffers
-    ? {
-        name: "w-[30%]",
-        company: "w-[20%]",
-        third: "w-36",
-        thirdLabel: "Expiration date",
-        thirdKey: "expires" as const,
-      }
-    : {
-        name: "w-[32%]",
-        company: "w-[20%]",
-        third: "w-32",
-        thirdLabel: "Status",
-        thirdKey: "status" as const,
-      };
-  const tableTitle = isOffers ? "Offers" : "Applications";
-
   let results;
   if (data === undefined) {
     results = (
@@ -181,20 +253,20 @@ function ApplicationsContent({ table }: { table: ApplicationsTable }) {
         {isWide ? (
           <TableCard
             title={tableTitle}
-            hideTitle={isOffers}
+            hideTitle={hideTitle}
             className="[&_table]:min-w-176"
             aria-hidden
           >
             <TableHeader>
-              <TableHead className={columns.name}>Name</TableHead>
-              <TableHead className={columns.company}>Company</TableHead>
-              <TableHead className={columns.third}>{columns.thirdLabel}</TableHead>
-              <TableHead className="w-28">Submitted</TableHead>
-              <TableHead>Compensation</TableHead>
+              {columns.map((column) => (
+                <TableHead key={column.sortKey} className={column.className}>
+                  {column.label}
+                </TableHead>
+              ))}
             </TableHeader>
             <TableBody>
               {Array.from({ length: 5 }, (_, index) => (
-                <SkeletonRow key={index} />
+                <SkeletonRow key={index} showSubmitted={table.tab !== "accepted"} />
               ))}
             </TableBody>
           </TableCard>
@@ -206,23 +278,7 @@ function ApplicationsContent({ table }: { table: ApplicationsTable }) {
       </>
     );
   } else if (neverHad) {
-    results = isOffers ? (
-      <EmptyState className="flex flex-col items-center gap-3">
-        <p className="font-medium text-gray-950">No offers yet.</p>
-        <p>When a company sends you an offer, it appears here. Offers usually last 48 hours.</p>
-        <Button variant="secondary-subtle" onClick={() => table.setTab("applications")}>
-          View applications
-        </Button>
-      </EmptyState>
-    ) : (
-      <EmptyState className="flex flex-col items-center gap-3">
-        <p className="font-medium text-gray-950">You haven&apos;t applied to anything yet.</p>
-        <p>When you apply to an opportunity, you can follow its status here.</p>
-        <Link href="/opportunities" className={buttonVariants({ variant: "secondary-subtle" })}>
-          Browse opportunities
-        </Link>
-      </EmptyState>
-    );
+    results = <NeverHadState tab={table.tab} onSwitchTab={table.setTab} />;
   } else if (data.totalCount === 0) {
     results = (
       <EmptyState className="flex flex-col items-center gap-3">
@@ -236,24 +292,20 @@ function ApplicationsContent({ table }: { table: ApplicationsTable }) {
     results = (
       <TableCard
         title={tableTitle}
-        hideTitle={isOffers}
+        hideTitle={hideTitle}
         count={data.totalCount}
         className="[&_table]:min-w-176"
       >
         <TableHeader>
-          <TableHead className={columns.name} {...headProps("name")}>
-            Name
-          </TableHead>
-          <TableHead className={columns.company} {...headProps("company")}>
-            Company
-          </TableHead>
-          <TableHead className={columns.third} {...headProps(columns.thirdKey)}>
-            {columns.thirdLabel}
-          </TableHead>
-          <TableHead className="w-28" {...headProps("submitted")}>
-            Submitted
-          </TableHead>
-          <TableHead {...headProps("compensation")}>Compensation</TableHead>
+          {columns.map((column) => (
+            <TableHead
+              key={column.sortKey}
+              className={column.className}
+              {...headProps(column.sortKey)}
+            >
+              {column.label}
+            </TableHead>
+          ))}
         </TableHeader>
         <TableBody>
           {data.rows.map((row) => (
@@ -271,7 +323,7 @@ function ApplicationsContent({ table }: { table: ApplicationsTable }) {
   } else {
     results = (
       <div className="flex flex-col gap-4 rounded-lg bg-gray-0 p-4 shadow-card">
-        {!isOffers && (
+        {!hideTitle && (
           <h2 className="flex items-center gap-1.5 text-body-lg font-medium text-gray-950">
             Applications <span className="text-gray-500">({data.totalCount})</span>
           </h2>

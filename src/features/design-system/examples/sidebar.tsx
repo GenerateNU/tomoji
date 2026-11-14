@@ -2,14 +2,8 @@
 
 import { useState, type ReactNode } from "react";
 import {
-  RiAuctionFill,
-  RiAuctionLine,
   RiBriefcaseFill,
   RiBriefcaseLine,
-  RiCheckboxMultipleFill,
-  RiCheckboxMultipleLine,
-  RiFolderFill,
-  RiFolderLine,
   RiGroupFill,
   RiGroupLine,
   RiHome4Fill,
@@ -20,33 +14,28 @@ import {
   RiLayoutGridLine,
   RiLineChartFill,
   RiLineChartLine,
-  RiPlayLargeFill,
-  RiPlayLargeLine,
   RiSearchFill,
   RiSearchLine,
   RiSettings3Fill,
   RiSettings3Line,
   RiUser3Line,
-  RiWallet3Fill,
-  RiWallet3Line,
-  type RemixiconComponentType,
 } from "@remixicon/react";
-import { SpellingLogo } from "@/components/logo";
-import { Avatar, CompanyAvatar } from "@/components/ui/avatar";
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+  AccountMenu,
+  AppSidebar,
+  NavItems,
+  companyNavItems,
+  creatorNavItems,
+  type AccountMenuEntry,
+  type NavEntry,
+} from "@/components/app-sidebar";
+import { CompanyAvatar } from "@/components/ui/avatar";
 import {
   Sidebar,
-  SidebarAccount,
   SidebarContent,
   SidebarFooter,
   SidebarGroup,
   SidebarHeader,
-  SidebarItem,
   SidebarLabel,
   SidebarNav,
   SidebarPage,
@@ -54,18 +43,7 @@ import {
   SidebarToggle,
 } from "@/components/ui/sidebar";
 import { Example } from "@/features/design-system/components/docs/example";
-import { iconProps } from "@/lib/icons";
 import { cn } from "@/lib/utils";
-
-type NavEntry<Id extends string, SubId extends string = string> = {
-  id: Id;
-  label: string;
-  icon: RemixiconComponentType;
-  activeIcon: RemixiconComponentType;
-  badge?: number;
-  /** A secondary nav this item owns; it shows only while the item is selected. */
-  subnav?: { label: string; items: readonly NavEntry<SubId>[] };
-};
 
 // The "Sidebar Item" demo: default, selected and badge states in one clickable nav.
 const itemDemoNavItems = [
@@ -84,32 +62,7 @@ const collapsedDemoNavItems = [
   { id: "home", label: "Home", icon: RiHome4Line, activeIcon: RiHome4Fill },
 ] as const satisfies readonly NavEntry<string>[];
 
-export const creatorNavItems = [
-  { id: "home", label: "Home", icon: RiHome4Line, activeIcon: RiHome4Fill },
-  { id: "opportunities", label: "Opportunities", icon: RiSearchLine, activeIcon: RiSearchFill },
-  { id: "applications", label: "Applications", icon: RiInboxLine, activeIcon: RiInboxFill },
-  {
-    id: "assignments",
-    label: "Assignments",
-    icon: RiCheckboxMultipleLine,
-    activeIcon: RiCheckboxMultipleFill,
-  },
-  { id: "posts", label: "Posts", icon: RiPlayLargeLine, activeIcon: RiPlayLargeFill },
-  { id: "earnings", label: "Earnings", icon: RiWallet3Line, activeIcon: RiWallet3Fill },
-  { id: "disputes", label: "Disputes", icon: RiAuctionLine, activeIcon: RiAuctionFill },
-] as const satisfies readonly NavEntry<string>[];
-
-export const companyNavItems = [
-  { id: "home", label: "Home", icon: RiHome4Line, activeIcon: RiHome4Fill },
-  { id: "campaigns", label: "Campaigns", icon: RiFolderLine, activeIcon: RiFolderFill },
-  { id: "applications", label: "Applications", icon: RiInboxLine, activeIcon: RiInboxFill },
-  { id: "submissions", label: "Submissions", icon: RiPlayLargeLine, activeIcon: RiPlayLargeFill },
-  { id: "analytics", label: "Analytics", icon: RiLineChartLine, activeIcon: RiLineChartFill },
-  { id: "payout", label: "Pay out", icon: RiWallet3Line, activeIcon: RiWallet3Fill },
-  { id: "disputes", label: "Disputes", icon: RiAuctionLine, activeIcon: RiAuctionFill },
-] as const satisfies readonly NavEntry<string>[];
-
-export const campaignNavItems = [
+const campaignNavItems = [
   { id: "overview", label: "Overview", icon: RiLayoutGridLine, activeIcon: RiLayoutGridFill },
   {
     id: "opportunities",
@@ -136,64 +89,23 @@ const campaignCompanyNavItems: readonly NavEntry<CompanyNavId, CampaignNavId>[] 
   );
 type AccountAction = "profile" | "settings";
 
-function NavItems<Id extends string>({
-  items,
-  selected,
-  muted,
-  onSelect,
-}: {
-  items: readonly NavEntry<Id>[];
-  selected: Id;
-  muted?: boolean;
-  onSelect?: (id: Id) => void;
-}) {
-  return items.map(({ id, label, icon: Icon, activeIcon: ActiveIcon, badge }) => (
-    <SidebarItem
-      key={id}
-      // Demo links: the click handler prevents navigation, so no "#" lands in the URL.
-      href="#"
-      active={id === selected ? (muted ? "parent" : true) : false}
-      icon={<Icon {...iconProps} />}
-      activeIcon={<ActiveIcon {...iconProps} />}
-      badge={badge}
-      onClick={(event) => {
-        event.preventDefault();
-        onSelect?.(id);
-      }}
-    >
-      {label}
-    </SidebarItem>
-  ));
-}
-
-function AccountMenu({
-  name,
-  avatarSrc,
-  onAction,
-}: {
-  name: string;
-  avatarSrc?: string;
-  onAction?: (action: AccountAction) => void;
-}) {
-  return (
-    <DropdownMenu>
-      <DropdownMenuTrigger
-        render={
-          <SidebarAccount avatar={<Avatar size={24} src={avatarSrc} />}>{name}</SidebarAccount>
-        }
-      />
-      <DropdownMenuContent side="top" align="start" sideOffset={4}>
-        <DropdownMenuItem onClick={() => onAction?.("profile")}>
-          <RiUser3Line {...iconProps} />
-          View profile
-        </DropdownMenuItem>
-        <DropdownMenuItem onClick={() => onAction?.("settings")}>
-          <RiSettings3Line {...iconProps} />
-          Settings
-        </DropdownMenuItem>
-      </DropdownMenuContent>
-    </DropdownMenu>
-  );
+function accountEntries(onAction?: (action: AccountAction) => void): AccountMenuEntry[] {
+  return [
+    {
+      kind: "action",
+      id: "profile",
+      label: "View profile",
+      icon: RiUser3Line,
+      onSelect: () => onAction?.("profile"),
+    },
+    {
+      kind: "action",
+      id: "settings",
+      label: "Settings",
+      icon: RiSettings3Line,
+      onSelect: () => onAction?.("settings"),
+    },
+  ];
 }
 
 function CreatorSidebar({
@@ -216,20 +128,20 @@ function CreatorSidebar({
   className?: string;
 }) {
   return (
-    <Sidebar collapsed={collapsed} className={className}>
-      <SidebarContent>
-        <SidebarHeader>
-          <SpellingLogo collapsed={collapsed} size={16} />
-          <SidebarToggle onCollapsedChange={onCollapsedChange} />
-        </SidebarHeader>
-        <SidebarNav aria-label="Main">
-          <NavItems items={creatorNavItems} selected={selected} onSelect={onSelect} />
-        </SidebarNav>
-      </SidebarContent>
-      <SidebarFooter>
-        <AccountMenu name={userName} avatarSrc={userAvatarSrc} onAction={onAccountAction} />
-      </SidebarFooter>
-    </Sidebar>
+    <AppSidebar
+      items={creatorNavItems}
+      activeId={selected}
+      // Demo: selecting never navigates.
+      onSelect={onSelect ?? (() => {})}
+      account={{
+        name: userName,
+        avatarSrc: userAvatarSrc,
+        items: accountEntries(onAccountAction),
+      }}
+      collapsed={collapsed}
+      onCollapsedChange={onCollapsedChange}
+      className={className}
+    />
   );
 }
 
@@ -266,7 +178,11 @@ function CompanySidebar({
   const logo = <CompanyAvatar size={24} src={companyLogoSrc} alt={companyName} />;
   const account = (
     <SidebarFooter>
-      <AccountMenu name={userName} avatarSrc={userAvatarSrc} onAction={onAccountAction} />
+      <AccountMenu
+        name={userName}
+        avatarSrc={userAvatarSrc}
+        items={accountEntries(onAccountAction)}
+      />
     </SidebarFooter>
   );
 
@@ -282,7 +198,11 @@ function CompanySidebar({
             <SidebarToggle onCollapsedChange={onCollapsedChange} />
           </SidebarHeader>
           <SidebarNav aria-label="Main">
-            <NavItems items={companyNavItems} selected={selected} onSelect={onSelect} />
+            <NavItems
+              items={companyNavItems}
+              activeId={selected}
+              onSelect={onSelect ?? (() => {})}
+            />
           </SidebarNav>
         </SidebarContent>
         {account}
@@ -322,9 +242,9 @@ function CompanySidebar({
           <SidebarNav aria-label="Main">
             <NavItems
               items={campaignCompanyNavItems}
-              selected={selected}
+              activeId={selected}
               muted={subnavOpen}
-              onSelect={onSelect}
+              onSelect={onSelect ?? (() => {})}
             />
           </SidebarNav>
         </SidebarContent>
@@ -337,8 +257,8 @@ function CompanySidebar({
             <SidebarNav aria-label={panelSubnav.label}>
               <NavItems
                 items={panelSubnav.items}
-                selected={campaignSelected}
-                onSelect={onCampaignSelect}
+                activeId={campaignSelected}
+                onSelect={onCampaignSelect ?? (() => {})}
               />
             </SidebarNav>
           </>
@@ -446,13 +366,13 @@ export function SidebarExamples() {
       >
         <div className="flex w-50 flex-col gap-1">
           <SidebarNav aria-label="Sidebar item states">
-            <NavItems items={itemDemoNavItems} selected={itemSelected} onSelect={setItemSelected} />
+            <NavItems items={itemDemoNavItems} activeId={itemSelected} onSelect={setItemSelected} />
           </SidebarNav>
           <Sidebar collapsed className="h-auto bg-transparent">
             <SidebarNav aria-label="Collapsed sidebar item">
               <NavItems
                 items={collapsedDemoNavItems}
-                selected={collapsedItemSelected}
+                activeId={collapsedItemSelected}
                 onSelect={setCollapsedItemSelected}
               />
             </SidebarNav>

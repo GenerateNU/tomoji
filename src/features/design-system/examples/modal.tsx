@@ -5,6 +5,7 @@ import { RiMoreLine } from "@remixicon/react";
 import { Modal, ModalIconButton } from "@/components/modal";
 import { Button } from "@/components/ui/button";
 import { CompanyAvatar } from "@/components/ui/avatar";
+import { Tag } from "@/components/ui/badge";
 import { Example } from "@/features/design-system/components/docs/example";
 
 function Demo({
@@ -101,6 +102,44 @@ export function ModalExamples() {
           title="Big title"
           titleSize="lg"
           actions={<ModalIconButton icon={RiMoreLine} label="More" />}
+        />
+      </Example>
+      <Example
+        title="Eyebrow and title tags"
+        description="An eyebrow row above a 28px title, level with the close button, and tags beside the title that wrap below it when the title is long. A blurred backdrop is optional."
+        code={`<Modal
+  open={open}
+  onOpenChange={setOpen}
+  title="How-To Tutorial: Writing UX Copy and Motion"
+  titleSize="lg"
+  eyebrow={<span>Anthropic</span>}
+  titleAddon={<Tag size="md" tone="primary">Applied</Tag>}
+  overlayClassName="backdrop-blur-xs"
+  footer={…}
+>
+  …
+</Modal>`}
+      >
+        <Demo
+          title="How-To Tutorial: Writing UX Copy and Motion"
+          titleSize="lg"
+          eyebrow={
+            <span className="flex items-center gap-2 text-body-sm text-gray-700">
+              <CompanyAvatar size={24} />
+              Anthropic
+            </span>
+          }
+          titleAddon={
+            <>
+              <Tag size="md" tone="primary">
+                Applied
+              </Tag>
+              <Tag size="md" tone="destructive">
+                Offer expired November 11
+              </Tag>
+            </>
+          }
+          overlayClassName="backdrop-blur-xs"
         />
       </Example>
     </>

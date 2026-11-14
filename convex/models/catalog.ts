@@ -29,7 +29,7 @@ export function listCatalogOptions(
 export function requireCatalogOption(
   catalog: readonly CatalogOption[],
   input: string,
-  kind: "niche" | "skill",
+  kind: "niche" | "skill" | "language",
 ): string {
   const name = normalizeCatalogName(input);
   const option = catalog.find(

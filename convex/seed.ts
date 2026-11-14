@@ -5,6 +5,7 @@ import { apiError } from "./lib/errors";
 import { HALF_HOUR_MS } from "./lib/validation";
 import { updateCreatorNiches } from "./models/creatorNiches";
 import { updateOpportunityNiches } from "./models/opportunityNiches";
+import { updateOpportunityLanguages } from "./models/opportunityLanguages";
 import { updateOpportunitySkills } from "./models/opportunitySkills";
 
 /**
@@ -126,13 +127,13 @@ type OpportunitySpec = {
   isGated: boolean;
   maxSlots: number;
   numFilledSlots: number;
-  maxApplications: number;
   deadlineInDays: number;
   status: Doc<"opportunities">["status"];
   fixedFeeCents: number;
   cpmRateCents: number;
   paymentCapCents: number;
   niches: string[];
+  languages: string[];
   skills: string[];
 };
 
@@ -148,7 +149,6 @@ const OPPORTUNITIES: OpportunitySpec[] = [
     isGated: true,
     maxSlots: 8,
     numFilledSlots: 2,
-    maxApplications: 8,
     deadlineInDays: 21,
     status: "open",
     fixedFeeCents: 65_000,
@@ -156,6 +156,7 @@ const OPPORTUNITIES: OpportunitySpec[] = [
     paymentCapCents: 200_000,
     niches: ["ai-agents", "developer-tools"],
     skills: ["python", "typescript"],
+    languages: ["english"],
   },
   {
     title: "Ship a side project on our free tier",
@@ -163,7 +164,6 @@ const OPPORTUNITIES: OpportunitySpec[] = [
     isGated: false,
     maxSlots: 20,
     numFilledSlots: 3,
-    maxApplications: 20,
     deadlineInDays: 14,
     status: "open",
     fixedFeeCents: 30_000,
@@ -171,6 +171,7 @@ const OPPORTUNITIES: OpportunitySpec[] = [
     paymentCapCents: 0,
     niches: ["web-development", "startups"],
     skills: ["react", "nextjs"],
+    languages: ["english", "spanish"],
   },
   {
     title: "Explain our vector search in one minute",
@@ -178,7 +179,6 @@ const OPPORTUNITIES: OpportunitySpec[] = [
     isGated: false,
     maxSlots: 5,
     numFilledSlots: 5,
-    maxApplications: 5,
     deadlineInDays: 10,
     status: "open",
     fixedFeeCents: 0,
@@ -186,6 +186,7 @@ const OPPORTUNITIES: OpportunitySpec[] = [
     paymentCapCents: 90_000,
     niches: ["databases", "machine-learning"],
     skills: ["postgresql", "python"],
+    languages: ["english"],
   },
   {
     title: "Security review of our auth flow",
@@ -193,7 +194,6 @@ const OPPORTUNITIES: OpportunitySpec[] = [
     isGated: true,
     maxSlots: 3,
     numFilledSlots: 0,
-    maxApplications: 3,
     deadlineInDays: 2,
     status: "open",
     fixedFeeCents: 0,
@@ -201,6 +201,7 @@ const OPPORTUNITIES: OpportunitySpec[] = [
     paymentCapCents: 0,
     niches: ["cybersecurity"],
     skills: ["application-security"],
+    languages: ["english"],
   },
   {
     title: "Our CLI in your daily workflow",
@@ -208,7 +209,6 @@ const OPPORTUNITIES: OpportunitySpec[] = [
     isGated: true,
     maxSlots: 6,
     numFilledSlots: 1,
-    maxApplications: 6,
     deadlineInDays: 30,
     status: "draft",
     fixedFeeCents: 45_000,
@@ -216,6 +216,7 @@ const OPPORTUNITIES: OpportunitySpec[] = [
     paymentCapCents: 0,
     niches: ["developer-tools", "productivity"],
     skills: ["bash-shell"],
+    languages: ["english", "portuguese"],
   },
   {
     title: "Migrating off a legacy ORM",
@@ -223,7 +224,6 @@ const OPPORTUNITIES: OpportunitySpec[] = [
     isGated: true,
     maxSlots: 4,
     numFilledSlots: 0,
-    maxApplications: 4,
     deadlineInDays: 25,
     status: "paused",
     fixedFeeCents: 50_000,
@@ -231,15 +231,14 @@ const OPPORTUNITIES: OpportunitySpec[] = [
     paymentCapCents: 0,
     niches: ["databases"],
     skills: ["prisma", "sql"],
+    languages: ["english"],
   },
 ];
 
 const BOILERPLATE = {
-  targetApplicant: "Developers who publish regularly and can show working code on camera.",
   contentRequirements: "One video, 60 seconds or longer, with the product visible in use.",
-  prohibitedClaims: "No performance or security claims we have not published ourselves.",
-  disclosureRequirements: "Disclose the partnership in the post itself, not only the caption.",
-  usageRights: "We may reshare the post on our own channels for twelve months.",
+  reviewPolicy:
+    "Disclose the partnership in the post itself. No performance or security claims we have not published ourselves. We may reshare the post for twelve months.",
 };
 
 /** Builds the campaigns and opportunities a company sees, and the feed creators see. */
@@ -292,7 +291,7 @@ async function seedCompanyContent(
 
   const opportunityIds: Id<"opportunities">[] = [];
   for (const spec of OPPORTUNITIES) {
-    const { deadlineInDays, niches, skills, ...fields } = spec;
+    const { deadlineInDays, niches, skills, languages, ...fields } = spec;
     const opportunityId = await ctx.db.insert("opportunities", {
       ...fields,
       ...BOILERPLATE,
@@ -304,6 +303,7 @@ async function seedCompanyContent(
     });
     await updateOpportunityNiches(ctx, opportunityId, niches);
     await updateOpportunitySkills(ctx, opportunityId, skills);
+    await updateOpportunityLanguages(ctx, opportunityId, languages);
     opportunityIds.push(opportunityId);
   }
   return { openCampaignId, opportunityIds };
@@ -507,4 +507,116 @@ export const clear = internalMutation({
   args: {},
   returns: v.object({ cleared: v.number() }),
   handler: async (ctx) => ({ cleared: await clearOwnedTables(ctx) }),
+});
+
+const MORE_TOPICS = [
+  {
+    topic: "Edge functions",
+    niches: ["cloud-computing", "web-development"],
+    skills: ["typescript", "nodejs"],
+  },
+  {
+    topic: "Local-first sync",
+    niches: ["databases", "frontend-development"],
+    skills: ["react", "sql"],
+  },
+  { topic: "Fine-tuning small models", niches: ["machine-learning", "llms"], skills: ["python"] },
+  {
+    topic: "Terminal power tools",
+    niches: ["developer-tools", "operating-systems-linux"],
+    skills: ["bash-shell", "rust"],
+  },
+  {
+    topic: "Agent evals",
+    niches: ["ai-agents", "software-testing-qa"],
+    skills: ["python", "typescript"],
+  },
+  { topic: "Mobile offline mode", niches: ["mobile-development"], skills: ["swift", "kotlin"] },
+  { topic: "Kubernetes in ten minutes", niches: ["devops", "cloud-computing"], skills: ["go"] },
+  {
+    topic: "Accessible forms",
+    niches: ["frontend-development", "design"],
+    skills: ["html", "accessibility"],
+  },
+  {
+    topic: "Realtime multiplayer",
+    niches: ["game-dev", "web-development"],
+    skills: ["websockets", "typescript"],
+  },
+  {
+    topic: "Data pipelines",
+    niches: ["data-engineering", "data-science"],
+    skills: ["python", "sql"],
+  },
+  {
+    topic: "Shipping a SaaS solo",
+    niches: ["startups", "freelancing-indie-hacking"],
+    skills: ["nextjs"],
+  },
+  {
+    topic: "Securing your API",
+    niches: ["cybersecurity", "api-development"],
+    skills: ["rest-apis", "graphql"],
+  },
+] as const;
+
+const MORE_FORMATS = [
+  "walkthrough",
+  "first look",
+  "build-along",
+  "explainer",
+  "deep dive",
+] as const;
+
+const MORE_FOLLOWER_MINIMUMS = [undefined, "1k-5k", "10k-50k", "50k-100k", "100k-500k"] as const;
+
+/**
+ * Adds `count` more open briefs to the seeded company's open campaign, so the
+ * feed has enough to page, search, and filter through. Run `run` first; this
+ * doesn't clear anything, and `run` or `clear` removes what it adds.
+ */
+export const more = internalMutation({
+  args: { count: v.optional(v.number()), companyName: v.optional(v.string()) },
+  returns: v.object({ added: v.number() }),
+  handler: async (ctx, args) => {
+    const count = Math.min(Math.max(Math.floor(args.count ?? 30), 1), 100);
+    const { company, admin } = await requireSeedCompany(ctx, args.companyName);
+    const campaign = await ctx.db
+      .query("campaigns")
+      .withIndex("by_companyId_and_status", (q) =>
+        q.eq("companyId", company._id).eq("status", "open"),
+      )
+      .first();
+    if (campaign === null) throw apiError("invalid_state", { reason: "run_seed_first" });
+
+    for (let index = 0; index < count; index++) {
+      const { topic, niches, skills } = MORE_TOPICS[index % MORE_TOPICS.length];
+      const format = MORE_FORMATS[index % MORE_FORMATS.length];
+      const isGated = index % 3 === 0;
+      const maxSlots = 4 + (index % 7) * 2;
+      const minFollowerRange = MORE_FOLLOWER_MINIMUMS[index % MORE_FOLLOWER_MINIMUMS.length];
+      const opportunityId = await ctx.db.insert("opportunities", {
+        ...BOILERPLATE,
+        title: `${topic}: a ${format}`,
+        description: `A ${format} on ${topic.toLowerCase()} for developers who build with it every day.`,
+        isGated,
+        maxSlots,
+        numFilledSlots: index % 5 === 4 ? maxSlots : index % maxSlots,
+        status: "open",
+        fixedFeeCents: (index % 4) * 15_000,
+        cpmRateCents: index % 2 === 0 ? 250 + (index % 5) * 50 : 0,
+        paymentCapCents: index % 2 === 0 ? 150_000 : 0,
+        campaignId: campaign._id,
+        companyId: company._id,
+        createdBy: admin._id,
+        usesAiReviewDefault: false,
+        deadline: halfHourFromNow(3 + ((index * 5) % 50)),
+        ...(minFollowerRange === undefined ? {} : { minFollowerRange }),
+      });
+      await updateOpportunityNiches(ctx, opportunityId, [...niches]);
+      await updateOpportunitySkills(ctx, opportunityId, [...skills]);
+      await updateOpportunityLanguages(ctx, opportunityId, ["english"]);
+    }
+    return { added: count };
+  },
 });

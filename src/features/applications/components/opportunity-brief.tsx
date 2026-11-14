@@ -53,7 +53,11 @@ export function OpportunityBrief({
       <Separator />
 
       <div className="grid gap-6 sm:grid-cols-2">
-        <OpportunityTags niches={opportunity.niches} skills={opportunity.skills} />
+        <OpportunityTags
+          niches={opportunity.niches}
+          skills={opportunity.skills}
+          languages={opportunity.languages}
+        />
         {/* HARDCODED: opportunities don't store years of experience yet. */}
         <Section label="Years of experience">
           <Tags tags={[">1 year"]} />
@@ -65,11 +69,8 @@ export function OpportunityBrief({
       </Section>
 
       {/* Not matching from the Figma, matching from the database - taking styling from Figma.*/}
-      <TextSection label="Who they're looking for" text={opportunity.targetApplicant} />
       <TextSection label="Content requirements" text={opportunity.contentRequirements} />
-      <TextSection label="Disclosure requirements" text={opportunity.disclosureRequirements} />
-      <TextSection label="Prohibited claims" text={opportunity.prohibitedClaims} />
-      <TextSection label="Usage rights" text={opportunity.usageRights} />
+      <TextSection label="Review policy" text={opportunity.reviewPolicy} />
     </div>
   );
 }

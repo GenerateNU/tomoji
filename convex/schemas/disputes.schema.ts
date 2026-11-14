@@ -64,6 +64,7 @@ const disputeFields = {
   // The opener's own words when `reason` is "other", and only then.
   customReason: v.optional(v.string()),
   description: v.string(),
+  evidenceMediaIds: v.optional(v.array(v.id("mediaUploads"))),
 };
 
 type UserIdValidator = Validator<Id<"users"> | undefined, OptionalProperty, string>;

@@ -166,8 +166,7 @@ const picture = {
   ),
 };
 
-// Profile picture uploads are off for now; re-enable with UPLOADS_ENABLED in profile-picture-section.tsx.
-test.skip("choosing and discarding a picture only changes its local preview", async ({ page }) => {
+test("choosing and discarding a picture only changes its local preview", async ({ page }) => {
   await openSettings(page);
   await page.getByLabel("Choose profile picture").setInputFiles(picture);
   await expect(page.getByAltText("New profile picture preview")).toBeVisible();
@@ -180,8 +179,7 @@ test.skip("choosing and discarding a picture only changes its local preview", as
   expect(await page.evaluate(() => window.settingsFixture.calls)).toEqual([]);
 });
 
-// Profile picture uploads are off for now; re-enable with UPLOADS_ENABLED in profile-picture-section.tsx.
-test.skip("saving a picture posts its signed fields before completion; completion retries reuse that upload", async ({
+test("saving a picture posts its signed fields before completion; completion retries reuse that upload", async ({
   page,
 }) => {
   let postBody = "";
@@ -218,18 +216,15 @@ test.skip("saving a picture posts its signed fields before completion; completio
   ]);
 });
 
-test("picture uploads are marked as coming soon and cannot be chosen", async ({ page }) => {
+test("picture uploads state what they accept and can be chosen", async ({ page }) => {
   await openSettings(page);
   const section = page.getByRole("region", { name: "Profile picture" });
-  await expect(section.getByText("Profile picture uploads are coming soon.")).toBeVisible();
-  await expect(section.getByRole("button", { name: "Choose picture" })).toBeDisabled();
-  await expect(page.getByLabel("Choose profile picture")).toBeDisabled();
+  await expect(section.getByText("JPEG, PNG, or WebP. Up to 2 MB.")).toBeVisible();
+  await expect(section.getByRole("button", { name: /picture/ })).toBeEnabled();
+  await expect(page.getByLabel("Choose profile picture")).toBeEnabled();
 });
 
-// Profile picture uploads are off for now; re-enable with UPLOADS_ENABLED in profile-picture-section.tsx.
-test.skip("unsupported and unreadable pictures are rejected without contacting S3", async ({
-  page,
-}) => {
+test("unsupported and unreadable pictures are rejected without contacting S3", async ({ page }) => {
   await openSettings(page);
   const fileInput = page.getByLabel("Choose profile picture");
   await fileInput.setInputFiles({
@@ -404,34 +399,6 @@ test("unsafe saved links are never rendered as clickable links", async ({ page }
     window.settingsFixture.setProfile({ additionalLinks: ["javascript:alert(1)"] }),
   );
   await expect(page.getByText("No other links added yet.")).toBeVisible();
-});
-
-test("turning on a private profile is confirmed and reported to the API", async ({ page }) => {
-  await openSettings(page);
-  const visibility = page.getByRole("region", { name: "Profile visibility" });
-  const toggle = visibility.getByRole("switch", { name: "Private profile" });
-  await expect(toggle).not.toBeChecked();
-
-  await toggle.click();
-
-  await expect(toggle).toBeChecked();
-  await expect(page.getByText("Your profile is now private.", { exact: true })).toBeVisible();
-  expect(await page.evaluate(() => window.settingsFixture.calls)).toEqual([
-    { name: "creators:update", args: { isPrivate: true } },
-  ]);
-});
-
-test("a failed visibility change explains itself and leaves the setting alone", async ({
-  page,
-}) => {
-  await openSettings(page);
-  await page.evaluate(() => window.settingsFixture.failNext("creators:update"));
-  const toggle = page.getByRole("switch", { name: "Private profile" });
-
-  await toggle.click();
-
-  await expect(page.getByRole("alert")).toBeVisible();
-  await expect(toggle).not.toBeChecked();
 });
 
 test("captures the responsive creator detail forms", async ({ page }, testInfo) => {

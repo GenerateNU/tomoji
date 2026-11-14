@@ -9,7 +9,7 @@ import { submissionShapes } from "../schemas/submissions.schema";
 import { requireAssignment, requireActiveAssignment, type AssignmentViewer } from "./assignments";
 import { creatorName, notifyCompanyUser, notifyCreator } from "./notifications";
 import { requireSubmissionVideo } from "./media";
-import { criterionResult, type aiReviewResult } from "../lib/ai/validation";
+import { criterionResult, reviewCriterion, type aiReviewResult } from "../lib/ai/validation";
 import { decideAiReview, AI_REVIEW_MAX_DURATION_SECONDS } from "../lib/ai/reviewPolicy";
 import { env } from "../_generated/server";
 import {
@@ -23,7 +23,8 @@ import {
 export const submissionDraft = v.object({
   assignmentId: v.id("assignments"),
   deliverableId: v.id("deliverables"),
-  mediaId: v.id("mediaUploads"),
+  mediaId: v.optional(v.id("mediaUploads")),
+  caption: v.optional(v.string()),
   draftDescription: v.string(),
 });
 
@@ -55,6 +56,7 @@ export const submissionView = v.union(
       v.object({
         status: aiReviewAttemptsTable.validator.fields.status,
         results: v.array(criterionResult.pick("criterionId", "outcome")),
+        failedCriteria: v.optional(v.array(reviewCriterion)),
       }),
     ),
   }),
@@ -67,6 +69,7 @@ export type SubmissionViewer = AssignmentViewer;
 // Limits on free text after trimming. `.length` counts UTF-16 units, so an emoji counts as two.
 const MAX_LENGTH = {
   draftDescription: 5000,
+  caption: 25_000,
 } as const;
 
 function requireText(value: string, field: keyof typeof MAX_LENGTH): string {
@@ -136,6 +139,7 @@ function toCreatorView(
     assignmentId: submission.assignmentId,
     deliverableId: submission.deliverableId,
     mediaId: submission.mediaId,
+    caption: submission.caption,
     draftDescription: submission.draftDescription,
     usesAiReview: submission.usesAiReview,
     closedWithoutReview,
@@ -227,12 +231,15 @@ export async function createSubmission(
     throw apiError("invalid_state", { reason: "already_approved" });
   }
 
-  await requireSubmissionVideo(ctx, assignment, draft.mediaId);
+  const caption = optionalNonBlank(draft.caption, "caption", MAX_LENGTH.caption);
+  if (draft.mediaId) await requireSubmissionVideo(ctx, assignment, draft.mediaId);
+  else if (!caption) throw apiError("invalid_state", { reason: "submission_evidence_required" });
 
   const submissionId = await ctx.db.insert("submissions", {
     assignmentId: assignment._id,
     deliverableId: deliverable._id,
     mediaId: draft.mediaId,
+    caption,
     draftDescription: requireText(draft.draftDescription, "draftDescription"),
     status: "pending",
     usesAiReview: assignment.usesAiReview,
@@ -338,7 +345,7 @@ export async function listSubmissions(
   };
 }
 
-/** Projects processing state and criterion outcomes; raw provider evidence stays internal. */
+/** Projects processing state, outcomes, and the criteria the AI asked the creator to fix. */
 async function withAiReviewSummary(ctx: QueryCtx, view: SubmissionView): Promise<SubmissionView> {
   if (!view.usesAiReview) return view;
   const attempt = await ctx.db
@@ -347,17 +354,27 @@ async function withAiReviewSummary(ctx: QueryCtx, view: SubmissionView): Promise
     .order("desc")
     .first();
   if (!attempt) return view;
-  return {
-    ...view,
-    aiReview: {
-      status:
-        attempt.status !== "completed" && (env.AI_REVIEW_ENABLED !== "true" || !attempt.workflowId)
-          ? "manualReview"
-          : attempt.status,
-      results:
-        attempt.result?.results.map(({ criterionId, outcome }) => ({ criterionId, outcome })) ?? [],
-    },
+  const aiReview: NonNullable<SubmissionView["aiReview"]> = {
+    status:
+      attempt.status !== "completed" && (env.AI_REVIEW_ENABLED !== "true" || !attempt.workflowId)
+        ? "manualReview"
+        : attempt.status,
+    results:
+      attempt.result?.results.map(({ criterionId, outcome }) => ({ criterionId, outcome })) ?? [],
   };
+  if (
+    view.status === "changesRequested" &&
+    view.reviewerType === "ai" &&
+    attempt.status === "completed"
+  ) {
+    const failedIds = new Set(
+      aiReview.results
+        .filter(({ outcome }) => outcome === "not_met")
+        .map(({ criterionId }) => criterionId),
+    );
+    aiReview.failedCriteria = attempt.criteria.filter(({ id }) => failedIds.has(id));
+  }
+  return { ...view, aiReview };
 }
 
 type Reviewer =
@@ -420,8 +437,10 @@ export async function finishAiReview(
 ): Promise<void> {
   const attempt = await requireCurrentAiReviewAttempt(ctx, attemptId, "evaluating");
   if (
-    !attempt.transcription?.text.trim() ||
-    attempt.transcription.durationSeconds > AI_REVIEW_MAX_DURATION_SECONDS
+    (!attempt.caption && !attempt.transcription?.text.trim()) ||
+    (attempt.mediaId && !attempt.transcription) ||
+    (attempt.transcription &&
+      attempt.transcription.durationSeconds > AI_REVIEW_MAX_DURATION_SECONDS)
   )
     throw apiError("invalid_state", { reason: "review_input_invalid" });
   if (attempt.deadlineAt !== undefined && Date.now() >= attempt.deadlineAt)
@@ -460,7 +479,7 @@ export async function finishAiReview(
       ? { status: "approved" as const }
       : {
           status: "changesRequested" as const,
-          reviewNote: `Please address these spoken requirements: ${attempt.criteria
+          reviewNote: `Please address these requirements: ${attempt.criteria
             .filter((c) => decision.failedCriterionIds.includes(c.id))
             .map((c) => c.description)
             .join("; ")}`.slice(0, 2000),

@@ -417,17 +417,13 @@ export function opportunityArgs(
     status: "open",
     isGated: false,
     usesAiReviewDefault: true,
-    targetApplicant: "Skincare creators",
     maxSlots: 5,
-    maxApplications: 5,
     deadline: Math.ceil((Date.now() + 86_400_000) / 1_800_000) * 1_800_000,
     fixedFeeCents: 10_000,
     cpmRateCents: 500,
     paymentCapCents: 25_000,
     contentRequirements: "One 30-second video",
-    prohibitedClaims: "No medical claims",
-    disclosureRequirements: "Disclose the paid partnership",
-    usageRights: "Organic reposting for 30 days",
+    reviewPolicy: "Disclose the paid partnership. No medical claims.",
     deliverables: [deliverableArgs()],
     ...overrides,
   };
@@ -497,7 +493,7 @@ export async function seedGatedOpportunity(t: TestConvex, opts: SeedGatedOpportu
   const seeded = await seedOpportunity(
     t,
     { subject: opts.subject ?? "company_owner", orgId: opts.orgId },
-    { isGated: true, maxSlots: 10, maxApplications: 10 },
+    { isGated: true, maxSlots: 10 },
   );
   const patch = opts.opportunity;
   if (patch !== undefined) {
@@ -640,6 +636,7 @@ export async function seedAiReviewFixture(
   reviewCriteria: NonNullable<DeliverableCreate["reviewCriteria"]> = [
     { id: "product", description: "Mention Driftwood." },
   ],
+  draft: Partial<SubmissionDraft> = {},
 ): Promise<
   AssignmentFixture & {
     mediaId: Id<"mediaUploads">;
@@ -653,8 +650,7 @@ export async function seedAiReviewFixture(
       title: "Driftwood launch demo",
       description: "Demonstrate a first deployment using Driftwood CLI.",
       contentRequirements: "Explain how Driftwood simplifies deployment.",
-      prohibitedClaims: "Do not promise zero downtime.",
-      disclosureRequirements: "Disclose the paid partnership.",
+      reviewPolicy: "Disclose the paid partnership. Do not promise zero downtime.",
       deliverables: [
         deliverableArgs({
           title: "CLI demo",
@@ -666,7 +662,7 @@ export async function seedAiReviewFixture(
   });
   const mediaId = fixture.mediaId;
   const submissionId = await t.run((ctx) =>
-    createSubmission(ctx, fixture.creatorId, submissionArgs(fixture, { mediaId })),
+    createSubmission(ctx, fixture.creatorId, submissionArgs(fixture, draft)),
   );
   const attempt = await t.run((ctx) =>
     ctx.db

@@ -15,11 +15,16 @@ import {
   createApplication,
   declineApplication,
   expireApplicationOffers,
-  listApplications,
+  applicationDetail,
+  applicationSearch,
+  applicationSearchResult,
+  listApplicationRows,
   listApplicationsByOpportunityId,
+  markApplicationsFullBatch,
   offerApplication,
   rejectApplication,
   requireApplication,
+  requireApplicationDetail,
 } from "./models/applications";
 import { requireCallerCreatorId } from "./models/users";
 import schema from "./schema";
@@ -45,13 +50,37 @@ export const create = creatorMutation({
   },
 });
 
-/** Lists the calling creator's applications, optionally filtered by status. */
-export const listMine = creatorQuery({
-  args: { status: v.optional(applicationStatus), paginationOpts: paginationOptsValidator },
-  returns: paginationResultValidator(application),
+/**
+ * Searches the calling creator's applications or offers: one page of rows for
+ * the requested tab plus a count for each tab. See `listApplicationRows` for
+ * the read limits and per-tab sorting.
+ *
+ * @throws `invalid_state` if the page, page size or search is out of bounds.
+ */
+export const searchMine = creatorQuery({
+  args: applicationSearch.fields,
+  returns: applicationSearchResult,
   handler: async (ctx, args) => {
-    const creatorId = await requireCallerCreatorId(ctx, ctx.user);
-    return await listApplications(ctx, { ...args, creatorId });
+    return await listApplicationRows(ctx, await requireCallerCreatorId(ctx, ctx.user), args);
+  },
+});
+
+/**
+ * Gets one of the calling creator's applications with its opportunity brief and
+ * what they can do with it, for the offer details.
+ *
+ * @throws `not_found` if the application does not exist, is not the caller's,
+ * or its opportunity was deleted.
+ */
+export const getMineDetail = creatorQuery({
+  args: { applicationId: v.id("applications") },
+  returns: applicationDetail,
+  handler: async (ctx, args) => {
+    return await requireApplicationDetail(
+      ctx,
+      await requireCallerCreatorId(ctx, ctx.user),
+      args.applicationId,
+    );
   },
 });
 
@@ -104,7 +133,10 @@ export const list = companyQuery({
  * paused or closed, or the expiry is not a future :00/:30 UTC time.
  */
 export const offer = companyMutation({
-  args: { applicationId: v.id("applications"), offerExpiresAt: v.optional(v.number()) },
+  args: {
+    applicationId: v.id("applications"),
+    offerExpiresAt: v.optional(v.number()),
+  },
   returns: application,
   handler: async (ctx, args) => {
     return await offerApplication(
@@ -171,6 +203,21 @@ export const expireOffers = internalMutation({
   handler: async (ctx) => {
     const hasMore = await expireApplicationOffers(ctx);
     if (hasMore) await ctx.scheduler.runAfter(0, internal.applications.expireOffers, {});
+    return null;
+  },
+});
+
+/**
+ * Marks one batch of an opportunity's waiting applications as `opportunityFull`
+ * and reschedules itself while more remain. Enqueued by `acceptApplication`
+ * when the last slot is taken.
+ */
+export const markFull = internalMutation({
+  args: { opportunityId: v.id("opportunities") },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const hasMore = await markApplicationsFullBatch(ctx, args.opportunityId);
+    if (hasMore) await ctx.scheduler.runAfter(0, internal.applications.markFull, args);
     return null;
   },
 });

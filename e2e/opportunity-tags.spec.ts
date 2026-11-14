@@ -35,13 +35,16 @@ async function openTags(page: Page, query = "") {
   await expect(page.getByRole("heading", { name: "Skills", exact: true })).toBeVisible();
 }
 
-test("tags show separate niche and skill catalogs", async ({ page }, testInfo) => {
+test("tags show separate niche, skill, and language catalogs", async ({ page }, testInfo) => {
   await openTags(page);
   const niches = page.getByRole("heading", { name: "Niches", exact: true }).locator("..");
   const skills = page.getByRole("heading", { name: "Skills", exact: true }).locator("..");
+  const languages = page.getByRole("heading", { name: "Languages", exact: true }).locator("..");
   await expect(niches.getByText("Database Management", { exact: true })).toBeVisible();
   await expect(skills.getByText("TypeScript", { exact: true })).toBeVisible();
+  await expect(languages.getByText("English", { exact: true })).toBeVisible();
   await expect(niches.getByText("TypeScript", { exact: true })).toHaveCount(0);
+  await expect(skills.getByText("English", { exact: true })).toHaveCount(0);
   await page.screenshot({
     path: testInfo.outputPath("opportunity-tags-desktop.png"),
     fullPage: true,
@@ -53,6 +56,7 @@ test("catalog loading preserves the selected values", async ({ page }) => {
   await openTags(page, "?loading=1");
   await expect(page.getByText("databases", { exact: true })).toBeVisible();
   await expect(page.getByText("typescript", { exact: true })).toBeVisible();
+  await expect(page.getByText("english", { exact: true })).toBeVisible();
 });
 
 test("long labels fit a narrow screen without overflowing", async ({ page }, testInfo) => {

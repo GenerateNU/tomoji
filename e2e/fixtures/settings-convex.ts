@@ -10,15 +10,16 @@ const listeners = new Set<() => void>();
 let revision = 0;
 let profile: Profile = {
   creatorId: "test-creator" as Id<"creators">,
+  joinedAt: Date.UTC(2026, 10, 1),
   firstName: "Zahra",
   lastName: "Wibisana",
   email: "zahra@example.test",
   githubLink: "https://github.com/zahra",
   countryOfResidence: "ID",
   additionalLinks: [],
-  isPrivate: false,
   niches: [],
   skills: [],
+  languages: [],
 };
 // A small stand-in for the real ISO list; the picker only needs a few rows.
 const COUNTRIES = [
@@ -168,7 +169,6 @@ function operation(reference: FunctionReference<"mutation" | "action">) {
           ...("countryOfResidence" in args
             ? { countryOfResidence: (args.countryOfResidence as string | null) ?? undefined }
             : {}),
-          ...(args.isPrivate !== undefined ? { isPrivate: args.isPrivate as boolean } : {}),
         };
         notify();
         return profile;

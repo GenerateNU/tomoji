@@ -63,7 +63,7 @@ describe("opportunities.close", () => {
     expect(result.status).toBe("closed");
     expect(
       await t.run(async (ctx) => await ctx.db.get("opportunities", owner.opportunityId)),
-    ).toEqual({ ...result, niches: undefined, skills: undefined });
+    ).toEqual({ ...result, niches: undefined, skills: undefined, languages: undefined });
   });
 
   test("rejects a signed-out caller", async () => {
@@ -176,11 +176,13 @@ describe("opportunities.closeExpired", () => {
       Promise.all(ids.map(async (id) => await ctx.db.get("opportunities", id))),
     );
     expect(finalPass.every((opportunity) => opportunity?.status === "closed")).toBe(true);
+    // Each close also enqueues its own notifyClosed sweep, so filter to the drain's continuation.
     const jobs = await t.run(
-      async (ctx) => await ctx.db.system.query("_scheduled_functions").take(5),
+      async (ctx) => await ctx.db.system.query("_scheduled_functions").take(200),
     );
-    expect(jobs).toHaveLength(1);
-    expect(jobs[0].state.kind).toBe("success");
+    const continuations = jobs.filter((job) => job.name.includes("closeExpired"));
+    expect(continuations).toHaveLength(1);
+    expect(jobs.every((job) => job.state.kind === "success")).toBe(true);
   });
 
   test("does not schedule continuation when no opportunities are overdue", async () => {
@@ -229,7 +231,7 @@ describe("opportunities.pause", () => {
     expect(result).toEqual({ ...before, status: "paused" });
     expect(
       await t.run(async (ctx) => await ctx.db.get("opportunities", owner.opportunityId)),
-    ).toEqual({ ...result, niches: undefined, skills: undefined });
+    ).toEqual({ ...result, niches: undefined, skills: undefined, languages: undefined });
     await expectApiError(
       () => asCreator.query(api.opportunities.get, { opportunityId: owner.opportunityId }),
       "not_found",
@@ -314,7 +316,7 @@ describe("opportunities.resume", () => {
       opportunityId: owner.opportunityId,
     });
 
-    expect(result).toEqual({ ...before, status: "open", niches: [], skills: [] });
+    expect(result).toEqual({ ...before, status: "open", niches: [], skills: [], languages: [] });
     const creatorView = await asCreator.query(api.opportunities.get, {
       opportunityId: owner.opportunityId,
     });
@@ -412,7 +414,7 @@ describe("opportunities.publish", () => {
       opportunityId: owner.opportunityId,
     });
 
-    expect(result).toEqual({ ...before, status: "open", niches: [], skills: [] });
+    expect(result).toEqual({ ...before, status: "open", niches: [], skills: [], languages: [] });
     const creatorView = await asCreator.query(api.opportunities.get, {
       opportunityId: owner.opportunityId,
     });
@@ -442,7 +444,7 @@ describe("opportunities.publish", () => {
     expect(result.status).toBe("open");
     expect(
       await t.run(async (ctx) => await ctx.db.get("opportunities", owner.opportunityId)),
-    ).toEqual({ ...result, niches: undefined, skills: undefined });
+    ).toEqual({ ...result, niches: undefined, skills: undefined, languages: undefined });
   });
 
   test("rejects a signed-out caller", async () => {
@@ -651,10 +653,16 @@ describe("opportunities.update", () => {
       title: "  Evening routine  ",
     });
 
-    expect(result).toEqual({ ...before, title: "Evening routine", niches: [], skills: [] });
+    expect(result).toEqual({
+      ...before,
+      title: "Evening routine",
+      niches: [],
+      skills: [],
+      languages: [],
+    });
     expect(
       await t.run(async (ctx) => await ctx.db.get("opportunities", owner.opportunityId)),
-    ).toEqual({ ...result, niches: undefined, skills: undefined });
+    ).toEqual({ ...result, niches: undefined, skills: undefined, languages: undefined });
   });
 
   test("sets and clears an opportunity's minimum follower range", async () => {
@@ -694,7 +702,7 @@ describe("opportunities.update", () => {
     expect(result).not.toHaveProperty("productAccessLink");
     expect(
       await t.run(async (ctx) => await ctx.db.get("opportunities", owner.opportunityId)),
-    ).toEqual({ ...result, niches: undefined, skills: undefined });
+    ).toEqual({ ...result, niches: undefined, skills: undefined, languages: undefined });
   });
 
   test("rejects a signed-out caller", async () => {
@@ -825,23 +833,20 @@ describe("opportunities.discover", () => {
         "isStarred",
         "niches",
         "skills",
+        "languages",
         "title",
         "description",
         "isGated",
         "usesAiReviewDefault",
-        "targetApplicant",
         "maxSlots",
         "numFilledSlots",
-        "maxApplications",
         "deadline",
         "status",
         "fixedFeeCents",
         "cpmRateCents",
         "paymentCapCents",
         "contentRequirements",
-        "prohibitedClaims",
-        "disclosureRequirements",
-        "usageRights",
+        "reviewPolicy",
       ].sort(),
     );
     expect(result.isDone).toBe(true);
@@ -925,6 +930,7 @@ describe("opportunities.list", () => {
         ...(await t.run(async (ctx) => await ctx.db.get("opportunities", owner.opportunityId))),
         niches: [],
         skills: [],
+        languages: [],
       },
     ]);
     expect(result.isDone).toBe(true);
@@ -947,6 +953,7 @@ describe("opportunities.list", () => {
         ...(await t.run(async (ctx) => await ctx.db.get("opportunities", owner.opportunityId))),
         niches: [],
         skills: [],
+        languages: [],
       },
     ]);
   });
@@ -1324,23 +1331,20 @@ describe("opportunities.get", () => {
         "isStarred",
         "niches",
         "skills",
+        "languages",
         "title",
         "description",
         "isGated",
         "usesAiReviewDefault",
-        "targetApplicant",
         "maxSlots",
         "numFilledSlots",
-        "maxApplications",
         "deadline",
         "status",
         "fixedFeeCents",
         "cpmRateCents",
         "paymentCapCents",
         "contentRequirements",
-        "prohibitedClaims",
-        "disclosureRequirements",
-        "usageRights",
+        "reviewPolicy",
       ].sort(),
     );
   });
@@ -1363,11 +1367,13 @@ describe("opportunities.get", () => {
       ...stored,
       niches: ["databases"],
       skills: ["typescript"],
+      languages: [],
     });
     expect(await asOperator.query(api.opportunities.get, { opportunityId })).toEqual({
       ...stored,
       niches: ["databases"],
       skills: ["typescript"],
+      languages: [],
     });
   });
 });

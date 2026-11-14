@@ -25,27 +25,21 @@ describe("updateCreatorNiches", () => {
       { creatorId, name: "web-development" },
       { creatorId, name: "databases" },
     ]);
-    const names = await t.run(async (ctx) =>
-      listCreatorNiches(ctx, (await ctx.db.get("creators", creatorId))!),
-    );
-    expect(names).toEqual(["web-development", "databases"]);
+    expect(await t.run((ctx) => listCreatorNiches(ctx, creatorId))).toEqual([
+      "web-development",
+      "databases",
+    ]);
   });
 
-  test("reads legacy niches and permanently clears them when given an empty selection", async () => {
+  test("an empty selection clears every row", async () => {
     const t = convexTest(schema, modules);
-    const creatorId = await seedCreatorId(t, "niches_legacy");
-    await t.run((ctx) => ctx.db.patch("creators", creatorId, { niches: ["ai-agents"] }));
-    expect(
-      await t.run(async (ctx) =>
-        listCreatorNiches(ctx, (await ctx.db.get("creators", creatorId))!),
-      ),
-    ).toEqual(["ai-agents"]);
+    const creatorId = await seedCreatorId(t, "niches_clear");
+    await t.run((ctx) => updateCreatorNiches(ctx, creatorId, ["ai-agents"]));
 
     await t.run((ctx) => updateCreatorNiches(ctx, creatorId, []));
 
-    const creator = await t.run((ctx) => ctx.db.get("creators", creatorId));
-    expect(creator).not.toHaveProperty("niches");
-    expect(await t.run((ctx) => listCreatorNiches(ctx, creator!))).toEqual([]);
+    expect(await t.run((ctx) => listCreatorNiches(ctx, creatorId))).toEqual([]);
+    expect(await t.run((ctx) => ctx.db.query("creatorNiches").take(10))).toEqual([]);
   });
 
   test("invalid replacement leaves the existing selection unchanged", async () => {

@@ -107,9 +107,95 @@ export type XMissingReason =
 export type XMissingPost = { xPostId: string; reason: XMissingReason };
 
 // X's documented id format; ids never start with 0.
-// TODO(posts): requirePostUrl accepts up to 25 digits and leading zeros, so
-// links that can never be looked up are stored; tighten it to this format.
 const xPostIdPattern = /^[1-9]\d{0,18}$/;
+
+/** Reads the exact linked post's full caption, including long-form text. */
+export async function getXPostText(bearerToken: string, xPostId: string): Promise<string> {
+  if (!xPostIdPattern.test(xPostId))
+    throw apiError("invalid_state", { reason: "x_post_id_invalid" });
+  const response = await xJson(
+    await xRequest(
+      `tweets/${xPostId}?post.fields=note_post,entities`,
+      { headers: { Authorization: `Bearer ${bearerToken}` } },
+      rateLimited,
+    ),
+  );
+  return readCaption(object(response.data), xPostId);
+}
+
+/** Parses the same provider caption for both operator and creator checks. */
+function readCaption(post: Record<string, unknown>, xPostId: string): string {
+  const caption = post.note_post === undefined ? post : object(post.note_post);
+  if (post.id !== xPostId || typeof caption.text !== "string")
+    throw apiError("upstream_failure", { reason: "invalid_response" });
+  const entities = caption.entities ?? post.entities;
+  const urls = entities === undefined ? undefined : object(entities).urls;
+  return restoreCaptionLinks(caption.text.trimEnd(), urls);
+}
+
+/** Reads the published caption and the metadata needed for creator verification. */
+export async function getXPostForCaptionCheck(bearerToken: string, xPostId: string) {
+  if (!xPostIdPattern.test(xPostId))
+    throw apiError("invalid_state", { reason: "x_post_id_invalid" });
+  const response = await xJson(
+    await xRequest(
+      `tweets/${xPostId}?post.fields=note_post,entities,author_id,created_at,attachments,referenced_posts`,
+      { headers: { Authorization: `Bearer ${bearerToken}` } },
+      rateLimited,
+    ),
+  );
+  const post = object(response.data);
+  const postedAt = typeof post.created_at === "string" ? Date.parse(post.created_at) : NaN;
+  if (typeof post.author_id !== "string" || !Number.isFinite(postedAt))
+    throw apiError("upstream_failure", { reason: "invalid_response" });
+  return {
+    text: readCaption(post, xPostId),
+    authorId: post.author_id,
+    postedAt,
+    hasExtraContent: post.attachments !== undefined || post.referenced_posts !== undefined,
+  };
+}
+
+/** Normalizes Unicode, line endings, and outer whitespace before exact comparison. */
+export function normalizeCaption(text: string): string {
+  return text.normalize("NFC").replace(/\r\n?/g, "\n").trim();
+}
+
+/** Drops X's trailing media link and restores creator links before exact comparison. */
+function restoreCaptionLinks(text: string, urls: unknown): string {
+  if (!Array.isArray(urls)) return text;
+  const destinations = new Map<string, string>();
+  for (const entry of urls) {
+    const { url, expanded_url: expandedUrl, media_key: mediaKey } = object(entry);
+    if (typeof url !== "string" || !/^https:\/\/t\.co\/[A-Za-z0-9]+$/.test(url)) continue;
+    if (typeof mediaKey === "string") {
+      if (text.endsWith(` ${url}`)) text = text.slice(0, -url.length - 1);
+      continue;
+    }
+    if (typeof expandedUrl === "string" && isCaptionDestination(expandedUrl)) {
+      destinations.set(url, expandedUrl);
+    }
+  }
+  // Match short links as tokens so one entity cannot rewrite part of another URL.
+  return text.replace(
+    /(^|[\s([{“"'])(https:\/\/t\.co\/[A-Za-z0-9]+)(?=$|[\s.,!?;:)\]}”"'])/g,
+    (match, prefix: string, shortUrl: string) => {
+      const destination = destinations.get(shortUrl);
+      return destination === undefined ? match : prefix + destination;
+    },
+  );
+}
+
+/** Checks that X returned an HTTP(S) destination and preserves its exact spelling for comparison. */
+function isCaptionDestination(value: string): boolean {
+  if (!/^https?:\/\/[^\s]+$/i.test(value)) return false;
+  try {
+    const url = new URL(value);
+    return url.username === "" && url.password === "";
+  } catch {
+    return false;
+  }
+}
 
 /**
  * Looks up current public counts for up to 100 posts with the app-only token.

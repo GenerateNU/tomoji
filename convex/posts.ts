@@ -1,14 +1,24 @@
 import { paginationResultValidator } from "convex/server";
-import { v } from "convex/values";
-import { internalMutation } from "./_generated/server";
+import { v, type Infer } from "convex/values";
+import { internal } from "./_generated/api";
+import { apiError } from "./lib/errors";
+import { requireIdentity } from "./lib/authz";
+import { action, env, internalMutation, internalQuery } from "./_generated/server";
 import {
   authedQuery,
   creatorMutation,
+  creatorContext,
   operatorMutation,
+  operatorAction,
   requireCallerViewer,
 } from "./lib/functions";
 import {
   createPost,
+  getPostCaptionInput,
+  captionCheckReservation,
+  creatorCaptionCheck,
+  startCreatorCaptionCheck,
+  finishCreatorCaptionCheck,
   listPosts,
   postCreate,
   postListFilters,
@@ -24,6 +34,7 @@ import {
 } from "./models/posts";
 import { requireCallerCreatorId } from "./models/users";
 import schema from "./schema";
+import { getXPostForCaptionCheck, getXPostText, normalizeCaption } from "./lib/xApi";
 
 /**
  * Records the live X post for the caller's approved submission. The link is
@@ -143,5 +154,91 @@ export const updateEngagement = internalMutation({
   returns: schema.doc("posts"),
   handler: async (ctx, { postId, ...engagement }) => {
     return await updatePostEngagement(ctx, postId, engagement);
+  },
+});
+
+/** Loads the linked post ID and creator-submitted caption for the operator action. */
+export const captionInput = internalQuery({
+  args: { postId: v.id("posts") },
+  returns: v.object({ xPostId: v.string(), caption: v.optional(v.string()) }),
+  handler: async (ctx, { postId }) => await getPostCaptionInput(ctx, postId),
+});
+
+const captionMatch = v.union(v.literal("match"), v.literal("mismatch"), v.literal("no_caption"));
+
+/** Compares the published caption to the approved submission for operator verification. */
+export const checkCaption = operatorAction({
+  args: { postId: v.id("posts") },
+  returns: captionMatch,
+  handler: async (ctx, { postId }): Promise<"match" | "mismatch" | "no_caption"> => {
+    const input = await ctx.runQuery(internal.posts.captionInput, { postId });
+    if (!input.caption) return "no_caption";
+    const token = env.X_BEARER_TOKEN?.trim();
+    if (!token) throw apiError("misconfigured", { reason: "x_bearer_token_missing" });
+    const published = await getXPostText(token, input.xPostId);
+    // A creator can replace the post while the provider request is in flight.
+    await ctx.runQuery(internal.posts.captionInput, { postId });
+    return normalizeCaption(input.caption) === normalizeCaption(published) ? "match" : "mismatch";
+  },
+});
+
+/** Reserves a lookup after proving the caller owns the current active post. */
+export const beginCaptionCheck = internalMutation({
+  args: { postId: v.id("posts") },
+  returns: captionCheckReservation,
+  handler: async (ctx, { postId }) => {
+    const { user } = await creatorContext(ctx);
+    return await startCreatorCaptionCheck(ctx, await requireCallerCreatorId(ctx, user), postId);
+  },
+});
+
+/** Applies a successful provider response to the same owned post checked earlier. */
+export const saveCaptionCheck = internalMutation({
+  args: {
+    postId: v.id("posts"),
+    startedAt: v.number(),
+    published: v.object({
+      text: v.string(),
+      authorId: v.string(),
+      postedAt: v.number(),
+      hasExtraContent: v.boolean(),
+    }),
+  },
+  returns: creatorCaptionCheck,
+  handler: async (ctx, { postId, startedAt, published }) => {
+    const { user } = await creatorContext(ctx);
+    return await finishCreatorCaptionCheck(
+      ctx,
+      await requireCallerCreatorId(ctx, user),
+      postId,
+      startedAt,
+      published,
+    );
+  },
+});
+
+const creatorCaptionResult = v.object({
+  status: creatorCaptionCheck,
+  publishedCaption: v.optional(v.string()),
+});
+
+/** Checks the published X caption for an approved draft from the calling creator. */
+export const checkMyCaption = action({
+  args: { postId: v.id("posts") },
+  returns: creatorCaptionResult,
+  handler: async (ctx, { postId }): Promise<Infer<typeof creatorCaptionResult>> => {
+    await requireIdentity(ctx);
+    const input = await ctx.runMutation(internal.posts.beginCaptionCheck, { postId });
+    if (input.status !== "lookup") return { status: input.status };
+    const token = env.X_BEARER_TOKEN?.trim();
+    if (!token) throw apiError("misconfigured", { reason: "x_bearer_token_missing" });
+    const published = await getXPostForCaptionCheck(token, input.xPostId);
+    const status = await ctx.runMutation(internal.posts.saveCaptionCheck, {
+      postId,
+      startedAt: input.startedAt,
+      published,
+    });
+    // Only return the public text after the write rechecks the caller and the active link.
+    return status === "mismatch" ? { status, publishedCaption: published.text } : { status };
   },
 });

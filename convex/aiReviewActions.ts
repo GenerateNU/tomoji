@@ -107,13 +107,14 @@ export const evaluate = internalAction({
     if (env.AI_REVIEW_ENABLED !== "true") return disabled;
     try {
       const attempt = await requireWorkerInput(ctx, input);
-      if (!attempt.transcription)
+      if (attempt.mediaId && !attempt.transcription)
         throw apiError("invalid_state", { reason: "transcription_missing" });
       const result = await evaluateTranscript(
         readAiReviewConfig(env).jevKey,
-        attempt.transcription.text,
+        attempt.transcription?.text ?? "",
         attempt.criteria,
         attempt.context,
+        attempt.caption,
       );
       return { ok: true, result };
     } catch (error) {

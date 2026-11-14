@@ -17,15 +17,15 @@ export const aiReviewFailureReason = v.union(
 /** Operational review data stays separate from the submission's business status. */
 export const aiReviewAttemptsTable = defineTable({
   submissionId: v.id("submissions"),
-  mediaId: v.id("mediaUploads"),
+  mediaId: v.optional(v.id("mediaUploads")),
+  caption: v.optional(v.string()),
   criteria: v.array(reviewCriterion),
-  // TODO(#177/#178): reconcile this brief snapshot with Afnan's schema updates before merge.
+  // Point-in-time snapshot of the brief; later edits never rewrite an attempt.
   context: v.object({
     title: v.string(),
     description: v.string(),
     contentRequirements: v.string(),
-    prohibitedClaims: v.string(),
-    disclosureRequirements: v.string(),
+    reviewPolicy: v.string(),
   }),
   status: v.union(
     v.literal("ready"),

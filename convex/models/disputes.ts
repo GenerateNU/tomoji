@@ -14,6 +14,7 @@ import {
   operatorDisputeOutcome,
 } from "../schemas/disputes.schema";
 import { userRole } from "../schemas/users.schema";
+import { MAX_DISPUTE_EVIDENCE, requireSupportingMedia } from "./supportingMedia";
 import { canViewResource } from "../lib/authz";
 import { requireAssignment, type AssignmentViewer } from "./assignments";
 import { getCompanyUser } from "./companyUsers";
@@ -30,6 +31,7 @@ export const disputeCreate = v.object({
   reason: disputeReason,
   customReason: v.optional(v.string()),
   description: v.string(),
+  evidenceMediaIds: v.optional(v.array(v.id("mediaUploads"))),
 });
 export type DisputeCreate = Infer<typeof disputeCreate>;
 
@@ -117,6 +119,17 @@ export async function createDispute(
     await requirePostOnAssignment(ctx, input.postId, assignment._id);
   }
   const description = requireNonBlank(input.description, "description", MAX_LENGTH.description);
+  // The opener owns every file: a dispute cannot cite the other side's uploads.
+  const evidenceMediaIds =
+    input.evidenceMediaIds === undefined
+      ? undefined
+      : await requireSupportingMedia(
+          ctx,
+          openedBy,
+          "dispute-evidence",
+          input.evidenceMediaIds,
+          MAX_DISPUTE_EVIDENCE,
+        );
 
   const dispute = {
     assignmentId: assignment._id,
@@ -129,6 +142,7 @@ export async function createDispute(
     reason: input.reason,
     customReason,
     description,
+    evidenceMediaIds,
     status: "open" as const,
   };
   const disputeId = await ctx.db.insert("disputes", dispute);
@@ -326,7 +340,7 @@ export async function requireDispute(
 }
 
 /** Reports a missing dispute and someone else's the same way. */
-async function requireVisibleDispute(
+export async function requireVisibleDispute(
   ctx: QueryCtx,
   viewer: AssignmentViewer,
   disputeId: Id<"disputes">,

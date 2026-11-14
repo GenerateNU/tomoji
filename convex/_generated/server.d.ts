@@ -34,6 +34,7 @@ type Env = {
   readonly ASSEMBLYAI_API_KEY: string | undefined;
   readonly S3_MEDIA_BUCKET: string;
   readonly S3_MEDIA_REGION: string;
+  readonly TOMOJI_DEV_SEED: string | undefined;
   readonly TYPESAFE_API_KEY: string | undefined;
   readonly WORKOS_API_KEY: string | undefined;
   readonly WORKOS_OPERATOR_ORG_ID: string | undefined;

@@ -13,6 +13,8 @@ const app = defineApp({
     // Already set on every deployment for the AuthKit component; declared here
     // so invite actions can read it.
     WORKOS_API_KEY: v.optional(v.string()),
+    // Opt in only on a local or personal development deployment.
+    TOMOJI_DEV_SEED: v.optional(v.string()),
     S3_MEDIA_BUCKET: v.string(),
     S3_MEDIA_REGION: v.string(),
     ASSEMBLYAI_API_KEY: v.optional(v.string()),

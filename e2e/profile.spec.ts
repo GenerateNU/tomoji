@@ -45,41 +45,114 @@ async function openProfile(page: Page, query = "") {
   }
 }
 
-test("creators see their own name, country, GitHub profile, and Settings link", async ({
+function birthdateFields(page: Page) {
+  const group = page.getByRole("group", { name: "Date of birth", exact: true });
+  return {
+    group,
+    month: group.getByRole("textbox", { name: "Month", exact: true }),
+    day: group.getByRole("textbox", { name: "Day", exact: true }),
+    year: group.getByRole("textbox", { name: "Year", exact: true }),
+  };
+}
+
+async function fillBirthdate(page: Page, value: string) {
+  const { month, day, year } = birthdateFields(page);
+  const parts = value.split("/");
+  for (const [index, field] of [month, day, year].entries()) {
+    await field.click();
+    await field.fill(parts[index] ?? "");
+  }
+}
+
+test("editing profile opens one form and cancelling preserves the saved profile", async ({
+  page,
+}) => {
+  await openProfile(page);
+  await page.getByRole("button", { name: "Edit", exact: true }).click();
+  await page
+    .getByLabel("GitHub profile", { exact: true })
+    .fill("https://github.com/unsaved-profile");
+  await page.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect(page.getByRole("link", { name: /GitHub/ })).toHaveAttribute(
+    "href",
+    "https://github.com/zahra",
+  );
+  expect(await page.evaluate(() => window.profileFixture.calls)).toEqual([]);
+});
+
+test("creators see saved profile details and statistics without private email", async ({
   page,
 }) => {
   await openProfile(page);
   await expect(page.getByRole("heading", { name: "Zahra Wibisana", exact: true })).toBeVisible();
   await expect(page.getByText("Indonesia", { exact: true })).toBeVisible();
-  await expect(page.getByRole("link", { name: /https:\/\/github.com\/zahra/ })).toHaveAttribute(
+  await expect(page.getByRole("link", { name: /GitHub profile/ })).toHaveAttribute(
     "href",
     "https://github.com/zahra",
   );
-  await expect(page.getByRole("link", { name: "Edit profile", exact: true })).toHaveAttribute(
-    "href",
-    "/settings",
-  );
+  await expect(page.getByRole("button", { name: "Edit", exact: true })).toBeVisible();
   await expect(page.getByRole("textbox")).toHaveCount(0);
   await expect(page.getByText("zahra@example.test", { exact: true })).toHaveCount(0);
-  await expect(page.getByText("+1 617 555 0100", { exact: true })).toHaveCount(0);
-  expect(await page.evaluate(() => window.profileFixture.queries)).toEqual([
-    { name: "users:me", args: {} },
-    { name: "creators:me", args: {} },
-    { name: "countries:list", args: {} },
-  ]);
+  await expect(page.getByText("Followers", { exact: true })).toBeVisible();
+  await expect(page.getByText("231,221", { exact: true })).toBeVisible();
+  await expect(page.getByText("Joined November 2026", { exact: true })).toBeVisible();
   expect(await page.evaluate(() => window.profileFixture.calls)).toEqual([]);
 });
 
-test("Profile navigation and Edit profile lead to the creator's own pages", async ({ page }) => {
+test("content type preview can be saved locally and cancelling discards its draft", async ({
+  page,
+}) => {
   await openProfile(page);
-  await expect(page.getByRole("navigation").getByRole("link", { name: "Profile" })).toHaveAttribute(
-    "href",
-    "/profile",
+  await expect(page.getByText("Tutorials & how-to", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Edit", exact: true }).click();
+  await page.getByRole("combobox", { name: "Content type", exact: true }).click();
+  await page.getByRole("checkbox", { name: "Tutorials & how-to", exact: true }).uncheck();
+  await page.getByRole("button", { name: "Done", exact: true }).click();
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Edit", exact: true })).toBeVisible();
+  await expect(page.getByText("Tutorials & how-to", { exact: true })).toHaveCount(0);
+  expect(await page.evaluate(() => window.profileFixture.calls)).toEqual([]);
+
+  await page.getByRole("button", { name: "Edit", exact: true }).click();
+  await page.getByRole("combobox", { name: "Content type", exact: true }).click();
+  await page.getByRole("checkbox", { name: "Tutorials & how-to", exact: true }).check();
+  await page.getByRole("button", { name: "Done", exact: true }).click();
+  await page.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect(page.getByText("Tutorials & how-to", { exact: true })).toHaveCount(0);
+  expect(await page.evaluate(() => window.profileFixture.calls)).toEqual([]);
+});
+
+test("mixed profile edits save only real fields and preserve demo edits across a failed save", async ({
+  page,
+}) => {
+  await openProfile(page);
+  await page.getByRole("button", { name: "Edit", exact: true }).click();
+  await page.getByRole("combobox", { name: "Content type", exact: true }).click();
+  await page.getByRole("checkbox", { name: "Tutorials & how-to", exact: true }).uncheck();
+  await page.getByRole("button", { name: "Done", exact: true }).click();
+  await page.getByLabel("GitHub profile", { exact: true }).fill("https://github.com/mixed");
+  await page.evaluate(() => window.profileFixture.failNext("creators:update"));
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(page.getByRole("alert")).toBeVisible();
+  await expect(page.getByLabel("GitHub profile", { exact: true })).toHaveValue(
+    "https://github.com/mixed",
   );
-  await page.getByRole("link", { name: "Edit profile", exact: true }).click();
-  await expect(page).toHaveURL("http://profile.test/settings");
-  await expect(page.getByRole("heading", { name: "Settings", exact: true })).toBeVisible();
-  await expect(page.getByRole("region", { name: "Basic details" })).toBeVisible();
+  await page.getByRole("combobox", { name: "Content type", exact: true }).click();
+  await expect(
+    page.getByRole("checkbox", { name: "Tutorials & how-to", exact: true }),
+  ).not.toBeChecked();
+  await page.getByRole("button", { name: "Done", exact: true }).click();
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Edit", exact: true })).toBeVisible();
+  await expect(page.getByRole("link", { name: /GitHub profile/ })).toHaveAttribute(
+    "href",
+    "https://github.com/mixed",
+  );
+  await expect(page.getByText("Tutorials & how-to", { exact: true })).toHaveCount(0);
+  expect(await page.evaluate(() => window.profileFixture.calls)).toEqual([
+    { name: "creators:update", args: { githubLink: "https://github.com/mixed" } },
+    { name: "creators:update", args: { githubLink: "https://github.com/mixed" } },
+  ]);
 });
 
 test("a failed navigation query preserves the shared shell and Profile returns when it recovers", async ({
@@ -112,7 +185,7 @@ test("signed-out component state prompts sign-in without requesting profile data
     "/login?next=%2Fprofile",
   );
   await expect(page.getByRole("navigation").getByRole("link", { name: "Profile" })).toHaveCount(0);
-  await expect(page.getByRole("link", { name: "Edit profile", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Edit", exact: true })).toHaveCount(0);
   expect(await page.evaluate(() => window.profileFixture.queries)).toEqual([]);
   expect(await page.evaluate(() => window.profileFixture.calls)).toEqual([]);
 });
@@ -169,7 +242,7 @@ for (const role of ["company", "operator"]) {
     await expect(page.getByRole("navigation").getByRole("link", { name: "Profile" })).toHaveCount(
       0,
     );
-    await expect(page.getByRole("link", { name: "Edit profile", exact: true })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Edit", exact: true })).toHaveCount(0);
     expect(await page.evaluate(() => window.profileFixture.queries)).toEqual([
       { name: "users:me", args: {} },
     ]);
@@ -192,11 +265,11 @@ test("missing profile fields have clear empty states without exposing email fall
   );
   await expect(page.getByRole("heading", { name: "Your profile", exact: true })).toBeVisible();
   await expect(page.getByText("Indonesia", { exact: true })).toHaveCount(0);
-  await expect(page.getByText("No GitHub profile added yet.")).toBeVisible();
-  await expect(page.getByText("No profile picture added.")).toBeVisible();
+  await expect(page.getByRole("link", { name: /GitHub profile/ })).toHaveCount(0);
+  await expect(page.getByAltText("Your profile picture", { exact: true })).toHaveCount(0);
   await expect(page.getByText("zahra@example.test", { exact: true })).toHaveCount(0);
   await expect(page.getByText("+1 617 555 0100", { exact: true })).toHaveCount(0);
-  await expect(page.getByRole("link", { name: "Edit profile", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Edit", exact: true })).toBeVisible();
 });
 
 test("unsafe legacy GitHub URLs are never rendered as clickable links", async ({ page }) => {
@@ -207,17 +280,13 @@ test("unsafe legacy GitHub URLs are never rendered as clickable links", async ({
     "https://example.test/zahra",
   ]) {
     await page.evaluate((link) => window.profileFixture.setGithubLink(link), githubLink);
-    await expect(
-      page.getByText(
-        "Your saved GitHub link needs updating. Edit your profile to add a valid URL.",
-      ),
-    ).toBeVisible();
+    await expect(page.getByRole("link", { name: /GitHub profile/ })).toHaveCount(0);
     await expect(page.getByRole("link").filter({ hasText: githubLink })).toHaveCount(0);
     expect(
       await page
         .locator("a")
         .evaluateAll((links) => links.map((link) => link.getAttribute("href"))),
-    ).toEqual(["/profile", "/settings"]);
+    ).toEqual(["/profile"]);
   }
 });
 
@@ -233,9 +302,10 @@ test("live updates refresh the displayed name, country, and GitHub URL", async (
   );
   await expect(page.getByRole("heading", { name: "Alex Chen", exact: true })).toBeVisible();
   await expect(page.getByText("Japan", { exact: true })).toBeVisible();
-  await expect(
-    page.getByRole("link", { name: /https:\/\/github.com\/alex-builds/ }),
-  ).toHaveAttribute("href", "https://github.com/alex-builds");
+  await expect(page.getByRole("link", { name: /GitHub profile/ })).toHaveAttribute(
+    "href",
+    "https://github.com/alex-builds",
+  );
   await expect(page.getByText("Indonesia", { exact: true })).toHaveCount(0);
   expect(await page.evaluate(() => window.profileFixture.calls)).toEqual([]);
 });
@@ -279,15 +349,22 @@ test("removing a picture while its request is pending does not restore stale ima
     window.profileFixture.setProfile({ profilePictureMediaId: undefined });
     window.profileFixture.release("media:getProfilePicture");
   });
-  await expect(page.getByText("No profile picture added.")).toBeVisible();
+  await expect(page.getByAltText("Your profile picture", { exact: true })).toHaveCount(0);
   await expect(page.getByAltText("Your profile picture", { exact: true })).toHaveCount(0);
 });
 
-test("creator profile fits a mobile viewport and links are keyboard accessible", async ({
+test("creator profile fits desktop and mobile with long names and links", async ({
   page,
 }, testInfo) => {
-  await page.setViewportSize({ width: 375, height: 812 });
+  await page.setViewportSize({ width: 1512, height: 982 });
   await openProfile(page);
+  await expect(page.getByRole("heading", { name: "Zahra Wibisana", exact: true })).toBeVisible();
+  await page.screenshot({
+    path: testInfo.outputPath("profile-desktop.png"),
+    fullPage: true,
+    animations: "disabled",
+  });
+  await page.setViewportSize({ width: 375, height: 812 });
   await page.evaluate(() =>
     window.profileFixture.setProfile({
       firstName: "AnExtremelyLongFirstNameForResponsiveLayout",
@@ -295,30 +372,550 @@ test("creator profile fits a mobile viewport and links are keyboard accessible",
       githubLink: "https://github.com/an-extremely-long-creator-username",
     }),
   );
-  await page.keyboard.press("Tab");
-  await expect(page.getByRole("navigation").getByRole("link", { name: "Profile" })).toBeFocused();
-  await page.keyboard.press("Tab");
-  await expect(page.getByRole("link", { name: "Edit profile", exact: true })).toBeFocused();
-  await page.keyboard.press("Tab");
-  await expect(page.getByRole("link", { name: /https:\/\/github.com/ })).toBeFocused();
+  await page.getByRole("link", { name: /GitHub profile/ }).focus();
+  await expect(page.getByRole("link", { name: /GitHub profile/ })).toBeFocused();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
     true,
   );
-  await page.screenshot({ path: testInfo.outputPath("profile-mobile.png"), fullPage: true });
-});
-
-test("creator profile displays its read-only details together on desktop", async ({
-  page,
-}, testInfo) => {
-  await openProfile(page);
-  await expect(page.getByRole("heading", { name: "Zahra Wibisana", exact: true })).toBeVisible();
-  await expect(page.getByText("No profile picture added.")).toBeVisible();
-  await expect(page.getByRole("heading", { name: "GitHub profile", exact: true })).toBeVisible();
-  await page.screenshot({ path: testInfo.outputPath("profile-desktop.png"), fullPage: true });
+  await page.screenshot({
+    path: testInfo.outputPath("profile-mobile.png"),
+    fullPage: true,
+    animations: "disabled",
+  });
 });
 
 test("signed-out visitors to the actual Profile route land on log in", async ({ page }) => {
   await page.goto("/profile");
   await expect(page).toHaveURL(/\/login\?next=%2Fprofile$/);
   await expect(page.getByRole("heading", { name: "Welcome back" })).toBeVisible();
+});
+
+test("profile saves only changed fields and can clear GitHub without changing other data", async ({
+  page,
+}) => {
+  await openProfile(page);
+  await page.getByRole("button", { name: "Edit", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Save", exact: true })).toBeDisabled();
+  await page.getByLabel("GitHub profile", { exact: true }).fill("github.com/new-profile");
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(page.getByRole("link", { name: /GitHub profile/ })).toHaveAttribute(
+    "href",
+    "https://github.com/new-profile",
+  );
+  await page.getByRole("button", { name: "Edit", exact: true }).click();
+  await page.getByLabel("GitHub profile", { exact: true }).fill("");
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(page.getByRole("link", { name: /GitHub profile/ })).toHaveCount(0);
+  expect(await page.evaluate(() => window.profileFixture.calls)).toEqual([
+    { name: "creators:update", args: { githubLink: "https://github.com/new-profile" } },
+    { name: "creators:update", args: { githubLink: null } },
+  ]);
+});
+
+test("external updates preserve a draft and cancelling reveals the latest saved data", async ({
+  page,
+}) => {
+  await openProfile(page);
+  await page.getByRole("button", { name: "Edit", exact: true }).click();
+  await page.getByLabel("GitHub profile", { exact: true }).fill("https://github.com/draft");
+  await page.evaluate(() =>
+    window.profileFixture.setGithubLink("https://github.com/updated-elsewhere"),
+  );
+  await expect(page.getByLabel("GitHub profile", { exact: true })).toHaveValue(
+    "https://github.com/draft",
+  );
+  await page.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect(page.getByRole("link", { name: /GitHub profile/ })).toHaveAttribute(
+    "href",
+    "https://github.com/updated-elsewhere",
+  );
+  expect(await page.evaluate(() => window.profileFixture.calls)).toEqual([]);
+});
+
+test("validation blocks invalid GitHub and a failed save preserves the draft for retry", async ({
+  page,
+}) => {
+  await openProfile(page);
+  await page.getByRole("button", { name: "Edit", exact: true }).click();
+  const github = page.getByLabel("GitHub profile", { exact: true });
+  await github.fill("https://example.test/not-github");
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(github).toHaveAttribute("aria-invalid", "true");
+  await expect(github).toBeFocused();
+  expect(await page.evaluate(() => window.profileFixture.calls)).toEqual([]);
+  await github.fill("https://github.com/updated");
+  await page.evaluate(() => window.profileFixture.failNext("creators:update"));
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(page.getByRole("alert")).toContainText("Something went wrong");
+  await expect(github).toHaveValue("https://github.com/updated");
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(page.getByRole("link", { name: /GitHub profile/ })).toHaveAttribute(
+    "href",
+    "https://github.com/updated",
+  );
+});
+
+test("saving disables editing and duplicate submissions until the mutation completes", async ({
+  page,
+}) => {
+  await openProfile(page);
+  await page.getByRole("button", { name: "Edit", exact: true }).click();
+  await page.getByLabel("GitHub profile", { exact: true }).fill("https://github.com/pending");
+  await page.evaluate(() => window.profileFixture.delayNext("creators:update"));
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Saving…", exact: true })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Cancel", exact: true })).toBeDisabled();
+  await expect(page.getByLabel("GitHub profile", { exact: true })).toBeDisabled();
+  expect(await page.evaluate(() => window.profileFixture.calls)).toHaveLength(1);
+  await page.evaluate(() => window.profileFixture.release("creators:update"));
+  await expect(page.getByRole("button", { name: "Edit", exact: true })).toBeVisible();
+});
+
+test("birthdate keeps fixed separators and advances through month day and year while typing", async ({
+  page,
+}) => {
+  await openProfile(page);
+  await page.getByRole("button", { name: "Edit", exact: true }).click();
+  const { group, month, day, year } = birthdateFields(page);
+  await expect(group.getByRole("textbox", { name: /^(Month|Day|Year)$/ })).toHaveCount(3);
+  await expect(group.getByText("/", { exact: true })).toHaveCount(2);
+  await month.focus();
+  await page.keyboard.type("06152001");
+  await expect(year).toBeFocused();
+  await expect(month).toHaveValue("06");
+  await expect(day).toHaveValue("15");
+  await expect(year).toHaveValue("2001");
+  await expect(group.getByText("/", { exact: true })).toHaveCount(2);
+  await fillBirthdate(page, "");
+  await month.focus();
+  await page.keyboard.type("06/15/2001");
+  await expect(month).toHaveValue("06");
+  await expect(day).toHaveValue("15");
+  await expect(year).toHaveValue("2001");
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Edit", exact: true })).toBeVisible();
+  expect(await page.evaluate(() => window.profileFixture.calls)).toEqual([
+    { name: "creators:update", args: { dateOfBirth: Date.UTC(2001, 5, 15) } },
+  ]);
+});
+
+test("birthdate calendar selection and manual segments stay synchronized and save UTC", async ({
+  page,
+}) => {
+  await openProfile(page);
+  await page.getByRole("button", { name: "Edit", exact: true }).click();
+  const { group, month, day, year } = birthdateFields(page);
+  await group.getByRole("button", { name: "Choose date of birth", exact: true }).focus();
+  await page.keyboard.press("Tab");
+  await expect(month).toBeFocused();
+  const picker = group.getByLabel("Date of birth calendar", { exact: true });
+  await expect(picker).toHaveAttribute("type", "date");
+  await picker.fill("2000-02-29");
+  await expect(month).toHaveValue("02");
+  await expect(day).toHaveValue("29");
+  await expect(year).toHaveValue("2000");
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Edit", exact: true })).toBeVisible();
+  expect(await page.evaluate(() => window.profileFixture.calls)).toEqual([
+    { name: "creators:update", args: { dateOfBirth: Date.UTC(2000, 1, 29) } },
+  ]);
+
+  await page.getByRole("button", { name: "Edit", exact: true }).click();
+  await fillBirthdate(page, "06/15/2001");
+  await expect(picker).toHaveValue("2001-06-15");
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Edit", exact: true })).toBeVisible();
+  expect(await page.evaluate(() => window.profileFixture.calls)).toEqual([
+    { name: "creators:update", args: { dateOfBirth: Date.UTC(2000, 1, 29) } },
+    { name: "creators:update", args: { dateOfBirth: Date.UTC(2001, 5, 15) } },
+  ]);
+});
+
+test("birthdate calendar opens by mouse and keyboard without extra tab stops", async ({ page }) => {
+  await openProfile(page);
+  await page.getByRole("button", { name: "Edit", exact: true }).click();
+  await fillBirthdate(page, "06/15/2001");
+  const { group, month, day, year } = birthdateFields(page);
+  const button = group.getByRole("button", { name: "Choose date of birth", exact: true });
+  const picker = group.getByLabel("Date of birth calendar", { exact: true });
+
+  // Select the next day through the real native popup, without replacing showPicker.
+  await button.click();
+  await page.keyboard.press("ArrowRight");
+  await page.keyboard.press("Enter");
+  await expect(picker).toHaveValue("2001-06-16");
+  await expect(day).toHaveValue("16");
+
+  await button.focus();
+  await page.keyboard.press("Enter");
+  await page.keyboard.press("ArrowRight");
+  await page.keyboard.press("Enter");
+  await expect(picker).toHaveValue("2001-06-17");
+  await expect(day).toHaveValue("17");
+
+  await button.focus();
+  for (const field of [month, day, year]) {
+    await page.keyboard.press("Tab");
+    await expect(field).toBeFocused();
+  }
+  await page.keyboard.press("Tab");
+  await expect(
+    page.getByRole("combobox", { name: "Country of residence", exact: true }),
+  ).toBeFocused();
+  expect(await page.evaluate(() => window.profileFixture.calls)).toEqual([]);
+});
+
+test("birthdate segments support independent edits, numeric limits, and backwards navigation", async ({
+  page,
+}) => {
+  await openProfile(page);
+  await page.evaluate(() =>
+    window.profileFixture.setProfile({ dateOfBirth: Date.UTC(2001, 5, 15) }),
+  );
+  await page.getByRole("button", { name: "Edit", exact: true }).click();
+  const { group, month, day, year } = birthdateFields(page);
+  await year.fill("1990");
+  await expect(month).toHaveValue("06");
+  await expect(day).toHaveValue("15");
+  await expect(year).toHaveValue("1990");
+  await page.keyboard.type("a9");
+  await expect(year).toHaveValue("1990");
+  await month.fill("");
+  await page.keyboard.type("a0");
+  await expect(month).toHaveValue("0");
+  await expect(month).toBeFocused();
+  await page.keyboard.type("6");
+  await expect(month).toHaveValue("06");
+  await expect(day).toBeFocused();
+  await day.fill("");
+  await day.press("Backspace");
+  await expect(month).toBeFocused();
+  await expect(month).toHaveValue("06");
+  await expect(group.getByText("/", { exact: true })).toHaveCount(2);
+  await day.fill("315");
+  await expect(day).toHaveValue("31");
+  await expect(year).toBeFocused();
+  await month.fill("123");
+  await expect(month).toHaveValue("12");
+  await expect(group.getByText("/", { exact: true })).toHaveCount(2);
+  expect(await page.evaluate(() => window.profileFixture.calls)).toEqual([]);
+});
+
+test.describe("saved birthdates", () => {
+  test.use({ timezoneId: "America/Los_Angeles" });
+
+  test("prefill the stored UTC calendar date without shifting to the previous day", async ({
+    page,
+  }) => {
+    await openProfile(page);
+    await page.evaluate(() =>
+      window.profileFixture.setProfile({ dateOfBirth: Date.UTC(2001, 5, 15) }),
+    );
+    await page.getByRole("button", { name: "Edit", exact: true }).click();
+    const { month, day, year } = birthdateFields(page);
+    await expect(month).toHaveValue("06");
+    await expect(day).toHaveValue("15");
+    await expect(year).toHaveValue("2001");
+    await expect(page.getByRole("button", { name: "Save", exact: true })).toBeDisabled();
+    expect(await page.evaluate(() => window.profileFixture.calls)).toEqual([]);
+  });
+});
+
+for (const invalid of ["9/1/2004", "09/10/04", "02/31/2000"]) {
+  test(`invalid birthdate ${invalid} identifies the required format and never saves`, async ({
+    page,
+  }) => {
+    await openProfile(page);
+    await page.getByRole("button", { name: "Edit", exact: true }).click();
+    const { group, month, day, year } = birthdateFields(page);
+    await fillBirthdate(page, invalid);
+    const [expectedMonth, expectedDay, expectedYear] = invalid.split("/");
+    await expect(month).toHaveValue(expectedMonth);
+    await expect(day).toHaveValue(expectedDay);
+    await expect(year).toHaveValue(expectedYear);
+    await expect(month).toHaveAttribute("aria-invalid", "false");
+    await expect(page.getByRole("alert")).toHaveCount(0);
+    await page.getByRole("button", { name: "Save", exact: true }).click();
+    await expect(month).toBeFocused();
+    await expect(month).toHaveAttribute("aria-invalid", "true");
+    await expect(group).toHaveAccessibleDescription("Enter your date of birth as MM/DD/YYYY");
+    await expect(page.getByRole("alert")).toHaveText("Enter your date of birth as MM/DD/YYYY");
+    expect(await page.evaluate(() => window.profileFixture.calls)).toEqual([]);
+  });
+}
+
+test("correcting an impossible birthdate to a valid leap day clears the error and saves UTC", async ({
+  page,
+}) => {
+  await openProfile(page);
+  await page.getByRole("button", { name: "Edit", exact: true }).click();
+  const { month, year } = birthdateFields(page);
+  await fillBirthdate(page, "02/29/2001");
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(page.getByRole("alert")).toHaveText("Enter your date of birth as MM/DD/YYYY");
+  expect(await page.evaluate(() => window.profileFixture.calls)).toEqual([]);
+  await year.fill("2000");
+  await expect(month).toHaveAttribute("aria-invalid", "false");
+  await expect(page.getByRole("alert")).toHaveCount(0);
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Edit", exact: true })).toBeVisible();
+  expect(await page.evaluate(() => window.profileFixture.calls)).toEqual([
+    { name: "creators:update", args: { dateOfBirth: Date.UTC(2000, 1, 29) } },
+  ]);
+});
+
+test("future birthdates cannot be saved", async ({ page }) => {
+  await page.clock.setFixedTime(new Date("2026-11-14T12:00:00Z"));
+  await openProfile(page);
+  await page.getByRole("button", { name: "Edit", exact: true }).click();
+  const { month } = birthdateFields(page);
+  await fillBirthdate(page, "11/15/2026");
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(page.getByRole("alert")).toHaveText("Your date of birth can't be in the future.");
+  await expect(month).toBeFocused();
+  await expect(month).toHaveAttribute("aria-invalid", "true");
+  expect(await page.evaluate(() => window.profileFixture.calls)).toEqual([]);
+});
+
+test("birthdate and country edits use the existing API fields", async ({ page }) => {
+  await openProfile(page);
+  await page.getByRole("button", { name: "Edit", exact: true }).click();
+  await fillBirthdate(page, "01/01/1990");
+  await page.getByRole("combobox", { name: "Country of residence", exact: true }).click();
+  await page.getByRole("option", { name: "Japan", exact: true }).click();
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(page.getByText("Japan", { exact: true })).toBeVisible();
+  expect(await page.evaluate(() => window.profileFixture.calls)).toEqual([
+    {
+      name: "creators:update",
+      args: { dateOfBirth: Date.UTC(1990, 0, 1), countryOfResidence: "JP" },
+    },
+  ]);
+  await page.getByRole("button", { name: "Edit", exact: true }).click();
+  await page.getByRole("combobox", { name: "Country of residence", exact: true }).click();
+  await page.getByRole("option", { name: "Not selected", exact: true }).click();
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(page.getByText("Japan", { exact: true })).toHaveCount(0);
+  expect(await page.evaluate(() => window.profileFixture.calls.at(-1))).toEqual({
+    name: "creators:update",
+    args: { countryOfResidence: null },
+  });
+});
+
+test("underage birthdates and clearing an existing birthdate cannot be saved", async ({ page }) => {
+  await page.clock.setFixedTime(new Date("2026-11-14T12:00:00Z"));
+  await openProfile(page);
+  await page.evaluate(() =>
+    window.profileFixture.setProfile({ dateOfBirth: Date.UTC(1990, 0, 1) }),
+  );
+  await page.getByRole("button", { name: "Edit", exact: true }).click();
+  const { month } = birthdateFields(page);
+  await fillBirthdate(page, "11/14/2009");
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(page.getByRole("alert")).toContainText("at least 18");
+  await expect(month).toBeFocused();
+  await expect(month).toHaveAttribute("aria-invalid", "true");
+  await fillBirthdate(page, "");
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(page.getByRole("alert")).toContainText("can't be removed");
+  expect(await page.evaluate(() => window.profileFixture.calls)).toEqual([]);
+});
+
+for (const viewport of [
+  { name: "desktop", width: 1512, height: 982 },
+  { name: "mobile", width: 375, height: 812 },
+]) {
+  test(`profile editor preserves header spacing while scrolling on ${viewport.name}`, async ({
+    page,
+  }, testInfo) => {
+    await page.setViewportSize({ width: viewport.width, height: viewport.height });
+    await openProfile(page);
+    await page.getByRole("button", { name: "Edit", exact: true }).click();
+    const header = page.locator("form header");
+    const scrollArea = page.getByRole("region", { name: "Basic info", exact: true }).locator("..");
+    const headerBefore = await header.boundingBox();
+    expect(headerBefore).not.toBeNull();
+    await page.screenshot({
+      path: testInfo.outputPath(`fixture-profile-edit-${viewport.name}.png`),
+      fullPage: true,
+      animations: "disabled",
+    });
+
+    await fillBirthdate(page, "02/31/2000");
+    await page.getByRole("button", { name: "Save", exact: true }).click();
+    await expect(page.getByRole("alert")).toHaveText("Enter your date of birth as MM/DD/YYYY");
+    await page.screenshot({
+      path: testInfo.outputPath(`fixture-profile-birthdate-error-${viewport.name}.png`),
+      fullPage: true,
+      animations: "disabled",
+    });
+
+    await scrollArea.hover();
+    await page.mouse.wheel(0, 700);
+    await expect.poll(() => scrollArea.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+    await expect(header).toBeInViewport();
+    const headerAfter = await header.boundingBox();
+    expect(headerAfter?.y).toBe(headerBefore?.y);
+    const gap = await scrollArea.evaluate((element) => {
+      const headerElement = element.previousElementSibling!;
+      const contentBottom = Math.max(
+        ...Array.from(headerElement.children, (child) => child.getBoundingClientRect().bottom),
+      );
+      return element.getBoundingClientRect().top - contentBottom;
+    });
+    expect(gap).toBeGreaterThanOrEqual(24);
+    expect(
+      await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
+    ).toBe(true);
+    await page.screenshot({
+      path: testInfo.outputPath(`fixture-profile-edit-scrolled-${viewport.name}.png`),
+      fullPage: true,
+      animations: "disabled",
+    });
+    expect(await page.evaluate(() => window.profileFixture.calls)).toEqual([]);
+  });
+}
+
+test("LinkedIn and additional links normalize and preserve their order", async ({ page }) => {
+  await openProfile(page);
+  await page.getByRole("button", { name: "Edit", exact: true }).click();
+  await page.getByLabel("LinkedIn profile", { exact: true }).fill("  linkedin.com/in/zahra  ");
+  await page.getByRole("button", { name: "Add link", exact: true }).click();
+  await page.getByLabel("Link 1", { exact: true }).fill("https://zahra.example.test/work");
+  await page.getByRole("button", { name: "Add link", exact: true }).click();
+  await page.getByLabel("Link 2", { exact: true }).fill("https://notes.example.test");
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Edit", exact: true })).toBeVisible();
+  expect(await page.evaluate(() => window.profileFixture.calls)).toEqual([
+    {
+      name: "creators:update",
+      args: {
+        linkedinLink: "https://linkedin.com/in/zahra",
+        additionalLinks: ["https://zahra.example.test/work", "https://notes.example.test/"],
+      },
+    },
+  ]);
+});
+
+test("invalid additional links identify the field and adding links respects the backend limit", async ({
+  page,
+}) => {
+  await openProfile(page);
+  await page.getByRole("button", { name: "Edit", exact: true }).click();
+  const add = page.getByRole("button", { name: "Add link", exact: true });
+  for (let index = 0; index < 3; index++) await add.click();
+  await expect(add).toBeDisabled();
+  await page.getByLabel("Link 1", { exact: true }).fill("https://fine.example.test");
+  await page.getByLabel("Link 2", { exact: true }).fill("http://insecure.example.test");
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(page.getByRole("alert")).toContainText("secure URL");
+  await expect(page.getByLabel("Link 2", { exact: true })).toBeFocused();
+  expect(await page.evaluate(() => window.profileFixture.calls)).toEqual([]);
+  await page.getByRole("button", { name: "Remove link 2", exact: true }).click();
+  await expect(add).toBeEnabled();
+});
+
+test("supported taxonomy selections persist and render labels on the profile", async ({ page }) => {
+  await openProfile(page);
+  await page.getByRole("button", { name: "Edit", exact: true }).click();
+  const nicheTrigger = page.getByRole("combobox", { name: "Niches", exact: true });
+  await expect(nicheTrigger).toHaveText("Select niches");
+  for (const [field, option] of [
+    ["Languages", "English"],
+    ["Niches", "Backend Development"],
+    ["Skills", "TypeScript"],
+  ]) {
+    await page.getByRole("combobox", { name: field, exact: true }).click();
+    await page.getByRole("checkbox", { name: option, exact: true }).click();
+    await page.getByRole("button", { name: "Done", exact: true }).click();
+  }
+  await expect(nicheTrigger.getByText("Backend Development", { exact: true })).toBeVisible();
+  await expect(nicheTrigger.getByText(/^\+\d+$/)).toHaveCount(0);
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(page.getByText("English", { exact: true })).toBeVisible();
+  await expect(page.getByText("Backend Development", { exact: true })).toBeVisible();
+  await expect(page.getByText("TypeScript", { exact: true })).toBeVisible();
+  expect(await page.evaluate(() => window.profileFixture.calls)).toEqual([
+    {
+      name: "creators:update",
+      args: { languages: ["english"], niches: ["backend-development"], skills: ["typescript"] },
+    },
+  ]);
+  expect(
+    await page.evaluate(() =>
+      window.profileFixture.queries.filter(({ name }) => name.endsWith(":list")),
+    ),
+  ).toEqual([]);
+});
+
+test("niches summarize hidden selections without removing them from the dropdown or save", async ({
+  page,
+}) => {
+  await openProfile(page);
+  await page.evaluate(() =>
+    window.profileFixture.setProfile({
+      niches: ["backend-development", "generative-ai", "design", "frontend-development"],
+    }),
+  );
+  await page.getByRole("button", { name: "Edit", exact: true }).click();
+  const trigger = page.getByRole("combobox", { name: "Niches", exact: true });
+  await expect(trigger.getByText("Backend Development", { exact: true })).toBeVisible();
+  await expect(trigger.getByText("+3", { exact: true })).toBeVisible();
+  await expect(trigger.getByRole("button", { name: /^Remove / })).toHaveCount(1);
+  for (const label of ["Generative AI & LLMs", "UI / UX Design", "Frontend Development"]) {
+    await expect(trigger.getByText(label, { exact: true })).toHaveCount(0);
+  }
+  await trigger.click();
+  for (const label of [
+    "Backend Development",
+    "Generative AI & LLMs",
+    "UI / UX Design",
+    "Frontend Development",
+  ]) {
+    await expect(page.getByRole("checkbox", { name: label, exact: true })).toBeChecked();
+  }
+  await page.getByRole("button", { name: "Done", exact: true }).click();
+  await trigger.getByRole("button", { name: "Remove Backend Development", exact: true }).click();
+  await expect(
+    trigger.getByRole("button", { name: "Remove Generative AI & LLMs", exact: true }),
+  ).toBeFocused();
+  await expect(trigger.getByText("Generative AI & LLMs", { exact: true })).toBeVisible();
+  await expect(trigger.getByText("+2", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Edit", exact: true })).toBeVisible();
+  expect(await page.evaluate(() => window.profileFixture.calls)).toEqual([
+    {
+      name: "creators:update",
+      args: { niches: ["generative-ai", "design", "frontend-development"] },
+    },
+  ]);
+});
+
+test("unsupported X and photo actions stay unavailable and do not make service calls", async ({
+  page,
+}) => {
+  await openProfile(page);
+  await page.getByRole("button", { name: "Edit", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Change photo", exact: true })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Link X", exact: true })).toBeDisabled();
+  await expect(page.locator('input[type="file"]')).toHaveCount(0);
+  expect(await page.evaluate(() => window.profileFixture.calls)).toEqual([]);
+});
+
+test("more than five languages is rejected and focuses the invalid selector", async ({ page }) => {
+  await openProfile(page);
+  await page.getByRole("button", { name: "Edit", exact: true }).click();
+  await page.getByRole("combobox", { name: "Languages", exact: true }).click();
+  for (const language of ["English", "Spanish", "French", "Japanese", "German", "Italian"]) {
+    await page.getByRole("checkbox", { name: language, exact: true }).click();
+  }
+  await page.getByRole("button", { name: "Done", exact: true }).click();
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(page.getByText("Choose up to 5 languages.", { exact: true })).toBeVisible();
+  await expect(page.getByRole("combobox", { name: "Languages", exact: true })).toHaveAttribute(
+    "aria-invalid",
+    "true",
+  );
+  await expect(page.getByRole("combobox", { name: "Languages", exact: true })).toBeFocused();
+  expect(await page.evaluate(() => window.profileFixture.calls)).toEqual([]);
 });

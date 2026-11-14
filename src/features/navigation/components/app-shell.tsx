@@ -1,6 +1,8 @@
 "use client";
 
-import { startTransition, useState, type ReactNode } from "react";
+import { startTransition, useMemo, useRef, useState, type ReactNode } from "react";
+import { useConvexAuth, useQueries, type RequestForQueries } from "convex/react";
+import { api } from "@convex/_generated/api";
 import { Dialog as DialogPrimitive } from "@base-ui/react/dialog";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -29,8 +31,9 @@ import { DialogOverlay, DialogPortal, DialogTitle } from "@/components/ui/dialog
 import { SidebarPage } from "@/components/ui/sidebar";
 import { Skeleton } from "@/components/ui/skeleton";
 import { NotificationBell } from "@/features/notifications/components/notifications-panel";
+import { ProfileDialog } from "@/features/profile/components/profile-dialog";
 import { useProfilePicture } from "@/features/profile/hooks/use-profile-picture";
-import { useMe, type Me } from "@/features/users/hooks/use-me";
+import type { Me } from "@/features/users/hooks/use-me";
 import { useMediaQuery } from "@/hooks/use-media-query";
 import { iconProps } from "@/lib/icons";
 import { isActivePath } from "@/lib/nav";
@@ -54,17 +57,6 @@ function accountName({ firstName, lastName }: Pick<SyncedMe, "firstName" | "last
 
 function accountItems(me: SyncedMe): AccountMenuEntry[] {
   return [
-    ...(me.role === "creator"
-      ? [
-          {
-            kind: "link",
-            id: "profile",
-            label: "View profile",
-            icon: RiUser3Line,
-            href: "/profile",
-          },
-        ]
-      : []),
     {
       kind: "link",
       id: "notifications",
@@ -131,7 +123,17 @@ function SyncedChrome({ me }: { me: SyncedMe }) {
   // The drawer remembers the page it was opened on, so navigating closes it.
   const [drawerPath, setDrawerPath] = useState<string | null>(null);
   const drawerOpen = drawerPath === pathname && !isDesktop;
+  const navigationTrigger = useRef<HTMLButtonElement>(null);
+  const profileTrigger = useRef<HTMLElement | null>(null);
+  const [profileOpen, setProfileOpen] = useState(false);
   const picture = useProfilePicture(me.profilePictureMediaId ?? undefined);
+
+  function openProfile(trigger: HTMLButtonElement | null) {
+    // The mobile account trigger unmounts with its drawer; return to navigation instead.
+    profileTrigger.current = isDesktop ? trigger : navigationTrigger.current;
+    setDrawerPath(null);
+    setProfileOpen(true);
+  }
 
   const items = navItemsFor(me.role);
   const activeId = items.find((item) => item.href && isActivePath(pathname, item.href))?.id;
@@ -139,7 +141,20 @@ function SyncedChrome({ me }: { me: SyncedMe }) {
     name: accountName(me),
     avatarSrc: picture.url,
     email: me.email,
-    items: accountItems(me),
+    items: [
+      ...(me.role === "creator"
+        ? [
+            {
+              kind: "action" as const,
+              id: "profile",
+              label: "Profile",
+              icon: RiUser3Line,
+              onSelect: openProfile,
+            },
+          ]
+        : []),
+      ...accountItems(me),
+    ],
   };
 
   return (
@@ -152,6 +167,7 @@ function SyncedChrome({ me }: { me: SyncedMe }) {
           {/* Home only, and one bell at a time; from md up it sits at the page's top right instead. */}
           {!isDesktop && pathname === "/" && <NotificationBell />}
           <button
+            ref={navigationTrigger}
             type="button"
             aria-label="Open navigation"
             aria-expanded={drawerOpen}
@@ -184,6 +200,7 @@ function SyncedChrome({ me }: { me: SyncedMe }) {
         <DialogPortal>
           <DialogOverlay className="transition-opacity duration-200 data-ending-style:opacity-0 data-starting-style:opacity-0 motion-reduce:transition-none" />
           <DialogPrimitive.Popup
+            finalFocus={profileOpen ? false : undefined}
             data-slot="navigation-drawer"
             className="fixed inset-y-0 left-0 z-50 w-[min(85vw,280px)] bg-gray-10 text-gray-950 shadow-overlay outline-none transition-transform duration-200 ease-out data-ending-style:-translate-x-full data-starting-style:-translate-x-full motion-reduce:transition-none"
           >
@@ -210,12 +227,27 @@ function SyncedChrome({ me }: { me: SyncedMe }) {
           </DialogPrimitive.Popup>
         </DialogPortal>
       </DialogPrimitive.Root>
+      <ProfileDialog open={profileOpen} onOpenChange={setProfileOpen} finalFocus={profileTrigger} />
     </>
   );
 }
 
+/** Keep shell queries recoverable without throwing outside a page's error boundary. */
+function useShellAccount() {
+  const { isAuthenticated, isLoading } = useConvexAuth();
+  const queries = useMemo(
+    (): RequestForQueries =>
+      !isLoading && isAuthenticated ? { me: { query: api.users.me, args: {} } } : {},
+    [isAuthenticated, isLoading],
+  );
+  const { me }: { me?: Me | Error } = useQueries(queries);
+  if (isLoading) return undefined;
+  if (!isAuthenticated) return null;
+  return me;
+}
+
 function ShellChrome() {
-  const me = useMe();
+  const me = useShellAccount();
 
   if (me === undefined) {
     return (
@@ -240,7 +272,7 @@ function ShellChrome() {
       </PlainChrome>
     );
   }
-  if (!me.synced) {
+  if (me instanceof Error || !me.synced) {
     return (
       <PlainChrome>
         <SignOutButton />
@@ -256,10 +288,10 @@ function ShellChrome() {
  * the top bar beside the menu. Other pages reach notifications from the account menu.
  */
 function PageBell() {
-  const me = useMe();
+  const me = useShellAccount();
   const pathname = usePathname();
   const isDesktop = useMediaQuery("(min-width: 768px)");
-  if (!isDesktop || !me?.synced || pathname !== "/") return null;
+  if (!isDesktop || me instanceof Error || !me?.synced || pathname !== "/") return null;
   return (
     <div className="absolute top-8 right-8 z-20 md:top-11">
       <NotificationBell />

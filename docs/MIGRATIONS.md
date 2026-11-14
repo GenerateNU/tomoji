@@ -22,8 +22,9 @@ A deployment that still holds legacy rows will have its schema push rejected, an
 the backfill that fixed those rows has been removed. See
 [Recovering an unmigrated deployment](#recovering-an-unmigrated-deployment).
 
-The creator profile rework drops `username`, `xId`, and `phoneNumber` from
-`creators`, also without a migration. See
+The creator profile rework no longer uses `username`, `xId`, and `phoneNumber` on
+`creators`. The schema temporarily accepts these optional legacy fields so older
+deployments can sync without losing data. There is no cleanup migration yet. See
 [Dropping the legacy creator columns](#dropping-the-legacy-creator-columns).
 
 Schema validation remains enabled throughout; no record deletion is needed.
@@ -225,15 +226,17 @@ The legacy shape is `name: v.optional(v.string())` plus `firstName` and
 
 ### Dropping the legacy creator columns
 
-The creator profile rework removes `username`, `xId`, and `phoneNumber` from
-`creators` with no migration, so a deployment whose creator rows still carry any
-of them will have its schema push rejected. There is no backfill to run.
+The schema temporarily retains `username`, `xId`, and `phoneNumber` as optional
+strings so existing creator records remain valid during deployment. Profile routes
+do not accept or return these legacy values; verified X identity comes from
+`xAccounts`. Deploying this compatibility schema does not remove any stored values.
 
-Wiping and reseeding is the quickest fix for a development deployment. To keep
-the data, add a dated migration that `ctx.db.replace`s each creator row without
-the three fields, following [Add a migration](#add-a-migration), and temporarily
-restore them as `v.optional` in `convex/schemas/creators.schema.ts` so the
-compatible backend deploys first.
+Before removing these schema fields, preserve a snapshot and add a dated cleanup
+migration that `ctx.db.replace`s each creator row without the three fields,
+preserving document IDs and all other fields. Follow [Add a migration](#add-a-migration),
+run it with the compatibility schema deployed, and verify completion before
+dropping the optional validators. No creator cleanup is currently registered in
+`runAll`.
 
 ## Add a migration
 

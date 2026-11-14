@@ -21,12 +21,6 @@ let profile: Profile = {
   skills: [],
   languages: [],
 };
-// A small stand-in for the real ISO list; the picker only needs a few rows.
-const COUNTRIES = [
-  { code: "ID", name: "Indonesia" },
-  { code: "JP", name: "Japan" },
-  { code: "US", name: "United States of America" },
-];
 const calls: Call[] = [];
 const queries: Call[] = [];
 const failures = new Map<string, Error[]>();
@@ -98,6 +92,23 @@ export function useQuery(reference: FunctionReference<"query">, args: unknown) {
   return queryResult(reference, args);
 }
 
+// The shell's notification panel shares this stable empty page across renders.
+const emptyNotifications: never[] = [];
+
+export function usePaginatedQuery(reference: FunctionReference<"query">, args: unknown) {
+  useRevision();
+  const name = getFunctionName(reference);
+  if (name !== "notifications:list") throw new Error(`Unexpected paginated query: ${name}`);
+  if (args !== "skip" && !queries.some((query) => query.name === name)) {
+    queries.push({ name, args: args as Record<string, unknown> });
+  }
+  return {
+    results: emptyNotifications,
+    status: args === "skip" ? ("LoadingFirstPage" as const) : ("Exhausted" as const),
+    loadMore() {},
+  };
+}
+
 export function useQueries(
   requests: Record<string, { query: FunctionReference<"query">; args: unknown }>,
 ) {
@@ -120,6 +131,7 @@ function queryResult(reference: FunctionReference<"query">, args: unknown) {
     queries.push({ name, args: args as Record<string, unknown> });
   }
   if (session.failedQuery === name) throw new Error("Simulated query failure");
+  if (name === "notifications:unreadCount") return 0;
   if (name === "users:me") {
     if (!session.isAuthenticated) throw new Error("Signed-out visitors must not query users.me");
     if (session.userLoading) return undefined;
@@ -127,8 +139,10 @@ function queryResult(reference: FunctionReference<"query">, args: unknown) {
       synced: session.synced,
       role: session.role,
       userId: "test-user",
-      firstName: "Zahra",
-      lastName: "Wibisana",
+      firstName: profile.firstName,
+      lastName: profile.lastName,
+      email: profile.email,
+      profilePictureMediaId: profile.profilePictureMediaId,
     };
   }
   if (name === "creators:me") {
@@ -136,9 +150,6 @@ function queryResult(reference: FunctionReference<"query">, args: unknown) {
       throw new Error("Only a synced creator must request creators.me");
     }
     return session.profileLoading ? undefined : profile;
-  }
-  if (name === "countries:list") {
-    return COUNTRIES;
   }
   throw new Error(`Unexpected query: ${name}`);
 }
@@ -166,6 +177,9 @@ function operation(reference: FunctionReference<"mutation" | "action">) {
             ? { additionalLinks: args.additionalLinks as string[] }
             : {}),
           ...(args.dateOfBirth !== undefined ? { dateOfBirth: args.dateOfBirth as number } : {}),
+          ...(args.languages !== undefined ? { languages: args.languages as string[] } : {}),
+          ...(args.niches !== undefined ? { niches: args.niches as string[] } : {}),
+          ...(args.skills !== undefined ? { skills: args.skills as string[] } : {}),
           ...("countryOfResidence" in args
             ? { countryOfResidence: (args.countryOfResidence as string | null) ?? undefined }
             : {}),

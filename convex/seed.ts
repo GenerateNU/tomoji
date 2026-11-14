@@ -1,5 +1,5 @@
 import { v } from "convex/values";
-import type { Doc, Id } from "./_generated/dataModel";
+import type { Doc, Id, TableNames } from "./_generated/dataModel";
 import { env, internalMutation, type MutationCtx } from "./_generated/server";
 import { apiError } from "./lib/errors";
 import { HALF_HOUR_MS } from "./lib/validation";
@@ -674,5 +674,196 @@ export const more = internalMutation({
       added++;
     }
     return { added };
+  },
+});
+
+/**
+ * Deletes the demo campaign and everything the seed hung off it, so a later run
+ * can rebuild it against a different account. Matched by the demo title, so real
+ * campaigns and the accounts themselves are untouched.
+ */
+export const clearDemo = internalMutation({
+  args: {},
+  returns: v.object({ campaigns: v.number(), documents: v.number() }),
+  handler: async (ctx) => {
+    requireDevSeed();
+    const all = await ctx.db.query("campaigns").take(campaignReadLimit);
+    if (all.length === campaignReadLimit)
+      throw apiError("invalid_state", { reason: "too_many_campaigns_to_seed" });
+    const demos = all.filter((row) => row.title === demoCampaignTitle);
+
+    let documents = 0;
+    const removed = {
+      campaigns: new Set<string>(),
+      opportunities: new Set<string>(),
+      applications: new Set<string>(),
+      assignments: new Set<string>(),
+      submissions: new Set<string>(),
+      disputes: new Set<string>(),
+    };
+    const userIds = new Set<Id<"users">>();
+
+    async function drop<T extends TableNames>(table: T, rows: { _id: Id<T> }[]) {
+      for (const row of rows) {
+        await ctx.db.delete(table, row._id);
+        documents++;
+      }
+    }
+
+    for (const campaign of demos) {
+      const opportunities = await ctx.db
+        .query("opportunities")
+        .withIndex("by_campaignId_and_deadline", (q) => q.eq("campaignId", campaign._id))
+        .collect();
+      const assignments = await ctx.db
+        .query("assignments")
+        .withIndex("by_campaignId", (q) => q.eq("campaignId", campaign._id))
+        .collect();
+      const creatorIds = new Set(assignments.map((row) => row.creatorId));
+
+      for (const { _id: opportunityId } of opportunities) {
+        removed.opportunities.add(opportunityId);
+        for (const table of [
+          "opportunityNiches",
+          "opportunitySkills",
+          "opportunityLanguages",
+          "opportunityScores",
+          "deliverables",
+        ] as const) {
+          await drop(
+            table,
+            await ctx.db
+              .query(table)
+              .withIndex("by_opportunityId", (q) => q.eq("opportunityId", opportunityId))
+              .collect(),
+          );
+        }
+        const applications = await ctx.db
+          .query("applications")
+          .withIndex("by_opportunityId_and_creatorId", (q) => q.eq("opportunityId", opportunityId))
+          .collect();
+        for (const row of applications) {
+          removed.applications.add(row._id);
+          creatorIds.add(row.creatorId);
+        }
+        await drop("applications", applications);
+        // Stars are indexed by creator, so each known creator is checked in turn.
+        for (const creatorId of creatorIds) {
+          await drop(
+            "opportunityStars",
+            await ctx.db
+              .query("opportunityStars")
+              .withIndex("by_creatorId_and_opportunityId", (q) =>
+                q.eq("creatorId", creatorId).eq("opportunityId", opportunityId),
+              )
+              .collect(),
+          );
+        }
+      }
+
+      for (const { _id: assignmentId } of assignments) {
+        removed.assignments.add(assignmentId);
+        const submissions = await ctx.db
+          .query("submissions")
+          .withIndex("by_assignmentId_and_deliverableId", (q) => q.eq("assignmentId", assignmentId))
+          .collect();
+        for (const { _id: submissionId } of submissions) {
+          removed.submissions.add(submissionId);
+          await drop(
+            "aiReviewAttempts",
+            await ctx.db
+              .query("aiReviewAttempts")
+              .withIndex("by_submissionId", (q) => q.eq("submissionId", submissionId))
+              .collect(),
+          );
+          const posts = await ctx.db
+            .query("posts")
+            .withIndex("by_submissionId_and_isActive", (q) => q.eq("submissionId", submissionId))
+            .collect();
+          for (const { _id: postId } of posts) {
+            const postDisputes = await ctx.db
+              .query("disputes")
+              .withIndex("by_postId", (q) => q.eq("postId", postId))
+              .collect();
+            for (const row of postDisputes) removed.disputes.add(row._id);
+            await drop("disputes", postDisputes);
+          }
+          await drop("posts", posts);
+        }
+        await drop("submissions", submissions);
+        const disputes = await ctx.db
+          .query("disputes")
+          .withIndex("by_assignmentId", (q) => q.eq("assignmentId", assignmentId))
+          .collect();
+        for (const row of disputes) removed.disputes.add(row._id);
+        await drop("disputes", disputes);
+        await drop(
+          "payouts",
+          await ctx.db
+            .query("payouts")
+            .withIndex("by_assignmentId_and_sourceKey", (q) => q.eq("assignmentId", assignmentId))
+            .collect(),
+        );
+      }
+      await drop("assignments", assignments);
+      await drop("opportunities", opportunities);
+
+      const invites = await ctx.db
+        .query("invites")
+        .withIndex("by_companyId", (q) => q.eq("companyId", campaign.companyId))
+        .collect();
+      await drop(
+        "invites",
+        invites.filter((row) => row.workosId.startsWith("invite_tomoji_seed_")),
+      );
+
+      for (const creatorId of creatorIds) {
+        const creator = await ctx.db.get("creators", creatorId);
+        if (creator !== null) userIds.add(creator.userId);
+      }
+      const members = await ctx.db
+        .query("companyUsers")
+        .withIndex("by_companyId", (q) => q.eq("companyId", campaign.companyId))
+        .collect();
+      for (const member of members) userIds.add(member.userId);
+
+      removed.campaigns.add(campaign._id);
+      await drop("campaigns", [campaign]);
+    }
+
+    // Grants carry no index, so the whole table is matched against the assignments.
+    const media = await ctx.db.query("mediaUploads").collect();
+    await drop(
+      "mediaUploads",
+      media.filter((row) => row.assignmentId && removed.assignments.has(row.assignmentId)),
+    );
+
+    for (const userId of userIds) {
+      const rows = await ctx.db
+        .query("notifications")
+        .withIndex("by_userId", (q) => q.eq("userId", userId))
+        .collect();
+      await drop(
+        "notifications",
+        rows.filter(({ target }) => {
+          switch (target.kind) {
+            case "application":
+              return removed.applications.has(target.applicationId);
+            case "assignment":
+              return removed.assignments.has(target.assignmentId);
+            case "submission":
+              return removed.submissions.has(target.submissionId);
+            case "opportunity":
+              return removed.opportunities.has(target.opportunityId);
+            case "campaign":
+              return removed.campaigns.has(target.campaignId);
+            case "dispute":
+              return removed.disputes.has(target.disputeId);
+          }
+        }),
+      );
+    }
+
+    return { campaigns: demos.length, documents };
   },
 });

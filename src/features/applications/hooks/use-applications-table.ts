@@ -12,47 +12,67 @@ type SearchArgs = FunctionArgs<typeof api.applications.searchMine>;
 export type ApplicationSort = NonNullable<SearchArgs["sort"]>;
 export type ApplicationSortKey = ApplicationSort["key"];
 
-const DEFAULT_SORT: ApplicationSort = { key: "submitted", direction: "descending" };
+export type ApplicationTab = NonNullable<SearchArgs["tab"]>;
+
+/** Matches the server's per-tab default, so the sorted header is the one actually applied. */
+const DEFAULT_SORT_BY_TAB: Record<ApplicationTab, ApplicationSort> = {
+  applications: { key: "submitted", direction: "descending" },
+  offers: { key: "expires", direction: "ascending" },
+};
 
 /**
- * The applications table's search, filters, sort and page, and the query
- * arguments they make. Any change to what is listed returns to page 1, since
+ * The applications table's tab, search, filters, sort and page, and the query
+ * arguments they make. Switching tabs starts the new tab from its own defaults,
+ * since a sort or filter chosen on one tab may not exist on the other. Any change to what is listed returns to page 1, since
  * the page the user was on may no longer exist. Typing is debounced so each
  * keystroke doesn't run a query.
  */
 export function useApplicationsTable() {
+  const [tab, setTabValue] = useState<ApplicationTab>("applications");
   const [search, setSearchValue] = useState("");
   const [starred, setStarredValue] = useState(false);
   const [hideRejected, setHideRejectedValue] = useState(false);
-  const [sort, setSortValue] = useState<ApplicationSort>(DEFAULT_SORT);
+  const [sort, setSortValue] = useState<ApplicationSort>(DEFAULT_SORT_BY_TAB.applications);
   const [page, setPage] = useState(1);
   const appliedSearch = useDebouncedValue(search, SEARCH_DEBOUNCE_MS).trim();
 
   const args = useMemo<SearchArgs>(
     () => ({
-      tab: "applications",
+      tab,
       search: appliedSearch || undefined,
       starred: starred || undefined,
-      hideRejected: hideRejected || undefined,
+      // Declined offers are part of the Offers tab, so there is nothing to hide there.
+      hideRejected: (tab === "applications" && hideRejected) || undefined,
       sort,
       page,
       pageSize: PAGE_SIZE,
     }),
-    [appliedSearch, starred, hideRejected, sort, page],
+    [tab, appliedSearch, starred, hideRejected, sort, page],
   );
 
   return {
     args,
+    tab,
+    defaultSort: DEFAULT_SORT_BY_TAB[tab],
     search,
     starred,
     hideRejected,
     sort,
     page,
     /** Whether the results are narrowed by anything the user can clear. */
-    hasFilters: appliedSearch !== "" || starred || hideRejected,
+    hasFilters: appliedSearch !== "" || starred || (tab === "applications" && hideRejected),
     /** Whether anything is typed or toggled, including a search still being debounced. */
-    canClear: search !== "" || starred || hideRejected,
+    canClear: search !== "" || starred || (tab === "applications" && hideRejected),
     setPage,
+    setTab(next: ApplicationTab) {
+      if (next === tab) return;
+      setTabValue(next);
+      setSearchValue("");
+      setStarredValue(false);
+      setHideRejectedValue(false);
+      setSortValue(DEFAULT_SORT_BY_TAB[next]);
+      setPage(1);
+    },
     setSearch(next: string) {
       setSearchValue(next);
       setPage(1);

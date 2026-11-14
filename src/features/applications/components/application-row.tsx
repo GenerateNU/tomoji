@@ -2,12 +2,17 @@
 
 import type { FunctionReturnType } from "convex/server";
 import { api } from "@convex/_generated/api";
+import type { Id } from "@convex/_generated/dataModel";
 import { CompanyAvatar, getInitials } from "@/components/ui/avatar";
 import { TableCell, TableRow } from "@/components/ui/table";
 import { useCompanyLogo } from "@/hooks/use-company-logo";
 import { formatCompensation } from "@/lib/money";
+import { focusRing } from "@/lib/styles";
+import { cn } from "@/lib/utils";
+import type { ApplicationTab } from "../hooks/use-applications-table";
 import { formatRelativeTime } from "../lib/format";
 import { ApplicationStatusBadge } from "./application-status-badge";
+import { OfferExpiry } from "./offer-expiry";
 import { StarToggle } from "./star-toggle";
 
 export type ApplicationRowData = FunctionReturnType<
@@ -55,14 +60,74 @@ export function ApplicationCompensation({ row }: { row: ApplicationRowData }) {
   );
 }
 
-/** One application as a table row. Everything it shows comes with the row; it runs no queries. */
-export function ApplicationRow({ row, now }: { row: ApplicationRowData; now: number }) {
+/**
+ * The title as a button that opens the offer. `data-offer-title` lets the modal
+ * return focus here when it closes, even if the row was opened by a click elsewhere on it.
+ */
+export function OfferTitleButton({
+  row,
+  onOpen,
+  className,
+}: {
+  row: ApplicationRowData;
+  onOpen: (applicationId: Id<"applications">) => void;
+  className?: string;
+}) {
   return (
-    <TableRow>
+    <button
+      type="button"
+      aria-haspopup="dialog"
+      data-offer-title={row.applicationId}
+      title={row.title}
+      onClick={() => onOpen(row.applicationId)}
+      className={cn(
+        "min-w-0 cursor-pointer rounded-xs text-left font-medium hover:underline",
+        focusRing,
+        className,
+      )}
+    >
+      {row.title}
+    </button>
+  );
+}
+
+/**
+ * One application as a table row. Everything it shows comes with the row; it runs no queries.
+ * On the Offers tab the title opens the offer, and so does a click anywhere else on the row.
+ */
+export function ApplicationRow({
+  row,
+  now,
+  tab = "applications",
+  onOpen,
+}: {
+  row: ApplicationRowData;
+  now: number;
+  tab?: ApplicationTab;
+  onOpen?: (applicationId: Id<"applications">) => void;
+}) {
+  return (
+    <TableRow
+      className={onOpen && "cursor-pointer hover:bg-gray-25"}
+      onClick={
+        onOpen
+          ? (event) => {
+              // Buttons and links in the row do their own thing.
+              if ((event.target as HTMLElement).closest("button, a")) return;
+              onOpen(row.applicationId);
+            }
+          : undefined
+      }
+    >
       <TableCell type="custom">
-        <span className="min-w-0 flex-1 truncate font-medium" title={row.title}>
-          {row.title}
-        </span>
+        {onOpen ? (
+          <OfferTitleButton row={row} onOpen={onOpen} className="truncate" />
+        ) : (
+          <span className="min-w-0 flex-1 truncate font-medium" title={row.title}>
+            {row.title}
+          </span>
+        )}
+        {onOpen && <span className="flex-1" />}
         <ApplicationStar row={row} />
       </TableCell>
       <TableCell type="custom">
@@ -71,9 +136,15 @@ export function ApplicationRow({ row, now }: { row: ApplicationRowData; now: num
           {displayCompanyName(row)}
         </span>
       </TableCell>
-      <TableCell type="custom">
-        <ApplicationStatusBadge status={row.status} />
-      </TableCell>
+      {tab === "offers" ? (
+        <TableCell>
+          <OfferExpiry status={row.status} offerExpiresAt={row.offerExpiresAt} now={now} />
+        </TableCell>
+      ) : (
+        <TableCell type="custom">
+          <ApplicationStatusBadge status={row.status} />
+        </TableCell>
+      )}
       <TableCell>{formatRelativeTime(row.submittedAt, now)}</TableCell>
       <TableCell>
         <ApplicationCompensation row={row} />

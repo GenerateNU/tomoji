@@ -25,3 +25,12 @@ export function formatRelativeTime(timestamp: number, now: number): string {
             : ["year", YEAR];
   return relative.format(Math.trunc(diff / size), unit);
 }
+
+/** "November 16", or "November 16, 2:30 PM" with `withTime`, in the viewer's time zone. */
+export function formatOfferDeadline(timestamp: number, { withTime = false } = {}): string {
+  return new Intl.DateTimeFormat("en-US", {
+    month: "long",
+    day: "numeric",
+    ...(withTime ? { hour: "numeric", minute: "2-digit" } : {}),
+  }).format(timestamp);
+}

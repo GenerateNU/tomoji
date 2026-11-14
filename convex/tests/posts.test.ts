@@ -543,6 +543,64 @@ describe("posts.checkMyCaption", () => {
     });
   });
 
+  const publicMetrics = {
+    impression_count: 1250,
+    like_count: 38,
+    reply_count: 3,
+    retweet_count: 7,
+    quote_count: 1,
+  };
+
+  test("stores the counts read at verification, in the same X request", async () => {
+    const t = convexTest(schema, modules);
+    const { fixture, postId } = await seedCaptionPost(t, false);
+    const lookup = stubLookup({ public_metrics: publicMetrics });
+
+    expect(await fixture.asCreator.action(api.posts.checkMyCaption, { postId })).toEqual({
+      status: "match",
+    });
+
+    expect(lookup).toHaveBeenCalledTimes(1);
+    expect(String(lookup.mock.calls[0]![0])).toContain("public_metrics");
+    expect(await fixture.asCreator.query(api.posts.get, { postId })).toMatchObject({
+      isVerified: true,
+      views: 1250,
+      viewsUpdatedAt: expect.any(Number),
+      likes: 38,
+      comments: 3,
+      reposts: 7,
+      quotes: 1,
+    });
+  });
+
+  test("stores no counts when a match leaves the post unverified", async () => {
+    const t = convexTest(schema, modules);
+    const { fixture, postId } = await seedCaptionPost(t, true);
+    stubLookup({ public_metrics: publicMetrics });
+
+    await fixture.asCreator.action(api.posts.checkMyCaption, { postId });
+
+    const post = await fixture.asCreator.query(api.posts.get, { postId });
+    expect(post).toMatchObject({ isVerified: false });
+    expect(post).not.toHaveProperty("views");
+    expect(post).not.toHaveProperty("likes");
+  });
+
+  test("unusable counts never block verification", async () => {
+    const t = convexTest(schema, modules);
+    const { fixture, postId } = await seedCaptionPost(t, false);
+    stubLookup({ public_metrics: { ...publicMetrics, impression_count: -1 } });
+
+    expect(await fixture.asCreator.action(api.posts.checkMyCaption, { postId })).toEqual({
+      status: "match",
+    });
+
+    const post = await fixture.asCreator.query(api.posts.get, { postId });
+    expect(post).toMatchObject({ isVerified: true });
+    expect(post).not.toHaveProperty("views");
+    expect(post).not.toHaveProperty("likes");
+  });
+
   test("does not call X for someone else's post or for a video without a caption", async () => {
     const t = convexTest(schema, modules);
     const { fixture, postId } = await seedPost(t);

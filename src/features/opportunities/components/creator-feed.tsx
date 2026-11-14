@@ -1,50 +1,46 @@
 "use client";
 
-import { api } from "@convex/_generated/api";
 import type { Id } from "@convex/_generated/dataModel";
-import { useQuery } from "convex/react";
+import {
+  RiCheckboxCircleLine,
+  RiLayoutGridLine,
+  RiListUnordered,
+  RiSearchLine,
+  RiStarLine,
+} from "@remixicon/react";
 import { useState } from "react";
+import { FilterChip } from "@/components/filter-chip";
+import { TextField } from "@/components/text-field";
 import { Button } from "@/components/ui/button";
+import { Segment, SegmentedControl } from "@/components/ui/segmented-control";
 import { ApplicationModal } from "@/features/applications/components/application-modal";
+import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { useOpportunityFeed } from "../hooks/use-opportunity-feed";
-import type { FeedView } from "../lib/types";
-import { FilterSelect } from "./filter-select";
-import { OpportunityCard } from "./opportunity-card";
-import { OpportunityTable } from "./opportunity-table";
+import { NO_FEED_FILTERS, type FeedFilters, type FeedView } from "../lib/types";
 import { FeedSkeleton } from "./feed-skeleton";
 import { NoOpportunities } from "./no-opportunities";
+import { OpportunityCard } from "./opportunity-card";
+import { OpportunityTable } from "./opportunity-table";
 
-type TypeFilter = "all" | "gated" | "open";
-
-const TYPE_OPTIONS = [
-  { value: "all", label: "All types" },
-  { value: "gated", label: "Application required" },
-  { value: "open", label: "Open spots" },
-];
-
-/** The creator's "For You" discovery feed: filters, grid or list view, and starring. */
+/** The creator's discovery feed: search, filters, grid or list view, and starring. */
 export function CreatorFeed() {
   const [view, setView] = useState<FeedView>("grid");
-  const [type, setType] = useState<TypeFilter>("all");
-  const [niche, setNiche] = useState("");
-  const [starredOnly, setStarredOnly] = useState(false);
+  const [filters, setFilters] = useState<FeedFilters>(NO_FEED_FILTERS);
   // Kept after closing so the dialog keeps its content while it animates out.
   const [selectedId, setSelectedId] = useState<Id<"opportunities"> | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
   // Read once per render so every row's "posted N days ago" agrees.
   const [now] = useState(() => Date.now());
 
-  const niches = useQuery(api.niches.list, {});
-  const feed = useOpportunityFeed({ niche: niche || undefined, starredOnly });
-
-  // The starred list isn't filtered by niche on the server, and type is a
-  // flag on each item, so both narrow the loaded page here.
-  const shown = feed.results.filter(
-    (opportunity) =>
-      (type === "all" || opportunity.isGated === (type === "gated")) &&
-      (!starredOnly || niche === "" || opportunity.niches.includes(niche)),
-  );
+  const search = useDebouncedValue(filters.search);
+  const feed = useOpportunityFeed({ ...filters, search });
   const loading = feed.status === "LoadingFirstPage";
+  const filtered =
+    JSON.stringify({ ...filters, starred: false }) !== JSON.stringify(NO_FEED_FILTERS);
+
+  function update(changes: Partial<FeedFilters>) {
+    setFilters((current) => ({ ...current, ...changes }));
+  }
 
   function openOpportunity(opportunityId: Id<"opportunities">) {
     setSelectedId(opportunityId);
@@ -52,100 +48,67 @@ export function CreatorFeed() {
   }
 
   return (
-    <div className="mx-auto flex w-full max-w-[1241px] flex-col gap-10 px-4 py-12 sm:px-10 lg:px-20 lg:py-[120px]">
-      <h1 className="text-3xl font-semibold">Opportunities</h1>
+    <div className="flex w-full flex-col gap-10 px-4 py-12 sm:px-10 lg:px-16 lg:py-16">
+      <h1 className="text-heading-lg text-gray-950">Opportunities</h1>
 
-      <section aria-label="Filters" className="flex flex-col gap-5">
-        <div className="flex flex-wrap items-end gap-3">
-          <FilterSelect
-            label="Type"
-            value={type}
-            onChange={(value) => setType(value as TypeFilter)}
-            options={TYPE_OPTIONS}
-          />
-          <FilterSelect
-            label="Niches"
-            value={niche}
-            onChange={setNiche}
-            options={[
-              { value: "", label: "All niches" },
-              ...(niches ?? []).map((entry) => ({ value: entry.name, label: entry.label })),
-            ]}
-          />
-        </div>
-        <div className="flex flex-wrap gap-3">
-          <button
-            type="button"
-            aria-pressed={starredOnly}
-            onClick={() => setStarredOnly((on) => !on)}
-            className="inline-flex items-center gap-2 rounded-full border border-border px-4 py-2 text-sm font-medium outline-none focus-visible:ring-3 focus-visible:ring-ring/50 aria-pressed:border-foreground aria-pressed:bg-muted"
+      <section aria-label="Filters" className="flex flex-wrap items-end gap-3">
+        <TextField
+          label="Search"
+          type="search"
+          icon={RiSearchLine}
+          placeholder="Search by keyword"
+          value={filters.search}
+          onChange={(event) => update({ search: event.target.value })}
+          className="w-full max-w-[572px]"
+        />
+        <div className="flex flex-wrap items-center gap-2 pb-2.5">
+          <FilterChip
+            icon={RiCheckboxCircleLine}
+            selected={filters.applied}
+            onPressedChange={(applied) => update({ applied })}
           >
-            {/* eslint-disable-next-line @next/next/no-img-element -- fixed-size design icon */}
-            <img
-              src={`/icons/opportunities/${starredOnly ? "star-fill" : "star-line"}.svg`}
-              alt=""
-              width={18}
-              height={18}
-            />
+            Applied
+          </FilterChip>
+          <FilterChip
+            icon={RiStarLine}
+            selected={filters.starred}
+            onPressedChange={(starred) => update({ starred })}
+          >
             Starred
-          </button>
+          </FilterChip>
         </div>
       </section>
 
-      <section aria-label="Results" className="flex flex-col gap-5">
-        <div className="flex items-center justify-between">
-          <h2 className="text-lg font-medium">
-            {starredOnly ? "Starred opportunities" : "Opportunities"}
+      <section aria-labelledby="results-heading" className="flex flex-col gap-6">
+        <div className="flex items-center justify-between gap-4">
+          <h2 id="results-heading" className="text-body-lg font-medium text-gray-950">
+            {filters.starred ? "Starred opportunities" : "Opportunities"}
+            {/* The total is only known once every page has loaded. */}
+            {feed.status === "Exhausted" && (
+              <span className="text-gray-500"> ({feed.results.length})</span>
+            )}
           </h2>
-          <div className="flex gap-1" role="group" aria-label="View">
-            <button
-              type="button"
-              aria-pressed={view === "grid"}
-              aria-label="Grid view"
-              onClick={() => setView("grid")}
-              className="rounded-2xl outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
-            >
-              {/* eslint-disable-next-line @next/next/no-img-element -- design icon includes its own background */}
-              <img
-                src={
-                  view === "grid"
-                    ? "/icons/opportunities/view-grid-selected.svg"
-                    : "/icons/opportunities/view-grid.svg"
-                }
-                alt=""
-                width={50.75}
-                height={42.75}
-              />
-            </button>
-            <button
-              type="button"
-              aria-pressed={view === "list"}
-              aria-label="List view"
-              onClick={() => setView("list")}
-              className="flex h-[42.75px] w-[50.75px] items-center justify-center rounded-2xl outline-none focus-visible:ring-3 focus-visible:ring-ring/50 aria-pressed:bg-muted"
-            >
-              {/* eslint-disable-next-line @next/next/no-img-element -- fixed-size design icon */}
-              <img
-                src={
-                  view === "list"
-                    ? "/icons/opportunities/view-list-selected.svg"
-                    : "/icons/opportunities/view-list.svg"
-                }
-                alt=""
-                width={25}
-                height={25}
-              />
-            </button>
-          </div>
+          <SegmentedControl
+            aria-label="View"
+            value={view}
+            onChange={(next) => setView(next as FeedView)}
+          >
+            <Segment value="grid" label="Grid view" icon={RiLayoutGridLine} />
+            <Segment value="list" label="List view" icon={RiListUnordered} />
+          </SegmentedControl>
         </div>
 
         {loading ? (
           <FeedSkeleton />
-        ) : shown.length === 0 ? (
-          <NoOpportunities starredOnly={starredOnly} filtered={type !== "all" || niche !== ""} />
+        ) : feed.results.length === 0 ? (
+          <NoOpportunities
+            starredOnly={filters.starred}
+            filtered={filtered}
+            onClear={() => setFilters(NO_FEED_FILTERS)}
+          />
         ) : view === "grid" ? (
-          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-            {shown.map((opportunity) => (
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+            {feed.results.map((opportunity) => (
               <OpportunityCard
                 key={opportunity._id}
                 opportunity={opportunity}
@@ -154,7 +117,7 @@ export function CreatorFeed() {
             ))}
           </div>
         ) : (
-          <OpportunityTable opportunities={shown} now={now} onOpen={openOpportunity} />
+          <OpportunityTable opportunities={feed.results} now={now} onOpen={openOpportunity} />
         )}
 
         {(feed.status === "CanLoadMore" || feed.status === "LoadingMore") && (

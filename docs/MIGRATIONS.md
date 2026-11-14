@@ -137,11 +137,14 @@ removal cutoff. Invalid timing or missing assignment context is recorded as
 `needsAttention`, allowing other agreements to proceed. No agreement or clock is
 inferred for legacy posts lacking verified timing.
 
-Verify schedule coverage, inspect `needsAttention` reasons, and confirm that
-agreements, calculation records, and payouts are unchanged. Existing calculation
-records remain authoritative: this backfill can initialize an already-settled
-agreement at its first due date for the future runner to reconcile. It does not
-settle earnings, enable a cron, or send payments.
+Verify schedule coverage and inspect `needsAttention` reasons. The backfill itself
+preserves agreements, calculation records, and payouts. Existing calculation
+records remain authoritative: an already-settled agreement can be initialized at
+its first due date for the runner to reconcile idempotently. Once the earnings
+cron is deployed, newly backfilled due schedules become eligible immediately and
+can create obligations for review. Neither the backfill nor the runner sends
+payments. See [scheduled execution](EARNINGS.md#scheduled-execution-and-recovery)
+for retry behavior and recovery.
 
 ## Troubleshooting deployment
 

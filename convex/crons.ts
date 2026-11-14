@@ -16,4 +16,7 @@ crons.cron("expire application offers", "0,30 * * * *", internal.applications.ex
 // Payout review deadlines are exact elapsed times, not half-hour boundaries.
 crons.interval("approve due payouts", { minutes: 1 }, internal.payouts.autoApprove, {});
 
+// Each deliverable keeps its own verification-based earning boundaries.
+crons.interval("create due earnings", { minutes: 1 }, internal.earningsSchedules.sweep, {});
+
 export default crons;

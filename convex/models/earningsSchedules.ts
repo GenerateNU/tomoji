@@ -1,12 +1,13 @@
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx } from "../_generated/server";
+import { v, type Infer } from "convex/values";
 import { getEarningPeriod } from "../lib/earningsCalculator";
 import { apiError } from "../lib/errors";
 import { MAX_DELIVERABLES } from "./deliverableDrafts";
 
 type ScheduleTiming = { firstDueAt: number; cutoffAt: number } | { reason: string };
 
-async function readScheduleTiming(
+export async function getEarningsScheduleTiming(
   ctx: MutationCtx,
   earnings: Doc<"deliverableEarnings">,
 ): Promise<ScheduleTiming> {
@@ -63,7 +64,7 @@ export async function ensureEarningsSchedule(
   if (existing !== null) return existing;
   const earnings = await ctx.db.get("deliverableEarnings", earningsId);
   if (earnings === null) throw apiError("not_found", { resource: "deliverable_earnings" });
-  const timing = await readScheduleTiming(ctx, earnings);
+  const timing = await getEarningsScheduleTiming(ctx, earnings);
   const id = await ctx.db.insert("earningsSchedules", {
     earningsId,
     ...("reason" in timing
@@ -81,19 +82,20 @@ export async function bringForwardEarningsSchedule(
 ): Promise<Doc<"earningsSchedules">> {
   const schedule = await ensureEarningsSchedule(ctx, earningsId);
   const earnings = (await ctx.db.get("deliverableEarnings", earningsId))!;
-  const timing = await readScheduleTiming(ctx, earnings);
+  const timing = await getEarningsScheduleTiming(ctx, earnings);
   if ("reason" in timing) {
     await ctx.db.patch("earningsSchedules", schedule._id, {
       status: "needsAttention",
       nextCheckAt: undefined,
+      scan: undefined,
       lastError: timing.reason,
     });
   } else if (timing.cutoffAt < earnings.endsAt) {
-    // Preserve earlier outstanding work and all attempt diagnostics. The worker must
-    // reconsider recorded periods against this cutoff, not resume from a cursor.
+    // Preserve diagnostics, but restart validation against the shortened window.
     await ctx.db.patch("earningsSchedules", schedule._id, {
       status: "scheduled",
       nextCheckAt: Math.min(schedule.nextCheckAt ?? Infinity, timing.cutoffAt),
+      scan: undefined,
     });
   } else {
     return schedule;
@@ -114,4 +116,30 @@ export async function bringForwardAssignmentEarningsSchedules(
     throw apiError("conflict", { reason: "earning_schedule_assignment_limit" });
   }
   for (const earnings of agreements) await bringForwardEarningsSchedule(ctx, earnings._id);
+}
+
+export const earningsSweepContinuation = v.object({ cursor: v.string(), cutoff: v.number() });
+export type EarningsSweepContinuation = Infer<typeof earningsSweepContinuation>;
+
+/** Keeps the initial cutoff and cursor so held or failed rows cannot starve later work. */
+export async function getDueEarningsSchedules(
+  ctx: MutationCtx,
+  continuation?: EarningsSweepContinuation,
+): Promise<{
+  page: Doc<"earningsSchedules">[];
+  continuation: EarningsSweepContinuation | null;
+}> {
+  const now = Date.now();
+  const cutoff = continuation?.cutoff ?? now;
+  if (!Number.isSafeInteger(cutoff) || cutoff < 0 || cutoff > now) {
+    throw apiError("invalid_state", { reason: "earnings_sweep_cutoff_invalid" });
+  }
+  const result = await ctx.db
+    .query("earningsSchedules")
+    .withIndex("by_nextCheckAt", (q) => q.gte("nextCheckAt", 0).lte("nextCheckAt", cutoff))
+    .paginate({ numItems: 25, maximumRowsRead: 25, cursor: continuation?.cursor ?? null });
+  return {
+    page: result.page,
+    continuation: result.isDone ? null : { cursor: result.continueCursor, cutoff },
+  };
 }

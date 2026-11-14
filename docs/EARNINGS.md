@@ -3,9 +3,9 @@
 This is the implementation contract for Tomoji's earnings calculator, scheduler,
 and Stripe integration. The calculator and internal settlement operation record
 earned obligations through the existing [payout operations](BACKEND.md#payout-records).
-Scheduling state and lifecycle hooks are implemented; the recurring earnings
-runner and Stripe collection are follow-up work. Creating or approving an
-obligation does not charge a company or pay a bank account.
+The recurring earnings runner creates due obligations for review. Stripe
+collection remains separate: creating or approving an obligation does not charge
+a company or pay a bank account.
 
 ## Agreed payout rules
 
@@ -189,8 +189,8 @@ return the original calculation and payout IDs.
 
 Invoke due periods in order. A later period can cover earlier attempted periods
 that are waiting only for metrics; it cannot skip an unattempted period or
-silently resolve an accounting problem. The next PR's scheduler will discover due
-periods and invoke this operation; there is no earnings cron in this PR.
+silently resolve an accounting problem. The scheduler discovers due agreements
+and invokes the same settlement model for each due period in order.
 
 The existing `posts.updateViews` operation also records a snapshot at server
 receipt time; engagement-only updates do not create view evidence. A collector
@@ -218,13 +218,18 @@ boundary or earlier cutoff. The stored start and end are reused; initialization
 retries, reverification, and replacement preserve an existing schedule unchanged.
 
 `status` is `scheduled`, `needsAttention`, or `complete`. A scheduled row has
-`nextCheckAt`; parked rows omit it. The future worker will use `by_nextCheckAt`
+`nextCheckAt`; parked rows omit it. The sweep uses `by_nextCheckAt`
 with `0 <= nextCheckAt <= sweepCutoff` to exclude parked rows and bound due work.
-`lastAttemptedAt`, `lastAttemptedPeriodIndex`, `retryCount`, and `lastError` retain
+`lastAttemptedAt`, `lastAttemptedPeriodIndex`, `retryCount`, `metricRetryCount`, and `lastError` retain
 attempt diagnostics. These fields do not establish that an earning was settled:
-a fixed-fee-only payout can still leave variable earnings pending. This layer
-initializes `retryCount` to zero; worker transitions and retry policy belong to
-the execution PR.
+a fixed-fee-only payout can still leave variable earnings pending. Initialization
+sets `retryCount` to zero.
+
+Optional `scan` state retains the next period index, whether earlier variable
+earnings remain pending, and the effective cutoff during a chronological pass.
+Existing rows without it start at period zero. It is cleared when a pass ends,
+when a shortened cutoff wakes the schedule, or on an explicit recovery retry.
+Calculation records remain authoritative; the cursor is only scheduling progress.
 
 Cancellation and confirmed removal bring the schedule forward in the cutoff
 transaction, preserving an earlier outstanding check and attempt diagnostics.
@@ -249,12 +254,74 @@ missing schedules in batches from existing agreements, including ones older than
 30 days. It preserves existing schedules and obligations. Invalid timing or a
 missing assignment parks the new schedule with an explicit reason; legacy posts
 without an earnings agreement do not acquire an invented verification date.
-Initial due dates can be in the past: the future worker will reconcile existing
+Initial due dates can be in the past: the worker reconciles existing
 calculations idempotently before creating any additional obligation.
 
-This layer does not enqueue settlement jobs or register an earnings cron. Pending
-metrics remain eligible for later reconciliation beyond day 30; automatic retry,
-completion, and recovery execution are part of the next PR.
+### Scheduled execution and recovery
+
+The `create due earnings` cron calls `internal.earningsSchedules.sweep` every
+minute. Each sweep reads at most 25 due schedules, queues a worker for each, and
+queues a continuation using the same cutoff and the next cursor. Missing metrics
+or failed work at the start of the index cannot prevent later rows from running.
+
+Queueing a worker and storing its `queuedWorker` claim commit atomically. Sweeps
+reuse a pending or running scheduled job for the same due token, even during a
+long backlog. A canceled, failed, completed, or missing job releases that claim
+for recovery on the next sweep; elapsed time alone never expires a live job.
+Continuations use the same claim mechanism. Claims are internal scheduling data,
+not evidence that any earning was settled.
+
+Each worker rereads its schedule and compares `expectedNextCheckAt` with the
+current value. Stale, early, completed, or parked work is a no-op. Each worker
+settles at most one period, then queues a continuation in a fresh transaction
+when more work is due. Its due token advances by at least one millisecond so
+queued duplicates cannot consume the next period. A pass visits periods in
+chronological order, including missed weeks and the final partial period.
+Each new pass starts from period zero, and a changed cutoff restarts the pass.
+It rechecks existing calculations against the current cutoff;
+`lastAttemptedPeriodIndex` is diagnostic, not a cursor that permits skipping
+earlier obligations. Catch-up payouts receive a full 72-hour review window from
+their actual creation time.
+
+One period's settlement and scan progress commit together in a nested mutation.
+If it throws, that period's writes roll back while earlier committed periods
+remain intact; the wrapper records a safe failure code and retries the same
+period. Other agreements run in separate workers. The nested mutation is capped
+at 3,500 queries, 8,000 document reads, 8 MiB read, and 2,000 document writes to reserve
+headroom for failure recording. Windows with more than 64 weekly periods park
+with `earning_window_too_large`; the default window has five periods.
+
+| Outcome                                     | Schedule behavior                                                                                                                                                                                                                 |
+| ------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| More due periods in the current pass        | Commit this period and continue in a separate scheduled transaction; retain pending-metric state.                                                                                                                                 |
+| Due periods recorded, future period remains | Check at the next canonical boundary.                                                                                                                                                                                             |
+| Missing metric evidence                     | Retry after 1, 2, 4, 8, and 16 hours, then daily, or at the next boundary if sooner. Seven days after the effective final cutoff, park as `needsAttention` with `metric_evidence_unavailable`. Pending amounts remain unresolved. |
+| All eligible periods settled                | Mark `complete` and clear `nextCheckAt`; zero increments do not create payouts.                                                                                                                                                   |
+| Reconciliation or invalid source data       | Park as `needsAttention` with the domain reason; retain existing obligations.                                                                                                                                                     |
+| Unexpected execution failure                | Record an allowlisted `settlement_*` failure category (generic `settlement_execution_failed` for unknown errors); retry after 1, 2, 4, and 8 minutes, then park on the fifth failure.                                             |
+
+After correcting the source problem, a trusted operator can invoke
+`internal.earningsSchedules.retry({ scheduleId })` through the selected deployment's
+internal tooling. It requeues the schedule immediately and resets both retry
+counters and the scan cursor, preserving the earning clock, obligations, and attempt diagnostics.
+Successful processing clears the last error. Retrying does not itself repair an
+accounting conflict or refund an existing payout.
+
+The seven-day metric grace period is an operational retry limit, not a deadline
+for the creator's earnings. After it expires, record the missing evidence and use
+the internal retry operation to settle the remaining amount. A retry with evidence
+still missing parks again; it does not extend the original accrual window or
+declare unknown earnings zero. No raw exception messages, stack traces, or
+arbitrary error details are stored in schedule diagnostics.
+The current Convex SDK exposes platform-limit failures as untyped errors, so they
+retain the generic code alongside unexpected bugs. Use the scheduled-function
+runtime logs to investigate those cases; do not infer categories from arbitrary
+exception text.
+
+This runner uses stored metric evidence; it does not fetch X metrics. Exact
+boundary evidence remains a prerequisite for variable earnings. After deployment,
+verify the cron registration and inspect schedule states and scheduled-function
+results; local tests alone do not establish live collection availability.
 
 ## Earnings-to-payment handoff
 
@@ -342,9 +409,13 @@ The calculator/records implementation covers the policy above with pure arithmet
 tests and Convex transaction tests, including retries, missing evidence, and
 cutoff handling. Run `just ci` for type checking, linting, formatting, and the full
 test suite. Scheduling-state tests cover lifecycle timing, atomic cancellation,
-and migration batching/idempotency. The scheduling execution PR will create due
-obligations automatically using the same settlement operation and existing
-review workflow.
+and migration batching/idempotency. Runner tests cover paginated discovery,
+overlapping runs, catch-up, delayed evidence, cutoffs, backoff, and rollback on
+exceptions or nested transaction limits. Resource regressions exercise large
+legacy histories and 64-period catch-up with transaction limits enforced, including
+later cumulative evidence and a failure after an earlier period commits.
+Due obligations use the same settlement
+operation and existing review workflow.
 
 Stripe processing and bank-payout reconciliation remain in the separate Stripe
 stack, followed by integration tests across both stacks. This implementation

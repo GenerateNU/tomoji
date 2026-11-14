@@ -1,7 +1,7 @@
 import { internalMutation } from "./_generated/server";
 import { earningSettlement, earningSettlementResult, settleEarnings } from "./models/earnings";
 
-/** Calculates and records one due earning period. Scheduling belongs to the next PR. */
+/** Calculates and records one due earning period using the same model as the scheduler. */
 export const settle = internalMutation({
   args: earningSettlement.fields,
   returns: earningSettlementResult,

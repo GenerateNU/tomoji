@@ -279,7 +279,7 @@ export function DraftComposer({
             selectVideo(event.dataTransfer.files[0]);
           }}
         >
-          <p className="text-body-sm font-medium">Content</p>
+          <p className="text-body-sm text-gray-700">Content</p>
           <input
             ref={fileInput}
             type="file"

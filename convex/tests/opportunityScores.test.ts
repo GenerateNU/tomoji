@@ -75,7 +75,7 @@ describe("opportunityScores.scoreOpportunity", () => {
     expect(await scoresFor(t, none)).toEqual([]);
   });
 
-  test("clears an opportunity's scores once creators can no longer see it", async () => {
+  test("clears an opportunity's scores once it closes", async () => {
     const t = convexTest(schema, modules);
     const { opportunityId } = await seedOpportunity(
       t,
@@ -87,7 +87,7 @@ describe("opportunityScores.scoreOpportunity", () => {
     expect(await scoreCount(t)).toBe(1);
 
     await t.run(async (ctx) => {
-      await ctx.db.patch("opportunities", opportunityId, { status: "paused" });
+      await ctx.db.patch("opportunities", opportunityId, { status: "closed" });
     });
     await scoreOpportunity(t, opportunityId);
 
@@ -96,12 +96,11 @@ describe("opportunityScores.scoreOpportunity", () => {
 });
 
 describe("opportunityScores.scoreCreator", () => {
-  test("rescores a creator after their profile changes and drops hidden opportunities", async () => {
+  test("rescores a creator after their profile changes and drops closed opportunities", async () => {
     const t = convexTest(schema, modules);
     const owner = await seedOpportunity(t, { subject: "scores_owner" }, { niches: ["ai-agents"] });
-    // A second campaign at the same company, so pausing it hides only this opportunity.
     const other = await seedCampaign(t, { subject: "scores_other_owner" });
-    const hiddenId = await t.run(
+    const closedId = await t.run(
       async (ctx) =>
         await createOpportunity(
           ctx,
@@ -111,11 +110,11 @@ describe("opportunityScores.scoreCreator", () => {
     );
     const creatorId = await seedCreatorWithNiches(t, "scores_creator", ["databases"]);
     await scoreCreator(t, creatorId);
-    expect(await scoresFor(t, creatorId)).toEqual([{ opportunityId: hiddenId, score: 1 }]);
+    expect(await scoresFor(t, creatorId)).toEqual([{ opportunityId: closedId, score: 1 }]);
 
     await t.run(async (ctx) => {
       await updateCreatorNiches(ctx, creatorId, ["ai-agents", "databases"]);
-      await ctx.db.patch("campaigns", other.campaignId, { status: "paused" });
+      await ctx.db.patch("opportunities", closedId, { status: "closed" });
     });
     await scoreCreator(t, creatorId);
 

@@ -224,10 +224,13 @@ export async function closeOpportunity(
   return await applyOpportunityClose(ctx, opportunity);
 }
 
-/** Closes a bounded batch of overdue published opportunities and reports whether more may remain. */
-export async function closeExpiredOpportunities(ctx: MutationCtx): Promise<boolean> {
+/** Closes a bounded batch of overdue published opportunities, returning them and whether more may remain. */
+export async function closeExpiredOpportunities(
+  ctx: MutationCtx,
+): Promise<{ closedIds: Id<"opportunities">[]; hasMore: boolean }> {
   const now = Date.now();
   const batchSize = 50;
+  const closedIds: Id<"opportunities">[] = [];
   let hasMore = false;
   for (const status of ["open", "paused"] as const) {
     const opportunities = await ctx.db
@@ -236,6 +239,7 @@ export async function closeExpiredOpportunities(ctx: MutationCtx): Promise<boole
       .take(batchSize);
     for (const opportunity of opportunities) {
       await applyOpportunityClose(ctx, opportunity);
+      closedIds.push(opportunity._id);
       // A manual close is the company's own action; only the deadline close is news to them.
       await notifyCompanyUser(ctx, opportunity.createdBy, {
         type: "opportunityClosed",
@@ -245,7 +249,7 @@ export async function closeExpiredOpportunities(ctx: MutationCtx): Promise<boole
     }
     hasMore ||= opportunities.length === batchSize;
   }
-  return hasMore;
+  return { closedIds, hasMore };
 }
 
 /** Loads an owned opportunity and its campaign for company lifecycle transitions. */

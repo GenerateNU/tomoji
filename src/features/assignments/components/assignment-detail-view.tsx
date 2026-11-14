@@ -19,7 +19,6 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { RequireAccount } from "@/features/users/components/require-account";
-import { formatCompensation } from "@/lib/money";
 import { assignmentStatusLabel } from "./assignment-status";
 import { AssignmentSubmission } from "./assignment-submission";
 
@@ -140,27 +139,21 @@ function AssignmentWorkspace({ details }: { details: AssignmentDetails }) {
             <p className="text-sm text-muted-foreground">Brief unavailable.</p>
           )}
         </section>
-        {deliverables.length > 0 && (
+        {deliverables.some(({ exampleMediaIds }) => exampleMediaIds?.length) && (
           <section className="space-y-4" aria-label="Deliverables">
-            {deliverables.map(({ _id, title, description, exampleMediaIds }) => (
-              <div key={_id}>
-                {!!exampleMediaIds?.length && (
-                  <AssignmentExamples deliverableId={_id} mediaIds={exampleMediaIds} />
-                )}
-                <div className="mt-3 space-y-1">
-                  {deliverables.length > 1 && <h3 className="font-medium break-words">{title}</h3>}
-                  <p className="text-sm break-words whitespace-pre-wrap text-muted-foreground">
-                    {description}
-                  </p>
-                </div>
-              </div>
-            ))}
+            {deliverables.map(
+              ({ _id, title, exampleMediaIds }) =>
+                !!exampleMediaIds?.length && (
+                  <div key={_id} className="space-y-2">
+                    {deliverables.length > 1 && (
+                      <h3 className="font-medium break-words">{title}</h3>
+                    )}
+                    <AssignmentExamples deliverableId={_id} mediaIds={exampleMediaIds} />
+                  </div>
+                ),
+            )}
           </section>
         )}
-        <section>
-          <h2 className="mb-2 text-body-sm font-medium text-gray-500">Payment</h2>
-          <p className="text-body-sm">{formatCompensation(assignment)}</p>
-        </section>
       </div>
     </>
   );

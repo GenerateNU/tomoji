@@ -7,7 +7,6 @@ import { GithubLinkSection } from "./github-link-section";
 import { LinksSection } from "./links-section";
 import { PersonalDetailsSection } from "./personal-details-section";
 import { ProfilePictureSection } from "./profile-picture-section";
-import { VisibilitySection } from "./visibility-section";
 import { XAccountSection } from "./x-account-section";
 import { SettingsSkeleton } from "./settings-skeleton";
 
@@ -31,7 +30,6 @@ export function CreatorSettings() {
           <GithubLinkSection githubLink={profile.githubLink} />
         </div>
       </section>
-      <VisibilitySection isPrivate={profile.isPrivate} />
     </div>
   );
 }

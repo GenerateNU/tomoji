@@ -76,7 +76,7 @@ async function getCreatorSignals(
   creator: Doc<"creators">,
 ): Promise<CreatorSignals> {
   const [niches, skills] = await Promise.all([
-    listCreatorNiches(ctx, creator),
+    listCreatorNiches(ctx, creator._id),
     listCreatorSkills(ctx, creator._id),
   ]);
   return { niches, skills, followerRange: creator.followerRange };

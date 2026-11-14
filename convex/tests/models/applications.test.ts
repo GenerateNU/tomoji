@@ -13,6 +13,7 @@ import {
   DEFAULT_OFFER_DURATION_MS,
   listApplications,
   listApplicationsByOpportunityId,
+  markApplicationsFullBatch,
   offerApplication,
   rejectApplication,
   requireApplication,
@@ -186,6 +187,41 @@ describe("createApplication", () => {
     expect(stored).toMatchObject({ opportunityId, creatorId: otherCreatorId });
   });
 
+  test("a slot freed between batches stops the rest of the sweep", async () => {
+    const t = convexTest(schema, modules);
+    const { companyId, opportunityId } = await seedGatedOpportunity(t, {
+      opportunity: { maxSlots: 1, numFilledSlots: 1 },
+    });
+    const creatorId = await seedCreatorId(t, "waiting_creator");
+    const waiting = APPLICATION_SWEEP_BATCH + 10;
+    await t.run(async (ctx) => {
+      for (let i = 0; i < waiting; i++) {
+        await ctx.db.insert("applications", {
+          opportunityId,
+          creatorId,
+          companyId,
+          status: "pending",
+        });
+      }
+    });
+
+    // First batch runs while the opportunity is full, then a decline frees the slot.
+    expect(await t.run((ctx) => markApplicationsFullBatch(ctx, opportunityId))).toBe(true);
+    await t.run((ctx) => ctx.db.patch("opportunities", opportunityId, { numFilledSlots: 0 }));
+    expect(await t.run((ctx) => markApplicationsFullBatch(ctx, opportunityId))).toBe(false);
+
+    const rows = await t.run((ctx) =>
+      ctx.db
+        .query("applications")
+        .withIndex("by_opportunityId_and_status", (q) => q.eq("opportunityId", opportunityId))
+        .take(waiting + 10),
+    );
+    expect(rows.filter((a) => a.status === "opportunityFull")).toHaveLength(
+      APPLICATION_SWEEP_BATCH,
+    );
+    expect(rows.filter((a) => a.status === "pending")).toHaveLength(10);
+  });
+
   test("sweeps more waiting applications than one batch holds, across scheduled continuations", async () => {
     const t = convexTest(schema, modules);
     const { companyId, opportunityId, creatorId, applicationId } = await seedOffered(t, {
@@ -216,6 +252,21 @@ describe("createApplication", () => {
     );
     expect(remaining.filter((a) => a.status === "opportunityFull")).toHaveLength(waiting);
     expect(remaining.filter((a) => a.status === "pending" || a.status === "offered")).toEqual([]);
+  });
+
+  test("refuses a new application once every slot is filled", async () => {
+    const t = convexTest(schema, modules);
+    const { opportunityId } = await seedGatedOpportunity(t, {
+      opportunity: { maxSlots: 1, numFilledSlots: 1 },
+    });
+    const creatorId = await seedCreatorId(t, "late_applicant");
+
+    await expectApiError(
+      () => applyAs(t, creatorId, opportunityId),
+      "invalid_state",
+      "opportunity_full",
+    );
+    expect(await t.run((ctx) => ctx.db.query("applications").take(1))).toEqual([]);
   });
 
   test("accepts applications past the slot count, since gated briefs are not capped", async () => {

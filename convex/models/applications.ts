@@ -20,7 +20,7 @@ import { creatorName, notifyCompanyUser, notifyCreator } from "./notifications";
  * The note is optional; a missing or blank note is left out.
  *
  * @throws `invalid_state` if the opportunity or its campaign is not open, the
- * opportunity is ungated.
+ * opportunity is ungated, or every slot is already filled.
  * @throws `conflict` if the creator has already applied.
  */
 export async function createApplication(
@@ -37,6 +37,11 @@ export async function createApplication(
   // Ungated opportunities are joined directly, without an application.
   if (!opportunity.isGated) {
     throw apiError("invalid_state", { reason: "opportunity_not_gated" });
+  }
+  // Applications are uncapped, but a full opportunity has nothing left to offer.
+  // Read here rather than relying on the sweep, which runs in a later transaction.
+  if (opportunity.numFilledSlots >= opportunity.maxSlots) {
+    throw apiError("invalid_state", { reason: "opportunity_full" });
   }
   // One application per creator per opportunity: blocks double-submits and
   // retries, which the non-unique index cannot prevent on its own.
@@ -369,6 +374,10 @@ async function requireOfferedApplication(
  * remain. There is no cap on applications, so the sweep runs a batch at a time
  * and `internal.applications.markFull` reschedules itself until it is done.
  *
+ * Each batch rechecks that the opportunity is still full, so a slot freed
+ * part-way through stops the rest of the sweep. Rows an earlier batch already
+ * marked keep that status; reopening them is a separate decision.
+ *
  * It needs no cursor: every row it patches leaves the `pending` and `offered`
  * ranges, so the next batch reads the next rows. That also makes a retry
  * harmless, since a reread cannot see a row this transaction already patched
@@ -380,6 +389,9 @@ export async function markApplicationsFullBatch(
 ): Promise<boolean> {
   const opportunity = await ctx.db.get("opportunities", opportunityId);
   if (opportunity === null) return false;
+  // Rechecked every batch: a creator who declines terms between batches frees
+  // their slot, and the applications still waiting are no longer shut out.
+  if (opportunity.numFilledSlots < opportunity.maxSlots) return false;
   const now = Date.now();
   let budget = APPLICATION_SWEEP_BATCH;
   for (const status of ["pending", "offered"] as const) {

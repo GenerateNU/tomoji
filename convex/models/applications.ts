@@ -1,11 +1,15 @@
 import type { PaginationOptions, PaginationResult } from "convex/server";
 import type { Infer } from "convex/values";
+import { internal } from "../_generated/api";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { apiError } from "../lib/errors";
 import { canViewResource, type ResourceViewer } from "../lib/authz";
 import { HALF_HOUR_MS, isHalfHourTimestamp } from "../lib/validation";
 import type { applicationStatus } from "../schemas/applications.schema";
+
+/** Applications one status sweep patches per transaction before rescheduling itself. */
+export const APPLICATION_SWEEP_BATCH = 50;
 import { assignmentTarget, createAssignmentFromOffer } from "./assignments";
 import { creatorName, notifyCompanyUser, notifyCreator } from "./notifications";
 
@@ -16,7 +20,7 @@ import { creatorName, notifyCompanyUser, notifyCreator } from "./notifications";
  * The note is optional; a missing or blank note is left out.
  *
  * @throws `invalid_state` if the opportunity or its campaign is not open, the
- * opportunity is ungated, or it already has `maxApplications` applications.
+ * opportunity is ungated.
  * @throws `conflict` if the creator has already applied.
  */
 export async function createApplication(
@@ -44,17 +48,6 @@ export async function createApplication(
     .first();
   if (existing !== null) {
     throw apiError("conflict", { reason: "already_applied" });
-  }
-
-  // Every application counts toward the cap, whatever its status. Reads at most
-  // maxApplications rows; concurrent applies read the same range, so Convex
-  // retries one and the cap cannot be exceeded.
-  const received = await ctx.db
-    .query("applications")
-    .withIndex("by_opportunityId_and_status", (q) => q.eq("opportunityId", opportunity._id))
-    .take(opportunity.maxApplications);
-  if (received.length >= opportunity.maxApplications) {
-    throw apiError("invalid_state", { reason: "applications_full" });
   }
 
   const applicationId = await ctx.db.insert("applications", {
@@ -279,9 +272,11 @@ async function requirePendingForReview(
 /**
  * Accepts the creator's own unexpired offer. In one transaction this creates
  * the assignment through `createAssignmentFromOffer` (which takes a slot), and,
- * if that was the last slot, marks every remaining pending or offered
- * application as `opportunityFull`. Offers can be accepted while the
- * opportunity is paused.
+ * if that was the last slot, enqueues the sweep that marks every remaining
+ * pending or offered application as `opportunityFull`. That sweep runs in its
+ * own transactions, so the statuses and notices land shortly after; the slot
+ * guard in `createAssignmentFromOffer` is what prevents an extra assignment.
+ * Offers can be accepted while the opportunity is paused.
  *
  * Two creators accepting the last slot at once both read the opportunity, so
  * Convex retries one, which then sees the slot is taken.
@@ -321,7 +316,9 @@ export async function acceptApplication(
     target: assignmentTarget(assignmentId),
   });
   if (opportunity.numFilledSlots + 1 >= opportunity.maxSlots) {
-    await markRemainingApplicationsFull(ctx, opportunity, now);
+    await ctx.scheduler.runAfter(0, internal.applications.markFull, {
+      opportunityId: opportunity._id,
+    });
   }
   return { ...application, ...patch };
 }
@@ -367,23 +364,33 @@ async function requireOfferedApplication(
 }
 
 /**
- * Marks every pending or offered application to the opportunity as
- * `opportunityFull` once its last slot is taken, and tells each creator. An
- * opportunity never has more than `maxApplications` applications, so this
- * batch is bounded.
+ * Marks one bounded batch of the opportunity's pending or offered applications
+ * as `opportunityFull`, tells each creator, and reports whether more may
+ * remain. There is no cap on applications, so the sweep runs a batch at a time
+ * and `internal.applications.markFull` reschedules itself until it is done.
+ *
+ * It needs no cursor: every row it patches leaves the `pending` and `offered`
+ * ranges, so the next batch reads the next rows. That also makes a retry
+ * harmless, since a reread cannot see a row this transaction already patched
+ * and notified.
  */
-async function markRemainingApplicationsFull(
+export async function markApplicationsFullBatch(
   ctx: MutationCtx,
-  opportunity: Doc<"opportunities">,
-  now: number,
-): Promise<void> {
+  opportunityId: Id<"opportunities">,
+): Promise<boolean> {
+  const opportunity = await ctx.db.get("opportunities", opportunityId);
+  if (opportunity === null) return false;
+  const now = Date.now();
+  let budget = APPLICATION_SWEEP_BATCH;
   for (const status of ["pending", "offered"] as const) {
+    if (budget === 0) return true;
     const remaining = await ctx.db
       .query("applications")
       .withIndex("by_opportunityId_and_status", (q) =>
-        q.eq("opportunityId", opportunity._id).eq("status", status),
+        q.eq("opportunityId", opportunityId).eq("status", status),
       )
-      .take(opportunity.maxApplications);
+      .take(budget);
+    budget -= remaining.length;
     for (const application of remaining) {
       await ctx.db.patch("applications", application._id, {
         status: "opportunityFull",
@@ -396,6 +403,7 @@ async function markRemainingApplicationsFull(
       });
     }
   }
+  return budget === 0;
 }
 
 /**

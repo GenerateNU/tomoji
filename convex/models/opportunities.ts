@@ -1,5 +1,6 @@
 import { paginationOptsValidator, type PaginationResult } from "convex/server";
 import { v, type Infer } from "convex/values";
+import { internal } from "../_generated/api";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { stream } from "convex-helpers/server/stream";
@@ -7,6 +8,7 @@ import { apiError } from "../lib/errors";
 import { requireUrl } from "../lib/urls";
 import { withRowsReadCap } from "../lib/pagination";
 import { requireNonBlank, isHalfHourTimestamp } from "../lib/validation";
+import { APPLICATION_SWEEP_BATCH } from "./applications";
 import { requireMembership } from "./companyUsers";
 import {
   deliverableCreate,
@@ -22,6 +24,7 @@ import {
   listOpportunityNiches,
   updateOpportunityNiches,
 } from "./opportunityNiches";
+import { listOpportunityLanguages, updateOpportunityLanguages } from "./opportunityLanguages";
 import { listOpportunitySkills, updateOpportunitySkills } from "./opportunitySkills";
 import schema from "../schema";
 import { followerRange } from "../schemas/creators.schema";
@@ -34,6 +37,7 @@ export const opportunityCreate = schema
     // Required to create it open; a draft can get them later through `deliverables.create`.
     deliverables: v.optional(v.array(deliverableCreate)),
     skills: v.optional(v.array(v.string())),
+    languages: v.optional(v.array(v.string())),
   });
 
 export type OpportunityCreate = Infer<typeof opportunityCreate>;
@@ -41,6 +45,7 @@ export type OpportunityCreate = Infer<typeof opportunityCreate>;
 export const opportunityView = schema.doc("opportunities").extend({
   niches: v.array(v.string()),
   skills: v.array(v.string()),
+  languages: v.array(v.string()),
 });
 export type OpportunityView = Infer<typeof opportunityView>;
 
@@ -49,11 +54,12 @@ export async function getOpportunityView(
   ctx: QueryCtx | MutationCtx,
   opportunity: Doc<"opportunities">,
 ): Promise<OpportunityView> {
-  const [niches, skills] = await Promise.all([
+  const [niches, skills, languages] = await Promise.all([
     listOpportunityNiches(ctx, opportunity),
     listOpportunitySkills(ctx, opportunity._id),
+    listOpportunityLanguages(ctx, opportunity._id),
   ]);
-  return { ...opportunity, niches, skills };
+  return { ...opportunity, niches, skills, languages };
 }
 
 // Allowlist creator fields so new stored fields do not become public by default.
@@ -66,21 +72,22 @@ export const creatorOpportunity = schema
     "description",
     "isGated",
     "usesAiReviewDefault",
-    "targetApplicant",
     "maxSlots",
     "numFilledSlots",
-    "maxApplications",
     "deadline",
     "status",
     "fixedFeeCents",
     "cpmRateCents",
     "paymentCapCents",
     "contentRequirements",
-    "prohibitedClaims",
-    "disclosureRequirements",
-    "usageRights",
+    "reviewPolicy",
   )
-  .extend({ companyName: v.string(), niches: v.array(v.string()), skills: v.array(v.string()) });
+  .extend({
+    companyName: v.string(),
+    niches: v.array(v.string()),
+    skills: v.array(v.string()),
+    languages: v.array(v.string()),
+  });
 
 export type CreatorOpportunity = Infer<typeof creatorOpportunity>;
 
@@ -88,7 +95,7 @@ export type CreatorOpportunity = Infer<typeof creatorOpportunity>;
 export function toCreatorOpportunity(
   opportunity: Doc<"opportunities">,
   company: Doc<"companies">,
-  selections: Pick<OpportunityView, "niches" | "skills">,
+  selections: Pick<OpportunityView, "niches" | "skills" | "languages">,
 ): CreatorOpportunity {
   return {
     _id: opportunity._id,
@@ -97,22 +104,19 @@ export function toCreatorOpportunity(
     description: opportunity.description,
     isGated: opportunity.isGated,
     usesAiReviewDefault: opportunity.usesAiReviewDefault,
-    targetApplicant: opportunity.targetApplicant,
     maxSlots: opportunity.maxSlots,
     numFilledSlots: opportunity.numFilledSlots,
-    maxApplications: opportunity.maxApplications,
     deadline: opportunity.deadline,
     status: opportunity.status,
     fixedFeeCents: opportunity.fixedFeeCents,
     cpmRateCents: opportunity.cpmRateCents,
     paymentCapCents: opportunity.paymentCapCents,
     contentRequirements: opportunity.contentRequirements,
-    prohibitedClaims: opportunity.prohibitedClaims,
-    disclosureRequirements: opportunity.disclosureRequirements,
-    usageRights: opportunity.usageRights,
+    reviewPolicy: opportunity.reviewPolicy,
     companyName: company.name,
     niches: selections.niches,
     skills: selections.skills,
+    languages: selections.languages,
   };
 }
 
@@ -158,38 +162,51 @@ async function applyOpportunityClose(
 ): Promise<Doc<"opportunities">> {
   if (opportunity.status === "closed") return opportunity;
   await ctx.db.patch("opportunities", opportunity._id, { status: "closed" });
-  await notifyWaitingApplicants(ctx, opportunity);
+  // Enqueued rather than inline: the deadline cron closes up to 50 opportunities
+  // in one transaction, and an opportunity's applications are unbounded.
+  await ctx.scheduler.runAfter(0, internal.opportunities.notifyClosed, {
+    opportunityId: opportunity._id,
+    cursor: null,
+  });
   return { ...opportunity, status: "closed" };
 }
 
 /**
- * Tells each creator with a pending or offered application that the
- * opportunity closed, since neither can go further. An opportunity never has
- * more than `maxApplications` applications, so this is bounded.
+ * Tells one bounded batch of creators with a pending or offered application
+ * that the opportunity closed, since neither can go further. Returns the
+ * cursor to continue from, or `null` when the batch was the last one.
+ *
+ * Unlike the full sweep this leaves the applications alone, so it cannot
+ * advance by status and pages by cursor instead. It walks every application on
+ * the opportunity and skips the ones that are already resolved; the cursor is
+ * stable because nothing here writes to an indexed field. A continuation that
+ * fails and runs again can renotify its own page, which is why the close
+ * notice has to stay safe to deliver more than once.
  */
-async function notifyWaitingApplicants(
+export async function notifyWaitingApplicantsBatch(
   ctx: MutationCtx,
-  opportunity: Doc<"opportunities">,
-): Promise<void> {
-  for (const status of ["pending", "offered"] as const) {
-    const waiting = await ctx.db
-      .query("applications")
-      .withIndex("by_opportunityId_and_status", (q) =>
-        q.eq("opportunityId", opportunity._id).eq("status", status),
-      )
-      .take(opportunity.maxApplications);
-    for (const application of waiting) {
-      await notifyCreator(ctx, application.creatorId, {
-        type: "applicationOpportunityClosed",
-        title: `${opportunity.title} has closed`,
-        target: {
-          kind: "application",
-          applicationId: application._id,
-          opportunityId: opportunity._id,
-        },
-      });
-    }
+  opportunityId: Id<"opportunities">,
+  cursor: string | null,
+): Promise<string | null> {
+  const opportunity = await ctx.db.get("opportunities", opportunityId);
+  if (opportunity === null) return null;
+  const page = await ctx.db
+    .query("applications")
+    .withIndex("by_opportunityId_and_status", (q) => q.eq("opportunityId", opportunityId))
+    .paginate({ numItems: APPLICATION_SWEEP_BATCH, cursor });
+  for (const application of page.page) {
+    if (application.status !== "pending" && application.status !== "offered") continue;
+    await notifyCreator(ctx, application.creatorId, {
+      type: "applicationOpportunityClosed",
+      title: `${opportunity.title} has closed`,
+      target: {
+        kind: "application",
+        applicationId: application._id,
+        opportunityId,
+      },
+    });
   }
+  return page.isDone ? null : page.continueCursor;
 }
 
 /** Permanently closes an owned published opportunity, preserving existing commitments. */
@@ -375,6 +392,7 @@ export async function removeOpportunity(
   }
   await updateOpportunityNiches(ctx, opportunityId, []);
   await updateOpportunitySkills(ctx, opportunityId, []);
+  await updateOpportunityLanguages(ctx, opportunityId, []);
   await ctx.db.delete("opportunities", opportunityId);
 }
 
@@ -392,20 +410,11 @@ export async function updateOpportunity(
   );
 
   const patch: Partial<OpportunityCreate> = {};
-  for (const field of [
-    "title",
-    "description",
-    "targetApplicant",
-    "contentRequirements",
-    "prohibitedClaims",
-    "disclosureRequirements",
-    "usageRights",
-  ] as const) {
+  for (const field of ["title", "description", "contentRequirements", "reviewPolicy"] as const) {
     if (updates[field] !== undefined) patch[field] = updates[field];
   }
   for (const field of [
     "maxSlots",
-    "maxApplications",
     "deadline",
     "fixedFeeCents",
     "cpmRateCents",
@@ -453,8 +462,12 @@ export async function updateOpportunity(
     updates.skills === undefined
       ? await listOpportunitySkills(ctx, opportunityId)
       : await updateOpportunitySkills(ctx, opportunityId, updates.skills);
+  const languages =
+    updates.languages === undefined
+      ? await listOpportunityLanguages(ctx, opportunityId)
+      : await updateOpportunityLanguages(ctx, opportunityId, updates.languages);
   await ctx.db.patch("opportunities", opportunityId, { ...patch, ...normalized });
-  return { ...updated, ...normalized, niches, skills };
+  return { ...updated, ...normalized, niches, skills, languages };
 }
 
 export const opportunityList = schema
@@ -583,7 +596,7 @@ export async function createOpportunity(
   if (campaign.endsAt !== undefined && fields.deadline > campaign.endsAt) {
     throw apiError("invalid_state", { reason: "deadline_after_campaign_end" });
   }
-  const { niches, skills, ...storedFields } = brief;
+  const { niches, skills, languages, ...storedFields } = brief;
   const productAccess =
     fields.productAccessLink === undefined
       ? {}
@@ -604,6 +617,7 @@ export async function createOpportunity(
   await insertDeliverables(ctx, opportunityId, membership._id, deliverables, 0);
   if (niches !== undefined) await updateOpportunityNiches(ctx, opportunityId, niches);
   if (skills !== undefined) await updateOpportunitySkills(ctx, opportunityId, skills);
+  if (languages !== undefined) await updateOpportunityLanguages(ctx, opportunityId, languages);
   return opportunityId;
 }
 
@@ -621,13 +635,8 @@ function validateOpportunityFields(
       throw apiError("invalid_state", { reason: "invalid_compensation", field });
     }
   }
-  for (const field of ["maxSlots", "maxApplications"] as const) {
-    if (!Number.isSafeInteger(fields[field]) || fields[field] <= 0) {
-      throw apiError("invalid_state", { reason: "invalid_capacity", field });
-    }
-  }
-  if (fields.maxApplications > fields.maxSlots) {
-    throw apiError("invalid_state", { reason: "invalid_capacity", field: "maxApplications" });
+  if (!Number.isSafeInteger(fields.maxSlots) || fields.maxSlots <= 0) {
+    throw apiError("invalid_state", { reason: "invalid_capacity", field: "maxSlots" });
   }
   validateOpportunityDeadline(fields.deadline);
   if (fields.status === "open" && fields.deadline <= Date.now()) {

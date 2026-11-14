@@ -37,18 +37,14 @@ const opportunityFields = {
   description: "Introduce the moisturizer to your audience.",
   isGated: false,
   usesAiReviewDefault: false,
-  targetApplicant: "Skincare creators",
   maxSlots: 5,
   numFilledSlots: 0,
-  maxApplications: 20,
   deadline: 2000,
   fixedFeeCents: 1000,
   cpmRateCents: 100,
   paymentCapCents: 2000,
   contentRequirements: "Share your experience with the product.",
-  prohibitedClaims: "No medical claims.",
-  disclosureRequirements: "Disclose the sponsorship.",
-  usageRights: "Organic reposting only.",
+  reviewPolicy: "Disclose the sponsorship. No medical claims. Organic reposting only.",
 };
 
 /** Resolves shared membership fixtures into owner fields for raw campaign inserts. */
@@ -1034,7 +1030,6 @@ describe("continuePausingCampaignOpportunities", () => {
               companyId: owner.companyId,
               createdBy: owner.createdBy,
               status: "open",
-              maxApplications: 5,
               deadline: i === 50 ? cutoff : cutoff + HOUR,
             }),
           );

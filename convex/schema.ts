@@ -14,6 +14,7 @@ import { notificationsTable } from "./schemas/notifications.schema";
 import { opportunitiesTable } from "./schemas/opportunities.schema";
 import { opportunityScoresTable } from "./schemas/opportunityScores.schema";
 import { opportunityStarsTable } from "./schemas/opportunityStars.schema";
+import { opportunityLanguagesTable } from "./schemas/opportunityLanguages.schema";
 import { opportunityNichesTable } from "./schemas/opportunityNiches.schema";
 import { opportunitySkillsTable } from "./schemas/opportunitySkills.schema";
 import { postsTable } from "./schemas/posts.schema";
@@ -37,6 +38,7 @@ export default defineSchema({
   campaigns: campaignsTable,
   opportunities: opportunitiesTable,
   opportunityNiches: opportunityNichesTable,
+  opportunityLanguages: opportunityLanguagesTable,
   opportunitySkills: opportunitySkillsTable,
   opportunityStars: opportunityStarsTable,
   opportunityScores: opportunityScoresTable,

@@ -6,6 +6,7 @@ import type { Doc, Id } from "../../_generated/dataModel";
 import type { MutationCtx } from "../../_generated/server";
 import {
   acceptApplication,
+  APPLICATION_SWEEP_BATCH,
   createApplication,
   declineApplication,
   expireApplicationOffers,
@@ -185,23 +186,54 @@ describe("createApplication", () => {
     expect(stored).toMatchObject({ opportunityId, creatorId: otherCreatorId });
   });
 
-  test("rejects applications once maxApplications is reached, counting every status", async () => {
+  test("sweeps more waiting applications than one batch holds, across scheduled continuations", async () => {
     const t = convexTest(schema, modules);
-    const { opportunityId } = await seedGatedOpportunity(t, {
-      opportunity: { maxApplications: 2 },
+    const { companyId, opportunityId, creatorId, applicationId } = await seedOffered(t, {
+      opportunity: { maxSlots: 1 },
     });
-    const rejectedId = await applyAs(t, await seedCreatorId(t, "creator_a"), opportunityId);
-    await t.run(
-      async (ctx) => await ctx.db.patch("applications", rejectedId, { status: "rejected" }),
-    );
-    await applyAs(t, await seedCreatorId(t, "creator_b"), opportunityId);
-    const third = await seedCreatorId(t, "creator_c");
+    const waiting = APPLICATION_SWEEP_BATCH + 10;
+    // Raw rows: the sweep reads by status, not by distinct creator.
+    const otherCreatorId = await seedCreatorId(t, "creator_b");
+    await t.run(async (ctx) => {
+      for (let i = 0; i < waiting; i++) {
+        await ctx.db.insert("applications", {
+          opportunityId,
+          creatorId: otherCreatorId,
+          companyId,
+          status: i % 2 === 0 ? "pending" : "offered",
+        });
+      }
+    });
 
-    await expectApiError(
-      () => applyAs(t, third, opportunityId),
-      "invalid_state",
-      "applications_full",
+    await t.run(async (ctx) => await acceptApplication(ctx, creatorId, applicationId));
+    await t.finishAllScheduledFunctions(() => {});
+
+    const remaining = await t.run((ctx) =>
+      ctx.db
+        .query("applications")
+        .withIndex("by_opportunityId_and_status", (q) => q.eq("opportunityId", opportunityId))
+        .take(waiting + 10),
     );
+    expect(remaining.filter((a) => a.status === "opportunityFull")).toHaveLength(waiting);
+    expect(remaining.filter((a) => a.status === "pending" || a.status === "offered")).toEqual([]);
+  });
+
+  test("accepts applications past the slot count, since gated briefs are not capped", async () => {
+    const t = convexTest(schema, modules);
+    const { opportunityId } = await seedGatedOpportunity(t, { opportunity: { maxSlots: 1 } });
+
+    for (const subject of ["creator_a", "creator_b", "creator_c"]) {
+      await applyAs(t, await seedCreatorId(t, subject), opportunityId);
+    }
+
+    expect(
+      await t.run((ctx) =>
+        ctx.db
+          .query("applications")
+          .withIndex("by_opportunityId_and_status", (q) => q.eq("opportunityId", opportunityId))
+          .take(10),
+      ),
+    ).toHaveLength(3);
   });
 });
 
@@ -726,6 +758,7 @@ describe("acceptApplication", () => {
 
     const beforeAccept = Date.now();
     await t.run(async (ctx) => await acceptApplication(ctx, creatorId, applicationId));
+    await t.finishAllScheduledFunctions(() => {});
     const statuses = await t.run(async (ctx) =>
       Promise.all(
         [applicationId, offeredId, pendingId, rejectedId].map(
@@ -951,6 +984,7 @@ describe("notifications", () => {
     await t.run(async (ctx) => await offerApplication(ctx, companyId, otherId));
 
     await t.run(async (ctx) => await acceptApplication(ctx, creatorId, applicationId));
+    await t.finishAllScheduledFunctions(() => {});
 
     expect((await creatorNotifications(t, otherCreatorId)).at(-1)).toEqual({
       type: "applicationOpportunityFull",

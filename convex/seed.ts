@@ -5,6 +5,7 @@ import { apiError } from "./lib/errors";
 import { HALF_HOUR_MS } from "./lib/validation";
 import { updateCreatorNiches } from "./models/creatorNiches";
 import { updateOpportunityNiches } from "./models/opportunityNiches";
+import { updateOpportunityLanguages } from "./models/opportunityLanguages";
 import { updateOpportunitySkills } from "./models/opportunitySkills";
 
 /**
@@ -126,13 +127,13 @@ type OpportunitySpec = {
   isGated: boolean;
   maxSlots: number;
   numFilledSlots: number;
-  maxApplications: number;
   deadlineInDays: number;
   status: Doc<"opportunities">["status"];
   fixedFeeCents: number;
   cpmRateCents: number;
   paymentCapCents: number;
   niches: string[];
+  languages: string[];
   skills: string[];
 };
 
@@ -148,7 +149,6 @@ const OPPORTUNITIES: OpportunitySpec[] = [
     isGated: true,
     maxSlots: 8,
     numFilledSlots: 2,
-    maxApplications: 8,
     deadlineInDays: 21,
     status: "open",
     fixedFeeCents: 65_000,
@@ -156,6 +156,7 @@ const OPPORTUNITIES: OpportunitySpec[] = [
     paymentCapCents: 200_000,
     niches: ["ai-agents", "developer-tools"],
     skills: ["python", "typescript"],
+    languages: ["english"],
   },
   {
     title: "Ship a side project on our free tier",
@@ -163,7 +164,6 @@ const OPPORTUNITIES: OpportunitySpec[] = [
     isGated: false,
     maxSlots: 20,
     numFilledSlots: 3,
-    maxApplications: 20,
     deadlineInDays: 14,
     status: "open",
     fixedFeeCents: 30_000,
@@ -171,6 +171,7 @@ const OPPORTUNITIES: OpportunitySpec[] = [
     paymentCapCents: 0,
     niches: ["web-development", "startups"],
     skills: ["react", "nextjs"],
+    languages: ["english", "spanish"],
   },
   {
     title: "Explain our vector search in one minute",
@@ -178,7 +179,6 @@ const OPPORTUNITIES: OpportunitySpec[] = [
     isGated: false,
     maxSlots: 5,
     numFilledSlots: 5,
-    maxApplications: 5,
     deadlineInDays: 10,
     status: "open",
     fixedFeeCents: 0,
@@ -186,6 +186,7 @@ const OPPORTUNITIES: OpportunitySpec[] = [
     paymentCapCents: 90_000,
     niches: ["databases", "machine-learning"],
     skills: ["postgresql", "python"],
+    languages: ["english"],
   },
   {
     title: "Security review of our auth flow",
@@ -193,7 +194,6 @@ const OPPORTUNITIES: OpportunitySpec[] = [
     isGated: true,
     maxSlots: 3,
     numFilledSlots: 0,
-    maxApplications: 3,
     deadlineInDays: 2,
     status: "open",
     fixedFeeCents: 0,
@@ -201,6 +201,7 @@ const OPPORTUNITIES: OpportunitySpec[] = [
     paymentCapCents: 0,
     niches: ["cybersecurity"],
     skills: ["application-security"],
+    languages: ["english"],
   },
   {
     title: "Our CLI in your daily workflow",
@@ -208,7 +209,6 @@ const OPPORTUNITIES: OpportunitySpec[] = [
     isGated: true,
     maxSlots: 6,
     numFilledSlots: 1,
-    maxApplications: 6,
     deadlineInDays: 30,
     status: "draft",
     fixedFeeCents: 45_000,
@@ -216,6 +216,7 @@ const OPPORTUNITIES: OpportunitySpec[] = [
     paymentCapCents: 0,
     niches: ["developer-tools", "productivity"],
     skills: ["bash-shell"],
+    languages: ["english", "portuguese"],
   },
   {
     title: "Migrating off a legacy ORM",
@@ -223,7 +224,6 @@ const OPPORTUNITIES: OpportunitySpec[] = [
     isGated: true,
     maxSlots: 4,
     numFilledSlots: 0,
-    maxApplications: 4,
     deadlineInDays: 25,
     status: "paused",
     fixedFeeCents: 50_000,
@@ -231,15 +231,14 @@ const OPPORTUNITIES: OpportunitySpec[] = [
     paymentCapCents: 0,
     niches: ["databases"],
     skills: ["prisma", "sql"],
+    languages: ["english"],
   },
 ];
 
 const BOILERPLATE = {
-  targetApplicant: "Developers who publish regularly and can show working code on camera.",
   contentRequirements: "One video, 60 seconds or longer, with the product visible in use.",
-  prohibitedClaims: "No performance or security claims we have not published ourselves.",
-  disclosureRequirements: "Disclose the partnership in the post itself, not only the caption.",
-  usageRights: "We may reshare the post on our own channels for twelve months.",
+  reviewPolicy:
+    "Disclose the partnership in the post itself. No performance or security claims we have not published ourselves. We may reshare the post for twelve months.",
 };
 
 /** Builds the campaigns and opportunities a company sees, and the feed creators see. */
@@ -292,7 +291,7 @@ async function seedCompanyContent(
 
   const opportunityIds: Id<"opportunities">[] = [];
   for (const spec of OPPORTUNITIES) {
-    const { deadlineInDays, niches, skills, ...fields } = spec;
+    const { deadlineInDays, niches, skills, languages, ...fields } = spec;
     const opportunityId = await ctx.db.insert("opportunities", {
       ...fields,
       ...BOILERPLATE,
@@ -304,6 +303,7 @@ async function seedCompanyContent(
     });
     await updateOpportunityNiches(ctx, opportunityId, niches);
     await updateOpportunitySkills(ctx, opportunityId, skills);
+    await updateOpportunityLanguages(ctx, opportunityId, languages);
     opportunityIds.push(opportunityId);
   }
   return { openCampaignId, opportunityIds };

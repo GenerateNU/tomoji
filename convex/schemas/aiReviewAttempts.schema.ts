@@ -19,13 +19,12 @@ export const aiReviewAttemptsTable = defineTable({
   submissionId: v.id("submissions"),
   mediaId: v.id("mediaUploads"),
   criteria: v.array(reviewCriterion),
-  // TODO(#177/#178): reconcile this brief snapshot with Afnan's schema updates before merge.
+  // Point-in-time snapshot of the brief; later edits never rewrite an attempt.
   context: v.object({
     title: v.string(),
     description: v.string(),
     contentRequirements: v.string(),
-    prohibitedClaims: v.string(),
-    disclosureRequirements: v.string(),
+    reviewPolicy: v.string(),
   }),
   status: v.union(
     v.literal("ready"),

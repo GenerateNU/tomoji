@@ -17,6 +17,7 @@ import {
   expireApplicationOffers,
   listApplications,
   listApplicationsByOpportunityId,
+  markApplicationsFullBatch,
   offerApplication,
   rejectApplication,
   requireApplication,
@@ -171,6 +172,21 @@ export const expireOffers = internalMutation({
   handler: async (ctx) => {
     const hasMore = await expireApplicationOffers(ctx);
     if (hasMore) await ctx.scheduler.runAfter(0, internal.applications.expireOffers, {});
+    return null;
+  },
+});
+
+/**
+ * Marks one batch of an opportunity's waiting applications as `opportunityFull`
+ * and reschedules itself while more remain. Enqueued by `acceptApplication`
+ * when the last slot is taken.
+ */
+export const markFull = internalMutation({
+  args: { opportunityId: v.id("opportunities") },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const hasMore = await markApplicationsFullBatch(ctx, args.opportunityId);
+    if (hasMore) await ctx.scheduler.runAfter(0, internal.applications.markFull, args);
     return null;
   },
 });

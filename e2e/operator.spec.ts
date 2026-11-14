@@ -18,7 +18,7 @@ test.afterAll(() => {
 });
 test.use({ timezoneId: "America/New_York" });
 
-type View = "disputes";
+type View = "users" | "disputes";
 
 /** Loads the real operator views against a local Convex double. */
 async function open(page: Page, view: View) {
@@ -35,6 +35,52 @@ async function open(page: Page, view: View) {
   });
   await page.goto(`http://operator.test/?view=${view}`);
 }
+
+test("users tabs scope the directory and search matches names and emails", async ({ page }) => {
+  await open(page, "users");
+
+  await expect(page.getByRole("row", { name: /Ada Lovelace/ })).toBeVisible();
+  // Alan is deactivated, so he is out until asked for.
+  await expect(page.getByRole("row", { name: /Alan Turing/ })).toBeHidden();
+  await page.getByRole("checkbox", { name: "Show deactivated accounts" }).check();
+  await expect(page.getByRole("row", { name: /Alan Turing/ })).toBeVisible();
+  await expect(
+    page.getByRole("row", { name: /Alan Turing/ }).getByText("Deactivated"),
+  ).toBeVisible();
+
+  await page.getByRole("tab", { name: "Company users" }).click();
+  await expect(page.getByRole("row", { name: /Jordan Lee/ })).toBeVisible();
+  await expect(page.getByRole("cell", { name: "Acme Robotics · Admin" })).toBeVisible();
+  await expect(page.getByRole("row", { name: /Ada Lovelace/ })).toBeHidden();
+
+  await page.getByRole("tab", { name: "Operators" }).click();
+  await expect(page.getByRole("row", { name: /Robin Shaw/ })).toBeVisible();
+
+  await page.getByRole("tab", { name: "Creators" }).click();
+  await page.getByLabel("Search users").fill("grace@example.com");
+  await expect(page.getByRole("row", { name: /Grace Hopper/ })).toBeVisible();
+  await expect(page.getByRole("row", { name: /Ada Lovelace/ })).toBeHidden();
+
+  await page.getByLabel("Search users").fill("turing-not-here");
+  await expect(page.getByText("Nothing to show")).toBeVisible();
+});
+
+test("deactivating an account calls setActive for that user and reflects it in the row", async ({
+  page,
+}) => {
+  await open(page, "users");
+
+  await page.getByRole("button", { name: "Ada Lovelace" }).click();
+  const modal = page.getByRole("dialog");
+  await expect(modal.getByText("ada@example.com")).toBeVisible();
+  await modal.getByRole("button", { name: "Deactivate account" }).click();
+
+  expect(await page.evaluate(() => window.operatorFixture.calls)).toEqual([
+    { name: "users:setActive", args: { userId: "user-0", isActive: false } },
+  ]);
+  await expect(page.getByRole("dialog")).toBeHidden();
+  await expect(page.getByRole("row", { name: /Ada Lovelace/ })).toBeHidden();
+});
 
 test("an open dispute can be closed and a settled one overridden with a required reason", async ({
   page,

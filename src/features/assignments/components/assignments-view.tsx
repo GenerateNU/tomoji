@@ -2,7 +2,7 @@
 
 import { api } from "@convex/_generated/api";
 import type { Id } from "@convex/_generated/dataModel";
-import { RiExpandUpDownLine, RiSearchLine } from "@remixicon/react";
+import { RiExpandUpDownLine, RiGlobalLine, RiSearchLine } from "@remixicon/react";
 import { usePaginatedQuery, useQuery } from "convex/react";
 import Link from "next/link";
 import { useEffect, useId, useState } from "react";
@@ -32,10 +32,15 @@ const queues = [
   { value: "approved", label: "Approved" },
 ] as const;
 type Queue = (typeof queues)[number]["value"];
+
+/** Resolves the selected tab from the workspace URL. */
+export function assignmentQueue(status?: string): Queue {
+  return queues.find(({ value }) => value === status)?.value ?? "notStarted";
+}
 type Stage = "detail" | "draft" | "post";
 
 /** Lists creator assignments by the current submission and posting state. */
-export function AssignmentsView({ stage = "detail" }: { stage?: Stage }) {
+export function AssignmentsView({ stage = "detail", status }: { stage?: Stage; status?: string }) {
   return (
     <section className="flex w-full flex-col gap-8 px-4 pt-8 pb-12 sm:px-8 lg:px-16 lg:pt-16">
       <RequireAccount
@@ -44,20 +49,20 @@ export function AssignmentsView({ stage = "detail" }: { stage?: Stage }) {
         wrongRole="Assignments are available to creators."
       >
         <h1 className="text-[28px] leading-tight font-medium">Assignments</h1>
-        <AssignmentTabs stage={stage} />
+        <AssignmentTabs key={status} stage={stage} initialQueue={assignmentQueue(status)} />
       </RequireAccount>
     </section>
   );
 }
 
 /** Loads status counts and opportunity choices for the workspace. */
-function AssignmentTabs({ stage }: { stage: Stage }) {
+function AssignmentTabs({ stage, initialQueue }: { stage: Stage; initialQueue: Queue }) {
   const options = useQuery(api.assignments.listMineFilterOptions);
   return (
-    <Tabs defaultValue="notStarted" className="gap-10">
+    <Tabs defaultValue={initialQueue} className="gap-10">
       <TabsList
         aria-label="Assignment status"
-        className="w-fit max-w-full gap-5 overflow-x-auto md:gap-7"
+        className="max-w-full gap-5 overflow-x-auto md:gap-7"
       >
         {queues.map(({ value, label }) => (
           <TabsTrigger key={value} value={value}>
@@ -231,12 +236,21 @@ function AssignmentRows({
 
   if (status === "LoadingFirstPage")
     return <Skeleton aria-label="Loading assignments" className="h-32 w-full" />;
+  if (visible.length === 0 && !hasMore) {
+    return (
+      <div role="status" className="grid justify-items-center gap-2 px-4 py-20 text-center">
+        <RiGlobalLine aria-hidden className="mb-7 size-24 text-blue-primary/35" />
+        <p className="text-body-lg text-gray-700">Nothing to see here!</p>
+        <p className="text-body-sm text-gray-500">
+          {filters.search || filters.opportunityId
+            ? "Try a different filter to see results."
+            : "There are no assignments in this tab."}
+        </p>
+      </div>
+    );
+  }
   return (
     <div className="space-y-5">
-      <h2 className="text-body-lg font-medium">
-        Assignments ({results.length}
-        {hasMore ? "+" : ""})
-      </h2>
       <div className={cn(columns, "hidden py-2 text-body-sm text-gray-500 lg:grid")}>
         {sortColumns.map(({ field, label }) => (
           <button
@@ -260,12 +274,9 @@ function AssignmentRows({
           </button>
         ))}
       </div>
-      {visible.length === 0 && (
-        <p className="py-4 text-body-sm text-gray-500">No assignments match this view.</p>
-      )}
       <ul>
         {visible.map((row) => {
-          const href = `/assignments/${row._id}`;
+          const href = `/assignments/${row._id}?status=${queue}`;
           const status = row.next?.status;
           const action =
             row.status === "active"
@@ -312,7 +323,7 @@ function AssignmentRows({
                 {row.queue === "review" && row.status === "active" && <Badge>In review</Badge>}
                 {row.status !== "active" && <Badge>{assignmentStatusLabel[row.status]}</Badge>}
                 <Link
-                  href={task && row.next ? `${href}?task=${task}&deliverable=${row.next.id}` : href}
+                  href={task && row.next ? `${href}&task=${task}&deliverable=${row.next.id}` : href}
                   className={buttonVariants({
                     size: "sm",
                     variant:

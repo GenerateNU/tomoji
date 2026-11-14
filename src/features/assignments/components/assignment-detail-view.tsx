@@ -12,7 +12,7 @@ import {
   DialogDescription,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { AssignmentsView } from "./assignments-view";
+import { assignmentQueue, AssignmentsView } from "./assignments-view";
 import { AssignmentExamples } from "./assignment-examples";
 import { AssignmentCompany } from "./assignment-company";
 import { Button } from "@/components/ui/button";
@@ -25,37 +25,44 @@ import { assignmentStatusLabel, submissionStatusLabel } from "./assignment-statu
 type AssignmentDetails = NonNullable<FunctionReturnType<typeof api.assignments.getMineDetails>>;
 
 /** Opens the assignment workspace after the creator's account is resolved. */
-export function AssignmentDetailView({ assignmentId }: { assignmentId: string }) {
+export function AssignmentDetailView({
+  assignmentId,
+  status,
+}: {
+  assignmentId: string;
+  status?: string;
+}) {
   return (
     <>
-      <AssignmentsView />
+      <AssignmentsView status={status} />
       <RequireAccount
         role="creator"
         next={`/assignments/${assignmentId}`}
         wrongRole="Assignments are available to creators."
       >
-        <AssignmentDetail assignmentId={assignmentId} />
+        <AssignmentDetail assignmentId={assignmentId} status={status} />
       </RequireAccount>
     </>
   );
 }
 
 /** Displays the assignment in a focused panel above the assignments table. */
-function AssignmentDetail({ assignmentId }: { assignmentId: string }) {
+function AssignmentDetail({ assignmentId, status }: { assignmentId: string; status?: string }) {
+  const back = `/assignments?status=${assignmentQueue(status)}`;
   const router = useRouter();
   const details = useQuery(api.assignments.getMineDetails, { assignmentId });
   return (
     <Dialog
       open
       onOpenChange={(open) => {
-        if (!open) router.replace("/assignments");
+        if (!open) router.replace(back);
       }}
     >
       <DialogContent
-        className="max-w-[742px] gap-0 overflow-hidden rounded-lg shadow-2xl"
+        className="grid h-[min(720px,calc(100dvh-32px))] max-w-[742px] grid-rows-[minmax(0,1fr)_auto] gap-0 overflow-hidden rounded-lg shadow-2xl"
         overlayClassName="bg-gray-950/20 backdrop-blur-[2px]"
       >
-        <div className="max-h-[calc(100dvh-110px)] overflow-y-auto px-5 py-8 sm:px-8">
+        <div className="overflow-y-auto px-5 py-8 sm:px-8">
           {details && (
             <div className="mb-4 flex flex-wrap items-center gap-2 text-body-sm">
               <AssignmentCompany name={details.companyName} mediaId={details.companyPictureId} />
@@ -75,13 +82,13 @@ function AssignmentDetail({ assignmentId }: { assignmentId: string }) {
             <Skeleton aria-label="Loading assignment" className="mt-6 h-48 w-full" />
           )}
           {details === null && (
-            <Link href="/assignments" className="mt-4 text-sm underline">
+            <Link href={back} className="mt-4 text-sm underline">
               All assignments
             </Link>
           )}
           {details && <AssignmentWorkspace details={details} />}
         </div>
-        <div className="flex justify-end border-t bg-gray-0 px-5 py-4 sm:px-8">
+        <div className="flex justify-end gap-2 bg-gray-0 px-5 py-6 sm:px-8">
           <DialogClose render={<Button variant="secondary-subtle" />}>Close</DialogClose>
         </div>
       </DialogContent>

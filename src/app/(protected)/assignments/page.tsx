@@ -4,6 +4,11 @@ import { AssignmentsView } from "@/features/assignments/components/assignments-v
 export const metadata: Metadata = { title: "Assignments · Tomoji" };
 
 /** Opens the creator's assignments workspace. */
-export default function AssignmentsPage() {
-  return <AssignmentsView />;
+export default async function AssignmentsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ status?: string }>;
+}) {
+  const { status } = await searchParams;
+  return <AssignmentsView status={status} />;
 }

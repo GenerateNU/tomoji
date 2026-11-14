@@ -1,3 +1,4 @@
+import Image from "next/image";
 import type { ReactNode } from "react";
 
 /** The shared frame for every sign-in page: form on the left, artwork on the right. */
@@ -21,8 +22,18 @@ export function AuthLayout({
           {children}
         </div>
       </main>
-      {/* Stands in for the product illustration in the wireframes. */}
-      <div aria-hidden className="hidden bg-muted lg:block" />
+      {/* The same artwork the onboarding flow opens with, so signing in and
+          setting up a profile read as one journey. */}
+      <div aria-hidden className="relative hidden bg-blue-primary lg:block">
+        <Image
+          src="/onboarding/onboarding.png"
+          alt=""
+          fill
+          sizes="50vw"
+          className="object-cover"
+          priority
+        />
+      </div>
     </div>
   );
 }

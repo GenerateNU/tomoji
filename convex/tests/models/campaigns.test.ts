@@ -1048,7 +1048,7 @@ describe("continuePausingCampaignOpportunities", () => {
       );
 
       clock.mockReturnValue(cutoff);
-      expect(await t.run(async (ctx) => closeExpiredOpportunities(ctx))).toBe(false);
+      expect((await t.run(async (ctx) => closeExpiredOpportunities(ctx))).hasMore).toBe(false);
       expect(await t.run(async (ctx) => ctx.db.get("opportunities", opportunityIds[50]))).toEqual({
         ...afterFirst[50],
         status: "closed",

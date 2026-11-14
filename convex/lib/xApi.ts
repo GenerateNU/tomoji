@@ -3,7 +3,8 @@ import { apiError, type ApiErrorData } from "./errors";
 import type { PostEngagement } from "../models/posts";
 
 /**
- * Days a post keeps earning after it goes live - number of days the metrics are tracked on the X post.
+ * Default earning duration from the original live-post verification, not publication.
+ * Collection must follow the stored agreement's window and any earlier cutoff.
  */
 export const X_POST_EARNING_DAYS = 30;
 
@@ -107,8 +108,6 @@ export type XMissingReason =
 export type XMissingPost = { xPostId: string; reason: XMissingReason };
 
 // X's documented id format; ids never start with 0.
-// TODO(posts): requirePostUrl accepts up to 25 digits and leading zeros, so
-// links that can never be looked up are stored; tighten it to this format.
 const xPostIdPattern = /^[1-9]\d{0,18}$/;
 
 /** Reads the exact linked post's full caption, including long-form text. */
@@ -122,13 +121,45 @@ export async function getXPostText(bearerToken: string, xPostId: string): Promis
       rateLimited,
     ),
   );
-  const post = object(response.data);
+  return readCaption(object(response.data), xPostId);
+}
+
+/** Parses the same provider caption for both operator and creator checks. */
+function readCaption(post: Record<string, unknown>, xPostId: string): string {
   const caption = post.note_post === undefined ? post : object(post.note_post);
   if (post.id !== xPostId || typeof caption.text !== "string")
     throw apiError("upstream_failure", { reason: "invalid_response" });
   const entities = caption.entities ?? post.entities;
   const urls = entities === undefined ? undefined : object(entities).urls;
   return restoreCaptionLinks(caption.text.trimEnd(), urls);
+}
+
+/** Reads the published caption and the metadata needed for creator verification. */
+export async function getXPostForCaptionCheck(bearerToken: string, xPostId: string) {
+  if (!xPostIdPattern.test(xPostId))
+    throw apiError("invalid_state", { reason: "x_post_id_invalid" });
+  const response = await xJson(
+    await xRequest(
+      `tweets/${xPostId}?post.fields=note_post,entities,author_id,created_at,attachments,referenced_posts`,
+      { headers: { Authorization: `Bearer ${bearerToken}` } },
+      rateLimited,
+    ),
+  );
+  const post = object(response.data);
+  const postedAt = typeof post.created_at === "string" ? Date.parse(post.created_at) : NaN;
+  if (typeof post.author_id !== "string" || !Number.isFinite(postedAt))
+    throw apiError("upstream_failure", { reason: "invalid_response" });
+  return {
+    text: readCaption(post, xPostId),
+    authorId: post.author_id,
+    postedAt,
+    hasExtraContent: post.attachments !== undefined || post.referenced_posts !== undefined,
+  };
+}
+
+/** Normalizes Unicode, line endings, and outer whitespace before exact comparison. */
+export function normalizeCaption(text: string): string {
+  return text.normalize("NFC").replace(/\r\n?/g, "\n").trim();
 }
 
 /** Drops X's trailing media link and restores creator links before exact comparison. */

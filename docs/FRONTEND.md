@@ -8,9 +8,9 @@ This document outlines how we organize and develop the Next.js frontend for Tomo
 src/
   app/                       Next.js routes and layouts
     layout.tsx               fonts and providers
-    signup/, login/, etc     sign-in pages, no nav bar
+    signup/, login/, etc     sign-in pages, no sidebar
     (protected)/
-      layout.tsx             nav bar
+      layout.tsx             sidebar shell (features/navigation)
       page.tsx               home (/) — where sign-in lands
       error.tsx              error boundary for signed-in pages
       <route>/               pages requiring sign-in
@@ -26,6 +26,15 @@ src/
 e2e/                         Playwright browser tests
   fixtures/                  per-spec entry points and stubbed backend responses
 ```
+
+### The signed-in shell
+
+`(protected)/layout.tsx` renders `AppShell` (`features/navigation/components/app-shell.tsx`), which
+wraps every signed-in page in the sidebar and supplies the page's `<main>`. Pages don't add their own.
+Nav items come from `components/app-sidebar.tsx` by account type (creator, company, operator); an item
+with an `href` is a link and an item without one is shown disabled as "coming soon", so give a nav item
+its `href` when its page ships. Below `md` the sidebar becomes a top bar with a navigation drawer; the
+sidebar sits in its own error boundary so a failed account read doesn't take the page down with it.
 
 ### Where should new files go?
 

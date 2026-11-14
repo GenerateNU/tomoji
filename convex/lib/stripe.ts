@@ -1,0 +1,355 @@
+import Stripe from "stripe";
+import type { Doc } from "../_generated/dataModel";
+import { env } from "../_generated/server";
+import type { StripeAccountState } from "../models/stripeAccounts";
+import type { SavedPaymentMethod } from "../models/stripeCustomers";
+import { apiError } from "./errors";
+
+// How far before an attempt's start to look for the account it made: our clock
+// and Stripe's can differ. There is no upper bound, because a retry can come
+// hours later and the account's creation time is whenever Stripe processed it.
+const RECOVERY_WINDOW_SECONDS = 10 * 60;
+
+/**
+ * The Stripe client, for actions and HTTP actions. Unlike WorkOS it needs no
+ * `"use node"`: the fetch HTTP client runs in Convex's default runtime, which
+ * is where the webhook verifies signatures.
+ *
+ * @throws `misconfigured` if the deployment has no secret key.
+ */
+export function stripeClient(): Stripe {
+  const apiKey = env.STRIPE_SECRET_KEY;
+  if (!apiKey) throw apiError("misconfigured", { reason: "stripe_secret_key_missing" });
+  return new Stripe(apiKey, { httpClient: Stripe.createFetchHttpClient() });
+}
+
+/**
+ * A page on the Tomoji frontend, for Stripe's hosted pages to send people back
+ * to.
+ *
+ * @throws `misconfigured` if the deployment has no `SITE_URL`.
+ */
+export function siteUrl(path: string): string {
+  const base = env.SITE_URL;
+  if (!base) throw apiError("misconfigured", { reason: "site_url_missing" });
+  return new URL(path, base).toString();
+}
+
+/**
+ * The page on the Tomoji site Checkout sends the admin back to, marked with
+ * `stripe=return` or `stripe=cancel`. Returning does not mean the card is
+ * saved; `me` updates when the webhook arrives.
+ *
+ * @throws `invalid_state` with reason `return_path_invalid` unless `returnPath`
+ * is a path on the Tomoji site, so the flow cannot redirect to another site.
+ */
+export function checkoutReturnUrl(returnPath: string, outcome: "return" | "cancel"): string {
+  const url = new URL(siteUrl(returnPath));
+  // `//host` and `/\host` resolve to another origin, so compare origins too.
+  if (!returnPath.startsWith("/") || url.origin !== new URL(siteUrl("/")).origin) {
+    throw apiError("invalid_state", { reason: "return_path_invalid" });
+  }
+  url.searchParams.set("stripe", outcome);
+  return url.toString();
+}
+
+/** Acknowledges a webhook event: anything but 2xx makes Stripe retry for days. */
+export const webhookOk = () => new Response(null, { status: 200 });
+
+/**
+ * The verified Stripe event in a webhook request, or the response to send
+ * when it cannot be verified: 500 while the signing secret is unset, so Stripe
+ * keeps the events, and 400 for a missing or wrong signature.
+ */
+export async function verifyWebhookEvent(
+  request: Request,
+  secret: string | undefined,
+  secretName: string,
+): Promise<Stripe.Event | Response> {
+  if (!secret) {
+    console.error(`Stripe webhook received but ${secretName} is not set`);
+    return new Response("Webhook not configured", { status: 500 });
+  }
+  const signature = request.headers.get("Stripe-Signature");
+  if (signature === null) return new Response("Missing signature", { status: 400 });
+  try {
+    // The raw body: re-serialized JSON would not match the signature.
+    return await Stripe.webhooks.constructEventAsync(
+      await request.text(),
+      signature,
+      secret,
+      undefined,
+      Stripe.createSubtleCryptoProvider(),
+    );
+  } catch {
+    return new Response("Invalid signature", { status: 400 });
+  }
+}
+
+/**
+ * The first 16 hex digits of the SHA-256 of `value`'s JSON; stable for equal
+ * objects built the same way. Idempotency keys include it because Stripe keeps
+ * a key's first response for 24 hours and refuses it for different parameters.
+ */
+export async function fingerprint(value: unknown): Promise<string> {
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(JSON.stringify(value)),
+  );
+  return Array.from(new Uint8Array(digest).slice(0, 8), (byte) =>
+    byte.toString(16).padStart(2, "0"),
+  ).join("");
+}
+
+/**
+ * Whether Stripe refused because Tomoji no longer has access to a connected
+ * account: the creator removed Tomoji in Stripe. Other permission errors mean
+ * our own key lacks a permission, which is a misconfiguration to retry after,
+ * not a disconnect.
+ */
+export function isAccountAccessLost(error: unknown): boolean {
+  return error instanceof Stripe.errors.StripePermissionError && error.code === "account_invalid";
+}
+
+/** Stripe's reason for a failed request, for the logs. Stripe errors carry no secrets. */
+export function stripeErrorDetails(error: unknown): Record<string, string | undefined> {
+  if (error instanceof Error) {
+    const { type, code } = error as Partial<Stripe.errors.StripeError>;
+    return { type, code, message: error.message };
+  }
+  return { message: String(error) };
+}
+
+/**
+ * Asks Stripe for a creator's Standard account for this attempt, in the
+ * attempt's country. Retries of the same attempt send the identical request
+ * under the same idempotency key, so Stripe returns one account.
+ *
+ * @returns `country_unsupported` or `rejected` if Stripe refused the request
+ * as invalid, which proves no account was made, after logging Stripe's reason.
+ * @throws `upstream_failure` with reason `stripe_account_failed` for any other
+ * failure, such as a network error, which leaves it unknown whether Stripe
+ * made the account.
+ */
+export async function createConnectAccount(
+  stripe: Stripe,
+  attempt: Doc<"stripeAccountCreations">,
+): Promise<Stripe.Account | "country_unsupported" | "rejected"> {
+  const params: Stripe.AccountCreateParams = {
+    country: attempt.country,
+    // Stripe's replacement for `type: "standard"`, chosen over Express to avoid its
+    // per-account costs: the creator uses the full Stripe Dashboard, pays Stripe's
+    // fees, and Stripe covers negative balances and collects requirements.
+    controller: {
+      stripe_dashboard: { type: "full" },
+      fees: { payer: "account" },
+      losses: { payments: "stripe" },
+      requirement_collection: "stripe",
+    },
+    // No `capabilities`: Stripe chooses them by country for Standard accounts and
+    // rejects a request for `transfers` alone. No email either: Stripe asks for it,
+    // and nothing here may change between an attempt and its retry.
+    metadata: { creatorId: attempt.creatorId },
+  };
+  try {
+    return await stripe.accounts.create(params, {
+      // One key per attempt: concurrent clicks and retries share it and get one
+      // account back, while reconnecting starts a new attempt and a new account.
+      // The fingerprint changes only if a deploy changes the request, which
+      // Stripe would otherwise refuse under the same key.
+      idempotencyKey: `stripe-account:${attempt.creatorId}:${attempt._id}:${await fingerprint(params)}`,
+    });
+  } catch (error) {
+    console.error("Stripe refused to create the account", stripeErrorDetails(error));
+    if (error instanceof Stripe.errors.StripeInvalidRequestError) {
+      return error.code === "country_unsupported" ? "country_unsupported" : "rejected";
+    }
+    throw apiError("upstream_failure", { reason: "stripe_account_failed" });
+  }
+}
+
+/**
+ * The account an earlier attempt made, if any, found by its creator tag among
+ * accounts created since the attempt started. Stripe offers no lookup by
+ * idempotency key and its Search API does not cover accounts, so this lists
+ * by creation time. Stripe can forget idempotency keys after 24 hours, so a
+ * late retry relies on this rather than on the key. `replacedAccountId` is the
+ * creator's disconnected account, if reconnecting, which is never returned.
+ *
+ * @throws `upstream_failure` with reason `stripe_account_failed` if Stripe
+ * cannot be asked, since that proves nothing about whether the account exists.
+ */
+export async function findCreatedConnectAccount(
+  stripe: Stripe,
+  attempt: Doc<"stripeAccountCreations">,
+  replacedAccountId: string | undefined,
+): Promise<Stripe.Account | null> {
+  const startedAt = Math.floor(attempt.startedAt / 1000);
+  try {
+    for await (const account of stripe.accounts.list({
+      created: { gte: startedAt - RECOVERY_WINDOW_SECONDS },
+      limit: 100,
+    })) {
+      // The disconnected account being replaced carries the same tag, and can fall
+      // inside the window if the creator reconnects soon after connecting.
+      if (account.metadata?.creatorId === attempt.creatorId && account.id !== replacedAccountId) {
+        return account;
+      }
+    }
+  } catch (error) {
+    // Failing to look is not the same as finding nothing: creating now could make
+    // a second account once Stripe has forgotten the original key. Keep the
+    // attempt so the next retry looks again.
+    console.error("Stripe refused to list accounts", stripeErrorDetails(error));
+    throw apiError("upstream_failure", { reason: "stripe_account_failed" });
+  }
+  return null;
+}
+
+/**
+ * What Stripe said about a payout charge. `pending` outcomes arrive by webhook.
+ * `rejected` means Stripe refused the request itself, so it made no charge.
+ */
+export type ChargeOutcome =
+  | { kind: "succeeded"; paymentIntentId: string }
+  | { kind: "failed"; paymentIntentId: string; failureCode: string }
+  | { kind: "pending"; paymentIntentId: string }
+  | { kind: "rejected"; failureCode: string };
+
+/** The outcome a charge Stripe already made has reached. */
+export function toChargeOutcome(intent: Stripe.PaymentIntent): ChargeOutcome {
+  if (intent.status === "succeeded") return { kind: "succeeded", paymentIntentId: intent.id };
+  if (intent.status === "requires_payment_method" || intent.status === "canceled") {
+    return {
+      kind: "failed",
+      paymentIntentId: intent.id,
+      failureCode:
+        intent.last_payment_error?.decline_code ?? intent.last_payment_error?.code ?? intent.status,
+    };
+  }
+  return { kind: "pending", paymentIntentId: intent.id };
+}
+
+/**
+ * The charge Stripe made for a payout attempt, if any, found by the
+ * `metadata.paymentId` the charge carries. A resumed attempt checks this before
+ * sending anything: its first request may have charged with the reply lost, and
+ * Stripe forgets idempotency keys after about a day, so resending could charge
+ * twice. Stripe's search can lag by up to a minute; attempts resume later than that.
+ *
+ * @throws whatever Stripe throws if it cannot be asked, which proves nothing.
+ */
+export async function findAttemptCharge(
+  stripe: Stripe,
+  payment: Doc<"payments">,
+): Promise<Stripe.PaymentIntent | null> {
+  const found = await stripe.paymentIntents.search(
+    { query: `metadata['paymentId']:'${payment._id}'` },
+    { stripeAccount: payment.stripeAccountId },
+  );
+  return found.data[0] ?? null;
+}
+
+/**
+ * Charges a company's saved card on the creator's Standard account for one
+ * payout attempt. The card lives on Tomoji's account, so it is first copied
+ * onto the creator's; the charge then runs there off-session, since the
+ * company is not present. Both requests are keyed by the attempt, so repeating
+ * an attempt whose outcome was lost returns the original card and charge
+ * instead of charging twice. The charge carries `metadata.paymentId` so
+ * webhooks find the attempt.
+ *
+ * @throws whatever Stripe throws when the outcome is unknown, such as a network
+ * or idempotency error. A card decline is returned as `failed`; an invalid
+ * request Stripe refused, as `rejected`.
+ */
+export async function chargeConnectAccount(
+  stripe: Stripe,
+  charge: {
+    payment: Doc<"payments">;
+    stripeCustomerId: string;
+    paymentMethodId: string;
+    amount: number;
+    currency: string;
+  },
+): Promise<ChargeOutcome> {
+  const { payment } = charge;
+  const onCreatorAccount = { stripeAccount: payment.stripeAccountId };
+  try {
+    // Always the attempt's own card (see `paymentMethodId` on `payments`), so
+    // a resumed attempt repeats exactly the same request under each key.
+    const card = await stripe.paymentMethods.create(
+      { customer: charge.stripeCustomerId, payment_method: charge.paymentMethodId },
+      { ...onCreatorAccount, idempotencyKey: `payment:${payment._id}:card` },
+    );
+    const intent = await stripe.paymentIntents.create(
+      {
+        amount: charge.amount,
+        currency: charge.currency,
+        payment_method: card.id,
+        confirm: true,
+        off_session: true,
+        // Off-session charges cannot redirect the company to their bank.
+        automatic_payment_methods: { enabled: true, allow_redirects: "never" },
+        metadata: { paymentId: payment._id, payoutId: payment.payoutId },
+      },
+      { ...onCreatorAccount, idempotencyKey: `payment:${payment._id}` },
+    );
+    return intent.status === "succeeded"
+      ? { kind: "succeeded", paymentIntentId: intent.id }
+      : { kind: "pending", paymentIntentId: intent.id };
+  } catch (error) {
+    // Stripe made the charge and the card refused it; the outcome is known.
+    if (error instanceof Stripe.errors.StripeCardError && error.payment_intent !== undefined) {
+      return {
+        kind: "failed",
+        paymentIntentId: error.payment_intent.id,
+        failureCode: error.decline_code ?? error.code ?? "card_declined",
+      };
+    }
+    // Refused outright, so no charge exists; retrying would fail the same way.
+    // An idempotency error is thrown instead: Stripe saw a request with this
+    // key, so the first may have charged, and Stripe must be asked.
+    if (error instanceof Stripe.errors.StripeInvalidRequestError) {
+      return { kind: "rejected", failureCode: error.code ?? "invalid_request" };
+    }
+    throw error;
+  }
+}
+
+/**
+ * The card details Tomoji keeps from a payment method, or null if it is not a
+ * card. The brand is the one Stripe displays, which for a co-branded card is
+ * the network the cardholder chose.
+ */
+export function toSavedCard(
+  paymentMethod: Stripe.PaymentMethod,
+): SavedPaymentMethod["card"] | null {
+  const card = paymentMethod.card;
+  if (!card) return null;
+  return {
+    paymentMethodId: paymentMethod.id,
+    brand: card.display_brand ?? card.brand,
+    last4: card.last4,
+    expMonth: card.exp_month,
+    expYear: card.exp_year,
+  };
+}
+
+/**
+ * What a Stripe account says about onboarding. `updatedAt` is when Tomoji
+ * received it from Stripe, in Unix ms on our clock, so later reads win.
+ */
+export function toStripeAccountState(
+  account: Stripe.Account,
+  updatedAt: number,
+): StripeAccountState {
+  return {
+    stripeAccountId: account.id,
+    detailsSubmitted: account.details_submitted,
+    payoutsEnabled: account.payouts_enabled,
+    requirementsDue: (account.requirements?.currently_due?.length ?? 0) > 0,
+    rejected: account.requirements?.disabled_reason?.startsWith("rejected") ?? false,
+    stripeUpdatedAt: updatedAt,
+  };
+}

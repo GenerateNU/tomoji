@@ -329,7 +329,7 @@ describe("posts.checkCaption", () => {
     const asOperator = await seedOperator(t, "caption-operator");
     await t.run((ctx) =>
       ctx.db.patch("submissions", submissionId, {
-        caption: "Café demo\r\n#ad",
+        caption: "Café demo\r\n#ad https://example.com/launch",
       }),
     );
     vi.stubEnv("X_BEARER_TOKEN", "x-test");
@@ -340,9 +340,18 @@ describe("posts.checkCaption", () => {
           data: {
             id: "1843000000000000001",
             text: "Truncated preview",
-            note_post: {
-              text: " Cafe\u0301 demo\n#ad https://t.co/video ",
-              entities: { urls: [{ url: "https://t.co/video", media_key: "7_video" }] },
+            note_tweet: {
+              text: " Cafe\u0301 demo\n#ad https://t.co/launch https://t.co/video ",
+              entities: {
+                urls: [
+                  { url: "https://t.co/launch", expanded_url: "https://example.com/launch" },
+                  {
+                    url: "https://t.co/video",
+                    expanded_url: "https://x.com/driftwood_dev/status/1843000000000000001/video/1",
+                    media_key: "7_video",
+                  },
+                ],
+              },
             },
           },
         }),
@@ -358,10 +367,42 @@ describe("posts.checkCaption", () => {
     expect(await asOperator.action(api.posts.checkCaption, { postId })).toBe("mismatch");
     expect(fetch).toHaveBeenCalledTimes(2);
     expect(fetch).toHaveBeenCalledWith(
-      "https://api.x.com/2/tweets/1843000000000000001?post.fields=note_post,entities",
+      "https://api.x.com/2/tweets/1843000000000000001?tweet.fields=note_tweet,entities",
       expect.objectContaining({ headers: { Authorization: "Bearer x-test" } }),
     );
     expect(await t.run((ctx) => ctx.db.get("posts", postId))).toMatchObject({ isVerified: false });
+  });
+
+  test("matches an ordinary caption with a creator-authored link but rejects a changed destination", async () => {
+    const t = convexTest(schema, modules);
+    const { postId, submissionId } = await seedPost(t);
+    const asOperator = await seedOperator(t, "caption-operator");
+    await t.run((ctx) =>
+      ctx.db.patch("submissions", submissionId, {
+        caption: "Demo (https://example.com/demo). #ad",
+      }),
+    );
+    vi.stubEnv("X_BEARER_TOKEN", "x-test");
+    /** Models X supplying the same short URL for different test destinations. */
+    function responseWithLink(expandedUrl: string) {
+      return Response.json({
+        data: {
+          id: "1843000000000000001",
+          text: "Demo (https://t.co/abc). #ad",
+          entities: { urls: [{ url: "https://t.co/abc", expanded_url: expandedUrl }] },
+        },
+      });
+    }
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValueOnce(responseWithLink("https://example.com/demo"))
+        .mockResolvedValueOnce(responseWithLink("https://example.com/other")),
+    );
+
+    expect(await asOperator.action(api.posts.checkCaption, { postId })).toBe("match");
+    expect(await asOperator.action(api.posts.checkCaption, { postId })).toBe("mismatch");
   });
 
   test("rejects X results if the creator replaced the post during the lookup", async () => {

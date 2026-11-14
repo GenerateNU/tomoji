@@ -32,12 +32,12 @@ A caption-only draft skips transcription.
 After publication, an operator can run `posts.checkCaption({ postId })` to compare
 the approved caption with the linked X post. The comparison uses Unicode NFC,
 consistent line endings, and trimmed outer whitespace. When X identifies an
-appended media link in its URL metadata, the check omits that link. Case,
-punctuation, and internal spacing remain significant. Creator-authored links
-remain in the comparison, so links rewritten by X can produce a mismatch. The
-check returns `match`, `mismatch`, or `no_caption`. It uses the existing app-only `X_BEARER_TOKEN` and leaves the
-verification decision with the operator. The authenticated lookup still needs a
-live test.
+appended media link in its URL metadata, the check omits that link. For
+creator-authored links, it uses X’s expanded destinations when available.
+Case, punctuation, and internal spacing remain significant. The check returns
+`match`, `mismatch`, or `no_caption` and leaves verification with the operator.
+It uses the existing app-only `X_BEARER_TOKEN`. The authenticated lookup still
+needs a live test.
 
 Convex applies the policy in `convex/lib/ai/reviewPolicy.ts`:
 

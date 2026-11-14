@@ -117,25 +117,54 @@ export async function getXPostText(bearerToken: string, xPostId: string): Promis
     throw apiError("invalid_state", { reason: "x_post_id_invalid" });
   const response = await xJson(
     await xRequest(
-      `tweets/${xPostId}?post.fields=note_post,entities`,
+      `tweets/${xPostId}?tweet.fields=note_tweet,entities`,
       { headers: { Authorization: `Bearer ${bearerToken}` } },
       rateLimited,
     ),
   );
   const post = object(response.data);
-  const caption = post.note_post === undefined ? post : object(post.note_post);
+  const caption = post.note_tweet === undefined ? post : object(post.note_tweet);
   if (post.id !== xPostId || typeof caption.text !== "string")
     throw apiError("upstream_failure", { reason: "invalid_response" });
-  const text = caption.text.trimEnd();
-  const urls = caption.entities === undefined ? undefined : object(caption.entities).urls;
+  const entities = caption.entities ?? post.entities;
+  const urls = entities === undefined ? undefined : object(entities).urls;
+  return restoreCaptionLinks(caption.text.trimEnd(), urls);
+}
+
+/** Drops X's trailing media link and restores creator links before exact comparison. */
+function restoreCaptionLinks(text: string, urls: unknown): string {
   if (!Array.isArray(urls)) return text;
-  // X may append a short link for the attached media. Keep creator-authored links.
+  const destinations = new Map<string, string>();
   for (const entry of urls) {
-    const { url, media_key: mediaKey } = object(entry);
-    if (typeof mediaKey === "string" && typeof url === "string" && text.endsWith(` ${url}`))
-      return text.slice(0, -url.length - 1);
+    const { url, expanded_url: expandedUrl, media_key: mediaKey } = object(entry);
+    if (typeof url !== "string" || !/^https:\/\/t\.co\/[A-Za-z0-9]+$/.test(url)) continue;
+    if (typeof mediaKey === "string") {
+      if (text.endsWith(` ${url}`)) text = text.slice(0, -url.length - 1);
+      continue;
+    }
+    if (typeof expandedUrl === "string" && isCaptionDestination(expandedUrl)) {
+      destinations.set(url, expandedUrl);
+    }
   }
-  return text;
+  // Match short links as tokens so one entity cannot rewrite part of another URL.
+  return text.replace(
+    /(^|[\s([{“"'])(https:\/\/t\.co\/[A-Za-z0-9]+)(?=$|[\s.,!?;:)\]}”"'])/g,
+    (match, prefix: string, shortUrl: string) => {
+      const destination = destinations.get(shortUrl);
+      return destination === undefined ? match : prefix + destination;
+    },
+  );
+}
+
+/** Checks that X returned an HTTP(S) destination and preserves its exact spelling for comparison. */
+function isCaptionDestination(value: string): boolean {
+  if (!/^https?:\/\/[^\s]+$/i.test(value)) return false;
+  try {
+    const url = new URL(value);
+    return url.username === "" && url.password === "";
+  } catch {
+    return false;
+  }
 }
 
 /**

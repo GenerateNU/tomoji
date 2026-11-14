@@ -11,7 +11,8 @@
  *   S3_MEDIA_REGION
  *   X_CLIENT_ID / X_CLIENT_SECRET / X_REDIRECT_URI (when supplied together)
  *   X_BEARER_TOKEN / X_METRICS_SYNC_ENABLED (each when supplied)
- *   STRIPE_SECRET_KEY / SITE_URL / STRIPE_WEBHOOK_SECRET (when a test-mode key is supplied)
+ *   STRIPE_SECRET_KEY / SITE_URL / STRIPE_WEBHOOK_SECRET / STRIPE_PLATFORM_WEBHOOK_SECRET
+ *     (when a test-mode key is supplied)
  */
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
@@ -150,29 +151,46 @@ if (result.status !== 0) {
   process.exit(result.status ?? 1);
 }
 
+// Stripe signs each webhook destination with its own secret.
+const STRIPE_WEBHOOKS = [
+  {
+    key: "STRIPE_WEBHOOK_SECRET",
+    purpose: "Creator onboarding status",
+    destination: "for connected accounts that sends account.updated",
+    path: "/stripe/webhook",
+  },
+  {
+    key: "STRIPE_PLATFORM_WEBHOOK_SECRET",
+    purpose: "Company cards",
+    destination:
+      "for your account that sends checkout.session.completed and\npayment_method.automatically_updated",
+    path: "/stripe/webhook/platform",
+  },
+] as const;
+
 if (configureStripe) {
-  const stripeWebhookSecret = readValue("STRIPE_WEBHOOK_SECRET");
-  if (stripeWebhookSecret === "") {
-    console.error(
-      [
-        "",
-        "STRIPE_WEBHOOK_SECRET is empty in .env.local. Creator onboarding status won't update without it.",
-        "",
-        "In the Stripe sandbox, add a webhook destination for connected accounts that sends",
-        "account.updated to:",
-        "",
-        `  ${convexEnv("CONVEX_SITE_URL")}/stripe/webhook`,
-        "",
-        "Paste its signing secret (whsec_...) into .env.local, then re-run this.",
-        "",
-      ].join("\n"),
-    );
-    process.exit(1);
+  for (const { key, purpose, destination, path } of STRIPE_WEBHOOKS) {
+    const secret = readValue(key);
+    if (secret === "") {
+      console.error(
+        [
+          "",
+          `${key} is empty in .env.local. ${purpose} won't update without it.`,
+          "",
+          `In the Stripe sandbox, add a webhook destination ${destination} to:`,
+          "",
+          `  ${convexEnv("CONVEX_SITE_URL")}${path}`,
+          "",
+          "Paste its signing secret (whsec_...) into .env.local, then re-run this.",
+          "",
+        ].join("\n"),
+      );
+      process.exit(1);
+    }
+    const stripeResult = spawnSync("bunx", ["convex", "env", "set", "--", key, secret], {
+      stdio: "inherit",
+      shell: process.platform === "win32",
+    });
+    if (stripeResult.status !== 0) process.exit(stripeResult.status ?? 1);
   }
-  const stripeResult = spawnSync(
-    "bunx",
-    ["convex", "env", "set", "--", "STRIPE_WEBHOOK_SECRET", stripeWebhookSecret],
-    { stdio: "inherit", shell: process.platform === "win32" },
-  );
-  if (stripeResult.status !== 0) process.exit(stripeResult.status ?? 1);
 }

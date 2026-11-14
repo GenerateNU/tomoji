@@ -1,12 +1,15 @@
-# Stripe creator payouts
+# Stripe payouts
 
 Creators get paid through Stripe Connect. Each creator has their own **Standard** connected
 account: Stripe hosts the signup form, the creator signs in to the full Stripe Dashboard at
 dashboard.stripe.com themselves, and they pay Stripe's processing fees. Tomoji takes no fee for
 now.
 
-This covers creator onboarding only. Company payment methods, charging, and payment webhooks
-come in later PRs.
+Companies pay with a card they save once through Stripe Checkout. It is stored on a Stripe
+customer on Tomoji's own account and copied to a creator's account for each charge.
+
+This covers creator onboarding and saving company cards. Charging and payment webhooks come in
+later PRs.
 
 ## Setup on your dev deployment
 
@@ -25,12 +28,19 @@ fail with `misconfigured`. To work on payments:
      Running `just convex-env` with an empty secret prints your exact URL.
    - Name it after yourself (`<name>-dev-creator-onboarding`). The sandbox is shared, so
      every teammate has their own destination.
-3. Fill in `.env.local`: `STRIPE_SECRET_KEY`, the destination's signing secret as
-   `STRIPE_WEBHOOK_SECRET` (`whsec_…`), and `SITE_URL=http://localhost:3000`.
-4. Run `just convex-env`.
+3. Add a second destination the same way for company cards, because Stripe sends events on
+   Tomoji's own account separately from Connect events:
+   - Scope: **Your account**.
+   - Events: `checkout.session.completed` and `payment_method.automatically_updated`.
+   - URL `https://<your-deployment>.convex.site/stripe/webhook/platform`, name
+     `<name>-dev-company-cards`.
+4. Fill in `.env.local`: `STRIPE_SECRET_KEY`, the first destination's signing secret as
+   `STRIPE_WEBHOOK_SECRET`, the second's as `STRIPE_PLATFORM_WEBHOOK_SECRET` (both `whsec_…`),
+   and `SITE_URL=http://localhost:3000`.
+5. Run `just convex-env`.
 
-Every teammate's destination receives every connected account's events. The webhook answers
-200 to accounts it doesn't know, so other people's test accounts are ignored, not retried.
+Every teammate's destinations receive everyone's events. The webhooks answer 200 to accounts
+and customers they don't know, so other people's test data is ignored, not retried.
 
 ## Creator status
 
@@ -161,3 +171,76 @@ date of birth `01/01/1901`, address line 1 `address_full_match`, SSN `000-00-000
 ```bash
 bunx convex run stripeAccounts:me '{}' --identity '{"subject":"<your workosId>"}'
 ```
+
+# Company cards
+
+## Status
+
+`stripeCustomers.me` returns `{ status, card }`:
+
+| Status    | Meaning           | What the UI shows                                  |
+| --------- | ----------------- | -------------------------------------------------- |
+| `missing` | No card saved yet | "Add a card" button for admins; a note for members |
+| `ready`   | A card is on file | e.g. "Visa •••• 4242, expires 08/28" and "Replace" |
+
+`card` is `null` when missing, otherwise `{ brand, last4, expMonth, expYear }`. `brand` is
+Stripe's network code (`visa`, `mastercard`, `amex`, …), so map it to a display name. Card
+numbers never reach Tomoji.
+
+## Routes
+
+| Route                                | Type   | Who                 | Returns                      |
+| ------------------------------------ | ------ | ------------------- | ---------------------------- |
+| `stripeCustomers.me`                 | query  | Any company member  | `{ status, card }`           |
+| `stripeCustomers.setupPaymentMethod` | action | Company admins only | `{ url }` to Stripe Checkout |
+
+Members get `forbidden` / `company_admin_required` from `setupPaymentMethod`; creators and
+operators get `forbidden` from both.
+
+The Checkout link lasts 24 hours but isn't stored, so request one when the admin clicks. It
+saves a card without charging it, and saving a new card replaces the old one.
+
+`setupPaymentMethod({ returnPath })` takes the page to come back to, usually the one with the
+button, e.g. `{ returnPath: "/payouts" }`. Stripe sends the admin back to
+`/payouts?stripe=return` when they finish, or `/payouts?stripe=cancel` if they back out; any
+query already on the path is kept. Only paths on the Tomoji site are accepted, so the flow
+can't redirect anywhere else. Coming back does **not** mean the card is saved; `me` changes to
+`ready` when the webhook arrives, usually within seconds.
+
+Errors are the same as the creator routes, with `stripe_customer_failed` (Stripe refused to
+create the customer) and `stripe_checkout_failed` (Stripe refused the Checkout session; the
+customer is kept) in place of the account and link failures, plus `invalid_state` /
+`return_path_invalid` for a `returnPath` that isn't a path on the Tomoji site.
+
+## How the card stays correct
+
+Only `POST /stripe/webhook/platform` saves a card, checked against
+`STRIPE_PLATFORM_WEBHOOK_SECRET` the same way as the creator webhook. It handles:
+
+- `checkout.session.completed` in setup mode: fetches the saved card from Stripe and stores
+  its brand, last 4, and expiry. If Stripe can't be reached it answers 500, so Stripe
+  redelivers.
+- `payment_method.automatically_updated`: the card network renewed a card. It fetches the card
+  from Stripe as it is now, because two updates in the same second can arrive in either order.
+  Only the company's current card is updated, so a replaced card never comes back.
+
+Events older than the saved card are skipped. The customer is saved before Checkout opens, so
+the webhook always finds the company a card belongs to.
+
+A company never ends up with two customers. Concurrent clicks send the same idempotency key and
+get one customer back. The customer is created with only `metadata.companyId`, nothing that
+can change between attempts like the company name, so a retry after a failed save is the
+identical request and returns the same customer. Stripe's dashboard therefore shows customers
+by id; search by `companyId` metadata to find a company.
+
+## Trying it end to end
+
+Company routes need a company admin. The seed data has one per company (`bunx convex data
+companyUsers`); for the first:
+
+```bash
+bunx convex run stripeCustomers:setupPaymentMethod '{"returnPath":"/campaigns"}' --identity '{"subject":"seed_applications_user_0","org_id":"seed_applications_0","role":"admin"}'
+```
+
+Open the URL, enter card `4242 4242 4242 4242` with any future expiry, CVC, and ZIP, and save.
+Then `stripeCustomers:me` with the same identity returns `ready` with the Visa ending in 4242.

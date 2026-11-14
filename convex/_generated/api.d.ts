@@ -112,6 +112,7 @@ import type * as posts from "../posts.js";
 import type * as seed from "../seed.js";
 import type * as skills from "../skills.js";
 import type * as stripeAccounts from "../stripeAccounts.js";
+import type * as stripeCustomers from "../stripeCustomers.js";
 import type * as stripeWebhook from "../stripeWebhook.js";
 import type * as submissions from "../submissions.js";
 import type * as tests_helpers from "../tests/helpers.js";
@@ -230,6 +231,7 @@ declare const fullApi: ApiFromModules<{
   seed: typeof seed;
   skills: typeof skills;
   stripeAccounts: typeof stripeAccounts;
+  stripeCustomers: typeof stripeCustomers;
   stripeWebhook: typeof stripeWebhook;
   submissions: typeof submissions;
   "tests/helpers": typeof tests_helpers;

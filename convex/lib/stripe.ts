@@ -2,6 +2,7 @@ import Stripe from "stripe";
 import type { Doc } from "../_generated/dataModel";
 import { env } from "../_generated/server";
 import type { StripeAccountState } from "../models/stripeAccounts";
+import type { SavedPaymentMethod } from "../models/stripeCustomers";
 import { apiError } from "./errors";
 
 // How far before an attempt's start to look for the account it made: our clock
@@ -152,6 +153,25 @@ export async function findCreatedConnectAccount(
     throw apiError("upstream_failure", { reason: "stripe_account_failed" });
   }
   return null;
+}
+
+/**
+ * The card details Tomoji keeps from a payment method, or null if it is not a
+ * card. The brand is the one Stripe displays, which for a co-branded card is
+ * the network the cardholder chose.
+ */
+export function toSavedCard(
+  paymentMethod: Stripe.PaymentMethod,
+): SavedPaymentMethod["card"] | null {
+  const card = paymentMethod.card;
+  if (!card) return null;
+  return {
+    paymentMethodId: paymentMethod.id,
+    brand: card.display_brand ?? card.brand,
+    last4: card.last4,
+    expMonth: card.exp_month,
+    expYear: card.exp_year,
+  };
 }
 
 /**

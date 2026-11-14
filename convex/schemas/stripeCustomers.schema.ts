@@ -16,10 +16,11 @@ export const savedCard = v.object({
 });
 
 /**
- * A company's Stripe customer on Tomoji's own account, holding the card that
- * approved payouts are charged to. The card is saved here once and copied to a
- * creator's account for each charge, because creators have Standard accounts.
- * Only the Checkout webhook sets the card.
+ * Each company's payer record in Stripe (a "customer"), kept on Tomoji's own
+ * Stripe account, with the card the company saved. Approved payouts are charged
+ * to this card: for each payout we copy it onto the creator's Stripe account and
+ * charge it there, since money for a Standard account has to be charged on that
+ * account. Only the Stripe webhook changes the saved card.
  */
 export const stripeCustomersTable = defineTable({
   companyId: v.id("companies"),

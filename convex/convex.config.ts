@@ -30,7 +30,10 @@ const app = defineApp({
     // Optional so deployments without Stripe keep working; Stripe routes fail
     // with `misconfigured` instead. Test-mode keys only until launch.
     STRIPE_SECRET_KEY: v.optional(v.string()),
+    // Connect events (creators' accounts) and events on Tomoji's own account
+    // (companies' cards) come from separate destinations with separate secrets.
     STRIPE_WEBHOOK_SECRET: v.optional(v.string()),
+    STRIPE_PLATFORM_WEBHOOK_SECRET: v.optional(v.string()),
     // The frontend's origin, where Stripe's hosted pages send people back. Not
     // CONVEX_SITE_URL, which is this deployment's HTTP actions origin.
     SITE_URL: v.optional(v.string()),

@@ -111,3 +111,18 @@ export async function savePaymentMethod(
   });
   return "updated";
 }
+
+/**
+ * Applies new card details the card network sent for a card already saved,
+ * such as a renewed expiry. Stripe keeps updating cards a company has since
+ * replaced, so only the current card changes; anything else is `replaced`.
+ */
+export async function refreshCard(
+  ctx: MutationCtx,
+  saved: SavedPaymentMethod,
+): Promise<"updated" | "stale" | "replaced" | "unknown"> {
+  const customer = await getStripeCustomerByStripeId(ctx, saved.stripeCustomerId);
+  if (customer === null) return "unknown";
+  if (customer.card?.paymentMethodId !== saved.card.paymentMethodId) return "replaced";
+  return await savePaymentMethod(ctx, saved);
+}

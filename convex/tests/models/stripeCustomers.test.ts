@@ -5,6 +5,7 @@ import {
   createStripeCustomer,
   getStripeCustomerByCompanyId,
   getStripeCustomerByStripeId,
+  refreshCard,
   savePaymentMethod,
   toPaymentMethodStatus,
   type SavedPaymentMethod,
@@ -178,5 +179,60 @@ describe("savePaymentMethod", () => {
       await t.run((ctx) => savePaymentMethod(ctx, { ...visa, stripeCustomerId: "cus_elsewhere" })),
     ).toBe("unknown");
     expect(await t.run((ctx) => ctx.db.query("stripeCustomers").first())).toBeNull();
+  });
+});
+
+describe("refreshCard", () => {
+  // The card network sends a renewed card's new expiry; the card itself stays the same.
+  const renewed: SavedPaymentMethod = {
+    ...visa,
+    card: { ...visa.card, expMonth: 8, expYear: 2031 },
+    stripeUpdatedAt: visa.stripeUpdatedAt + 60_000,
+  };
+
+  test("updates the expiry of the company's current card", async () => {
+    const { t, customer } = await seedCustomer("refresh_current");
+    await t.run((ctx) => savePaymentMethod(ctx, visa));
+
+    expect(await t.run((ctx) => refreshCard(ctx, renewed))).toBe("updated");
+    expect(await customer()).toMatchObject(renewed);
+  });
+
+  // Stripe keeps updating a detached card; it must not come back as the company's card.
+  test("ignores a card the company has since replaced", async () => {
+    const { t, customer } = await seedCustomer("refresh_replaced");
+    await t.run((ctx) => savePaymentMethod(ctx, visa));
+
+    const oldCard = { ...renewed, card: { ...renewed.card, paymentMethodId: "pm_old" } };
+
+    expect(await t.run((ctx) => refreshCard(ctx, oldCard))).toBe("replaced");
+    expect(await customer()).toMatchObject(visa);
+  });
+
+  test("ignores a card when the company has none saved", async () => {
+    const { t, customer } = await seedCustomer("refresh_none");
+
+    expect(await t.run((ctx) => refreshCard(ctx, renewed))).toBe("replaced");
+    expect((await customer())?.card).toBeUndefined();
+  });
+
+  test("skips an update older than the saved card", async () => {
+    const { t, customer } = await seedCustomer("refresh_stale");
+    await t.run((ctx) => savePaymentMethod(ctx, visa));
+
+    expect(
+      await t.run((ctx) =>
+        refreshCard(ctx, { ...renewed, stripeUpdatedAt: visa.stripeUpdatedAt - 1 }),
+      ),
+    ).toBe("stale");
+    expect(await customer()).toMatchObject(visa);
+  });
+
+  test("ignores a customer this deployment does not have", async () => {
+    const t = convexTest(schema, modules);
+
+    expect(
+      await t.run((ctx) => refreshCard(ctx, { ...renewed, stripeCustomerId: "cus_elsewhere" })),
+    ).toBe("unknown");
   });
 });

@@ -1,86 +1,162 @@
 "use client";
 
-import { api } from "@convex/_generated/api";
-import type { Doc } from "@convex/_generated/dataModel";
-import { useQueries } from "convex/react";
 import type { FunctionReturnType } from "convex/server";
-import { useMemo } from "react";
+import { api } from "@convex/_generated/api";
+import type { Id } from "@convex/_generated/dataModel";
+import { CompanyAvatar } from "@/components/ui/avatar";
+import { TableCell, TableRow } from "@/components/ui/table";
+import { useCompanyLogo } from "@/hooks/use-company-logo";
+import { formatCompensation } from "@/lib/money";
+import { focusRing } from "@/lib/styles";
+import { cn } from "@/lib/utils";
+import type { ApplicationTab } from "../hooks/use-applications-table";
 import { formatRelativeTime } from "@/lib/relative-time";
-import { applicationExpiresAt, formatCompensation } from "../lib/format";
 import { ApplicationStatusBadge } from "./application-status-badge";
-import { Skeleton } from "@/components/ui/skeleton";
+import { OfferExpiry } from "./offer-expiry";
+import { StarToggle } from "./star-toggle";
 
-type Opportunity = FunctionReturnType<typeof api.opportunities.get>;
+export type ApplicationRowData = FunctionReturnType<
+  typeof api.applications.searchMine
+>["rows"][number];
+
+/** A row whose company has gone missing still says so, rather than showing a blank. */
+export function displayCompanyName(row: Pick<ApplicationRowData, "companyName">): string {
+  return row.companyName || "Unknown company";
+}
+
+/** The company's logo, or the grey building placeholder while the logo loads or if it can't be read. */
+export function ApplicationCompanyAvatar({ row }: { row: ApplicationRowData }) {
+  const logo = useCompanyLogo(row.companyLogoMediaId);
+  return <CompanyAvatar size={24} src={logo.url} />;
+}
+
+export function ApplicationStar({ row }: { row: ApplicationRowData }) {
+  return (
+    <StarToggle
+      opportunityId={row.opportunityId}
+      title={row.title}
+      isStarred={row.isStarred}
+      canStar={row.canStar}
+    />
+  );
+}
+
+/** Compensation in the compact form, with the full terms for screen readers and as a tooltip. */
+export function ApplicationCompensation({ row }: { row: ApplicationRowData }) {
+  const full = formatCompensation(row);
+  return (
+    <>
+      <span aria-hidden title={full}>
+        {formatCompensation(row, { variant: "compact" })}
+      </span>
+      <span className="sr-only">{full}</span>
+    </>
+  );
+}
 
 /**
- * One application with its opportunity. Creators can only load an opportunity
- * while it's open, so a closed or paused one comes back as an error and the
- * row shows what the application itself knows. `useQueries` returns that error
- * instead of throwing, so one closed opportunity doesn't break the page.
+ * The title as a button that opens the offer. `data-offer-title` lets the modal
+ * return focus here when it closes, even if the row was opened by a click elsewhere on it.
+ */
+export function OfferTitleButton({
+  row,
+  onOpen,
+  className,
+}: {
+  row: ApplicationRowData;
+  onOpen: (applicationId: Id<"applications">) => void;
+  className?: string;
+}) {
+  return (
+    <button
+      type="button"
+      aria-haspopup="dialog"
+      data-offer-title={row.applicationId}
+      title={row.title}
+      onClick={() => onOpen(row.applicationId)}
+      className={cn(
+        "min-w-0 cursor-pointer rounded-xs text-left font-medium hover:underline",
+        focusRing,
+        className,
+      )}
+    >
+      {row.title}
+    </button>
+  );
+}
+
+/**
+ * One application as a table row. Everything it shows comes with the row; it runs no queries.
+ * On the Offers and Accepted tabs the title opens the offer, and so does a click anywhere else on the row.
  */
 export function ApplicationRow({
-  application,
+  row,
   now,
+  tab = "applications",
+  onOpen,
 }: {
-  application: Doc<"applications">;
+  row: ApplicationRowData;
   now: number;
+  tab?: ApplicationTab;
+  onOpen?: (applicationId: Id<"applications">) => void;
 }) {
-  const { opportunityId } = application;
-  // useQueries resubscribes whenever it gets a new object, which loops on every
-  // render, so the request must be memoized. useQuery does this internally.
-  const queries = useMemo(
-    () => ({ opportunity: { query: api.opportunities.get, args: { opportunityId } } }),
-    [opportunityId],
-  );
-  const { opportunity } = useQueries(queries) as {
-    opportunity: Opportunity | Error | undefined;
-  };
-
-  const loading = opportunity === undefined;
-  const brief = opportunity instanceof Error || loading ? null : opportunity;
-  const companyName = brief !== null && "companyName" in brief ? brief.companyName : null;
-  const expiresAt = applicationExpiresAt(application, brief?.deadline);
-
   return (
-    <tr className="align-middle">
-      <td className="py-2.5 pr-5">
-        <div className="flex items-center gap-4">
-          <div
-            aria-hidden
-            className="flex size-13 shrink-0 items-center justify-center rounded-2xl bg-muted text-lg font-medium text-muted-foreground"
-          >
-            {companyName?.charAt(0).toUpperCase()}
-          </div>
-          {loading ? (
-            <div className="flex flex-col gap-2">
-              <Skeleton className="h-5 w-40 rounded" />
-              <Skeleton className="h-4 w-24 rounded" />
-            </div>
-          ) : brief !== null ? (
-            <div className="flex min-w-0 flex-col gap-1">
-              <span className="text-xl font-medium">{brief.title}</span>
-              <span className="text-base">{companyName}</span>
-            </div>
+    <TableRow
+      className={onOpen && "cursor-pointer hover:bg-gray-25"}
+      onClick={
+        onOpen
+          ? (event) => {
+              // Buttons and links in the row do their own thing.
+              if ((event.target as HTMLElement).closest("button, a")) return;
+              onOpen(row.applicationId);
+            }
+          : undefined
+      }
+    >
+      <TableCell type="custom">
+        {onOpen ? (
+          <OfferTitleButton row={row} onOpen={onOpen} className="truncate" />
+        ) : (
+          <span className="min-w-0 truncate font-medium" title={row.title}>
+            {row.title}
+          </span>
+        )}
+        {/* Sits right after the title, as in the design, not pushed to the cell's edge. */}
+        <ApplicationStar row={row} />
+      </TableCell>
+      <TableCell type="custom">
+        <ApplicationCompanyAvatar row={row} />
+        <span className="min-w-0 truncate" title={displayCompanyName(row)}>
+          {displayCompanyName(row)}
+        </span>
+      </TableCell>
+      {tab === "accepted" ? (
+        <TableCell>
+          {row.offerAcceptedAt === undefined ? (
+            "—"
           ) : (
-            <div className="flex min-w-0 flex-col gap-1 text-muted-foreground">
-              <span className="text-xl font-medium">Opportunity no longer available</span>
-              <span className="text-base">It has closed or been paused.</span>
-            </div>
+            <span className="first-letter:uppercase">
+              {formatRelativeTime(row.offerAcceptedAt, now)}
+            </span>
           )}
-        </div>
-      </td>
-      <td className="py-2.5 pr-5">
-        <ApplicationStatusBadge status={application.status} />
-      </td>
-      <td className="py-2.5 pr-5 text-base font-medium whitespace-nowrap">
-        {formatRelativeTime(application._creationTime, now)}
-      </td>
-      <td className="py-2.5 pr-5 text-base font-medium whitespace-nowrap">
-        {expiresAt === null ? "—" : formatRelativeTime(expiresAt, now)}
-      </td>
-      <td className="py-2.5 text-base font-medium">
-        {brief === null ? "—" : formatCompensation(brief)}
-      </td>
-    </tr>
+        </TableCell>
+      ) : (
+        <>
+          {tab === "offers" ? (
+            <TableCell>
+              <OfferExpiry status={row.status} offerExpiresAt={row.offerExpiresAt} now={now} />
+            </TableCell>
+          ) : (
+            <TableCell type="custom">
+              <ApplicationStatusBadge status={row.status} />
+            </TableCell>
+          )}
+          <TableCell>{formatRelativeTime(row.submittedAt, now)}</TableCell>
+        </>
+      )}
+      <TableCell>
+        <ApplicationCompensation row={row} />
+      </TableCell>
+    </TableRow>
   );
 }

@@ -29,7 +29,8 @@ export function ModalIconButton({
       title={label}
       onClick={onClick}
       className={cn(
-        "flex shrink-0 cursor-pointer rounded-xs text-gray-500 transition-colors hover:text-gray-950",
+        // The negative margin keeps layout at 24px while touch screens get a 44px hit area.
+        "flex shrink-0 cursor-pointer rounded-xs text-gray-500 transition-colors hover:text-gray-950 max-md:-m-2.5 max-md:p-2.5",
         focusRing,
         className,
       )}
@@ -46,12 +47,20 @@ type ModalProps = {
   /** "lg" is 28px; breadcrumbs always use it. */
   titleSize?: "sm" | "lg";
   breadcrumbs?: BreadcrumbItemData[];
+  /** A row above the title, level with the header controls, e.g. who the modal is about. */
+  eyebrow?: ReactNode;
+  /** Tags or status beside the title. It wraps below a long title and stays outside the dialog's accessible name. */
+  titleAddon?: ReactNode;
   /** Header controls placed before the close button. */
   actions?: ReactNode;
   /** Right-aligned action row. */
   footer?: ReactNode;
   children?: ReactNode;
   className?: string;
+  /** Classes for the dimmed backdrop, e.g. a blur. */
+  overlayClassName?: string;
+  /** Where focus goes on close; the default is the element that opened the modal. */
+  finalFocus?: React.ComponentProps<typeof DialogContent>["finalFocus"];
 };
 
 // Figma "Modal": a white dialog over a dimmed page. Built on the Dialog
@@ -62,11 +71,16 @@ export function Modal({
   title,
   titleSize = "sm",
   breadcrumbs,
+  eyebrow,
+  titleAddon,
   actions,
   footer,
   children,
   className,
+  overlayClassName,
+  finalFocus,
 }: ModalProps) {
+  const above = breadcrumbs ? <Breadcrumbs items={breadcrumbs} className="min-w-0" /> : eyebrow;
   const big = titleSize === "lg" || Boolean(breadcrumbs);
   const close = (
     <DialogPrimitive.Close render={<ModalIconButton icon={RiCloseLine} label="Close" />} />
@@ -84,30 +98,41 @@ export function Modal({
       className={cn(
         "min-w-0 text-gray-950",
         big ? "text-heading-md font-medium" : "text-body-lg font-medium",
+        titleAddon && "break-words",
       )}
     >
       {title}
     </DialogPrimitive.Title>
+  );
+  const headingRow = titleAddon ? (
+    <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2">
+      {heading}
+      {titleAddon}
+    </div>
+  ) : (
+    heading
   );
 
   return (
     <DialogPrimitive.Root open={open} onOpenChange={onOpenChange}>
       <DialogContent
         showCloseButton={false}
+        overlayClassName={overlayClassName}
+        finalFocus={finalFocus}
         className={cn("flex flex-col gap-0 overflow-hidden", className)}
       >
-        <div className="flex min-h-0 flex-1 flex-col gap-6 p-8">
-          {breadcrumbs ? (
+        <div className="flex min-h-0 flex-1 flex-col gap-6 p-4 sm:p-6 md:p-8">
+          {above ? (
             <div className="flex flex-col gap-4">
               <div className="flex items-center justify-between gap-4">
-                <Breadcrumbs items={breadcrumbs} className="min-w-0" />
+                {above}
                 {controls}
               </div>
-              {heading}
+              {headingRow}
             </div>
           ) : (
             <div className={cn("flex justify-between gap-4", big ? "items-start" : "items-center")}>
-              {heading}
+              {headingRow}
               {controls}
             </div>
           )}

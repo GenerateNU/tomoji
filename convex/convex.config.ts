@@ -27,6 +27,13 @@ const app = defineApp({
     X_TOKEN_ENCRYPTION_KEY_VERSION: v.optional(v.string()),
     X_BEARER_TOKEN: v.optional(v.string()),
     X_METRICS_SYNC_ENABLED: v.optional(v.string()),
+    // Optional so deployments without Stripe keep working; Stripe routes fail
+    // with `misconfigured` instead. Test-mode keys only until launch.
+    STRIPE_SECRET_KEY: v.optional(v.string()),
+    STRIPE_WEBHOOK_SECRET: v.optional(v.string()),
+    // The frontend's origin, where Stripe's hosted pages send people back. Not
+    // CONVEX_SITE_URL, which is this deployment's HTTP actions origin.
+    SITE_URL: v.optional(v.string()),
   },
 });
 app.use(workOSAuthKit);

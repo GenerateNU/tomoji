@@ -45,6 +45,8 @@ export const creatorAssignmentSummary = creatorAssignment
   });
 
 export const creatorAssignmentFilterOptions = v.object({
+  // A record keyed by `assignmentQueue` would read better, but Convex rejects
+  // records with literal keys at deploy time (convex-test doesn't), so the keys are spelled out.
   counts: v.union(
     v.object({
       notStarted: v.number(),

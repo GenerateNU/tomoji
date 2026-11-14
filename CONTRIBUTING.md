@@ -126,6 +126,10 @@ but the backend reads the copied deployment values. Do not prefix them with
 `NEXT_PUBLIC_`. See [S3 media foundation](docs/S3.md) for production/preview setup
 and the separate credentials and browser-upload prerequisites.
 
+Stripe settings are optional; `just convex-env` copies them only when `STRIPE_SECRET_KEY`
+is set. To work on payments, follow the setup in [Stripe creator payouts](docs/STRIPE.md)
+first.
+
 Restart `just bd` and it should print `Convex functions ready!`.
 
 ## Step 5 — Run the app
@@ -253,7 +257,7 @@ just seed '{"creatorEmail":"creator@example.com","companyAdminEmail":"admin@exam
 Use the same arguments on retries. To add pagination data to the signed-in demo, use
 `bunx convex run seed:more` with the same JSON fields and `"count": 30`.
 
-Uploads, X credentials, and invitations are inert fixtures. Seeded drafts contain captions and
+Uploads, X credentials, Stripe records, and invitations are inert fixtures. Seeded drafts contain captions and
 review history; to test playback or AI transcription, upload a real clip to the **Not started**
 assignment using the app and the normal dev S3 configuration. Seeding makes no provider calls
 and does not send invites or initiate payments.

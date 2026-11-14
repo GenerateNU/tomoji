@@ -1,22 +1,11 @@
-import type { Doc } from "@convex/_generated/dataModel";
-
 export { formatCompensation } from "@/lib/money";
+export { formatRelativeTime } from "@/lib/relative-time";
 
-/**
- * The next deadline that matters to the creator: how long they have to answer
- * an offer, or until a pending application's opportunity closes. Finished
- * applications have none.
- */
-export function applicationExpiresAt(
-  application: Pick<Doc<"applications">, "status" | "offerExpiresAt">,
-  opportunityDeadline: number | undefined,
-): number | null {
-  switch (application.status) {
-    case "offered":
-      return application.offerExpiresAt ?? null;
-    case "pending":
-      return opportunityDeadline ?? null;
-    default:
-      return null;
-  }
+/** "November 16", or "November 16, 2:30 PM" with `withTime`, in the viewer's time zone. */
+export function formatOfferDeadline(timestamp: number, { withTime = false } = {}): string {
+  return new Intl.DateTimeFormat("en-US", {
+    month: "long",
+    day: "numeric",
+    ...(withTime ? { hour: "numeric", minute: "2-digit" } : {}),
+  }).format(timestamp);
 }

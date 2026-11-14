@@ -192,6 +192,29 @@ async function seedDemoProfile(ctx: MutationCtx, now: number) {
     });
   }
 
+  const stripeAccount = await ctx.db
+    .query("stripeAccounts")
+    .withIndex("by_creatorId", (q) => q.eq("creatorId", creator._id))
+    .unique();
+  if (stripeAccount === null) {
+    // A disconnected demo account with a reconnect in progress. Neither row
+    // references a live Stripe account or belongs to a sign-in selected by email.
+    await ctx.db.insert("stripeAccounts", {
+      creatorId: creator._id,
+      stripeAccountId: "acct_tomoji_seed_disconnected",
+      detailsSubmitted: false,
+      payoutsEnabled: false,
+      requirementsDue: false,
+      stripeUpdatedAt: now - dayMs,
+      disconnectedAt: now - dayMs,
+    });
+    await ctx.db.insert("stripeAccountCreations", {
+      creatorId: creator._id,
+      country: "US",
+      startedAt: now,
+    });
+  }
+
   return { creatorId: creator._id, signals };
 }
 

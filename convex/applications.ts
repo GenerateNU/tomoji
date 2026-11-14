@@ -15,7 +15,9 @@ import {
   createApplication,
   declineApplication,
   expireApplicationOffers,
-  listApplications,
+  applicationSearch,
+  applicationSearchResult,
+  listApplicationRows,
   listApplicationsByOpportunityId,
   markApplicationsFullBatch,
   offerApplication,
@@ -46,13 +48,18 @@ export const create = creatorMutation({
   },
 });
 
-/** Lists the calling creator's applications, optionally filtered by status. */
-export const listMine = creatorQuery({
-  args: { status: v.optional(applicationStatus), paginationOpts: paginationOptsValidator },
-  returns: paginationResultValidator(application),
+/**
+ * Searches the calling creator's applications for the applications table: one
+ * page of rows plus a count for each tab. See `listApplicationRows` for the
+ * read limits.
+ *
+ * @throws `invalid_state` if the page, page size or search is out of bounds.
+ */
+export const searchMine = creatorQuery({
+  args: applicationSearch.fields,
+  returns: applicationSearchResult,
   handler: async (ctx, args) => {
-    const creatorId = await requireCallerCreatorId(ctx, ctx.user);
-    return await listApplications(ctx, { ...args, creatorId });
+    return await listApplicationRows(ctx, await requireCallerCreatorId(ctx, ctx.user), args);
   },
 });
 

@@ -1,6 +1,6 @@
 /// <reference types="vite/client" />
 import { convexTest } from "convex-test";
-import { describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { api } from "../_generated/api";
 import schema from "../schema";
 import {
@@ -35,9 +35,15 @@ describe("applications.create", () => {
     const t = convexTest(schema, modules);
     const { asCreator, applicationId, opportunityId } = await seedApplication(t);
 
-    const application = await asCreator.query(api.applications.get, { applicationId });
+    const application = await asCreator.query(api.applications.get, {
+      applicationId,
+    });
 
-    expect(application).toMatchObject({ opportunityId, note: "I film daily.", status: "pending" });
+    expect(application).toMatchObject({
+      opportunityId,
+      note: "I film daily.",
+      status: "pending",
+    });
   });
 
   test("accepts an application without a note", async () => {
@@ -45,9 +51,13 @@ describe("applications.create", () => {
     const { opportunityId } = await seedGatedOpportunity(t);
     const asCreator = await seedUser(t, { subject: "creator_a" });
 
-    const applicationId = await asCreator.mutation(api.applications.create, { opportunityId });
+    const applicationId = await asCreator.mutation(api.applications.create, {
+      opportunityId,
+    });
 
-    const application = await asCreator.query(api.applications.get, { applicationId });
+    const application = await asCreator.query(api.applications.get, {
+      applicationId,
+    });
     expect(application.status).toBe("pending");
     expect(application).not.toHaveProperty("note");
   });
@@ -67,30 +77,11 @@ describe("applications.create", () => {
     const { asCompany, opportunityId } = await seedGatedOpportunity(t);
 
     await expectApiError(
-      () => asCompany.mutation(api.applications.create, { opportunityId, note: "Hi" }),
-      "forbidden",
-    );
-  });
-});
-
-describe("applications.listMine", () => {
-  test("lists only the calling creator's applications", async () => {
-    const t = convexTest(schema, modules);
-    const { asCreator, applicationId, opportunityId } = await seedApplication(t);
-    const asOther = await seedUser(t, { subject: "creator_b" });
-    await asOther.mutation(api.applications.create, { opportunityId, note: "Me too." });
-
-    const result = await asCreator.query(api.applications.listMine, { paginationOpts: firstPage });
-
-    expect(result.page.map((application) => application._id)).toEqual([applicationId]);
-  });
-
-  test("rejects a company user", async () => {
-    const t = convexTest(schema, modules);
-    const { asCompany } = await seedGatedOpportunity(t);
-
-    await expectApiError(
-      () => asCompany.query(api.applications.listMine, { paginationOpts: firstPage }),
+      () =>
+        asCompany.mutation(api.applications.create, {
+          opportunityId,
+          note: "Hi",
+        }),
       "forbidden",
     );
   });
@@ -100,7 +91,10 @@ describe("applications.get", () => {
   test("returns the application to the owning company's members", async () => {
     const t = convexTest(schema, modules);
     const { asCompany, applicationId } = await seedApplication(t);
-    const asTeammate = await seedUser(t, { subject: "teammate", org: { id: "org_acme" } });
+    const asTeammate = await seedUser(t, {
+      subject: "teammate",
+      org: { id: "org_acme" },
+    });
 
     expect(await asCompany.query(api.applications.get, { applicationId })).toMatchObject({
       _id: applicationId,
@@ -165,7 +159,10 @@ describe("applications.list", () => {
   test("lists applications to the company's opportunity for any teammate", async () => {
     const t = convexTest(schema, modules);
     const { opportunityId, applicationId } = await seedApplication(t);
-    const asTeammate = await seedUser(t, { subject: "teammate", org: { id: "org_acme" } });
+    const asTeammate = await seedUser(t, {
+      subject: "teammate",
+      org: { id: "org_acme" },
+    });
 
     const result = await asTeammate.query(api.applications.list, {
       opportunityId,
@@ -178,11 +175,17 @@ describe("applications.list", () => {
   test("hides another company's opportunity as not found", async () => {
     const t = convexTest(schema, modules);
     const { opportunityId } = await seedApplication(t);
-    const other = await seedGatedOpportunity(t, { subject: "other_owner", orgId: "org_other" });
+    const other = await seedGatedOpportunity(t, {
+      subject: "other_owner",
+      orgId: "org_other",
+    });
 
     await expectApiError(
       () =>
-        other.asCompany.query(api.applications.list, { opportunityId, paginationOpts: firstPage }),
+        other.asCompany.query(api.applications.list, {
+          opportunityId,
+          paginationOpts: firstPage,
+        }),
       "not_found",
     );
   });
@@ -192,7 +195,11 @@ describe("applications.list", () => {
     const { opportunityId, asCreator } = await seedApplication(t);
 
     await expectApiError(
-      () => asCreator.query(api.applications.list, { opportunityId, paginationOpts: firstPage }),
+      () =>
+        asCreator.query(api.applications.list, {
+          opportunityId,
+          paginationOpts: firstPage,
+        }),
       "forbidden",
     );
   });
@@ -203,7 +210,11 @@ describe("applications.list", () => {
     const asWrongOrg = await seedWrongOrgCaller(t);
 
     await expectApiError(
-      () => asWrongOrg.query(api.applications.list, { opportunityId, paginationOpts: firstPage }),
+      () =>
+        asWrongOrg.query(api.applications.list, {
+          opportunityId,
+          paginationOpts: firstPage,
+        }),
       "forbidden",
     );
   });
@@ -214,7 +225,9 @@ describe("applications.offer", () => {
     const t = convexTest(schema, modules);
     const { asCompany, asCreator, applicationId } = await seedApplication(t);
 
-    const offered = await asCompany.mutation(api.applications.offer, { applicationId });
+    const offered = await asCompany.mutation(api.applications.offer, {
+      applicationId,
+    });
 
     expect(offered).toMatchObject({ _id: applicationId, status: "offered" });
     expect(await asCreator.query(api.applications.get, { applicationId })).toMatchObject({
@@ -226,7 +239,10 @@ describe("applications.offer", () => {
   test("hides another company's application as not found", async () => {
     const t = convexTest(schema, modules);
     const { applicationId } = await seedApplication(t);
-    const other = await seedGatedOpportunity(t, { subject: "other_owner", orgId: "org_other" });
+    const other = await seedGatedOpportunity(t, {
+      subject: "other_owner",
+      orgId: "org_other",
+    });
 
     await expectApiError(
       () => other.asCompany.mutation(api.applications.offer, { applicationId }),
@@ -250,7 +266,9 @@ describe("applications.reject", () => {
     const t = convexTest(schema, modules);
     const { asCompany, asCreator, applicationId } = await seedApplication(t);
 
-    const rejected = await asCompany.mutation(api.applications.reject, { applicationId });
+    const rejected = await asCompany.mutation(api.applications.reject, {
+      applicationId,
+    });
 
     expect(rejected).toMatchObject({ _id: applicationId, status: "rejected" });
     expect(await asCreator.query(api.applications.get, { applicationId })).toMatchObject({
@@ -261,7 +279,10 @@ describe("applications.reject", () => {
   test("hides another company's application as not found", async () => {
     const t = convexTest(schema, modules);
     const { applicationId } = await seedApplication(t);
-    const other = await seedGatedOpportunity(t, { subject: "other_owner", orgId: "org_other" });
+    const other = await seedGatedOpportunity(t, {
+      subject: "other_owner",
+      orgId: "org_other",
+    });
 
     await expectApiError(
       () => other.asCompany.mutation(api.applications.reject, { applicationId }),
@@ -294,7 +315,9 @@ describe("applications.accept", () => {
     const t = convexTest(schema, modules);
     const { asCompany, asCreator, applicationId } = await seedOfferedApplication(t);
 
-    const accepted = await asCreator.mutation(api.applications.accept, { applicationId });
+    const accepted = await asCreator.mutation(api.applications.accept, {
+      applicationId,
+    });
 
     expect(accepted).toMatchObject({ _id: applicationId, status: "accepted" });
     expect(await asCompany.query(api.applications.get, { applicationId })).toMatchObject({
@@ -329,7 +352,9 @@ describe("applications.decline", () => {
     const t = convexTest(schema, modules);
     const { asCreator, applicationId } = await seedOfferedApplication(t);
 
-    const declined = await asCreator.mutation(api.applications.decline, { applicationId });
+    const declined = await asCreator.mutation(api.applications.decline, {
+      applicationId,
+    });
 
     expect(declined).toMatchObject({ _id: applicationId, status: "declined" });
   });
@@ -353,5 +378,192 @@ describe("applications.decline", () => {
       () => asCompany.mutation(api.applications.decline, { applicationId }),
       "forbidden",
     );
+  });
+});
+
+describe("applications.searchMine", () => {
+  const searchArgs = { tab: "applications", page: 1, pageSize: 10 } as const;
+
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-10-13T12:00:00Z"));
+  });
+
+  afterEach(() => vi.useRealTimers());
+
+  let sequence = 0;
+
+  /** Seeds an opportunity at its own company and has the creator apply through the route. */
+  async function applyTo(
+    t: TestConvex,
+    asCreator: ReturnType<TestConvex["withIdentity"]>,
+    title: string,
+  ) {
+    sequence += 1;
+    const seeded = await seedGatedOpportunity(t, {
+      subject: `search_owner_${sequence}`,
+      orgId: `org_search_${sequence}`,
+      opportunity: { title },
+    });
+    vi.setSystemTime(Date.now() + 1000);
+    const applicationId = await asCreator.mutation(api.applications.create, {
+      opportunityId: seeded.opportunityId,
+    });
+    return { ...seeded, applicationId };
+  }
+
+  test("rejects a signed-out caller", async () => {
+    const t = convexTest(schema, modules);
+
+    await expectApiError(
+      () => t.query(api.applications.searchMine, searchArgs),
+      "not_authenticated",
+    );
+  });
+
+  test("rejects a company user", async () => {
+    const t = convexTest(schema, modules);
+    const { asCompany } = await seedGatedOpportunity(t);
+
+    await expectApiError(
+      () => asCompany.query(api.applications.searchMine, searchArgs),
+      "forbidden",
+    );
+  });
+
+  test("rejects an operator", async () => {
+    const t = convexTest(schema, modules);
+    const asOperator = await seedOperator(t, "operator");
+
+    await expectApiError(
+      () => asOperator.query(api.applications.searchMine, searchArgs),
+      "forbidden",
+    );
+  });
+
+  test("lists only the calling creator's applications", async () => {
+    const t = convexTest(schema, modules);
+    const asCreator = await seedUser(t, { subject: "creator_a" });
+    const asOther = await seedUser(t, { subject: "creator_b" });
+    const mine = await applyTo(t, asCreator, "Mine");
+    await applyTo(t, asOther, "Theirs");
+
+    const result = await asCreator.query(api.applications.searchMine, searchArgs);
+
+    expect(result.rows).toMatchObject([{ applicationId: mine.applicationId, title: "Mine" }]);
+    expect(result.totalCount).toBe(1);
+    expect(result.counts.applications).toEqual({ count: 1, isCapped: false });
+  });
+
+  test("starring through the route marks the row, and the starred filter keeps only it", async () => {
+    const t = convexTest(schema, modules);
+    const asCreator = await seedUser(t, { subject: "creator_a" });
+    const starred = await applyTo(t, asCreator, "Starred");
+    await applyTo(t, asCreator, "Plain");
+    await asCreator.mutation(api.opportunities.star, {
+      opportunityId: starred.opportunityId,
+    });
+
+    const all = await asCreator.query(api.applications.searchMine, {
+      ...searchArgs,
+      sort: { key: "name", direction: "ascending" },
+    });
+    const onlyStarred = await asCreator.query(api.applications.searchMine, {
+      ...searchArgs,
+      starred: true,
+    });
+
+    expect(all.rows.map((row) => [row.title, row.isStarred])).toEqual([
+      ["Plain", false],
+      ["Starred", true],
+    ]);
+    expect(onlyStarred.rows).toMatchObject([{ title: "Starred", isStarred: true }]);
+  });
+
+  test("searches and sorts by the requested arguments", async () => {
+    const t = convexTest(schema, modules);
+    const asCreator = await seedUser(t, { subject: "creator_a" });
+    await applyTo(t, asCreator, "Serum B");
+    await applyTo(t, asCreator, "Serum A");
+    await applyTo(t, asCreator, "Sneakers");
+
+    const result = await asCreator.query(api.applications.searchMine, {
+      ...searchArgs,
+      search: " serum ",
+      sort: { key: "name", direction: "ascending" },
+    });
+
+    expect(result.rows.map((row) => row.title)).toEqual(["Serum A", "Serum B"]);
+  });
+
+  test("a search over 100 characters is refused as invalid_state", async () => {
+    const t = convexTest(schema, modules);
+    const asCreator = await seedUser(t, { subject: "creator_a" });
+
+    await expectApiError(
+      () =>
+        asCreator.query(api.applications.searchMine, {
+          ...searchArgs,
+          search: "a".repeat(101),
+        }),
+      "invalid_state",
+      "search_too_long",
+    );
+  });
+
+  test.each([
+    { name: "page 0", args: { page: 0 }, reason: "invalid_page" },
+    { name: "a fractional page", args: { page: 1.5 }, reason: "invalid_page" },
+    {
+      name: "page size 51",
+      args: { pageSize: 51 },
+      reason: "invalid_page_size",
+    },
+  ])("refuses $name as invalid_state", async ({ args, reason }) => {
+    const t = convexTest(schema, modules);
+    const asCreator = await seedUser(t, { subject: "creator_a" });
+
+    await expectApiError(
+      () =>
+        asCreator.query(api.applications.searchMine, {
+          ...searchArgs,
+          ...args,
+        }),
+      "invalid_state",
+      reason,
+    );
+  });
+
+  test("refuses a tab other than applications", async () => {
+    const t = convexTest(schema, modules);
+    const asCreator = await seedUser(t, { subject: "creator_a" });
+
+    await expect(
+      asCreator.query(api.applications.searchMine, {
+        ...searchArgs,
+        // @ts-expect-error The offers and accepted tabs are not part of the contract yet.
+        tab: "offers",
+      }),
+    ).rejects.toThrow(/Expected `applications`, got `offers`/);
+  });
+
+  test("pages through the rows", async () => {
+    const t = convexTest(schema, modules);
+    const asCreator = await seedUser(t, { subject: "creator_a" });
+    for (let i = 1; i <= 4; i++) await applyTo(t, asCreator, `Row ${i}`);
+
+    const result = await asCreator.query(api.applications.searchMine, {
+      ...searchArgs,
+      page: 2,
+      pageSize: 3,
+    });
+
+    expect(result.rows.map((row) => row.title)).toEqual(["Row 1"]);
+    expect(result).toMatchObject({
+      page: 2,
+      pageSize: 3,
+      totalCount: 4,
+      pageCount: 2,
+    });
   });
 });

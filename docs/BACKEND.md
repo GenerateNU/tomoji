@@ -225,6 +225,34 @@ deliverable separately:
 dev deployment holding submissions from before it won't accept the schema:
 clear its `submissions`, `posts`, and `disputes` tables, then push again.
 
+## Creator applications table
+
+`applications.searchMine` feeds the creator's Applications page: one page of rows plus a
+count for each tab. It is a creator-only query; the creator always comes from the caller.
+
+- **Tabs.** `APPLICATION_TAB_STATUSES` maps every status to one tab. Applications lists
+  `pending`, `rejected`, and `opportunityFull`; Offers lists `offered`, `offerExpired`, and
+  `declined`; Accepted lists `accepted`. Only the applications tab can be requested so far;
+  the other two are counted but have no rows yet. "Hide rejected" hides only `rejected`.
+- **Read budget.** Each count reads at most `MAX_APPLICATIONS_READ` (300) applications,
+  newest first within each status, and the applications tab's statuses share that budget.
+  Search, filters, sorting, and paging then run in memory over those rows. A count that
+  reaches its limit reports `isCapped: true`, and the UI shows "300+". Counts ignore the
+  search and filters; `totalCount` is the filtered total.
+- **Arguments.** `page` is an integer from 1 and a page past the end is clamped to the last.
+  `pageSize` is an integer from 1 to 50 and the search is trimmed to at most 100
+  characters. Violations are `invalid_state` with reason `invalid_page`,
+  `invalid_page_size`, or `search_too_long`. Sorting defaults to newest submitted first,
+  and ties always fall back to newest first.
+- **Rows keep their details after an opportunity closes.** A row reads the opportunity and
+  company directly rather than through `requireOpportunity`, so a closed, paused, or
+  inactive-company opportunity still shows its title, company, and pay. `canStar` says
+  whether creators can still see it, because starring a hidden opportunity is refused
+  (`not_found`) while unstarring always works. A row whose opportunity was deleted is
+  skipped, and a missing company shows an empty `companyName`.
+- `submittedAt` is the application's creation time. Company logos are private media, so the
+  row returns `companyLogoMediaId` and the client loads it with `media.getCompanyMedia`.
+
 ## Payout records
 
 `payouts` records individual finalized earnings payments. Every payout identifies

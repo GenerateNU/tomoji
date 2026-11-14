@@ -11,7 +11,7 @@ import { cn } from "@/lib/utils";
 // the header and rows for a ruled table.
 type SortDirection = "ascending" | "descending";
 
-const cardClassName = "relative w-full overflow-x-auto rounded-lg bg-gray-0 p-6 shadow-card";
+const cardClassName = "relative w-full overflow-x-auto rounded-lg bg-gray-0 p-4 shadow-card md:p-6";
 
 /** A table inside a white card. Pass `bare` when a TableCard already supplies the card. */
 function Table({

@@ -1,21 +1,26 @@
 import { Skeleton } from "@/components/ui/skeleton";
+import { TableCell, TableRow } from "@/components/ui/table";
+
+/** A table row's worth of placeholder, matching the real row's columns. */
 export function SkeletonRow() {
   return (
-    <tr aria-hidden>
-      <td className="py-2.5 pr-5">
-        <div className="flex items-center gap-4">
-          <Skeleton className="size-13 shrink-0 rounded-2xl" />
-          <div className="flex flex-col gap-2">
-            <Skeleton className="h-5 w-40 rounded" />
-            <Skeleton className="h-4 w-24 rounded" />
-          </div>
-        </div>
-      </td>
-      {Array.from({ length: 4 }, (_, i) => (
-        <td key={i} className="py-2.5 pr-5 last:pr-0">
-          <Skeleton className="h-5 w-20 rounded" />
-        </td>
-      ))}
-    </tr>
+    <TableRow aria-hidden>
+      <TableCell type="custom">
+        <Skeleton className="h-5 w-3/4" />
+      </TableCell>
+      <TableCell type="custom">
+        <Skeleton className="size-6 shrink-0" />
+        <Skeleton className="h-5 w-2/3" />
+      </TableCell>
+      <TableCell type="custom">
+        <Skeleton className="h-7 w-20" />
+      </TableCell>
+      <TableCell type="custom">
+        <Skeleton className="h-5 w-16" />
+      </TableCell>
+      <TableCell type="custom">
+        <Skeleton className="h-5 w-28" />
+      </TableCell>
+    </TableRow>
   );
 }

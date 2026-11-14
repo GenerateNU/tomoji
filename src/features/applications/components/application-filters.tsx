@@ -3,31 +3,24 @@
 import { RiEyeOffLine, RiSearchLine, RiStarLine } from "@remixicon/react";
 import { FilterChip } from "@/components/filter-chip";
 import { TextField } from "@/components/text-field";
-import { cn } from "@/lib/utils";
 import type { ApplicationsTable } from "../hooks/use-applications-table";
 
+const SEARCH_LABELS = {
+  applications: "Search applications",
+  offers: "Search offers",
+  accepted: "Search accepted offers",
+} as const;
+
 /**
- * Keyword search plus the Starred and Hide rejected toggles. The Offers and Accepted
- * tabs have no visible label, only an accessible one, and no Hide rejected.
+ * Keyword search plus the Starred and Hide rejected toggles. The search field has no
+ * visible label, only an accessible one. Hide rejected is on the Applications tab only.
  */
 export function ApplicationFilters({ table }: { table: ApplicationsTable }) {
-  const isOffers = table.tab !== "applications";
+  const isApplications = table.tab === "applications";
   return (
-    <div
-      className={cn(
-        "flex flex-col gap-3 md:flex-row",
-        isOffers ? "md:items-center" : "md:items-end",
-      )}
-    >
+    <div className="flex flex-col gap-3 md:flex-row md:items-center">
       <TextField
-        label={isOffers ? undefined : "Search"}
-        aria-label={
-          isOffers
-            ? table.tab === "accepted"
-              ? "Search accepted offers"
-              : "Search offers"
-            : undefined
-        }
+        aria-label={SEARCH_LABELS[table.tab]}
         icon={RiSearchLine}
         placeholder="Search by keyword"
         type="search"
@@ -38,7 +31,7 @@ export function ApplicationFilters({ table }: { table: ApplicationsTable }) {
         onChange={(event) => table.setSearch(event.target.value)}
         className="w-full md:w-80"
       />
-      <div className={cn("flex flex-wrap gap-2", !isOffers && "md:pb-1")}>
+      <div className="flex flex-wrap gap-2">
         <FilterChip
           icon={RiStarLine}
           selected={table.starred}
@@ -47,7 +40,7 @@ export function ApplicationFilters({ table }: { table: ApplicationsTable }) {
         >
           Starred
         </FilterChip>
-        {!isOffers && (
+        {isApplications && (
           <FilterChip
             icon={RiEyeOffLine}
             selected={table.hideRejected}

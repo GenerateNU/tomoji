@@ -13,7 +13,7 @@ export function SkeletonRow({ showSubmitted = true }: { showSubmitted?: boolean 
         <Skeleton className="h-5 w-2/3" />
       </TableCell>
       <TableCell type="custom">
-        <Skeleton className="h-7 w-20" />
+        <Skeleton className="h-6 w-16" />
       </TableCell>
       {showSubmitted && (
         <TableCell type="custom">

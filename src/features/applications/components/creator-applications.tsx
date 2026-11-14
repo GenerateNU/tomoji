@@ -2,12 +2,10 @@
 
 import { api } from "@convex/_generated/api";
 import type { FunctionReturnType } from "convex/server";
-import Link from "next/link";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import type { Id } from "@convex/_generated/dataModel";
-import { EmptyState } from "@/components/empty-state";
 import { ErrorBoundary } from "@/components/error-boundary";
-import { Button, buttonVariants } from "@/components/ui/button";
+import { Button } from "@/components/ui/button";
 import { TableBody, TableCard, TableHead, TableHeader } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsCount, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useMediaQuery } from "@/hooks/use-media-query";
@@ -20,16 +18,15 @@ import {
   type ApplicationTab,
   type ApplicationsTable,
 } from "../hooks/use-applications-table";
-import {
-  ApplicationCardList,
-  ApplicationSortSelect,
-  SkeletonCardList,
-} from "./application-card-list";
+import { ApplicationCardList, ApplicationSortSelect } from "./application-card-list";
+import { usePrefetchedTabs } from "../hooks/use-prefetched-tabs";
 import { ApplicationFilters } from "./application-filters";
+import { ApplicationsEmptyState } from "./applications-empty-state";
 import { OfferModal } from "./offer-modal";
 import { ApplicationRow } from "./application-row";
 import { ApplicationsPagination } from "./applications-pagination";
-import { SkeletonRow } from "./skeleton-row";
+import { ApplicationsResultsSkeleton } from "./applications-page-skeleton";
+import { TAB_CONFIG } from "./tab-config";
 
 type TabCount = { count: number; isCapped: boolean };
 
@@ -95,102 +92,28 @@ function ApplicationsError({ onRetry, onClear }: { onRetry: () => void; onClear:
   );
 }
 
-type TableColumn = { label: string; sortKey: ApplicationSortKey; className?: string };
-
-type TabConfig = {
-  noun: string;
-  tableTitle: string;
-  /** The Offers and Accepted tabs are named by their tab, so the table has no heading of its own. */
-  hideTitle: boolean;
-  /** Whether a row opens the offer. */
-  opensModal: boolean;
-  columns: TableColumn[];
-};
-
-const NAME_COLUMN = { label: "Name", sortKey: "name" } as const;
-const COMPANY_COLUMN = { label: "Company", sortKey: "company" } as const;
-const COMPENSATION_COLUMN = { label: "Compensation", sortKey: "compensation" } as const;
-const SUBMITTED_COLUMN = { label: "Submitted", sortKey: "submitted", className: "w-28" } as const;
-
-const TAB_CONFIG: Record<ApplicationTab, TabConfig> = {
-  applications: {
-    noun: "applications",
-    tableTitle: "Applications",
-    hideTitle: false,
-    opensModal: false,
-    columns: [
-      { ...NAME_COLUMN, className: "w-[32%]" },
-      { ...COMPANY_COLUMN, className: "w-[20%]" },
-      { label: "Status", sortKey: "status", className: "w-32" },
-      SUBMITTED_COLUMN,
-      COMPENSATION_COLUMN,
-    ],
-  },
-  // The Offers tab's third column is when the offer ends, not where it stands.
-  offers: {
-    noun: "offers",
-    tableTitle: "Offers",
-    hideTitle: true,
-    opensModal: true,
-    columns: [
-      { ...NAME_COLUMN, className: "w-[30%]" },
-      { ...COMPANY_COLUMN, className: "w-[20%]" },
-      { label: "Expiration date", sortKey: "expires", className: "w-36" },
-      SUBMITTED_COLUMN,
-      COMPENSATION_COLUMN,
-    ],
-  },
-  accepted: {
-    noun: "accepted offers",
-    tableTitle: "Accepted offers",
-    hideTitle: true,
-    opensModal: true,
-    columns: [
-      { ...NAME_COLUMN, className: "w-[40%]" },
-      { ...COMPANY_COLUMN, className: "w-[22%]" },
-      { label: "Accepted", sortKey: "accepted", className: "w-36" },
-      COMPENSATION_COLUMN,
-    ],
-  },
-};
-
-function NeverHadState({
-  tab,
-  onSwitchTab,
-}: {
-  tab: ApplicationTab;
-  onSwitchTab: (tab: ApplicationTab) => void;
-}) {
+function NeverHadState({ tab }: { tab: ApplicationTab }) {
   if (tab === "offers") {
     return (
-      <EmptyState className="flex flex-col items-center gap-3">
-        <p className="font-medium text-gray-950">No offers yet.</p>
-        <p>When a company sends you an offer, it appears here. Offers usually last 48 hours.</p>
-        <Button variant="secondary-subtle" onClick={() => onSwitchTab("applications")}>
-          View applications
-        </Button>
-      </EmptyState>
+      <ApplicationsEmptyState
+        title="No offers yet."
+        description="When a company sends you an offer, it appears here. Offers usually last 48 hours."
+      />
     );
   }
   if (tab === "accepted") {
     return (
-      <EmptyState className="flex flex-col items-center gap-3">
-        <p className="font-medium text-gray-950">No accepted offers yet.</p>
-        <p>Offers you accept appear here.</p>
-        <Button variant="secondary-subtle" onClick={() => onSwitchTab("offers")}>
-          View offers
-        </Button>
-      </EmptyState>
+      <ApplicationsEmptyState
+        title="No accepted offers yet."
+        description="Offers you accept appear here."
+      />
     );
   }
   return (
-    <EmptyState className="flex flex-col items-center gap-3">
-      <p className="font-medium text-gray-950">You haven&apos;t applied to anything yet.</p>
-      <p>When you apply to an opportunity, you can follow its status here.</p>
-      <Link href="/opportunities" className={buttonVariants({ variant: "secondary-subtle" })}>
-        Browse opportunities
-      </Link>
-    </EmptyState>
+    <ApplicationsEmptyState
+      title="You haven't applied to anything yet."
+      description="When you apply to an opportunity, you can follow its status here."
+    />
   );
 }
 
@@ -201,6 +124,7 @@ function ApplicationsContent({ table }: { table: ApplicationsTable }) {
   const [openApplicationId, setOpenApplicationId] = useState<Id<"applications"> | null>(null);
   // Kept apart from the id so the modal's content doesn't change as it closes.
   const [modalOpen, setModalOpen] = useState(false);
+  usePrefetchedTabs();
   // Keeps the current rows on screen while a new filter or page loads.
   const { data: latest, isStale } = useStableQuery(api.applications.searchMine, table.args);
   // Rows of the other tab have different columns, so they are never shown under this tab's headers.
@@ -250,50 +174,20 @@ function ApplicationsContent({ table }: { table: ApplicationsTable }) {
         <span className="sr-only" role="status">
           Loading {noun}…
         </span>
-        {isWide ? (
-          <TableCard
-            title={tableTitle}
-            hideTitle={hideTitle}
-            className="[&_table]:min-w-176"
-            aria-hidden
-          >
-            <TableHeader>
-              {columns.map((column) => (
-                <TableHead key={column.sortKey} className={column.className}>
-                  {column.label}
-                </TableHead>
-              ))}
-            </TableHeader>
-            <TableBody>
-              {Array.from({ length: 5 }, (_, index) => (
-                <SkeletonRow key={index} showSubmitted={table.tab !== "accepted"} />
-              ))}
-            </TableBody>
-          </TableCard>
-        ) : (
-          <div className="rounded-lg bg-gray-0 p-4 shadow-card">
-            <SkeletonCardList />
-          </div>
-        )}
+        <ApplicationsResultsSkeleton tab={table.tab} />
       </>
     );
   } else if (neverHad) {
-    results = <NeverHadState tab={table.tab} onSwitchTab={table.setTab} />;
+    results = <NeverHadState tab={table.tab} />;
   } else if (data.totalCount === 0) {
-    results = (
-      <EmptyState className="flex flex-col items-center gap-3">
-        <p className="font-medium text-gray-950">No {noun} match your filters.</p>
-        <Button variant="secondary-subtle" onClick={table.clearFilters}>
-          Clear filters
-        </Button>
-      </EmptyState>
-    );
+    results = <ApplicationsEmptyState title={`No ${noun} match your filters.`} />;
   } else if (isWide) {
     results = (
       <TableCard
         title={tableTitle}
         hideTitle={hideTitle}
         count={data.totalCount}
+        bare
         className="[&_table]:min-w-176"
       >
         <TableHeader>
@@ -322,12 +216,7 @@ function ApplicationsContent({ table }: { table: ApplicationsTable }) {
     );
   } else {
     results = (
-      <div className="flex flex-col gap-4 rounded-lg bg-gray-0 p-4 shadow-card">
-        {!hideTitle && (
-          <h2 className="flex items-center gap-1.5 text-body-lg font-medium text-gray-950">
-            Applications <span className="text-gray-500">({data.totalCount})</span>
-          </h2>
-        )}
+      <div className="flex flex-col gap-4">
         <ApplicationSortSelect tab={table.tab} sort={table.sort} onSortChange={table.setSort} />
         <ApplicationCardList rows={data.rows} now={now} tab={table.tab} onOpen={openOffer} />
       </div>

@@ -188,7 +188,7 @@ export function ApplicationCardList({
               : undefined
           }
         >
-          <div className="flex items-start justify-between gap-2">
+          <div className="flex items-start gap-2">
             {onOpen ? (
               <OfferTitleButton
                 row={row}

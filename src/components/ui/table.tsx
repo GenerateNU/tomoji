@@ -35,16 +35,20 @@ function Table({
 
 /**
  * A white card with a title and count above a table, e.g. "Offers (4)".
- * `className` styles the card; other props go to the table.
+ * `className` styles the card; other props go to the table. `bare` drops the
+ * card's background, shadow, and padding, for a page that is already white.
  */
 function TableCard({
   title,
   count,
   hideTitle = false,
+  bare = false,
   className,
   children,
   ...props
 }: Omit<React.ComponentProps<"table">, "title"> & {
+  /** Renders without the card treatment. */
+  bare?: boolean;
   title: React.ReactNode;
   /** Shown in gray after the title, as (4). */
   count?: number | string;
@@ -53,7 +57,10 @@ function TableCard({
 }) {
   const titleId = React.useId();
   return (
-    <div data-slot="table-card" className={cn("flex flex-col gap-4", cardClassName, className)}>
+    <div
+      data-slot="table-card"
+      className={cn("flex flex-col gap-4", !bare && cardClassName, className)}
+    >
       <div
         id={titleId}
         className={cn(

@@ -23,6 +23,7 @@ export const assignmentsTable = defineTable({
   paymentCapCents: v.number(),
   usesAiReview: v.boolean(),
   status: assignmentStatus,
+  cancelledAt: v.optional(v.number()), // Accrual cutoff, preserved separately from payout status.
   // No timestamp means product access is pending. Delivery time is Unix milliseconds.
   productAccessDeliveredAt: v.optional(v.number()),
   productAccessDeliveredBy: v.optional(v.id("companyUsers")),

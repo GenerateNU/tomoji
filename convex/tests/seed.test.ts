@@ -4,6 +4,7 @@ import { afterEach, expect, test, vi } from "vitest";
 import { api, internal } from "../_generated/api";
 import type { TableNames } from "../_generated/dataModel";
 import schema from "../schema";
+import { notificationTargetKind } from "../schemas/notifications.schema";
 import { expectApiError, seedUser } from "./helpers";
 
 const modules = import.meta.glob("../**/*.ts");
@@ -11,7 +12,7 @@ const paginationOpts = { numItems: 20, cursor: null };
 
 afterEach(() => vi.unstubAllEnvs());
 
-test("seeds every application table and preserves existing data on repeat runs", async () => {
+test("seeds demo tables without earnings evidence and preserves existing data on repeat runs", async () => {
   vi.stubEnv("TOMOJI_DEV_SEED", "true");
   const t = convexTest(schema, modules);
   await t.run((ctx) =>
@@ -32,7 +33,14 @@ test("seeds every application table and preserves existing data on repeat runs",
       Promise.all(tables.map(async (table) => (await ctx.db.query(table).collect()).length)),
     );
   const counts = await countRows();
-  expect(tables.filter((_, index) => counts[index] === 0)).toEqual([]);
+  // Synthetic demo posts have no verified earnings clock or X observations.
+  // Keep those tables empty rather than inventing payable earnings evidence.
+  expect(tables.filter((_, index) => counts[index] === 0).sort()).toEqual([
+    "deliverableEarnings",
+    "earningCalculations",
+    "earningsSchedules",
+    "postViewSnapshots",
+  ]);
   expect(first.created).toBe(true);
 
   expect(await t.mutation(internal.seed.run, {})).toEqual({ ...first, created: false });
@@ -189,4 +197,45 @@ test("reset preserves a campaign with the same name when it has no seed marker",
   expect(await t.mutation(internal.seed.clearDemo, {})).toMatchObject({ campaigns: 1 });
   expect(await t.run((ctx) => ctx.db.get("campaigns", campaignId))).toBeNull();
   expect(await t.run((ctx) => ctx.db.get("campaigns", unrelated))).not.toBeNull();
+});
+
+test("seeds every notification type whose page exists, with a target that exists", async () => {
+  vi.stubEnv("TOMOJI_DEV_SEED", "true");
+  const t = convexTest(schema, modules);
+  await t.mutation(internal.seed.run, {});
+
+  const notifications = await t.run((ctx) => ctx.db.query("notifications").collect());
+  // Dispute notifications have no page to open yet (`notificationHref` returns null).
+  const expected = Object.entries(notificationTargetKind)
+    .filter(([, kind]) => kind !== "dispute")
+    .map(([type]) => type);
+  expect(new Set(notifications.map((n) => n.type))).toEqual(new Set(expected));
+  for (const { type, target } of notifications) {
+    expect(target.kind).toBe(notificationTargetKind[type]);
+    const id =
+      target.kind === "application"
+        ? target.applicationId
+        : target.kind === "assignment"
+          ? target.assignmentId
+          : target.kind === "submission"
+            ? target.submissionId
+            : target.kind === "opportunity"
+              ? target.opportunityId
+              : target.kind === "campaign"
+                ? target.campaignId
+                : target.disputeId;
+    expect(await t.run((ctx) => ctx.db.get(id))).not.toBeNull();
+  }
+
+  // Both the creator and the company admin get a mix, with unread on top.
+  const recipients = new Set(notifications.map((n) => n.userId));
+  expect(recipients.size).toBe(2);
+  for (const userId of recipients) {
+    const mine = notifications
+      .filter((n) => n.userId === userId)
+      .sort((a, b) => b._creationTime - a._creationTime);
+    expect(mine.some((n) => n.isRead) && mine.some((n) => !n.isRead)).toBe(true);
+    const firstRead = mine.findIndex((n) => n.isRead);
+    expect(mine.slice(firstRead).every((n) => n.isRead)).toBe(true);
+  }
 });

@@ -36,14 +36,18 @@ export function siteUrl(path: string): string {
 }
 
 /**
- * The page on the Tomoji site Checkout sends the admin back to, marked with
- * `stripe=return` or `stripe=cancel`. Returning does not mean the card is
- * saved; `me` updates when the webhook arrives.
+ * The page on the Tomoji site Stripe sends someone back to, marked with why:
+ * `return` (they left Stripe's form), `cancel` (they backed out of Checkout),
+ * or `refresh` (the onboarding link expired and the page needs a new one).
+ * Coming back proves nothing; each `me` query updates when the webhook arrives.
  *
  * @throws `invalid_state` with reason `return_path_invalid` unless `returnPath`
  * is a path on the Tomoji site, so the flow cannot redirect to another site.
  */
-export function checkoutReturnUrl(returnPath: string, outcome: "return" | "cancel"): string {
+export function stripeReturnUrl(
+  returnPath: string,
+  outcome: "return" | "cancel" | "refresh",
+): string {
   const url = new URL(siteUrl(returnPath));
   // `//host` and `/\host` resolve to another origin, so compare origins too.
   if (!returnPath.startsWith("/") || url.origin !== new URL(siteUrl("/")).origin) {

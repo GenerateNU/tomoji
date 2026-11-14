@@ -68,16 +68,17 @@ isn't built yet.
 
 ## Routes
 
-| Route                           | Type   | Returns                                                       |
-| ------------------------------- | ------ | ------------------------------------------------------------- |
-| `stripeAccounts.me`             | query  | `{ status }`                                                  |
-| `stripeAccounts.onboardingLink` | action | `{ url }` to Stripe's form; creates the account on first call |
+| Route                                           | Type   | Returns                                                       |
+| ----------------------------------------------- | ------ | ------------------------------------------------------------- |
+| `stripeAccounts.me`                             | query  | `{ status }`                                                  |
+| `stripeAccounts.onboardingLink({ returnPath })` | action | `{ url }` to Stripe's form; creates the account on first call |
 
 Both are creator-only; companies and operators get `forbidden`.
 
 `onboardingLink` URLs are single-use and expire within minutes, so request one when the
 creator clicks, never ahead of time. Stripe sends the creator back to
-`/profile?stripe=return` when they leave the form, or `/profile?stripe=refresh` when the link
+the page that asked (`returnPath`, e.g. `/earnings` or `/settings`) with `?stripe=return` when
+they leave the form, or `?stripe=refresh` when the link
 expired, in which case call `onboardingLink` again and redirect. Coming back does **not**
 mean onboarding finished; `me` updates on its own when Stripe's webhook arrives.
 
@@ -162,7 +163,7 @@ With `just bd` running and your own creator account (find your WorkOS id in the 
 table):
 
 ```bash
-bunx convex run stripeAccounts:onboardingLink '{}' --identity '{"subject":"<your workosId>"}'
+bunx convex run stripeAccounts:onboardingLink '{"returnPath":"/settings"}' --identity '{"subject":"<your workosId>"}'
 ```
 
 Open the returned URL and use Stripe's test values: test phone number with code `000000`,

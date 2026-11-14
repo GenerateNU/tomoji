@@ -4,7 +4,7 @@ import { internal } from "./_generated/api";
 import { internalMutation, internalQuery } from "./_generated/server";
 import { apiError } from "./lib/errors";
 import { companyAdminAction, companyQuery } from "./lib/functions";
-import { checkoutReturnUrl, fingerprint, stripeClient, stripeErrorDetails } from "./lib/stripe";
+import { stripeReturnUrl, fingerprint, stripeClient, stripeErrorDetails } from "./lib/stripe";
 import { requireCompany } from "./models/companies";
 import { requeueCompanyPayouts } from "./models/payments";
 import {
@@ -66,8 +66,8 @@ export const setupPaymentMethod = companyAdminAction({
     // Built before any Stripe call so a misconfigured deployment or a bad path
     // is not reported as a Stripe outage.
     const stripe = stripeClient();
-    const returnUrl = checkoutReturnUrl(args.returnPath, "return");
-    const cancelUrl = checkoutReturnUrl(args.returnPath, "cancel");
+    const returnUrl = stripeReturnUrl(args.returnPath, "return");
+    const cancelUrl = stripeReturnUrl(args.returnPath, "cancel");
     const companyId = ctx.membership.companyId;
 
     let customer = await ctx.runQuery(internal.stripeCustomers.getForCompany, { companyId });

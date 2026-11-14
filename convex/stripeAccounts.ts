@@ -8,7 +8,7 @@ import {
   createConnectAccount,
   findCreatedConnectAccount,
   isAccountAccessLost,
-  siteUrl,
+  stripeReturnUrl,
   stripeClient,
   stripeErrorDetails,
   toStripeAccountState,
@@ -42,11 +42,6 @@ import schema from "./schema";
  * never one taken from a client.
  */
 
-// Where Stripe sends creators back. The profile page holds the Payment card;
-// on `refresh` it requests a new link, because the old one expired or was used.
-const RETURN_PATH = "/profile?stripe=return";
-const REFRESH_PATH = "/profile?stripe=refresh";
-
 /**
  * What the creator has to do about payouts: `notStarted`, `actionRequired`,
  * `inReview`, `ready`, `rejected`, or `disconnected`.
@@ -67,8 +62,12 @@ export const me = creatorQuery({
  * account on first use, or a new one after they disconnected Tomoji. The
  * account is made in the creator's profile country, which Stripe can never
  * change. The link expires within minutes, so it is never stored; call this
- * again for each visit.
+ * again for each visit. `returnPath` is the page Stripe sends the creator back
+ * to, such as `/earnings` or `/settings`, marked `stripe=return` when they leave
+ * the form or `stripe=refresh` when the link expired and the page needs a new one.
  *
+ * @throws `invalid_state` with reason `return_path_invalid` unless `returnPath`
+ * is a path on the Tomoji site.
  * @throws `invalid_state` with reason `country_required` if the creator has not
  * set a country, `stripe_country_unsupported` if Stripe does not operate there,
  * or `stripe_account_disconnected` if the creator removed Tomoji in Stripe; the
@@ -78,14 +77,14 @@ export const me = creatorQuery({
  * `stripe_link_failed` if Stripe rejects either request.
  */
 export const onboardingLink = creatorAction({
-  args: {},
+  args: { returnPath: v.string() },
   returns: v.object({ url: v.string() }),
-  handler: async (ctx): Promise<{ url: string }> => {
-    // Built before any Stripe call so a misconfigured deployment is not
-    // reported as a Stripe outage.
+  handler: async (ctx, { returnPath }): Promise<{ url: string }> => {
+    // Built before any Stripe call so a misconfigured deployment or a bad path
+    // is not reported as a Stripe outage.
     const stripe = stripeClient();
-    const returnUrl = siteUrl(RETURN_PATH);
-    const refreshUrl = siteUrl(REFRESH_PATH);
+    const returnUrl = stripeReturnUrl(returnPath, "return");
+    const refreshUrl = stripeReturnUrl(returnPath, "refresh");
 
     let account = await ctx.runQuery(internal.stripeAccounts.getForCreator, {
       creatorId: ctx.creatorId,

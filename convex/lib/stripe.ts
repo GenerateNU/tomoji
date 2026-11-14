@@ -260,8 +260,8 @@ export async function findAttemptCharge(
  * webhooks find the attempt.
  *
  * @throws whatever Stripe throws when the outcome is unknown, such as a network
- * error. A card decline is returned as `failed`; a request Stripe refused,
- * including an idempotency key reused with other parameters, as `rejected`.
+ * or idempotency error. A card decline is returned as `failed`; an invalid
+ * request Stripe refused, as `rejected`.
  */
 export async function chargeConnectAccount(
   stripe: Stripe,
@@ -276,14 +276,11 @@ export async function chargeConnectAccount(
   const { payment } = charge;
   const onCreatorAccount = { stripeAccount: payment.stripeAccountId };
   try {
-    // The card in the key: a resumed attempt may send a card swapped in since.
-    // Copying a card moves no money, so a second copy is harmless.
+    // Always the attempt's own card (see `paymentMethodId` on `payments`), so
+    // a resumed attempt repeats exactly the same request under each key.
     const card = await stripe.paymentMethods.create(
       { customer: charge.stripeCustomerId, payment_method: charge.paymentMethodId },
-      {
-        ...onCreatorAccount,
-        idempotencyKey: `payment:${payment._id}:card:${charge.paymentMethodId}`,
-      },
+      { ...onCreatorAccount, idempotencyKey: `payment:${payment._id}:card` },
     );
     const intent = await stripe.paymentIntents.create(
       {
@@ -311,9 +308,8 @@ export async function chargeConnectAccount(
       };
     }
     // Refused outright, so no charge exists; retrying would fail the same way.
-    if (error instanceof Stripe.errors.StripeIdempotencyError) {
-      return { kind: "rejected", failureCode: "idempotency_error" };
-    }
+    // An idempotency error is thrown instead: Stripe saw a request with this
+    // key, so the first may have charged, and Stripe must be asked.
     if (error instanceof Stripe.errors.StripeInvalidRequestError) {
       return { kind: "rejected", failureCode: error.code ?? "invalid_request" };
     }

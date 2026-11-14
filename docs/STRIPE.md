@@ -314,30 +314,32 @@ nothing.
 2. Starts the attempt (see above), or records why it can't be charged and stops.
 3. Copies the company's saved card onto the creator's account and charges it off-session for
    exactly the payout's `amount`. Both requests are keyed by the attempt
-   (`payment:<id>:card:<card id>`, `payment:<id>`); the card copy includes the card's id, since
-   a resumed attempt may send a card the company swapped in.
+   (`payment:<id>:card`, `payment:<id>`). The attempt records the card it charges
+   (`paymentMethodId`), and a resumed attempt resends with that card, never one the company
+   swapped in since, so each key always carries the same request.
 4. Records the outcome from Stripe's response; the webhook later reports the same outcome,
    which is then a no-op.
 
-| Outcome                                                                     | Attempt                                        | Payout `paymentStatus` |
-| --------------------------------------------------------------------------- | ---------------------------------------------- | ---------------------- |
-| Charge succeeded                                                            | `succeeded`, fee recorded via webhook          | `transferred`          |
-| Card declined                                                               | `failed`, issuer's reason                      | `needsAttention`       |
-| Stripe refused the request (invalid, or a reused key with other parameters) | `failed`, Stripe's code or `idempotency_error` | `needsAttention`       |
-| Company has no saved card                                                   | `failed`, `company_card_missing`               | `needsAttention`       |
-| Company's saved card has expired                                            | `failed`, `company_card_expired`               | `needsAttention`       |
-| Creator's account can't accept charges                                      | `failed`, `creator_not_ready`                  | `needsAttention`       |
-| Open dispute on the assignment                                              | `failed`, `payout_disputed`                    | `needsAttention`       |
-| Creator has no Stripe account (shouldn't happen: applying requires one)     | none, error logged                             | `needsAttention`       |
-| Outcome unknown (e.g. network error)                                        | stays `processing`                             | `processing`           |
+| Outcome                                                                 | Attempt                               | Payout `paymentStatus` |
+| ----------------------------------------------------------------------- | ------------------------------------- | ---------------------- |
+| Charge succeeded                                                        | `succeeded`, fee recorded via webhook | `transferred`          |
+| Card declined                                                           | `failed`, issuer's reason             | `needsAttention`       |
+| Stripe refused the request as invalid                                   | `failed`, Stripe's code               | `needsAttention`       |
+| Company has no saved card                                               | `failed`, `company_card_missing`      | `needsAttention`       |
+| Company's saved card has expired                                        | `failed`, `company_card_expired`      | `needsAttention`       |
+| Creator's account can't accept charges                                  | `failed`, `creator_not_ready`         | `needsAttention`       |
+| Open dispute on the assignment                                          | `failed`, `payout_disputed`           | `needsAttention`       |
+| Creator has no Stripe account (shouldn't happen: applying requires one) | none, error logged                    | `needsAttention`       |
+| Outcome unknown (network or idempotency error)                          | stays `processing`                    | `processing`           |
 
 An unknown outcome is retried up to 3 times, a minute apart, with **the same attempt**. Before
 resending, the retry **asks Stripe whether that attempt already charged** (searching the creator
 account's charges for its `metadata.paymentId`) and records that charge's outcome if so: the
 first request may have succeeded with its reply lost, and Stripe forgets idempotency keys after
 about a day, so resending blindly could charge twice. Only when Stripe confirms there is no
-charge does the retry charge again, or fail the attempt if the company's card is gone or expired
-by then. Stripe's search can lag by up to a minute; retries come later than that. Payouts that
+charge does the retry charge again, with the attempt's card, or fail the attempt if the company
+has removed its card by then. An idempotency error counts as unknown, not as a refusal: Stripe
+saw a request with that key, so the first may have charged. Stripe's search can lag by up to a minute; retries come later than that. Payouts that
 need attention, and attempts still unresolved after the retries, are left for recovery (next
 PR); the charging run never retries them itself, so they can't hold up other payouts.
 

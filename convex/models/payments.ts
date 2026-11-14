@@ -167,19 +167,16 @@ export async function prepareCharge(
     ) {
       return { kind: "settled" };
     }
-    const cardBlock =
-      customer === null || card === undefined
-        ? "company_card_missing"
-        : isCardExpired(card, Date.now())
-          ? "company_card_expired"
-          : null;
+    // Resent with the attempt's own card, so the same key carries the same
+    // request. Not resent at all once the company has removed its card.
+    const usable = customer !== null && card !== undefined && latest.paymentMethodId !== undefined;
     return {
       kind: "charge",
       payment: latest,
       resumed: true,
-      stripeCustomerId: cardBlock === null ? (customer?.stripeCustomerId ?? null) : null,
-      paymentMethodId: cardBlock === null ? (card?.paymentMethodId ?? null) : null,
-      cardBlock,
+      stripeCustomerId: usable ? customer.stripeCustomerId : null,
+      paymentMethodId: usable ? (latest.paymentMethodId ?? null) : null,
+      cardBlock: usable ? null : "company_card_missing",
       amount: payout.amount,
       currency: payout.currency,
     };
@@ -209,9 +206,11 @@ export async function prepareCharge(
   if (isCardExpired(card, Date.now())) {
     return await blockPayout(ctx, payout, latest, account.stripeAccountId, "company_card_expired");
   }
+  const started = await startPayment(ctx, payoutId, account.stripeAccountId);
+  await ctx.db.patch("payments", started._id, { paymentMethodId: card.paymentMethodId });
   return {
     kind: "charge",
-    payment: await startPayment(ctx, payoutId, account.stripeAccountId),
+    payment: { ...started, paymentMethodId: card.paymentMethodId },
     resumed: false,
     stripeCustomerId: customer.stripeCustomerId,
     paymentMethodId: card.paymentMethodId,

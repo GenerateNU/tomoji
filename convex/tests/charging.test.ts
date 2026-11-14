@@ -120,16 +120,14 @@ describe("charging approved payouts", () => {
       attempt: 1,
       status: "succeeded",
       stripePaymentIntentId: "pi_test",
+      // A resumed attempt resends with this card, never one swapped in since.
+      paymentMethodId: COMPANY_CARD,
     });
     expect((await payout())?.paymentStatus).toBe("transferred");
     // The company's saved card is copied onto the creator's account, once per attempt.
     expect(stripe.cloneCard).toHaveBeenCalledWith(
       { customer: COMPANY_CUSTOMER, payment_method: COMPANY_CARD },
-      // The card in the key: a resumed attempt may send a card the company swapped in.
-      {
-        stripeAccount: CREATOR_ACCOUNT,
-        idempotencyKey: `payment:${attempt._id}:card:${COMPANY_CARD}`,
-      },
+      { stripeAccount: CREATOR_ACCOUNT, idempotencyKey: `payment:${attempt._id}:card` },
     );
     // Exactly the earned amount, off-session, tagged so webhooks find the attempt.
     expect(stripe.createIntent).toHaveBeenCalledWith(
@@ -265,27 +263,54 @@ describe("charging approved payouts", () => {
     expect((await payout())?.paymentStatus).toBe("needsAttention");
   });
 
-  // An idempotency error means the key's first request had other parameters, such
-  // as a card swapped since. Retrying would fail the same way forever, unseen.
-  test("flags the attempt when Stripe refuses the resent request", async () => {
-    const { payout, attempts, run } = await seedDuePayout();
+  // The reply was lost and the company swapped cards before the retry. Sending
+  // the new card under the same key would make Stripe refuse it, and failing
+  // then could charge twice, since the first try may have gone through.
+  test("resends a resumed attempt with its own card, not one swapped in since", async () => {
+    const { t, attempts, run } = await seedDuePayout();
     vi.spyOn(console, "error").mockImplementation(() => {});
-    stripe.createIntent
-      .mockRejectedValueOnce(new Stripe.errors.StripeConnectionError({ message: "socket hang up" }))
-      .mockRejectedValue(
-        new Stripe.errors.StripeIdempotencyError({
-          type: "idempotency_error",
-          message: "Keys for idempotent requests can only be used with the same parameters",
-        }),
-      );
+    stripe.createIntent.mockImplementationOnce((async () => {
+      await t.run(async (ctx) => {
+        const customer = await ctx.db.query("stripeCustomers").first();
+        if (customer?.card !== undefined)
+          await ctx.db.patch("stripeCustomers", customer._id, {
+            card: { ...customer.card, paymentMethodId: "pm_company_new" },
+          });
+      });
+      throw new Stripe.errors.StripeConnectionError({ message: "socket hang up" });
+    }) as never);
 
     await run();
 
-    expect(stripe.createIntent).toHaveBeenCalledTimes(2);
-    expect(await attempts()).toMatchObject([
-      { status: "failed", failureCode: "idempotency_error" },
-    ]);
-    expect((await payout())?.paymentStatus).toBe("needsAttention");
+    const [attempt] = await attempts();
+    expect(stripe.cloneCard).toHaveBeenCalledTimes(2);
+    for (const [params, options] of stripe.cloneCard.mock.calls) {
+      expect(params).toEqual({ customer: COMPANY_CUSTOMER, payment_method: COMPANY_CARD });
+      expect(options).toEqual({
+        stripeAccount: CREATOR_ACCOUNT,
+        idempotencyKey: `payment:${attempt._id}:card`,
+      });
+    }
+    expect(attempt).toMatchObject({ attempt: 1, status: "succeeded" });
+  });
+
+  // Stripe saw a request with this key, so the first one may have charged.
+  test("keeps the attempt open when Stripe reports an idempotency error", async () => {
+    const { payout, attempts, run } = await seedDuePayout();
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    stripe.createIntent.mockRejectedValue(
+      new Stripe.errors.StripeIdempotencyError({
+        type: "idempotency_error",
+        message: "Keys for idempotent requests can only be used with the same parameters",
+      }),
+    );
+
+    await run();
+
+    // Each retry checks Stripe for the charge first; recovery keeps checking after.
+    expect(stripe.searchIntents).toHaveBeenCalledTimes(3);
+    expect(await attempts()).toMatchObject([{ attempt: 1, status: "processing" }]);
+    expect((await payout())?.paymentStatus).toBe("processing");
   });
 
   // An invalid request proves Stripe made no charge, so there is nothing to retry.

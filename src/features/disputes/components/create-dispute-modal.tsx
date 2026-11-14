@@ -23,7 +23,6 @@ type Errors = Partial<Record<"assignment" | "title" | "description", string>>;
 
 export type CreatedDispute = { disputeId: Id<"disputes">; companyName: string };
 
-/** Figma "Create a Dispute". Remounts on open, so it starts blank. */
 export function CreateDisputeModal({
   open,
   onOpenChange,

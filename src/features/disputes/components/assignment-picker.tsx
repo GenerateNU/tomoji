@@ -20,7 +20,6 @@ import { cn } from "@/lib/utils";
 
 export type AssignmentOption = FunctionReturnType<typeof api.assignments.searchMine>[number];
 
-/** Searches the creator's assignments by company name (Figma's "Company" field). */
 export function AssignmentPicker({
   value,
   onValueChange,

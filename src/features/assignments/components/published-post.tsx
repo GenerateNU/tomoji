@@ -21,6 +21,7 @@ import { errorCode, errorMessage } from "@/lib/errors";
 import { cn } from "@/lib/utils";
 import { SubmissionPreview } from "./submission-preview";
 import { SubmittedVideo } from "./submitted-video";
+import { VideoSkeleton } from "./video-preview";
 
 type PublishedPostProps = {
   submissionId: Id<"submissions">;
@@ -182,40 +183,71 @@ export function PublishedPost({
       </DialogTrigger>
       <DialogContent
         initialFocus={false}
-        className="max-w-[1186px] [align-content:safe_center] overflow-y-auto rounded-lg bg-gray-50 px-5 py-14 shadow-2xl sm:px-10 md:min-h-[min(79.4dvh,780px)]"
+        className={cn(
+          "max-w-[1186px] [align-content:safe_center] overflow-y-auto rounded-lg px-5 py-14 shadow-2xl sm:px-10 md:min-h-[min(79.4dvh,780px)]",
+          checking
+            ? "bg-gray-0 sm:[&>[data-slot=dialog-close]]:top-8 sm:[&>[data-slot=dialog-close]]:right-8 [&>[data-slot=dialog-close]]:size-6 [&>[data-slot=dialog-close]]:items-center [&>[data-slot=dialog-close]]:justify-center [&>[data-slot=dialog-close]>svg]:size-4"
+            : "bg-gray-50",
+        )}
         overlayClassName="bg-gray-950/20 backdrop-blur-[2px]"
       >
-        <div className="mx-auto w-full max-w-[912px] space-y-5">
+        <div className={cn("mx-auto w-full max-w-[912px]", checking ? "space-y-8" : "space-y-5")}>
           <div className={cn("grid gap-5", (showMismatch || checking) && "sm:grid-cols-2")}>
             <div
               className={cn(
-                "relative min-w-0 space-y-4",
+                "relative min-w-0",
+                checking ? "space-y-5" : "space-y-4",
                 !showMismatch && !checking && "mx-auto w-full max-w-[446px]",
               )}
             >
-              <SubmissionPreview caption={caption}>
+              {checking && (
+                <p className="text-center text-body font-medium text-gray-500">
+                  The content you submitted
+                </p>
+              )}
+              <SubmissionPreview caption={caption} compact={checking}>
                 {mediaId && <SubmittedVideo mediaId={mediaId} eager />}
               </SubmissionPreview>
-              {(showMismatch || checking) && (
+              {showMismatch && (
                 <p className="text-center text-body-sm text-gray-500">The content you submitted</p>
               )}
               {post?.isVerified && <ResultIcon />}
             </div>
-            {(showMismatch || checking) && (
+            {checking && (
+              <div className="min-w-0 space-y-5">
+                <p className="text-center text-body font-medium text-gray-500">
+                  What we pulled from the URL
+                </p>
+                <div className="space-y-4 rounded-lg bg-gray-0 p-4 shadow-raised" aria-hidden>
+                  <div className="flex items-center gap-3">
+                    <div className="size-12 shrink-0 rounded-full bg-gray-50" />
+                    <div className="w-28 space-y-1.5">
+                      <div className="h-3.5 rounded-full bg-gray-50" />
+                      <div className="h-2.5 w-3/4 rounded-full bg-gray-50" />
+                    </div>
+                  </div>
+                  <div className="space-y-1">
+                    <div className="h-3.25 rounded-full bg-gray-50" />
+                    <div className="h-3.25 w-[54%] rounded-full bg-gray-50" />
+                  </div>
+                  {mediaId && <VideoSkeleton />}
+                </div>
+              </div>
+            )}
+            {showMismatch && (
               <div className="min-w-0 space-y-4">
                 <div className="relative space-y-4 rounded-lg bg-gray-0 p-4">
-                  {showMismatch && <ResultIcon mismatch />}
+                  <ResultIcon mismatch />
                   <div className="flex items-center gap-3">
                     <span className="size-8 shrink-0 rounded-full bg-gray-100" aria-hidden />
                     <p className="text-body-sm font-medium">Published post</p>
                   </div>
-                  {publishedCaption !== undefined && !checking && (
+                  {publishedCaption !== undefined && (
                     <p className="text-body-sm break-words whitespace-pre-wrap">
                       {publishedCaption || "This post has no caption."}
                     </p>
                   )}
                   {post && <XLink url={post.url} />}
-                  {checking && <div className="aspect-video rounded-md bg-gray-50" aria-hidden />}
                 </div>
                 <p className="text-center text-body-sm text-gray-500">
                   What we pulled from the URL
@@ -225,7 +257,7 @@ export function PublishedPost({
           </div>
 
           {checking ? (
-            <div className="mx-auto mt-10 flex w-fit max-w-full items-center gap-4 rounded-lg bg-gray-0 p-4 shadow-page">
+            <div className="mx-auto flex w-fit max-w-full items-center gap-4 rounded-lg bg-gray-0 p-4 shadow-page">
               <DialogTitle className="sr-only">Checking published caption</DialogTitle>
               <DialogDescription className="sr-only">
                 Comparing the published post with your approved submission

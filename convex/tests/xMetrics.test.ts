@@ -8,8 +8,9 @@ import { seedAssignmentFixture, seedPost, type TestConvex } from "./helpers";
 
 const modules = import.meta.glob("../**/*.ts");
 
+// Timers are fake too, so a page one test schedules can't fire during a later test.
 beforeEach(() => {
-  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.useFakeTimers();
   vi.setSystemTime(new Date("2026-11-14T00:00:00Z"));
 });
 
@@ -66,6 +67,25 @@ function stubX(body: unknown, status = 200) {
 
 async function storedPost(t: TestConvex, postId: Id<"posts">) {
   return await t.run(async (ctx) => await ctx.db.get("posts", postId));
+}
+
+/** Answers each lookup with the posts it asked for, failing any page that includes `failing`. */
+function stubXByPage(failing: string[] = []) {
+  const fetch = vi.fn().mockImplementation(async (url: string) => {
+    const ids = new URL(url).searchParams.get("ids")!.split(",");
+    if (ids.some((id) => failing.includes(id))) {
+      return Response.json({ title: "Service Unavailable" }, { status: 503 });
+    }
+    return Response.json({ data: ids.map((id) => xPost(id, 100)) });
+  });
+  vi.stubGlobal("fetch", fetch);
+  return fetch;
+}
+
+/** Runs the first page and every page it schedules. */
+async function runFullSync(t: TestConvex, pageSize: number) {
+  await t.action(internal.xMetrics.sync, { pageSize });
+  await t.finishAllScheduledFunctions(vi.runAllTimers);
 }
 
 async function scheduledSyncs(t: TestConvex) {
@@ -135,7 +155,62 @@ describe("xMetrics.sync", () => {
     });
   });
 
-  test("an X failure stops the run without storing or continuing", async () => {
+  test("runs every page through to the end", async () => {
+    enableSync();
+    const t = convexTest(schema, modules);
+    const posts = await seedSyncedPosts(t, 3);
+    const fetch = stubXByPage();
+
+    await runFullSync(t, 1);
+
+    expect(fetch).toHaveBeenCalledTimes(3);
+    for (const { postId } of posts) {
+      expect(await storedPost(t, postId)).toMatchObject({ views: 100 });
+    }
+  });
+
+  test("a page X can't answer is skipped and the run continues", async () => {
+    enableSync();
+    const t = convexTest(schema, modules);
+    const [first, failing, last] = await seedSyncedPosts(t, 3);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    stubXByPage([failing!.xPostId]);
+
+    await runFullSync(t, 1);
+
+    expect(await storedPost(t, first!.postId)).toMatchObject({ views: 100 });
+    expect(await storedPost(t, failing!.postId)).not.toHaveProperty("views");
+    expect(await storedPost(t, last!.postId)).toMatchObject({ views: 100 });
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining("skipped"),
+      expect.objectContaining({ code: "upstream_failure" }),
+    );
+  });
+
+  test("a page whose save fails is skipped and the run continues", async () => {
+    enableSync();
+    const t = convexTest(schema, modules);
+    const [conflicted, last] = await seedSyncedPosts(t, 2);
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    stubXByPage();
+    // A snapshot already at this exact moment makes the first page's save fail.
+    await t.run(
+      async (ctx) =>
+        await ctx.db.insert("postViewSnapshots", {
+          postId: conflicted!.postId,
+          observedAt: Date.now(),
+          views: 1,
+          sourceKey: "preexisting",
+          receivedAt: Date.now(),
+        }),
+    );
+
+    await runFullSync(t, 1);
+
+    expect(await storedPost(t, last!.postId)).toMatchObject({ views: 100 });
+  });
+
+  test("a rate limit stops the run without storing or continuing", async () => {
     enableSync();
     const t = convexTest(schema, modules);
     const [post] = await seedSyncedPosts(t, 2);

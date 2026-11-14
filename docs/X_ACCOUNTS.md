@@ -178,9 +178,11 @@ that run fails, the post keeps the previous day's total. Posts with no recorded 
 verification (legacy `earningsTimingUnknown` posts) are skipped. `posts.listEarning`
 (internal) returns the posts a page at a time.
 
-The daily sync's counts keep `posts` current for analytics; payouts don't settle from them.
-Earnings settle from view snapshots taken at each post's verification and period
-boundaries (`postViewSnapshots`), recorded through the earnings flow rather than this sync.
+The daily sync keeps `posts` current for analytics. Earnings settle from view snapshots
+at each post's exact verification and period-boundary times (`postViewSnapshots`), which
+the daily readings don't line up with. Each daily views save is still recorded as a
+snapshot (`updatePostViews`), and a count lower than an earlier one in the earnings
+window holds that post's variable earnings for reconciliation.
 The analytics sync skips posts on cancelled assignments; posts with an open dispute stay
 in. Payouts decide eligibility separately: a cancellation stops accrual at its cutoff,
 and any readings earnings need around that cutoff come from the earnings flow, not this
@@ -190,8 +192,10 @@ Each run reads one page of 100 posts from `posts.listEarning`, looks them up in 
 request, and stores views and engagement through `xMetrics.saveCounts`, skipping posts
 replaced since they were listed. It then schedules the next page with the same `now`
 until every page is done. Posts X leaves out keep their stored counts and are logged by
-reason. Any X failure, including a rate limit, is logged and stops the run without
-retrying, since each read is billed; the next day's run reads the same posts again. With
+reason. A page X can't answer, or whose counts can't be saved, is logged and skipped so
+it can't block later pages. A rate limit is logged and stops the run, since it applies to
+every page. Nothing is retried, since each read is billed; the next day's run reads the
+same posts again. With
 `X_METRICS_SYNC_ENABLED` off, the cron does nothing and calls nothing.
 
 `getXPostMetrics` looks up at most 100 post IDs per call through `GET /2/tweets` with

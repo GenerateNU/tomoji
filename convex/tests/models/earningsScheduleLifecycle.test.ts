@@ -111,7 +111,7 @@ test("reverification repairs a missing schedule using the original earning clock
   });
 });
 
-test("cancellation brings every deliverable forward without changing earnings or payouts", async () => {
+test("cancellation records cutoffs and brings every deliverable forward without changing payouts", async () => {
   const t = convexTest(schema, modules);
   const { fixture, postId } = await verifiedFixture(t);
   const deliverableId = await seedDeliverable(t, fixture);
@@ -133,7 +133,13 @@ test("cancellation brings every deliverable forward without changing earnings or
   const schedules = await t.run((ctx) => ctx.db.query("earningsSchedules").take(3));
   expect(schedules).toHaveLength(2);
   expect(schedules.every((row) => row.nextCheckAt === START + 3 * DAY)).toBe(true);
-  expect(await t.run((ctx) => ctx.db.query("deliverableEarnings").take(3))).toEqual(agreements);
+  expect(await t.run((ctx) => ctx.db.query("deliverableEarnings").take(3))).toEqual(
+    agreements.map((agreement) => ({
+      ...agreement,
+      cutoffAt: START + 3 * DAY,
+      cutoffReason: "cancelled",
+    })),
+  );
   expect(await t.run((ctx) => ctx.db.query("payouts").take(2))).toEqual([payout]);
   expect(await t.run((ctx) => ctx.db.query("earningCalculations").take(1))).toEqual([]);
 });
@@ -411,7 +417,7 @@ test("corrupt excess agreements roll cancellation back without partially waking 
   });
   vi.setSystemTime(START + 3 * DAY);
   await expect(t.run((ctx) => cancelAssignment(ctx, assignment))).rejects.toMatchObject({
-    data: { code: "conflict", reason: "earning_schedule_assignment_limit" },
+    data: { code: "conflict", reason: "earning_agreement_assignment_limit" },
   });
   expect(await t.run((ctx) => ctx.db.get("assignments", fixture.assignmentId))).toEqual(assignment);
   expect(await t.run((ctx) => ctx.db.get("opportunities", assignment.opportunityId))).toEqual(

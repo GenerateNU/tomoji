@@ -258,9 +258,11 @@ async function readTabApplications(
 }
 
 // Ranks only compare rows within one tab, so the tabs can reuse 0 to 2.
+// `opportunityFull` shares `rejected`'s rank: creators see both as "Rejected",
+// so the status sort groups them and the tie-break orders them together.
 const STATUS_RANK: Record<Infer<typeof applicationRowStatus>, number> = {
   pending: 0,
-  opportunityFull: 1,
+  opportunityFull: 2,
   rejected: 2,
   offered: 0,
   offerExpired: 1,
@@ -325,7 +327,9 @@ function compareRows(
  * search, filters, sorting and a count for each tab. Offers sort by expiry
  * soonest first unless told otherwise; Applications by newest submitted;
  * Accepted by most recently accepted, rows without `offerAcceptedAt` last.
- * `hideRejected` does nothing on Offers or Accepted. The result echoes `tab`.
+ * `hideRejected` also hides applications closed because the opportunity filled,
+ * and the status sort groups them with rejected ones. It does nothing on Offers
+ * or Accepted. The result echoes `tab`.
  *
  * Reads at most `MAX_APPLICATIONS_READ` applications per count (shared across a
  * tab's statuses, newest first) and filters, sorts and pages them in memory, so
@@ -422,7 +426,9 @@ export async function listApplicationRows(
     );
     rows = rows.filter((row) => starredIds!.has(row.opportunityId));
   }
-  if (args.hideRejected) rows = rows.filter((row) => row.status !== "rejected");
+  if (args.hideRejected) {
+    rows = rows.filter((row) => row.status !== "rejected" && row.status !== "opportunityFull");
+  }
 
   const sort = args.sort ?? DEFAULT_SORT_BY_TAB[args.tab];
   rows.sort((a, b) => compareRows(a, b, sort));

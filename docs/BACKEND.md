@@ -234,8 +234,9 @@ count for each tab. It is a creator-only query; the creator always comes from th
   `pending`, `rejected`, and `opportunityFull`; Offers lists `offered`, `offerExpired`, and
   `declined` (declined offers stay in Offers); Accepted lists `accepted`. The `tab` argument
   accepts `applications`, `offers`, or `accepted`. The result echoes `tab` so the client can
-  tell which tab's rows it holds. "Hide rejected" hides only `rejected` and does nothing on
-  Offers or Accepted.
+  tell which tab's rows it holds. "Hide rejected" hides `rejected` and `opportunityFull` (applications
+  closed because the opportunity filled) and does nothing on Offers or Accepted. The status
+  sort groups those two together, then falls back to newest submitted, then `_id`.
 - **Read budget.** Each count reads at most `MAX_APPLICATIONS_READ` (300) applications,
   newest first within each status, and the applications tab's statuses share that budget.
   Search, filters, sorting, and paging then run in memory over those rows. A count that

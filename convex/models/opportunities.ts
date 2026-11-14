@@ -95,7 +95,7 @@ export type CreatorOpportunity = Infer<typeof creatorOpportunity>;
 /** Builds the allowlisted creator-facing brief from an opportunity and its company. */
 export function toCreatorOpportunity(
   opportunity: Doc<"opportunities">,
-  company: Doc<"companies">,
+  company: Pick<Doc<"companies">, "name">,
   selections: Pick<OpportunityView, "niches" | "skills" | "languages">,
 ): CreatorOpportunity {
   return {
@@ -354,14 +354,20 @@ export async function publishOpportunity(
     throw apiError("invalid_state", { reason: "deliverables_required" });
   }
   // Validate the target state so a deadline allowed on a draft must still be future at publication.
-  const normalized = validateOpportunityFields({ ...opportunity, status: "open" });
+  const normalized = validateOpportunityFields({
+    ...opportunity,
+    status: "open",
+  });
   if (campaign.endsAt !== undefined && opportunity.deadline > campaign.endsAt) {
     throw apiError("invalid_state", { reason: "deadline_after_campaign_end" });
   }
   if (opportunity.usesAiReviewDefault) {
     requireAiReviewCriteria(true, await listOpportunityDeliverables(ctx, opportunityId));
   }
-  await ctx.db.patch("opportunities", opportunityId, { status: "open", ...normalized });
+  await ctx.db.patch("opportunities", opportunityId, {
+    status: "open",
+    ...normalized,
+  });
   return { ...opportunity, status: "open", ...normalized };
 }
 
@@ -385,7 +391,9 @@ export async function removeOpportunity(
     .withIndex("by_opportunityId_and_status", (q) => q.eq("opportunityId", opportunityId))
     .take(1);
   if (applications.length > 0 || assignments.length > 0) {
-    throw apiError("invalid_state", { reason: "opportunity_has_workflow_history" });
+    throw apiError("invalid_state", {
+      reason: "opportunity_has_workflow_history",
+    });
   }
   // Deliverables are part of the brief, not workflow history, so they go with it.
   for (const deliverable of await listOpportunityDeliverables(ctx, opportunityId)) {
@@ -431,7 +439,9 @@ export async function updateOpportunity(
     patch.productAccessLink =
       updates.productAccessLink === null
         ? undefined
-        : requireUrl(updates.productAccessLink, { reason: "invalid_product_access_link" });
+        : requireUrl(updates.productAccessLink, {
+            reason: "invalid_product_access_link",
+          });
   }
   if (updates.minFollowerRange !== undefined) {
     patch.minFollowerRange = updates.minFollowerRange ?? undefined;
@@ -467,7 +477,10 @@ export async function updateOpportunity(
     updates.languages === undefined
       ? await listOpportunityLanguages(ctx, opportunityId)
       : await updateOpportunityLanguages(ctx, opportunityId, updates.languages);
-  await ctx.db.patch("opportunities", opportunityId, { ...patch, ...normalized });
+  await ctx.db.patch("opportunities", opportunityId, {
+    ...patch,
+    ...normalized,
+  });
   return { ...updated, ...normalized, niches, skills, languages };
 }
 
@@ -634,11 +647,17 @@ function validateOpportunityFields(
   const description = requireNonBlank(fields.description, "description");
   for (const field of ["fixedFeeCents", "cpmRateCents", "paymentCapCents"] as const) {
     if (!Number.isSafeInteger(fields[field]) || fields[field] < 0) {
-      throw apiError("invalid_state", { reason: "invalid_compensation", field });
+      throw apiError("invalid_state", {
+        reason: "invalid_compensation",
+        field,
+      });
     }
   }
   if (!Number.isSafeInteger(fields.maxSlots) || fields.maxSlots <= 0) {
-    throw apiError("invalid_state", { reason: "invalid_capacity", field: "maxSlots" });
+    throw apiError("invalid_state", {
+      reason: "invalid_capacity",
+      field: "maxSlots",
+    });
   }
   validateOpportunityDeadline(fields.deadline);
   if (fields.status === "open" && fields.deadline <= Date.now()) {
@@ -665,7 +684,9 @@ export async function requireOpportunity(
   }
   if (caller.user.role === "company") {
     if (caller.orgId === null) {
-      throw apiError("misconfigured", { reason: "company account has no organization" });
+      throw apiError("misconfigured", {
+        reason: "company account has no organization",
+      });
     }
     const membership = await requireMembership(ctx, caller.user._id, caller.orgId);
     if (membership.companyId !== opportunity.companyId) {

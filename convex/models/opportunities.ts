@@ -94,7 +94,7 @@ export const creatorOpportunity = schema
   .extend({
     companyName: v.string(),
     // Shown on feed cards; fetched through `media.getCompanyMedia`.
-    companyPictureMediaId: v.optional(v.id("mediaUploads")),
+    companyLogoMediaId: v.optional(v.id("mediaUploads")),
     companyBannerMediaId: v.optional(v.id("mediaUploads")),
     niches: v.array(v.string()),
     skills: v.array(v.string()),
@@ -127,11 +127,21 @@ export function toCreatorOpportunity(
     reviewPolicy: opportunity.reviewPolicy,
     minFollowerRange: opportunity.minFollowerRange,
     companyName: company.name,
-    companyPictureMediaId: company.profilePictureMediaId,
-    companyBannerMediaId: company.bannerMediaId,
     niches: selections.niches,
     skills: selections.skills,
     languages: selections.languages,
+  };
+}
+
+/** Adds the company's logo and banner IDs, when it has them, for feed cards. */
+function withCompanyMedia(
+  brief: CreatorOpportunity,
+  company: Doc<"companies">,
+): CreatorOpportunity {
+  return {
+    ...brief,
+    ...(company.profilePictureMediaId && { companyLogoMediaId: company.profilePictureMediaId }),
+    ...(company.bannerMediaId && { companyBannerMediaId: company.bannerMediaId }),
   };
 }
 
@@ -149,7 +159,10 @@ export async function getOpportunity(
   if (company === null) {
     throw apiError("not_found", { resource: "opportunity" });
   }
-  return toCreatorOpportunity(opportunity, company, await getOpportunityView(ctx, opportunity));
+  return withCompanyMedia(
+    toCreatorOpportunity(opportunity, company, await getOpportunityView(ctx, opportunity)),
+    company,
+  );
 }
 
 // Deliverables change through the `deliverables` routes.
@@ -521,7 +534,10 @@ export async function getVisibleCreatorOpportunity(
   const company = await getVisibleOpportunityCompany(ctx, opportunity);
   return company === null
     ? null
-    : toCreatorOpportunity(opportunity, company, await getOpportunityView(ctx, opportunity));
+    : withCompanyMedia(
+        toCreatorOpportunity(opportunity, company, await getOpportunityView(ctx, opportunity)),
+        company,
+      );
 }
 
 /**

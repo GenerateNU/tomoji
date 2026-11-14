@@ -36,6 +36,7 @@ test("seeds demo tables without earnings evidence and preserves existing data on
   // Keep those tables empty rather than inventing payable earnings evidence.
   expect(tables.filter((_, index) => counts[index] === 0).sort()).toEqual([
     "deliverableEarnings",
+    "earningCalculations",
     "postViewSnapshots",
   ]);
   expect(first.created).toBe(true);

@@ -1016,7 +1016,7 @@ export async function seedScheduledEarnings(
   const submissionId = await seedSubmission(t, fixture, "approved");
   const xPostId = BigInt(`0x${crypto.randomUUID().replaceAll("-", "")}`)
     .toString()
-    .slice(0, 20);
+    .slice(0, 19);
   const postId = await t.run(async (ctx) => {
     const id = await createPost(ctx, fixture.creatorId, {
       submissionId,

@@ -12,6 +12,7 @@ import {
   seedCreatorId,
   seedOperator,
   seedOpportunity,
+  seedOneSubmission,
   seedUser,
   seedWrongOrgCaller,
   type TestConvex,
@@ -887,5 +888,120 @@ describe("assignments.complete", () => {
     const result = await t.mutation(internal.assignments.complete, { assignmentId });
 
     expect(result.status).toBe("completed");
+  });
+});
+
+describe("creator assignment workspace", () => {
+  test("keeps completed work and its brief visible after an opportunity closes", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(t, { subject: "workspace-owner" });
+    const asCreator = await seedUser(t, { subject: "workspace-creator" });
+    const creatorId = await seedCreatorId(t, "workspace-creator");
+    const assignmentId = await seedAssignment(t, {
+      opportunityId: owner.opportunityId,
+      creatorId,
+    });
+    await t.run(async (ctx) => {
+      await ctx.db.patch("opportunities", owner.opportunityId, {
+        status: "closed",
+      });
+      await ctx.db.patch("assignments", assignmentId, { status: "completed" });
+    });
+
+    const past = await asCreator.query(api.assignments.listMineSummaries, {
+      phase: "past",
+      paginationOpts: { numItems: 12, cursor: null },
+    });
+    const details = await asCreator.query(api.assignments.getMineDetails, {
+      assignmentId,
+    });
+
+    expect(past.page).toEqual([
+      expect.objectContaining({
+        _id: assignmentId,
+        status: "completed",
+        title: expect.any(String),
+      }),
+    ]);
+    expect(details).toMatchObject({
+      assignment: { _id: assignmentId, status: "completed" },
+      brief: { description: expect.any(String) },
+    });
+  });
+
+  test("updates tab counts and moves a draft into changes needed after review", async () => {
+    const t = convexTest(schema, modules);
+    const { fixture, submissionId } = await seedOneSubmission(t);
+    const initial = await fixture.asCreator.query(api.assignments.listMineFilterOptions, {});
+    expect(initial.counts).toEqual({ notStarted: 0, review: 1, changesNeeded: 0, approved: 0 });
+
+    await fixture.asCompany.mutation(api.submissions.review, {
+      submissionId,
+      review: { status: "changesRequested", reviewNote: "Add the sponsorship disclosure." },
+    });
+
+    const filters = await fixture.asCreator.query(api.assignments.listMineFilterOptions, {});
+    const changes = await fixture.asCreator.query(api.assignments.listMineSummaries, {
+      phase: "current",
+      queue: "changesNeeded",
+      paginationOpts: { cursor: null, numItems: 10 },
+    });
+    expect(filters.counts).toEqual({ notStarted: 0, review: 0, changesNeeded: 1, approved: 0 });
+    expect(changes.page).toMatchObject([
+      {
+        _id: fixture.assignmentId,
+        next: { id: fixture.deliverableId, status: "changesRequested" },
+      },
+    ]);
+  });
+
+  test("orders filter options by assignment creation across statuses", async () => {
+    const t = convexTest(schema, modules);
+    const asCreator = await seedUser(t, { subject: "filter-creator" });
+    const creatorId = await seedCreatorId(t, "filter-creator");
+    const older = await seedOpportunity(
+      t,
+      { subject: "older-filter-owner" },
+      { title: "An older assignment" },
+    );
+    const newer = await seedOpportunity(
+      t,
+      { subject: "newer-filter-owner" },
+      { title: "A newer assignment" },
+    );
+    await seedAssignment(t, { opportunityId: older.opportunityId, creatorId, status: "active" });
+    vi.setSystemTime(Date.now() + 60_000);
+    await seedAssignment(t, {
+      opportunityId: newer.opportunityId,
+      creatorId,
+      status: "termsPending",
+    });
+
+    const filters = await asCreator.query(api.assignments.listMineFilterOptions, {});
+
+    expect(filters.opportunities.map(({ id }) => id)).toEqual([
+      newer.opportunityId,
+      older.opportunityId,
+    ]);
+  });
+
+  test("returns the same unavailable result for malformed IDs and another creator's assignment", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(t, {
+      subject: "private-workspace-owner",
+    });
+    const creatorId = await seedCreatorId(t, "private-workspace-creator");
+    const assignmentId = await seedAssignment(t, {
+      opportunityId: owner.opportunityId,
+      creatorId,
+    });
+    const asOther = await seedUser(t, { subject: "private-workspace-other" });
+
+    expect(await asOther.query(api.assignments.getMineDetails, { assignmentId })).toBeNull();
+    expect(
+      await asOther.query(api.assignments.getMineDetails, {
+        assignmentId: "invalid",
+      }),
+    ).toBeNull();
   });
 });

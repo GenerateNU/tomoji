@@ -508,3 +508,115 @@ export const clear = internalMutation({
   returns: v.object({ cleared: v.number() }),
   handler: async (ctx) => ({ cleared: await clearOwnedTables(ctx) }),
 });
+
+const MORE_TOPICS = [
+  {
+    topic: "Edge functions",
+    niches: ["cloud-computing", "web-development"],
+    skills: ["typescript", "nodejs"],
+  },
+  {
+    topic: "Local-first sync",
+    niches: ["databases", "frontend-development"],
+    skills: ["react", "sql"],
+  },
+  { topic: "Fine-tuning small models", niches: ["machine-learning", "llms"], skills: ["python"] },
+  {
+    topic: "Terminal power tools",
+    niches: ["developer-tools", "operating-systems-linux"],
+    skills: ["bash-shell", "rust"],
+  },
+  {
+    topic: "Agent evals",
+    niches: ["ai-agents", "software-testing-qa"],
+    skills: ["python", "typescript"],
+  },
+  { topic: "Mobile offline mode", niches: ["mobile-development"], skills: ["swift", "kotlin"] },
+  { topic: "Kubernetes in ten minutes", niches: ["devops", "cloud-computing"], skills: ["go"] },
+  {
+    topic: "Accessible forms",
+    niches: ["frontend-development", "design"],
+    skills: ["html", "accessibility"],
+  },
+  {
+    topic: "Realtime multiplayer",
+    niches: ["game-dev", "web-development"],
+    skills: ["websockets", "typescript"],
+  },
+  {
+    topic: "Data pipelines",
+    niches: ["data-engineering", "data-science"],
+    skills: ["python", "sql"],
+  },
+  {
+    topic: "Shipping a SaaS solo",
+    niches: ["startups", "freelancing-indie-hacking"],
+    skills: ["nextjs"],
+  },
+  {
+    topic: "Securing your API",
+    niches: ["cybersecurity", "api-development"],
+    skills: ["rest-apis", "graphql"],
+  },
+] as const;
+
+const MORE_FORMATS = [
+  "walkthrough",
+  "first look",
+  "build-along",
+  "explainer",
+  "deep dive",
+] as const;
+
+const MORE_FOLLOWER_MINIMUMS = [undefined, "1k-5k", "10k-50k", "50k-100k", "100k-500k"] as const;
+
+/**
+ * Adds `count` more open briefs to the seeded company's open campaign, so the
+ * feed has enough to page, search, and filter through. Run `run` first; this
+ * doesn't clear anything, and `run` or `clear` removes what it adds.
+ */
+export const more = internalMutation({
+  args: { count: v.optional(v.number()), companyName: v.optional(v.string()) },
+  returns: v.object({ added: v.number() }),
+  handler: async (ctx, args) => {
+    const count = Math.min(Math.max(Math.floor(args.count ?? 30), 1), 100);
+    const { company, admin } = await requireSeedCompany(ctx, args.companyName);
+    const campaign = await ctx.db
+      .query("campaigns")
+      .withIndex("by_companyId_and_status", (q) =>
+        q.eq("companyId", company._id).eq("status", "open"),
+      )
+      .first();
+    if (campaign === null) throw apiError("invalid_state", { reason: "run_seed_first" });
+
+    for (let index = 0; index < count; index++) {
+      const { topic, niches, skills } = MORE_TOPICS[index % MORE_TOPICS.length];
+      const format = MORE_FORMATS[index % MORE_FORMATS.length];
+      const isGated = index % 3 === 0;
+      const maxSlots = 4 + (index % 7) * 2;
+      const minFollowerRange = MORE_FOLLOWER_MINIMUMS[index % MORE_FOLLOWER_MINIMUMS.length];
+      const opportunityId = await ctx.db.insert("opportunities", {
+        ...BOILERPLATE,
+        title: `${topic}: a ${format}`,
+        description: `A ${format} on ${topic.toLowerCase()} for developers who build with it every day.`,
+        isGated,
+        maxSlots,
+        numFilledSlots: index % 5 === 4 ? maxSlots : index % maxSlots,
+        status: "open",
+        fixedFeeCents: (index % 4) * 15_000,
+        cpmRateCents: index % 2 === 0 ? 250 + (index % 5) * 50 : 0,
+        paymentCapCents: index % 2 === 0 ? 150_000 : 0,
+        campaignId: campaign._id,
+        companyId: company._id,
+        createdBy: admin._id,
+        usesAiReviewDefault: false,
+        deadline: halfHourFromNow(3 + ((index * 5) % 50)),
+        ...(minFollowerRange === undefined ? {} : { minFollowerRange }),
+      });
+      await updateOpportunityNiches(ctx, opportunityId, [...niches]);
+      await updateOpportunitySkills(ctx, opportunityId, [...skills]);
+      await updateOpportunityLanguages(ctx, opportunityId, ["english"]);
+    }
+    return { added: count };
+  },
+});

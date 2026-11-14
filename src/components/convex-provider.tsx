@@ -1,6 +1,7 @@
 "use client";
 
 import { useAccessToken, useAuth } from "@workos-inc/authkit-nextjs/components";
+import { ConvexQueryCacheProvider } from "convex-helpers/react/cache/provider";
 import { ConvexProviderWithAuth, ConvexReactClient } from "convex/react";
 import { useCallback, useMemo } from "react";
 
@@ -36,7 +37,10 @@ function useAuthFromWorkOS() {
 export function ConvexClientProvider({ children }: { children: React.ReactNode }) {
   return (
     <ConvexProviderWithAuth client={convex} useAuth={useAuthFromWorkOS}>
-      {children}
+      {/* Keep recent assignment queries subscribed across short tab and dialog visits. */}
+      <ConvexQueryCacheProvider expiration={60_000} maxIdleEntries={32}>
+        {children}
+      </ConvexQueryCacheProvider>
     </ConvexProviderWithAuth>
   );
 }

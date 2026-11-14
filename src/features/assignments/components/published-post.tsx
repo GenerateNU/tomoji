@@ -6,6 +6,7 @@ import { useAction, useMutation } from "convex/react";
 import { useId, useRef, useState, type FormEvent } from "react";
 import { ConvexError } from "convex/values";
 import { RiCheckLine, RiCloseLine, RiTimeLine } from "@remixicon/react";
+import { IconContainer } from "@/components/icon-container";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -245,12 +246,7 @@ export function PublishedPost({
               noValidate
             >
               <div className="flex items-start gap-3">
-                <span
-                  className="grid size-10 shrink-0 place-items-center rounded-md bg-gray-50"
-                  aria-hidden
-                >
-                  <RiCheckLine size={20} />
-                </span>
+                <IconContainer tone="success" />
                 <div className="space-y-2">
                   <DialogTitle className="sr-only">{title}</DialogTitle>
                   <DialogDescription className="text-gray-950">

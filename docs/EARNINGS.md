@@ -132,9 +132,15 @@ preserve the original agreement, fixed fee, cap, and clock; uncertain attributio
 holds variable earnings for reconciliation.
 
 Existing records may lack these optional timestamps. Reverification of a legacy
-post with unknown timing does not start a new window. Do not infer verification
-from publication time or historical view counts from today's total. No automatic
-backfill or data migration is performed.
+post with unknown timing does not start a new window. Genuinely new posts record
+`earningsTrackingVersion: 1`; replacement links inherit that marker and any known
+original verification time. Without the marker, an original verification time,
+or an existing agreement, verification succeeds but marks earnings timing unknown
+and leaves earnings on hold. This also holds never-verified legacy posts until
+their history is reviewed, because the old records cannot distinguish them from
+posts unverified before tracking began. The initialization operation enforces the
+same guard. Do not infer verification from publication time or historical view
+counts from today's total. No automatic backfill or data migration is performed.
 
 Calculation records and direct payout linkage are added by the next stacked PR.
 
@@ -150,10 +156,16 @@ These server-only operations persist trusted evidence:
   records a confirmed removal cutoff. A failed metrics request alone does not
   establish removal.
 
-The existing `posts.updateMetrics` operation also records a snapshot at server
-receipt time. A collector that knows the actual observation time should use
+The existing `posts.updateViews` operation also records a snapshot at server
+receipt time; engagement-only updates do not create view evidence. A collector
+that knows the actual observation time should use
 `recordViews`, especially for delayed evidence. Regressing counts within the
-eligible window hold variable earnings for reconciliation. Live X collection must
+eligible window hold variable earnings for reconciliation. Confirmed removal,
+including an identical retry, rechecks metric-regression holds within the shortened
+window. A hold clears only after the complete eligible history is checked and no
+decline remains. The read is capped at 1,000 observations; longer histories retain
+the hold for reconciliation. Replacement and verification-change holds remain.
+Live X collection must
 supply verification and cutoff evidence; fixture tests do not prove its availability.
 
 Before enabling automatic earnings for these legacy posts, a Tomoji admin must

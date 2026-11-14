@@ -24,6 +24,8 @@ export const postsTable = defineTable({
   postedAt: v.optional(v.number()), // Unix milliseconds.
   // Preserved when verification is revoked; publication time is not an earnings clock.
   firstVerifiedAt: v.optional(v.number()),
+  // Set on genuinely new posts; replacements inherit it without certifying legacy history.
+  earningsTrackingVersion: v.optional(v.literal(1)),
   // Legacy verification without a recorded time cannot be treated as a fresh agreement.
   earningsTimingUnknown: v.optional(v.boolean()),
   removedAt: v.optional(v.number()),

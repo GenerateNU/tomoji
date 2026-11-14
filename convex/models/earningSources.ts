@@ -47,7 +47,17 @@ export async function initializePostEarnings(
     }
     return existing;
   }
-  if (post.earningsTimingUnknown) return null;
+  // Old unverified rows may have lost an earlier verification. Only tracked new
+  // posts or a recorded original time can establish an agreement automatically.
+  if (
+    post.earningsTimingUnknown ||
+    (post.firstVerifiedAt === undefined && post.earningsTrackingVersion === undefined)
+  ) {
+    if (!post.earningsTimingUnknown) {
+      await ctx.db.patch("posts", postId, { earningsTimingUnknown: true });
+    }
+    return null;
+  }
   const startedAt = post.firstVerifiedAt ?? verifiedAt;
   const endsAt = startedAt + EARNING_WINDOW_MS;
   if (
@@ -163,6 +173,39 @@ async function holdRegressingViewEvidence(
   }
 }
 
+// Bound the read work for one removal transaction. A longer eligible history keeps
+// its hold for reconciliation; a partial scan must never authorize clearing it.
+const MAX_REGRESSION_RECHECK_SNAPSHOTS = 1_000;
+
+async function clearMetricRegressionHold(
+  ctx: MutationCtx,
+  earnings: Doc<"deliverableEarnings">,
+  effectiveEnd: number,
+): Promise<boolean> {
+  if (earnings.variableHoldReason !== "metric_count_regressed" || effectiveEnd < earnings.startedAt)
+    return false;
+  const snapshots = await ctx.db
+    .query("postViewSnapshots")
+    .withIndex("by_postId_and_observedAt", (q) =>
+      q
+        .eq("postId", earnings.postId)
+        .gte("observedAt", earnings.startedAt)
+        .lte("observedAt", effectiveEnd),
+    )
+    .take(MAX_REGRESSION_RECHECK_SNAPSHOTS + 1);
+  if (snapshots.length > MAX_REGRESSION_RECHECK_SNAPSHOTS) return false;
+  for (const [index, snapshot] of snapshots.entries()) {
+    if (
+      !Number.isSafeInteger(snapshot.views) ||
+      snapshot.views < 0 ||
+      (index > 0 && snapshots[index - 1].views > snapshot.views)
+    )
+      return false;
+  }
+  await ctx.db.patch("deliverableEarnings", earnings._id, { variableHoldReason: undefined });
+  return true;
+}
+
 /** Appends immutable evidence; replay cannot rewrite history or rewind the latest count. */
 export async function recordPostViewSnapshot(
   ctx: MutationCtx,
@@ -232,23 +275,35 @@ export async function recordPostRemoval(
     if (post.removedAt !== args.removedAt || post.removalSourceKey !== sourceKey) {
       throw apiError("conflict", { reason: "post_removal_conflict" });
     }
-    return post;
-  }
-  if (!Number.isSafeInteger(args.removedAt) || args.removedAt < 0 || args.removedAt > Date.now()) {
+  } else if (
+    !Number.isSafeInteger(args.removedAt) ||
+    args.removedAt < 0 ||
+    args.removedAt > Date.now()
+  ) {
     throw apiError("invalid_state", { reason: "post_removal_invalid" });
   }
   const patch = { removedAt: args.removedAt, removalSourceKey: sourceKey };
-  await ctx.db.patch("posts", args.postId, patch);
+  if (post.removedAt === undefined) await ctx.db.patch("posts", args.postId, patch);
   const earnings = await getDeliverableEarnings(ctx, assignment._id, submission.deliverableId);
-  if (
-    earnings !== null &&
-    earnings.postId === args.postId &&
-    (earnings.cutoffAt === undefined || args.removedAt < earnings.cutoffAt)
-  ) {
-    await ctx.db.patch("deliverableEarnings", earnings._id, {
-      cutoffAt: args.removedAt,
-      cutoffReason: "removed",
-    });
+  if (earnings !== null && earnings.postId === args.postId) {
+    if (earnings.cutoffAt === undefined || args.removedAt < earnings.cutoffAt) {
+      await ctx.db.patch("deliverableEarnings", earnings._id, {
+        cutoffAt: args.removedAt,
+        cutoffReason: "removed",
+      });
+    }
+    // A delayed removal can exclude the decline that originally caused the hold.
+    // Recheck retries too, so a cutoff recorded before this check can be reconciled.
+    await clearMetricRegressionHold(
+      ctx,
+      earnings,
+      Math.min(
+        earnings.endsAt,
+        earnings.cutoffAt ?? Infinity,
+        args.removedAt,
+        assignment.cancelledAt ?? Infinity,
+      ),
+    );
   }
   return { ...post, ...patch };
 }

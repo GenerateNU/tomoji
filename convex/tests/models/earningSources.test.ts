@@ -85,7 +85,13 @@ test("reverification and replacement retain the original agreement and hold ambi
 test("legacy verification without a timestamp cannot start a new earning window after replacement", async () => {
   const t = convexTest(schema, modules);
   const { fixture, postId } = await fixturePost(t);
-  await t.run((ctx) => ctx.db.patch("posts", postId, { isVerified: true, postedAt: NOW - 60_000 }));
+  await t.run((ctx) =>
+    ctx.db.patch("posts", postId, {
+      isVerified: true,
+      postedAt: NOW - 60_000,
+      earningsTrackingVersion: undefined,
+    }),
+  );
   await t.run((ctx) => unverifyPost(ctx, postId));
   const replacement = await t.run((ctx) =>
     replacePost(ctx, fixture.creatorId, postId, {

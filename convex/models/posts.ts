@@ -144,6 +144,7 @@ export async function createPost(
     xPostId,
     isActive: true,
     isVerified: false,
+    earningsTrackingVersion: 1,
   });
 }
 
@@ -240,6 +241,10 @@ export async function replacePost(
     xPostId,
     isActive: true,
     isVerified: false,
+    ...(post.earningsTrackingVersion === undefined
+      ? {}
+      : { earningsTrackingVersion: post.earningsTrackingVersion }),
+    ...(post.firstVerifiedAt === undefined ? {} : { firstVerifiedAt: post.firstVerifiedAt }),
     ...(post.earningsTimingUnknown ? { earningsTimingUnknown: true } : {}),
   });
   return (await ctx.db.get("posts", newPostId))!;
@@ -275,14 +280,12 @@ export async function verifyPost(
   if (!Number.isSafeInteger(postedAt) || postedAt < 0 || postedAt > Date.now()) {
     throw apiError("invalid_state", { reason: "invalid_posted_at" });
   }
-  const firstVerifiedAt = post.earningsTimingUnknown
-    ? undefined
-    : (post.firstVerifiedAt ?? Date.now());
-  if (firstVerifiedAt !== undefined) await initializePostEarnings(ctx, postId, firstVerifiedAt);
+  const earnings = await initializePostEarnings(ctx, postId, Date.now());
+  const firstVerifiedAt = post.firstVerifiedAt ?? earnings?.startedAt;
   const patch = {
     isVerified: true,
     postedAt,
-    ...(firstVerifiedAt === undefined ? {} : { firstVerifiedAt }),
+    ...(firstVerifiedAt === undefined ? { earningsTimingUnknown: true } : { firstVerifiedAt }),
   };
   await ctx.db.patch("posts", postId, patch);
   return { ...post, ...patch };

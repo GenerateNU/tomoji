@@ -22,7 +22,7 @@ export function SubmissionPreview({
   const name = (me?.synced && [me.firstName, me.lastName].filter(Boolean).join(" ")) || "You";
 
   return (
-    <div className="space-y-4 rounded-lg bg-gray-0 p-4">
+    <div className="space-y-4 rounded-lg bg-gray-0 p-4 shadow-raised">
       <div className="flex items-center gap-2.5">
         <span aria-hidden>
           <Avatar size={48} initials={getInitials(name)} />

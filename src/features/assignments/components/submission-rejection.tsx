@@ -21,7 +21,7 @@ export function SubmissionRejection({
   return (
     <div className="mx-auto w-full max-w-[910px] space-y-8 sm:space-y-10">
       <div className="grid gap-5 md:grid-cols-2">
-        <div className="min-w-0 rounded-lg shadow-tile">{preview}</div>
+        <div className="min-w-0">{preview}</div>
         <SubmissionRejectionFeedback submission={submission} />
       </div>
       <div className="mx-auto flex w-full max-w-[446px] flex-col gap-3">{children}</div>
@@ -36,7 +36,7 @@ export function SubmissionRejectionFeedback({ submission }: { submission: Reject
   return (
     <section
       aria-label="Review feedback"
-      className="min-w-0 space-y-5 rounded-lg bg-gray-0 p-5 shadow-tile"
+      className="min-w-0 space-y-5 rounded-lg bg-gray-0 p-5 shadow-raised"
     >
       <div className="flex items-start gap-3">
         <RiCloseLine

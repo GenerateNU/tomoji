@@ -84,7 +84,7 @@ export function DeliverableSubmissions({
             </DialogTrigger>
           )}
           <DialogContent
-            className="max-w-[1186px] gap-0 overflow-y-auto rounded-lg shadow-2xl"
+            className="max-w-[1186px] gap-0 overflow-y-auto rounded-lg shadow-page"
             overlayClassName="bg-gray-950/20 backdrop-blur-[2px]"
             showCloseButton={false}
           >

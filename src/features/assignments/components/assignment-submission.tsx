@@ -17,7 +17,6 @@ import {
 } from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
 import { formatRelativeTime } from "@/lib/relative-time";
-import { cn } from "@/lib/utils";
 import { submissionStatusLabel } from "./assignment-status";
 import { SubmissionPreview } from "./submission-preview";
 import { SubmissionRejection } from "./submission-rejection";
@@ -79,10 +78,7 @@ export function AssignmentSubmission({
         </DialogTrigger>
       </div>
       <DialogContent
-        className={cn(
-          "min-h-[min(79.4dvh,780px)] max-w-[1186px] [align-content:safe_center] overflow-y-auto px-5 py-14 shadow-2xl",
-          changesNeeded ? "bg-gray-0" : "bg-gray-50",
-        )}
+        className="min-h-[min(79.4dvh,780px)] max-w-[1186px] [align-content:safe_center] overflow-y-auto px-5 py-14 shadow-page"
         overlayClassName="bg-gray-950/20 backdrop-blur-[2px]"
       >
         <DialogTitle className="sr-only">
@@ -105,7 +101,7 @@ export function AssignmentSubmission({
         ) : (
           <div className="mx-auto w-full max-w-[446px] space-y-5">
             {preview}
-            <div className="space-y-3 rounded-lg bg-gray-0 p-5">
+            <div className="space-y-3 rounded-lg bg-gray-0 p-5 shadow-raised">
               <DialogDescription className="text-gray-950">{status}</DialogDescription>
               {submission.status !== "pending" && submission.reviewNote && (
                 <p className="text-body-sm break-words whitespace-pre-wrap text-gray-700">

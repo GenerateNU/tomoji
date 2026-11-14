@@ -181,12 +181,7 @@ export function DraftComposer({
   if (reviewId) {
     const rejected = review?.status === "changesRequested" ? review : undefined;
     return (
-      <div
-        className={cn(
-          "grid min-w-0 min-h-[min(79.4dvh,780px)] place-items-center px-5 py-16",
-          rejected ? "bg-gray-0" : "bg-gray-50",
-        )}
-      >
+      <div className="grid min-w-0 min-h-[min(79.4dvh,780px)] place-items-center px-5 py-16">
         <DialogTitle className="sr-only">Submission review</DialogTitle>
         <DialogDescription className="sr-only">Your draft and its review status</DialogDescription>
         <DialogClose
@@ -449,7 +444,7 @@ function DraftReviewProgress({
   const Icon = review?.status === "approved" ? RiCheckLine : RiTimeLine;
 
   return (
-    <div ref={card} tabIndex={-1} className="rounded-lg bg-gray-0 p-4">
+    <div ref={card} tabIndex={-1} className="rounded-lg bg-gray-0 p-4 shadow-page">
       {reviewing ? (
         status === "evaluating" ? (
           <ReviewingCriteria criteria={criteria} />

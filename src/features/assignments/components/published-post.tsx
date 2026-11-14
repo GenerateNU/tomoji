@@ -250,8 +250,8 @@ export function PublishedPost({
                 <div className="space-y-2">
                   <DialogTitle className="sr-only">{title}</DialogTitle>
                   <DialogDescription className="text-gray-950">
-                    Your submission has been approved. Publish it on X and submit the link here.
-                    {mediaId && " A reviewer will verify the posted video."}
+                    Your submission has been approved. Upload the post to X and submit the link
+                    here.
                   </DialogDescription>
                 </div>
               </div>

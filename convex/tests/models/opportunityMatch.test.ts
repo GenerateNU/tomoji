@@ -43,7 +43,7 @@ describe("describeMatch", () => {
         { niches: ["llms", "databases"], skills: ["python", "go"], minFollowerRange: "5k-10k" },
       ),
     ).toEqual({
-      level: "good",
+      isGreatMatch: false,
       matchedSkills: ["python"],
       missingSkills: ["go"],
       matchedNiches: ["llms"],
@@ -52,19 +52,37 @@ describe("describeMatch", () => {
     });
   });
 
-  test("is a strong, eligible match when the creator has everything", () => {
+  test("is a great, eligible match when the creator has everything", () => {
     const match = describeMatch(
       { niches: ["llms"], skills: ["python"], followerRange: "50k-100k" },
       { niches: ["llms"], skills: ["python"], minFollowerRange: "50k-100k" },
     );
-    expect(match).toMatchObject({ level: "strong", isEligible: true, meetsFollowerMinimum: true });
+    expect(match).toMatchObject({
+      isGreatMatch: true,
+      isEligible: true,
+      meetsFollowerMinimum: true,
+    });
   });
 
-  test("has no level when the brief asks for nothing", () => {
+  test("is never great when the brief asks for nothing", () => {
     expect(describeMatch({ niches: [], skills: [] }, { niches: [], skills: [] })).toMatchObject({
-      level: null,
+      isGreatMatch: false,
       meetsFollowerMinimum: null,
       isEligible: true,
     });
+  });
+
+  test("isn't great below 90%, even when eligible", () => {
+    // Every skill and the minimum, but only one of two niches: (0.45 + 0.35 + 0.1) / 1 = 0.9.
+    const almost = describeMatch(
+      { niches: ["llms"], skills: ["python"], followerRange: "50k-100k" },
+      { niches: ["llms", "databases"], skills: ["python"], minFollowerRange: "50k-100k" },
+    );
+    expect(almost.isGreatMatch).toBe(true);
+    const short = describeMatch(
+      { niches: [], skills: ["python"], followerRange: "50k-100k" },
+      { niches: ["llms", "databases"], skills: ["python"], minFollowerRange: "50k-100k" },
+    );
+    expect(short).toMatchObject({ isGreatMatch: false, isEligible: true });
   });
 });

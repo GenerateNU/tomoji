@@ -73,13 +73,13 @@ export async function getCreatorSignals(
 }
 
 /**
- * How well a brief fits the creator, in terms they can act on. `level` is null
- * when the brief asks for nothing to match on. A creator is eligible when they
- * meet the follower minimum and have every skill the brief asks for; anyone
- * may still apply or claim, so this only informs.
+ * How well a brief fits the creator, in terms they can act on. A creator is
+ * eligible when they meet the follower minimum and have every skill the brief
+ * asks for. `isGreatMatch` is kept rare on purpose: eligible, and a score of at
+ * least `GREAT_MATCH_SCORE`, so it means something when a creator sees it.
  */
 export const opportunityMatch = v.object({
-  level: v.union(v.literal("strong"), v.literal("good"), v.literal("weak"), v.null()),
+  isGreatMatch: v.boolean(),
   matchedSkills: v.array(v.string()),
   missingSkills: v.array(v.string()),
   matchedNiches: v.array(v.string()),
@@ -89,8 +89,8 @@ export const opportunityMatch = v.object({
 });
 export type OpportunityMatch = Infer<typeof opportunityMatch>;
 
-/** Scores at or above these read as a strong or good match; anything lower is weak. */
-const MATCH_LEVELS = { strong: 0.75, good: 0.4 } as const;
+/** The weighted score a brief needs, out of 1, to be called a great match. */
+export const GREAT_MATCH_SCORE = 0.9;
 
 export function describeMatch(
   creator: CreatorSignals,
@@ -107,18 +107,15 @@ export function describeMatch(
       ? null
       : followerRangeFit(creator.followerRange, opportunity.minFollowerRange) === 1;
   const missingSkills = opportunity.skills.filter((name) => !has(creator.skills)(name));
+  const isEligible = meetsFollowerMinimum !== false && missingSkills.length === 0;
   return {
-    level: !asksForAnything
-      ? null
-      : score >= MATCH_LEVELS.strong
-        ? "strong"
-        : score >= MATCH_LEVELS.good
-          ? "good"
-          : "weak",
+    // A brief that asks for nothing matches everyone equally, so it's never great.
+    // The epsilon keeps sums like 0.45 + 0.35 + 0.1 from landing just under 0.9.
+    isGreatMatch: asksForAnything && isEligible && score >= GREAT_MATCH_SCORE - 1e-9,
     matchedSkills: opportunity.skills.filter(has(creator.skills)),
     missingSkills,
     matchedNiches: opportunity.niches.filter(has(creator.niches)),
     meetsFollowerMinimum,
-    isEligible: meetsFollowerMinimum !== false && missingSkills.length === 0,
+    isEligible,
   };
 }

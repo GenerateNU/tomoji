@@ -5,8 +5,6 @@ import { OnboardingGate } from "@/features/onboarding/components/onboarding-gate
 export default function ProtectedLayout({ children }: LayoutProps<"/">) {
   return (
     <>
-      {/* Renders nothing; it sends a creator who hasn't finished onboarding
-          into it from any authenticated page. */}
       <OnboardingGate />
       <AppShell>{children}</AppShell>
     </>

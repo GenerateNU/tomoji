@@ -7,7 +7,7 @@ import { RiBuilding2Fill, RiUser3Fill } from "@remixicon/react";
 import { cn } from "@/lib/utils";
 
 // Figma "Avatar" (people, round) and "Company Avatar" (rounded square), at
-// 24, 32, 40 and 48px. People's initials are blue on blue; companies' are gray.
+// 24, 32, 40, 48 and 64px. People's initials are blue on blue; companies' are gray.
 // With no photo and no initials, a gray placeholder glyph shows instead.
 const avatarVariants = cva("group/avatar relative flex shrink-0 overflow-hidden select-none", {
   variants: {
@@ -46,26 +46,29 @@ function AvatarRoot({
   );
 }
 
-type AvatarSize = 24 | 32 | 40 | 48;
+type AvatarSize = 24 | 32 | 40 | 48 | 64;
 
 const boxSize: Record<AvatarSize, string> = {
   24: "size-6",
   32: "size-8",
   40: "size-10",
   48: "size-12",
+  64: "size-16",
 };
 const initialsText: Record<AvatarSize, string> = {
   24: "text-body-xs font-medium",
   32: "text-body-sm font-medium",
   40: "text-body font-medium",
   48: "text-body-lg font-medium",
+  64: "text-heading-sm font-medium",
 };
-const placeholderSize: Record<AvatarSize, number> = { 24: 14, 32: 18, 40: 24, 48: 28 };
+const placeholderSize: Record<AvatarSize, number> = { 24: 14, 32: 18, 40: 24, 48: 28, 64: 36 };
 const companyRadius: Record<AvatarSize, string> = {
   24: "rounded-xs",
   32: "rounded",
   40: "rounded",
   48: "rounded",
+  64: "rounded",
 };
 
 type AvatarProps = {

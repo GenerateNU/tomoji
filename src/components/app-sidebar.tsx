@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRef } from "react";
 import {
   RiAuctionFill,
   RiAuctionLine,
@@ -205,7 +206,7 @@ export type AccountMenuEntry =
       id: string;
       label: string;
       icon: RemixiconComponentType;
-      onSelect: () => void;
+      onSelect: (trigger: HTMLButtonElement | null) => void;
     }
   | { kind: "separator"; id: string };
 
@@ -219,9 +220,12 @@ export type SidebarAccountInfo = {
 
 /** The account at the bottom of the sidebar, opening a menu of links and actions. */
 export function AccountMenu({ name, avatarSrc, email, items }: SidebarAccountInfo) {
+  const trigger = useRef<HTMLButtonElement>(null);
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
+        ref={trigger}
+        aria-label="Account menu"
         render={
           <SidebarAccount avatar={<Avatar size={24} src={avatarSrc} />}>{name}</SidebarAccount>
         }
@@ -241,7 +245,7 @@ export function AccountMenu({ name, avatarSrc, email, items }: SidebarAccountInf
               {item.label}
             </DropdownMenuItem>
           ) : (
-            <DropdownMenuItem key={item.id} onClick={item.onSelect}>
+            <DropdownMenuItem key={item.id} onClick={() => item.onSelect(trigger.current)}>
               <Icon {...iconProps} />
               {item.label}
             </DropdownMenuItem>

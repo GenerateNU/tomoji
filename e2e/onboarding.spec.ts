@@ -156,6 +156,39 @@ test("finishing stores normalized links and completes onboarding", async ({ page
   expect(await page.evaluate(() => window.onboardingFixture.pushes)).toContain("/onboarding/ready");
 });
 
+test("onboarding selections collapse at rest and expand for keyboard removal", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openStep(page, "content");
+  const niches = page.getByRole("combobox", { name: "Niches", exact: true });
+  await niches.click();
+  const labels = [
+    "Backend Development",
+    "Generative AI & LLMs",
+    "UI / UX Design",
+    "Product Management",
+  ];
+  for (const label of labels) {
+    await page.getByRole("checkbox", { name: label, exact: true }).click();
+  }
+  await page.getByRole("button", { name: "Done", exact: true }).click();
+  await page.getByRole("button", { name: "Continue", exact: true }).focus();
+  await expect(niches.getByText(/^\+\d+$/)).toBeVisible();
+
+  await niches.focus();
+  await expect(niches.getByText(/^\+\d+$/)).toHaveCount(0);
+  for (const label of labels) {
+    await expect(
+      niches.getByRole("button", { name: `Remove ${label}`, exact: true }),
+    ).toBeInViewport();
+  }
+  await niches.getByRole("button", { name: "Remove Backend Development", exact: true }).focus();
+  await page.keyboard.press("Enter");
+  await expect(
+    niches.getByRole("button", { name: "Remove Generative AI & LLMs", exact: true }),
+  ).toBeFocused();
+  expect(await page.evaluate(() => window.onboardingFixture.calls)).toEqual([]);
+});
+
 test("captures the responsive onboarding steps", async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await openStep(page, "content");

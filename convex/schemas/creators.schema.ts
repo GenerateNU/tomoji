@@ -16,6 +16,11 @@ export const followerRange = v.union(
 
 export const creatorsTable = defineTable({
   userId: v.id("users"),
+  // Retain legacy values until a cleanup migration has run on existing deployments.
+  // Profile routes neither accept nor expose these fields; X identity comes from xAccounts.
+  username: v.optional(v.string()),
+  xId: v.optional(v.string()),
+  phoneNumber: v.optional(v.string()),
   githubLink: v.optional(v.string()),
   linkedinLink: v.optional(v.string()),
   // Anything else the creator wants to show, capped at MAX_ADDITIONAL_LINKS.

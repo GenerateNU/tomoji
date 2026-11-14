@@ -1,6 +1,7 @@
 import type { FunctionArgs, FunctionReturnType } from "convex/server";
 import type { api } from "@convex/_generated/api";
 import type { Id } from "@convex/_generated/dataModel";
+import { errorCode, errorReason } from "./errors";
 
 export type UploadActions = {
   requestUpload: (
@@ -51,8 +52,17 @@ export function createMediaUpload(
     }
     signal?.throwIfAborted();
     onPhase?.("saving");
-    const completed = await actions.completeUpload({ uploadId: grant!.uploadId });
-    return completed.mediaId;
+    try {
+      const completed = await actions.completeUpload({ uploadId: grant!.uploadId });
+      return completed.mediaId;
+    } catch (error) {
+      // A confirmed expiry cannot complete later; ambiguous failures must keep the same ID.
+      if (errorCode(error) === "invalid_state" && errorReason(error) === "upload_expired") {
+        grant = undefined;
+        transferred = false;
+      }
+      throw error;
+    }
   }
 
   return {

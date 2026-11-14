@@ -46,17 +46,16 @@ let notifications: Doc<"notifications">[] = titles.map((title, i) => ({
             assignmentId: "assignment" as Id<"assignments">,
           },
 }));
-// The panel also covers a target with no page yet; the inbox specs count four rows.
-if (new URLSearchParams(location.search).get("view") === "panel")
-  notifications.push({
-    _id: "notification-4" as Id<"notifications">,
-    _creationTime: Date.parse("2026-10-08T12:00:00-04:00"),
-    userId: "viewer" as Id<"users">,
-    title: "A dispute was opened on your Yeti video",
-    type: "disputeOpened",
-    isRead: false,
-    target: { kind: "dispute", disputeId: "dispute" as Id<"disputes"> },
-  });
+// Also cover a target with no page yet.
+notifications.push({
+  _id: "notification-4" as Id<"notifications">,
+  _creationTime: Date.parse("2026-10-08T12:00:00-04:00"),
+  userId: "viewer" as Id<"users">,
+  title: "A dispute was opened on your Yeti video",
+  type: "disputeOpened",
+  isRead: false,
+  target: { kind: "dispute", disputeId: "dispute" as Id<"disputes"> },
+});
 let version = 0;
 let limit = 2;
 const listeners = new Set<() => void>();
@@ -117,7 +116,7 @@ export function useQuery(reference: FunctionReference<"query">, args: unknown) {
   return fixture.mode === "empty" ? 0 : notifications.filter((item) => !item.isRead).length;
 }
 
-/** Exercises the real inbox's query selection, read filter, and load-more callback. */
+/** Exercises the panel's query selection, read filter, and load-more callback. */
 export function usePaginatedQuery(reference: FunctionReference<"query">, args: unknown) {
   if (getFunctionName(reference) !== "notifications:list") throw new Error("Unexpected query");
   if (fixture.mode === "query-error") throw new Error("Fixture query failure");

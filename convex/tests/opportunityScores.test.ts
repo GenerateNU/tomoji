@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import type { Id } from "../_generated/dataModel";
 import { internal } from "../_generated/api";
 import { updateCreatorNiches } from "../models/creatorNiches";
+import { updateCreatorSkills } from "../models/creatorSkills";
 import { createOpportunity } from "../models/opportunities";
 import schema from "../schema";
 import {
@@ -116,6 +117,28 @@ describe("opportunityScores.scoreCreator", () => {
       await updateCreatorNiches(ctx, creatorId, ["ai-agents", "databases"]);
       await ctx.db.patch("campaigns", other.campaignId, { status: "paused" });
     });
+    await scoreCreator(t, creatorId);
+
+    expect(await scoresFor(t, creatorId)).toEqual([
+      { opportunityId: owner.opportunityId, score: 1 },
+    ]);
+  });
+
+  test("only scores opportunities that share one of the creator's selections", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(t, { subject: "scores_owner" }, { skills: ["python"] });
+    const other = await seedCampaign(t, { subject: "scores_other_owner" });
+    await t.run(
+      async (ctx) =>
+        await createOpportunity(
+          ctx,
+          other.membership,
+          opportunityArgs(other.campaignId, { skills: ["react"] }),
+        ),
+    );
+    const creatorId = await seedCreatorId(t, "scores_creator");
+    await t.run(async (ctx) => await updateCreatorSkills(ctx, creatorId, ["python"]));
+
     await scoreCreator(t, creatorId);
 
     expect(await scoresFor(t, creatorId)).toEqual([

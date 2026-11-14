@@ -129,32 +129,56 @@ async function saveOpportunityScore(
 const ROWS_PER_BATCH = 100;
 
 /**
- * Where a batched scoring job stopped. Jobs run in numbered stages; call again
- * with `stage` and `cursor` until `isDone`.
+ * Where a batched scoring job stopped. A job runs the "existing" stage first,
+ * then one stage per shared selection, named like "niche:ai-agents" or
+ * "skill:python". Naming stages, rather than numbering them, keeps a job on
+ * track when selections change between batches. Call again with `stage` and
+ * `cursor` until `isDone`.
  */
-export type ScoringProgress = { isDone: boolean; stage: number; cursor: string | null };
+export type ScoringProgress = { isDone: boolean; stage: string; cursor: string | null };
 
-const DONE: ScoringProgress = { isDone: true, stage: 0, cursor: null };
+export const FIRST_STAGE = "existing";
 
-/** Moves to the next stage once a page finishes, or stays to read the next page. */
-function advance(stage: number, page: { isDone: boolean; continueCursor: string }) {
-  return page.isDone
-    ? { isDone: false, stage: stage + 1, cursor: null }
-    : { isDone: false, stage, cursor: page.continueCursor };
+const DONE: ScoringProgress = { isDone: true, stage: FIRST_STAGE, cursor: null };
+
+/** The selection stages for these niches and skills, in the order they run. */
+function selectionStages(selections: { niches: readonly string[]; skills: readonly string[] }) {
+  return [
+    ...selections.niches.map((name) => `niche:${name}`),
+    ...selections.skills.map((name) => `skill:${name}`),
+  ].sort();
 }
 
 /**
+ * Stays on the stage to read its next page, or moves to the next stage once it
+ * finishes. Stage names sort after "existing", so a stage whose selection was
+ * removed mid-job still finds its successor.
+ */
+function advance(
+  stage: string,
+  stages: string[],
+  page: { isDone: boolean; continueCursor: string },
+): ScoringProgress {
+  if (!page.isDone) return { isDone: false, stage, cursor: page.continueCursor };
+  const next = stages.find((candidate) => candidate > stage);
+  return next === undefined ? DONE : { isDone: false, stage: next, cursor: null };
+}
+
+const FINISHED_PAGE = { isDone: true, continueCursor: "" };
+
+/**
  * Scores one opportunity for the creators it could match, a batch at a time.
- * Stage 0 rescores creators who already have a score, since an edit may have
- * dropped them. Each later stage reads the creators who picked one of the
- * opportunity's niches or skills, so the work grows with real matches rather
- * than with every creator. If creators can no longer see the opportunity, its
- * scores are removed instead.
+ * The "existing" stage rescores creators who already have a score, since an
+ * edit may have dropped them; each selection stage reads the creators who
+ * picked that niche or skill, so the work grows with real matches rather than
+ * with every creator. An opportunity that only sets a follower minimum has no
+ * selections to look creators up by, so it isn't scored. If creators can no
+ * longer see the opportunity, its scores are removed instead.
  */
 export async function scoreOpportunityForCreators(
   ctx: MutationCtx,
   opportunityId: Id<"opportunities">,
-  stage: number,
+  stage: string,
   cursor: string | null,
 ): Promise<ScoringProgress> {
   const opportunity = await ctx.db.get("opportunities", opportunityId);
@@ -164,10 +188,13 @@ export async function scoreOpportunityForCreators(
       .withIndex("by_opportunityId", (q) => q.eq("opportunityId", opportunityId))
       .take(ROWS_PER_BATCH);
     for (const score of scores) await ctx.db.delete("opportunityScores", score._id);
-    return scores.length < ROWS_PER_BATCH ? DONE : { isDone: false, stage: 0, cursor: null };
+    return scores.length < ROWS_PER_BATCH
+      ? DONE
+      : { isDone: false, stage: FIRST_STAGE, cursor: null };
   }
 
   const signals = await getOpportunitySignals(ctx, opportunity);
+  const stages = selectionStages(signals);
   const rescore = async (creatorId: Id<"creators">) => {
     const creator = await ctx.db.get("creators", creatorId);
     const score =
@@ -177,65 +204,62 @@ export async function scoreOpportunityForCreators(
     await saveOpportunityScore(ctx, creatorId, opportunityId, score);
   };
 
-  if (stage === 0) {
+  if (stage === FIRST_STAGE) {
     const page = await ctx.db
       .query("opportunityScores")
       .withIndex("by_opportunityId", (q) => q.eq("opportunityId", opportunityId))
       .paginate({ numItems: ROWS_PER_BATCH, cursor });
     for (const row of page.page) await rescore(row.creatorId);
-    return advance(stage, page);
+    return advance(stage, stages, page);
   }
+  if (!stages.includes(stage)) return advance(stage, stages, FINISHED_PAGE);
 
   // A creator who shares several selections is scored once per selection; the
   // repeat writes nothing because the score hasn't changed.
-  const nicheIndex = stage - 1;
-  const skillIndex = nicheIndex - signals.niches.length;
-  if (nicheIndex < signals.niches.length) {
-    const page = await ctx.db
-      .query("creatorNiches")
-      .withIndex("by_name_and_creatorId", (q) => q.eq("name", signals.niches[nicheIndex]))
-      .paginate({ numItems: ROWS_PER_BATCH, cursor });
-    for (const row of page.page) await rescore(row.creatorId);
-    return advance(stage, page);
-  }
-  if (skillIndex < signals.skills.length) {
-    const page = await ctx.db
-      .query("creatorSkills")
-      .withIndex("by_name_and_creatorId", (q) => q.eq("name", signals.skills[skillIndex]))
-      .paginate({ numItems: ROWS_PER_BATCH, cursor });
-    for (const row of page.page) await rescore(row.creatorId);
-    return advance(stage, page);
-  }
-  return DONE;
+  const name = stage.slice(stage.indexOf(":") + 1);
+  const page = stage.startsWith("niche:")
+    ? await ctx.db
+        .query("creatorNiches")
+        .withIndex("by_name_and_creatorId", (q) => q.eq("name", name))
+        .paginate({ numItems: ROWS_PER_BATCH, cursor })
+    : await ctx.db
+        .query("creatorSkills")
+        .withIndex("by_name_and_creatorId", (q) => q.eq("name", name))
+        .paginate({ numItems: ROWS_PER_BATCH, cursor });
+  for (const row of page.page) await rescore(row.creatorId);
+  return advance(stage, stages, page);
 }
 
 /**
- * Scores open opportunities for one creator, e.g. after they edit their
- * profile. Stage 0 rescores the opportunities they already have a score for,
- * dropping ones that closed or stopped matching; stage 1 scores every open
- * opportunity. If the creator no longer has a feed, their scores are removed.
+ * Scores opportunities for one creator, e.g. after they edit their profile. The
+ * "existing" stage rescores the opportunities they already have a score for,
+ * dropping ones that closed or stopped matching; each selection stage reads the
+ * opportunities that picked one of the creator's niches or skills, skipping
+ * ones creators can't see. If the creator no longer has a feed, their scores
+ * are removed.
  */
 export async function scoreCreatorOpportunities(
   ctx: MutationCtx,
   creatorId: Id<"creators">,
-  stage: number,
+  stage: string,
   cursor: string | null,
 ): Promise<ScoringProgress> {
   const creator = await ctx.db.get("creators", creatorId);
   if (creator === null || !(await hasCreatorFeed(ctx, creator))) {
     const scores = await ctx.db
       .query("opportunityScores")
-      .withIndex("by_creatorId_and_score", (q) => q.eq("creatorId", creatorId))
+      .withIndex("by_creatorId_and_opportunityId", (q) => q.eq("creatorId", creatorId))
       .take(ROWS_PER_BATCH);
     for (const score of scores) await ctx.db.delete("opportunityScores", score._id);
-    return scores.length < ROWS_PER_BATCH ? DONE : { isDone: false, stage: 0, cursor: null };
+    return scores.length < ROWS_PER_BATCH
+      ? DONE
+      : { isDone: false, stage: FIRST_STAGE, cursor: null };
   }
 
   const signals = await getCreatorSignals(ctx, creator);
-  const rescore = async (
-    opportunity: Doc<"opportunities"> | null,
-    opportunityId: Id<"opportunities">,
-  ) => {
+  const stages = selectionStages(signals);
+  const rescore = async (opportunityId: Id<"opportunities">) => {
+    const opportunity = await ctx.db.get("opportunities", opportunityId);
     const score =
       opportunity !== null && (await getVisibleOpportunityCompany(ctx, opportunity)) !== null
         ? scoreOpportunityMatch(signals, await getOpportunitySignals(ctx, opportunity))
@@ -243,23 +267,28 @@ export async function scoreCreatorOpportunities(
     await saveOpportunityScore(ctx, creatorId, opportunityId, score);
   };
 
-  if (stage === 0) {
+  if (stage === FIRST_STAGE) {
+    // Paged by opportunity, not score, so rescoring doesn't reorder the rows
+    // still to be read.
     const page = await ctx.db
       .query("opportunityScores")
-      .withIndex("by_creatorId_and_score", (q) => q.eq("creatorId", creatorId))
+      .withIndex("by_creatorId_and_opportunityId", (q) => q.eq("creatorId", creatorId))
       .paginate({ numItems: ROWS_PER_BATCH, cursor });
-    for (const row of page.page) {
-      await rescore(await ctx.db.get("opportunities", row.opportunityId), row.opportunityId);
-    }
-    return advance(stage, page);
+    for (const row of page.page) await rescore(row.opportunityId);
+    return advance(stage, stages, page);
   }
-  if (stage === 1) {
-    const page = await ctx.db
-      .query("opportunities")
-      .withIndex("by_status_and_deadline", (q) => q.eq("status", "open"))
-      .paginate({ numItems: ROWS_PER_BATCH, cursor });
-    for (const opportunity of page.page) await rescore(opportunity, opportunity._id);
-    return advance(stage, page);
-  }
-  return DONE;
+  if (!stages.includes(stage)) return advance(stage, stages, FINISHED_PAGE);
+
+  const name = stage.slice(stage.indexOf(":") + 1);
+  const page = stage.startsWith("niche:")
+    ? await ctx.db
+        .query("opportunityNiches")
+        .withIndex("by_name_and_opportunityId", (q) => q.eq("name", name))
+        .paginate({ numItems: ROWS_PER_BATCH, cursor })
+    : await ctx.db
+        .query("opportunitySkills")
+        .withIndex("by_name_and_opportunityId", (q) => q.eq("name", name))
+        .paginate({ numItems: ROWS_PER_BATCH, cursor });
+  for (const row of page.page) await rescore(row.opportunityId);
+  return advance(stage, stages, page);
 }

@@ -165,8 +165,8 @@ and error reasons.
 ## Opportunity recommendations
 
 `opportunityScores` stores how well an open opportunity fits a creator, from 0 to 1.
-`scoreOpportunityMatch` weighs the opportunity's niches (0.35), skills (0.25), and
-minimum follower range (0.10) against the creator's profile. Signals the opportunity
+`scoreOpportunityMatch` weighs the opportunity's minimum follower range (0.45), skills
+(0.35), and niches (0.20) against the creator's profile. Signals the opportunity
 doesn't ask for are left out and the rest re-normalized.
 
 Follower ranges are self-reported (`creators.followerRange`,
@@ -176,11 +176,14 @@ every 10x a creator falls short. A minimum ranks a brief lower but never hides i
 
 Only matches are stored; no row means a score of 0. The internal mutations
 `opportunityScores.scoreOpportunity` and `scoreCreator` rebuild scores in bounded,
-self-scheduling batches. `scoreOpportunity` only reads creators who share one of the
-opportunity's niches or skills, so its cost grows with matches, not with every
-creator. Both skip users who aren't active creators and clear scores once the
-opportunity or creator drops out of discovery. Nothing calls them on edits yet, and
-`discover` doesn't read scores yet; both come next.
+self-scheduling batches: first rescoring existing rows, then one stage per shared
+niche or skill (named, not numbered, so edits between batches don't misdirect them).
+Both read candidates through the `by_name_and_*Id` selection indexes, so cost grows
+with matches, not with every creator or opportunity; a brief that only sets a
+follower minimum has no selections to look up and isn't scored. Both skip users who
+aren't active creators and clear scores once the opportunity or creator drops out of
+discovery. Nothing calls them on edits yet, and `discover` doesn't read scores yet;
+both come next.
 
 ## Opportunity deliverables
 

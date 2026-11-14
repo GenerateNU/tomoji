@@ -1,10 +1,14 @@
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
 import { internalMutation } from "./_generated/server";
-import { scoreCreatorOpportunities, scoreOpportunityForCreators } from "./models/opportunityScores";
+import {
+  FIRST_STAGE,
+  scoreCreatorOpportunities,
+  scoreOpportunityForCreators,
+} from "./models/opportunityScores";
 
 const progressArgs = {
-  stage: v.optional(v.number()),
+  stage: v.optional(v.string()),
   cursor: v.optional(v.union(v.string(), v.null())),
 };
 
@@ -16,7 +20,7 @@ export const scoreOpportunity = internalMutation({
     const progress = await scoreOpportunityForCreators(
       ctx,
       opportunityId,
-      stage ?? 0,
+      stage ?? FIRST_STAGE,
       cursor ?? null,
     );
     if (!progress.isDone) {
@@ -35,7 +39,12 @@ export const scoreCreator = internalMutation({
   args: { creatorId: v.id("creators"), ...progressArgs },
   returns: v.null(),
   handler: async (ctx, { creatorId, stage, cursor }) => {
-    const progress = await scoreCreatorOpportunities(ctx, creatorId, stage ?? 0, cursor ?? null);
+    const progress = await scoreCreatorOpportunities(
+      ctx,
+      creatorId,
+      stage ?? FIRST_STAGE,
+      cursor ?? null,
+    );
     if (!progress.isDone) {
       await ctx.scheduler.runAfter(0, internal.opportunityScores.scoreCreator, {
         creatorId,

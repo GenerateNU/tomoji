@@ -1,0 +1,473 @@
+# Earnings rules and payment contract
+
+This is the implementation contract for Tomoji's earnings calculator, scheduler,
+and Stripe integration. The calculator and internal settlement operation record
+earned obligations through the existing [payout operations](BACKEND.md#payout-records).
+The recurring earnings runner creates due obligations for review. Stripe
+collection remains separate: creating or approving an obligation does not charge
+a company or pay a bank account.
+
+## Agreed payout rules
+
+| Rule                 | Behavior                                                                                                                                                                            |
+| -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Start                | The live post's first verification starts that deliverable's earnings clock. Draft approval, publication, and payout approval are different events.                                 |
+| Schedule             | Create an earned payout for review every seven days from verification when money is owed.                                                                                           |
+| Duration             | Default to 30 days, including a final partial period covering days 28–30. Keep the default configurable in code.                                                                    |
+| Fixed fee            | Include it once per deliverable in the first payout. No minimum views are required: a verified post with zero views still earns its fixed fee.                                      |
+| Variable earnings    | Pay additional eligible views since the last recorded earnings calculation, using the agreed compensation rate.                                                                     |
+| Compensation         | The company sets opportunity terms; calculate from the accepted assignment's stored terms so later opportunity edits do not change the agreement.                                   |
+| Cap                  | The cap covers fixed plus variable earnings separately for each deliverable. Three deliverables with a $200 cap can earn $600 total.                                                |
+| Review               | Each payout gets 72 hours from its actual creation time. A company admin can approve earlier; automatic approval respects existing dispute holds.                                   |
+| Cancellation/removal | Stop new accrual at the cutoff. Settle accrued amounts, including unrecorded earnings from a partial period; existing unpaid payouts remain owed. No automatic refund is triggered. |
+| Money                | Use `usd` and integer cents. `payouts.amount` is gross earned compensation before processing fees. The initial Tomoji fee is zero.                                                  |
+
+Let `T` be the original live-post verification time. The normal period boundaries
+are `T`, `T + 7 days`, `T + 14 days`, `T + 21 days`, `T + 28 days`, and
+`T + 30 days`. Days are elapsed 24-hour durations, not local calendar days. Use
+non-overlapping periods with an inclusive start and exclusive end. An earlier
+cancellation or removal ends the final period at that cutoff; the next earnings
+run settles it when the required evidence is available.
+
+Preserve the original start and applicable window end. Job retries, later
+verification changes, replacement links, and edits to the default duration must
+not restart an existing deliverable's clock, fixed fee, or cap. Correcting a
+verification is not a new earning agreement. If replacement or verification
+changes make view eligibility ambiguous, leave that portion unresolved for
+review rather than automatically counting both posts.
+
+A job that creates the day-seven payout on day eight still gives it 72 hours from
+day eight. The 30-day limit controls accrual, not review, collection, or bank
+deposit timing. Open assignment disputes can hold approval beyond its deadline;
+the existing [approval rules](BACKEND.md#approval-and-dispute-holds) still apply.
+
+## Calculation defaults
+
+The following are the initial engineering defaults for the calculator, separate
+from the product rules above:
+
+- Count views gained during the earning window, using a timestamped baseline at
+  verification and measurements for the applicable cutoffs. Exclude views already
+  present at verification.
+- Pay proportionally per view. `cpmRateCents` means cents per **1,000** eligible
+  views, not cents per view or per 100 views. Round cumulative variable earnings
+  down to whole cents so fractional cents carry forward across weekly periods.
+- Treat the fixed fee as earned at verification and normally include it in the
+  first weekly settlement. If cancellation/removal ends the window sooner,
+  include any unrecorded fixed fee in that final settlement.
+
+For a verified deliverable with valid compensation and complete metric evidence:
+
+```text
+variableEarnedCents = floor(cpmRateCents * cumulativeEligibleViews / 1000)
+totalEarnedCents = min(paymentCapCents, fixedFeeCents + variableEarnedCents)
+newPayoutCents = totalEarnedCents - previouslyRecordedEarningsCents
+```
+
+`previouslyRecordedEarningsCents` includes every existing obligation for that
+assignment/deliverable, including pending review, disputed, and failed-collection
+payouts. It is not the sum of successful payments. Refunds and payment retries
+must not make the calculator earn the same amount again.
+
+Create a payout only for a positive increment. A zero increment advances
+calculation progress without inserting a zero-value payout. A negative increment
+or a regressing view count requires reconciliation; do not create a negative
+payout, erase an existing obligation, or silently reset the baseline. Validate
+nonnegative safe-integer inputs and use arithmetic that cannot silently lose
+integer precision. Compensation with a cap below its fixed fee is inconsistent:
+flag it for correction instead of silently reducing the promised fixed fee.
+
+### Missing metrics
+
+Missing or stale data is not zero views. A newer lifetime count cannot prove how
+many views existed at verification, day 30, or removal. Preserve measurement
+timestamps and provenance; leave the affected variable amount pending when a
+baseline or cutoff cannot be established. A failed X request alone does not
+prove that a post was removed.
+
+The known fixed fee must still become reviewable at the first due settlement,
+even if view measurements are unavailable. In that case, record the fixed amount
+once and retain an explicit pending variable component. When evidence arrives,
+settle only the additional variable amount under its own stable earning identity.
+Do not change the amount of the original payout or repeat the fixed fee. The
+calculation records must distinguish this separate component from a retry of the
+original earning. With complete metrics, the first payout combines fixed and
+variable earnings normally.
+
+A later period with a reliable baseline and cutoff can settle the cumulative
+variable earnings that earlier periods left pending. Its calculation records the
+earliest covered period and links the earlier pending records to the covering
+calculation. This does not turn a day-14 observation into day-seven evidence.
+Reconciliation problems require review rather than being covered automatically.
+
+## Inputs and records needed by the calculator
+
+The calculator must retain enough evidence to reproduce each obligation:
+
+| Input              | Required meaning                                                                                                                                            |
+| ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Identity           | Assignment, deliverable, and source post IDs. Fixed-fee usage, cap usage, and total earnings belong to the assignment/deliverable even if its post changes. |
+| Terms              | Accepted fixed fee, CPM rate, cap, USD currency, and the applicable calculation policy/window.                                                              |
+| Timing             | Original verification time, fixed period boundaries, and any cancellation/removal cutoff with its source.                                                   |
+| Metrics            | Timestamped baseline and cutoff measurements, their source post, and any unresolved measurement gaps.                                                       |
+| Prior obligations  | Recorded fixed/variable components and linked payout IDs, independent of collection success.                                                                |
+| Calculation result | Eligible view count, fixed/variable breakdown, rounding/cap application, resulting increment, and stable earning identity.                                  |
+
+The implementation separates the agreement, measurement evidence, and settlement
+record:
+
+| Table                 | Purpose                                                                                                                                                                            |
+| --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `deliverableEarnings` | One agreement per assignment/deliverable: original post, ownership, compensation, policy version, verification start, window end, and any view-attribution hold or removal cutoff. |
+| `postViewSnapshots`   | Immutable view counts with the actual observation time, source key, and receipt time.                                                                                              |
+| `earningCalculations` | Period/component inputs and results, pending or reconciliation reasons, and linked payout or covering calculation. A pending calculation is not an additional obligation.          |
+| `earningsSchedules`   | Mutable due time and attempt diagnostics for one agreement; calculation records remain authoritative for settled and pending periods.                                              |
+| `payouts`             | The earned obligation and its review/payment progress. New records also retain the deliverable ID derived from the source post's submission.                                       |
+
+The [verification operation](../convex/models/posts.ts) stores `firstVerifiedAt`
+and initializes the agreement in the same transaction. `postedAt` remains the
+publication time. [Cancellation](../convex/models/assignments.ts) stores
+`cancelledAt` and atomically records that cutoff on each earnings agreement, keeping
+an earlier removal cutoff if one exists. The read is bounded by the 20-deliverable
+limit; excess agreements reject the cancellation rather than partially updating
+them. Confirmed removal records `removedAt` and its source key; a delayed report
+can shorten an existing cancellation cutoff. Neither operation cancels previously
+earned obligations. Reverification and replacement
+preserve the original agreement, fixed fee, cap, and clock; uncertain attribution
+holds variable earnings for reconciliation.
+
+Record missing timestamps/evidence explicitly during rollout. Do not backfill
+verification time from publication time or infer historical view counts from
+today's total. Preserve records needed to settle an outstanding obligation even
+when the assignment is cancelled or the external post is removed.
+
+Existing records can lack these optional timestamps and the payout deliverable
+ID. Reverification of a legacy post with unknown timing does not start a new
+window. Settlement checks legacy payout relationships when summing existing
+obligations; missing relationships or a history beyond the bounded read limit
+require reconciliation rather than a partial total. No speculative backfill or
+automatic data migration is performed.
+
+Genuinely new posts record `earningsTrackingVersion: 1`; replacement links inherit
+that marker and any known
+original verification time. Without the marker, an original verification time,
+or an existing agreement, verification succeeds but marks earnings timing unknown
+and leaves earnings on hold. This also holds never-verified legacy posts until
+their history is reviewed, because the old records cannot distinguish them from
+posts unverified before tracking began. The initialization operation enforces the
+same guard. Do not infer verification from publication time or historical view
+counts from today's total. No automatic backfill or data migration is performed.
+
+Before enabling automatic earnings for these legacy posts, a Tomoji admin must
+review the available evidence and record the reviewer, source evidence, and
+determination of the original verification time, including any unresolved gaps.
+A separately approved, evidence-backed conversion plan must establish the earning
+window and first due settlement using the rules above. If the original time
+cannot be established, leave the case unresolved for a product decision; do not
+substitute publication time or a new verification date. Preserve existing
+obligations throughout. This contract does not introduce a correction endpoint
+or authorize an automatic historical backfill.
+
+## Internal operations
+
+These operations are server-only. They do not accept a client-selected payout
+amount or expose new public earnings endpoints.
+
+| Operation                               | Inputs and effect                                                                                                                                                                                                         |
+| --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `internal.earningSources.recordViews`   | `{ postId, observedAt, views, sourceKey }`: persist trusted observation evidence. Identical retries return the original snapshot; changed evidence under the same key or a competing key at the same timestamp conflicts. |
+| `internal.earningSources.recordRemoval` | `{ postId, removedAt, sourceKey }`: record a confirmed removal cutoff. This is not called automatically on a failed metrics request.                                                                                      |
+| `internal.earnings.settle`              | `{ assignmentId, deliverableId, periodIndex }`: calculate and record one due period atomically. Indices start at zero; the default 30-day window has indices 0–4.                                                         |
+
+Settlement reads the stored agreement, timing, observations, and all relevant
+existing obligations. It saves the calculation and creates any positive payout
+in one mutation, so failure rolls back both. Zero increments create calculation
+progress without a payout. Future periods return `notDue`; periods beyond a
+cutoff return `outsideWindow`. Unresolved evidence and reconciliation return
+`pendingMetrics` or `needsAttention` with a reason. Repeated completed settlements
+return the original calculation and payout IDs.
+
+Invoke due periods in order. A later period can cover earlier attempted periods
+that are waiting only for metrics; it cannot skip an unattempted period or
+silently resolve an accounting problem. The scheduler discovers due agreements
+and invokes the same settlement model for each due period in order.
+
+The existing `posts.updateViews` operation also records a snapshot at server
+receipt time; engagement-only updates do not create view evidence. A collector
+that knows the actual observation time should use `recordViews`, especially for
+delayed evidence. Settlement uses measurements at the stored verification and
+cutoff times; a nearby observation is not automatically an exact boundary. Live
+X collection must supply this evidence; fixture tests do not prove its availability.
+
+Regressing counts within the eligible window hold variable earnings for
+reconciliation. Confirmed removal, including an identical retry, rechecks
+metric-regression holds within the shortened window. A hold clears only after
+the complete eligible history is checked and no decline remains. The read is
+capped at 1,000 observations; longer histories retain the hold for reconciliation.
+Observations received while held are still stored and included in that recheck.
+Replacement and verification-change holds never clear automatically; any future
+resolution operation must revalidate the retained view evidence before releasing
+variable earnings.
+
+## Earnings detail and calculation history reads
+
+Two public queries provide the read contract for earnings pages:
+
+| Query                       | Inputs and result                                                                                                                                                  |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `earnings.get`              | `{ assignmentId, deliverableId }`: stored agreement identity, fixed fee, CPM rate, cap, currency, verification window, cutoff/hold context, and scheduling status. |
+| `earnings.listCalculations` | `{ assignmentId, deliverableId, paginationOpts }`: a native cursor page of calculation components, newest period first, then newest creation within the period.    |
+
+Both authorize against the agreement's stored creator/company ownership. Creators
+see their agreements, company members and admins see their company's agreements,
+and operators can see all. Missing, mismatched, and inaccessible agreements return
+the same `not_found` error with resource `deliverable_earnings`. A deliverable
+without an initialized agreement has no earnings detail yet. Reads never initialize
+an agreement, create a schedule, settle a period, or update a payout.
+
+`get` preserves the original `startedAt` and `endsAt`. Its `window` is either
+`{ status: "known", effectiveEndsAt }`, using the earliest original end, removal
+cutoff, or cancellation time, or `{ status: "needsAttention" }` when timing cannot
+be established. Missing assignment context, mismatched parent ownership, unknown
+cancellation timing, and invalid stored boundaries do not become an assumed full
+window. Historical terms and calculation records remain readable after parent
+deletion. This projection uses stored timestamps, not the current wall clock.
+
+`schedule` is `null` when no scheduling record exists; otherwise it exposes only
+`status` and optional `nextCheckAt`. A next check is a scheduler retry/boundary,
+not a promised payment date. Execution errors and retry counters remain internal.
+The finite agreement `variableHoldReason` is exposed when present.
+
+Calculation rows expose period boundaries, component/status, optional cumulative
+eligible views, and **incremental** `newFixedCents`, `newVariableCents`, and
+`newPayoutCents` only when recorded. They retain payout and coverage links:
+
+- `pendingMetrics` and `needsAttention` leave payable amounts absent, not zero.
+- `covered` points to `coveredByCalculationId`; it is not another payable increment.
+- A recorded zero increment is explicitly zero and has no payout.
+- A positive recorded increment links to its actual obligation through `payoutId`;
+  approval and payment progress come from the existing payout reads.
+
+The response excludes internal source keys, raw reason strings, snapshot IDs, and
+cumulative monetary totals. No page or agreement total is computed here. Native
+pagination metadata is preserved; continue with the same scope and cursor.
+Tests exercise authorization, missing parents, cutoffs, delayed/covered metrics,
+zero increments, private-field omission, pagination, and unchanged financial records.
+
+## Scheduling state
+
+[`earningsSchedules`](../convex/schemas/earningsSchedules.schema.ts) has one row
+per agreement, enforced transactionally through `by_earningsId`. Verification
+initializes it in the same mutation as the agreement, due at the first weekly
+boundary or earlier cutoff. The stored start and end are reused; initialization
+retries, reverification, and replacement preserve an existing schedule unchanged.
+
+`status` is `scheduled`, `needsAttention`, or `complete`. A scheduled row has
+`nextCheckAt`; parked rows omit it. The sweep uses `by_nextCheckAt`
+with `0 <= nextCheckAt <= sweepCutoff` to exclude parked rows and bound due work.
+`lastAttemptedAt`, `lastAttemptedPeriodIndex`, `retryCount`, `metricRetryCount`, and `lastError` retain
+attempt diagnostics. These fields do not establish that an earning was settled:
+a fixed-fee-only payout can still leave variable earnings pending. Initialization
+sets `retryCount` to zero.
+
+Optional `scan` state retains the next period index, whether earlier variable
+earnings remain pending, and the effective cutoff during a chronological pass.
+Existing rows without it start at period zero. It is cleared when a pass ends,
+when a shortened cutoff wakes the schedule, or on an explicit recovery retry.
+Calculation records remain authoritative; the cursor is only scheduling progress.
+
+Cancellation and confirmed removal bring the schedule forward in the cutoff
+transaction, preserving an earlier outstanding check and attempt diagnostics.
+A shortened window can wake a previously completed or parked schedule. The
+same applies when an identical removal retry clears an obsolete metric-regression
+hold; a retry that changes neither cutoff nor hold preserves schedule progress. The
+worker must reconsider calculation records against the current cutoff rather
+than skip to the last attempted period. If the effective cutoff remains the
+stored window end, the schedule is unchanged. Cancellation checks every agreement within
+the 20-deliverable limit and rejects inconsistent overflow instead of skipping rows.
+
+Known cancellation or removal prevents a new live-post verification. If late evidence
+instead places a cutoff before an existing agreement's verification, its schedule is
+parked as `needsAttention` with `cutoff_precedes_verification`. This contradicts the
+stored earning history and needs reconciliation; it is not an automatic zero-dollar
+completion or reversal of a fixed-fee obligation. Existing payouts and review deadlines
+stay unchanged. A cutoff exactly at verification remains eligible for the earned fixed
+fee and is scheduled immediately.
+
+The [schedule backfill](MIGRATIONS.md#backfill-earnings-schedules) adds
+missing schedules in batches from existing agreements, including ones older than
+30 days. It preserves existing schedules and obligations. Invalid timing or a
+missing assignment parks the new schedule with an explicit reason; legacy posts
+without an earnings agreement do not acquire an invented verification date.
+Initial due dates can be in the past: the worker reconciles existing
+calculations idempotently before creating any additional obligation.
+
+### Scheduled execution and recovery
+
+The `create due earnings` cron calls `internal.earningsSchedules.sweep` every
+minute. Each sweep reads at most 25 due schedules, queues a worker for each, and
+queues a continuation using the same cutoff and the next cursor. Missing metrics
+or failed work at the start of the index cannot prevent later rows from running.
+
+Queueing a worker and storing its `queuedWorker` claim commit atomically. Sweeps
+reuse a pending or running scheduled job for the same due token, even during a
+long backlog. A canceled, failed, completed, or missing job releases that claim
+for recovery on the next sweep; elapsed time alone never expires a live job.
+Continuations use the same claim mechanism. Claims are internal scheduling data,
+not evidence that any earning was settled.
+
+Each worker rereads its schedule and compares `expectedNextCheckAt` with the
+current value. Stale, early, completed, or parked work is a no-op. Each worker
+settles at most one period, then queues a continuation in a fresh transaction
+when more work is due. Its due token advances by at least one millisecond so
+queued duplicates cannot consume the next period. A pass visits periods in
+chronological order, including missed weeks and the final partial period.
+Each new pass starts from period zero, and a changed cutoff restarts the pass.
+It rechecks existing calculations against the current cutoff;
+`lastAttemptedPeriodIndex` is diagnostic, not a cursor that permits skipping
+earlier obligations. Catch-up payouts receive a full 72-hour review window from
+their actual creation time.
+
+One period's settlement and scan progress commit together in a nested mutation.
+If it throws, that period's writes roll back while earlier committed periods
+remain intact; the wrapper records a safe failure code and retries the same
+period. Other agreements run in separate workers. The nested mutation is capped
+at 3,500 queries, 8,000 document reads, 8 MiB read, and 2,000 document writes to reserve
+headroom for failure recording. Windows with more than 64 weekly periods park
+with `earning_window_too_large`; the default window has five periods.
+
+| Outcome                                     | Schedule behavior                                                                                                                                                                                                                 |
+| ------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| More due periods in the current pass        | Commit this period and continue in a separate scheduled transaction; retain pending-metric state.                                                                                                                                 |
+| Due periods recorded, future period remains | Check at the next canonical boundary.                                                                                                                                                                                             |
+| Missing metric evidence                     | Retry after 1, 2, 4, 8, and 16 hours, then daily, or at the next boundary if sooner. Seven days after the effective final cutoff, park as `needsAttention` with `metric_evidence_unavailable`. Pending amounts remain unresolved. |
+| All eligible periods settled                | Mark `complete` and clear `nextCheckAt`; zero increments do not create payouts.                                                                                                                                                   |
+| Reconciliation or invalid source data       | Park as `needsAttention` with the domain reason; retain existing obligations.                                                                                                                                                     |
+| Unexpected execution failure                | Record an allowlisted `settlement_*` failure category (generic `settlement_execution_failed` for unknown errors); retry after 1, 2, 4, and 8 minutes, then park on the fifth failure.                                             |
+
+After correcting the source problem, a trusted operator can invoke
+`internal.earningsSchedules.retry({ scheduleId })` through the selected deployment's
+internal tooling. It requeues the schedule immediately and resets both retry
+counters and the scan cursor, preserving the earning clock, obligations, and attempt diagnostics.
+Successful processing clears the last error. Retrying does not itself repair an
+accounting conflict or refund an existing payout.
+
+The seven-day metric grace period is an operational retry limit, not a deadline
+for the creator's earnings. After it expires, record the missing evidence and use
+the internal retry operation to settle the remaining amount. A retry with evidence
+still missing parks again; it does not extend the original accrual window or
+declare unknown earnings zero. No raw exception messages, stack traces, or
+arbitrary error details are stored in schedule diagnostics.
+The current Convex SDK exposes platform-limit failures as untyped errors, so they
+retain the generic code alongside unexpected bugs. Use the scheduled-function
+runtime logs to investigate those cases; do not infer categories from arbitrary
+exception text.
+
+This runner uses stored metric evidence; it does not fetch X metrics. Exact
+boundary evidence remains a prerequisite for variable earnings. After deployment,
+verify the cron registration and inspect schedule states and scheduled-function
+results; local tests alone do not establish live collection availability.
+
+## Earnings-to-payment handoff
+
+The existing internal operation is:
+
+```text
+internal.payouts.create({
+  assignmentId, sourceKey, amount, currency, postId, earningPeriod?
+})
+```
+
+It derives creator/company/campaign ownership from the assignment, checks the
+post relationship, and returns the payout document. The earnings workflow uses
+`currency: "usd"`, supplies the finalized increment in cents, and retains the
+returned `_id` as `payoutId`. The generic existing operation's currency validator
+is broader than the MVP's USD-only earnings policy.
+
+An earning identity describes an assignment/deliverable, period, and component
+being settled; it does not describe a job run or payment attempt. Generate a
+stable `sourceKey` from that identity and persist the original calculation inputs.
+Within an assignment, an identical retry returns the existing payout. A changed
+amount, currency, post, or period under that key conflicts. Reconcile that
+conflict rather than inventing a new key for the same earning. Prior-obligation
+accounting and creation must be atomic so concurrent runs cannot record the same
+earnings under different keys.
+
+| Earnings implementation (Eric)                                                                           | Stripe implementation (Gulnas)                                                             |
+| -------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| Calculate earnings and create obligations using the existing payout API.                                 | Collect approved obligations, referring to the existing `payoutId`.                        |
+| Own period boundaries, calculation evidence, fixed-fee/cap accounting, and earning deduplication.        | Own Stripe account/payment IDs, payment attempts, fees, and payment-status updates.        |
+| Preserve accrued earnings through cancellation and leave existing amounts intact after payment failures. | Retry/reconcile collection against the same obligation without charging twice.             |
+| Build earnings and payment UI against agreed inputs and callbacks.                                       | Define the setup/recovery operations and responses before those UI tickets are integrated. |
+
+Before collection, the payment executor checks approval, current assignment
+disputes, and payment readiness. Cancellation alone must not block collection of
+already-earned amounts. The initial collection amount is `payouts.amount`, with
+no Tomoji fee or fee gross-up. Record actual processing fees and creator net
+receipts separately; do not rewrite the earned amount to match the net deposit.
+
+Approval does not send money. `paymentStatus: "transferred"` and `transferredAt`
+describe collection into the creator's provider balance, not a bank deposit or a
+requirement to use a separate Stripe Transfer. Bank payouts and failures are
+separate payment-provider events; a bank-payout failure cannot trigger another
+charge to the company.
+
+Payout history reads expose a stored `deliverableId` when available and
+`review: { hasOpenDispute, canApprove }` for the authenticated caller. Review
+information is derived from current disputes and membership without changing the
+obligation. It describes manual approval eligibility, not payment readiness or
+bank-payout status. See [payout reads and review context](BACKEND.md#payout-records).
+
+Each engineer branches independently from `main`. Gulnas can test against the
+existing payout records without importing code from Eric's branch. New Stripe
+records and endpoints belong to her stack; detailed UI response contracts are
+agreed before the UI tickets. Existing payout authorization remains enforced.
+
+## Acceptance examples
+
+Amounts below are gross USD earnings before processing fees. For one deliverable,
+use a $100 fixed fee, $10 per 100 eligible views (`cpmRateCents: 10000`), and a
+$200 cap. View counts are gains since verification, with reliable measurements
+at each boundary:
+
+| Day after verification | Cumulative eligible views | Total earned | New payout for review |
+| ---------------------- | ------------------------: | -----------: | --------------------: |
+| 7                      |                       100 |         $110 |                  $110 |
+| 14                     |                       300 |         $130 |                   $20 |
+| 21                     |                       600 |         $160 |                   $30 |
+| 28                     |                       900 |         $190 |                   $30 |
+| 30                     |                     1,200 |         $200 |                   $10 |
+
+Every new payout gets its own 72-hour review from actual creation. Three
+deliverables following this example earn $600 total, each on its own clock.
+
+| Scenario                                                                                 | Expected result                                                                                                                                                        |
+| ---------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Zero views throughout                                                                    | $100 at day seven; no further payouts. The fixed fee has no view threshold.                                                                                            |
+| Cap reached at day seven with 1,000 eligible views                                       | Record $200 once; later views create no additional earnings, even if collection of that $200 is still pending.                                                         |
+| No metric response at day seven                                                          | Record the known $100 fixed fee once; keep variable earnings pending, not zero. If reliable evidence later establishes 100 eligible views, only $10 remains to record. |
+| Cancellation on day ten after $110 was recorded, with 300 eligible views at cancellation | Record the remaining $20 for review, even if the earlier $110 has not been collected. No later accrual or automatic refund.                                            |
+| Removal on day three with 100 eligible views and no prior payout                         | Final settlement is $110, including the fixed fee, once cutoff evidence is available.                                                                                  |
+| First $110 collection fails                                                              | The obligation remains $110 owed. At 300 eligible views, the next earning is still only $20; collection retries use the original payout.                               |
+| Repeated job for the same earning                                                        | Return the original payout without resetting its review deadline or recording another obligation.                                                                      |
+| Day-seven job runs on day eight                                                          | Settle only the first period's supported earnings; the full 72-hour review begins on day eight. Do not count day-eight views as day-seven evidence.                    |
+| Replacement/reverification                                                               | No new fixed fee, cap allowance, or 30-day window. Resolve ambiguous view attribution before recording additional variable earnings.                                   |
+| Fractional cents                                                                         | At 1 cent per 1,000 views, 600 eligible views accrue 0 payable variable cents; 1,200 accrue 1 cent. Weekly rounding must not discard the earlier fraction.             |
+
+## Delivery and verification
+
+The calculator/records implementation covers the policy above with pure arithmetic
+tests and Convex transaction tests, including retries, missing evidence, and
+cutoff handling. Run `just ci` for type checking, linting, formatting, and the full
+test suite. Scheduling-state tests cover lifecycle timing, atomic cancellation,
+and migration batching/idempotency. Runner tests cover paginated discovery,
+overlapping runs, catch-up, delayed evidence, cutoffs, backoff, and rollback on
+exceptions or nested transaction limits. Resource regressions exercise large
+legacy histories and 64-period catch-up with transaction limits enforced, including
+later cumulative evidence and a failure after an earlier period commits.
+Due obligations use the same settlement
+operation and existing review workflow.
+
+Stripe processing and bank-payout reconciliation remain in the separate Stripe
+stack, followed by integration tests across both stacks. This implementation
+does not configure a payment provider or run live charges.

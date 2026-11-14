@@ -646,15 +646,19 @@ describe("overrideDispute", () => {
 });
 
 describe("requireDispute", () => {
-  test("gives company users and operators the stored row", async () => {
+  test("gives company users and operators the stored row and the company's name", async () => {
     const t = convexTest(schema, modules);
     const fixture = await seedAssignmentFixture(t);
+    await t.run(
+      async (ctx) =>
+        await ctx.db.patch("companies", fixture.membership.companyId, { name: "Datadog" }),
+    );
     const disputeId = await seedDispute(t, fixture);
     const [stored] = await storedDisputes(t);
 
     for (const viewer of [companyOf(fixture), operator]) {
       const view = await t.run(async (ctx) => await requireDispute(ctx, viewer, disputeId));
-      expect(view).toEqual(stored);
+      expect(view).toEqual({ ...stored, companyName: "Datadog" });
     }
   });
 

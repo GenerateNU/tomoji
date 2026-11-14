@@ -6,6 +6,64 @@ import { apiError } from "../lib/errors";
 import { requireAssignment, type AssignmentViewer } from "./assignments";
 import { listOpportunityDeliverables } from "./deliverableDrafts";
 import { getLatestSubmission } from "./submissions";
+import { getXAccountByCreatorId } from "./xAccountLookup";
+import { postCaptionCheck } from "../schemas/posts.schema";
+import { normalizeCaption, type getXPostForCaptionCheck } from "../lib/xApi";
+import { holdPostEarnings, initializePostEarnings, recordPostViewSnapshot } from "./earningSources";
+import schema from "../schema";
+
+/** Client-facing post fields; earnings evidence and lookup reservations stay internal. */
+export const postView = schema
+  .doc("posts")
+  .pick(
+    "_id",
+    "_creationTime",
+    "submissionId",
+    "campaignId",
+    "url",
+    "xPostId",
+    "isActive",
+    "isVerified",
+    "postedAt",
+    "firstVerifiedAt",
+    "removedAt",
+    "captionCheck",
+    "views",
+    "viewsUpdatedAt",
+    "likes",
+    "comments",
+    "reposts",
+    "quotes",
+  );
+export type PostView = Infer<typeof postView>;
+
+export function toPostView(post: Doc<"posts">): PostView {
+  const result: PostView = {
+    _id: post._id,
+    _creationTime: post._creationTime,
+    submissionId: post.submissionId,
+    campaignId: post.campaignId,
+    url: post.url,
+    xPostId: post.xPostId,
+    isActive: post.isActive,
+    isVerified: post.isVerified,
+  };
+  for (const key of [
+    "postedAt",
+    "firstVerifiedAt",
+    "removedAt",
+    "captionCheck",
+    "views",
+    "viewsUpdatedAt",
+    "likes",
+    "comments",
+    "reposts",
+    "quotes",
+  ] as const) {
+    if (post[key] !== undefined) Object.assign(result, { [key]: post[key] });
+  }
+  return result;
+}
 
 /** The creator-supplied fields of a new post. */
 export const postCreate = v.object({
@@ -29,7 +87,7 @@ const X_HOSTS = new Set([
 // `<handle>/status/<id>`, `i/status/<id>`, or `i/web/status/<id>`, with any
 // trailing parts like `/photo/1`. A handle is 1-15 letters, digits, or
 // underscores. Post ids are numeric, which tells a post apart from other pages.
-const X_POST_PATH = /^\/(?:i(?:\/web)?|([A-Za-z0-9_]{1,15}))\/status\/(\d{1,25})(?:\/.*)?$/;
+const X_POST_PATH = /^\/(?:i(?:\/web)?|([A-Za-z0-9_]{1,15}))\/status\/([1-9]\d{0,18})(?:\/.*)?$/;
 
 /**
  * Reads an X post link into its id and canonical URL:
@@ -140,6 +198,7 @@ export async function createPost(
     xPostId,
     isActive: true,
     isVerified: false,
+    earningsTrackingVersion: 1,
   });
 }
 
@@ -223,7 +282,11 @@ export async function replacePost(
     throw apiError("invalid_state", { reason: "assignment_not_active" });
   }
   const { url, xPostId } = requirePostUrl(fields.url);
+  if (xPostId === post.xPostId) return post;
   await requirePostUnused(ctx, xPostId, post.submissionId);
+  // This post may have been verified before it became replaceable again.
+  // Hold any existing agreement; the helper is a no-op when none exists.
+  await holdPostEarnings(ctx, postId, "post_replaced");
   await ctx.db.patch("posts", postId, { isActive: false });
   const newPostId = await ctx.db.insert("posts", {
     submissionId: post.submissionId,
@@ -232,6 +295,11 @@ export async function replacePost(
     xPostId,
     isActive: true,
     isVerified: false,
+    ...(post.earningsTrackingVersion === undefined
+      ? {}
+      : { earningsTrackingVersion: post.earningsTrackingVersion }),
+    ...(post.firstVerifiedAt === undefined ? {} : { firstVerifiedAt: post.firstVerifiedAt }),
+    ...(post.earningsTimingUnknown ? { earningsTimingUnknown: true } : {}),
   });
   return (await ctx.db.get("posts", newPostId))!;
 }
@@ -260,11 +328,21 @@ export async function verifyPost(
   if (post.isVerified) {
     throw apiError("invalid_state", { reason: "post_already_verified" });
   }
+  if (post.removedAt !== undefined) {
+    throw apiError("invalid_state", { reason: "post_removed" });
+  }
   if (!Number.isSafeInteger(postedAt) || postedAt < 0 || postedAt > Date.now()) {
     throw apiError("invalid_state", { reason: "invalid_posted_at" });
   }
-  await ctx.db.patch("posts", postId, { isVerified: true, postedAt });
-  return { ...post, isVerified: true, postedAt };
+  const earnings = await initializePostEarnings(ctx, postId, Date.now());
+  const firstVerifiedAt = post.firstVerifiedAt ?? earnings?.startedAt;
+  const patch = {
+    isVerified: true,
+    postedAt,
+    ...(firstVerifiedAt === undefined ? { earningsTimingUnknown: true } : { firstVerifiedAt }),
+  };
+  await ctx.db.patch("posts", postId, patch);
+  return { ...post, ...patch };
 }
 
 /**
@@ -280,7 +358,13 @@ export async function unverifyPost(ctx: MutationCtx, postId: Id<"posts">): Promi
   if (!post.isVerified) {
     throw apiError("invalid_state", { reason: "post_not_verified" });
   }
-  await ctx.db.patch("posts", postId, { isVerified: false, postedAt: undefined });
+  await holdPostEarnings(ctx, postId, "verification_changed");
+  await ctx.db.patch("posts", postId, {
+    isVerified: false,
+    postedAt: undefined,
+    captionCheck: "manualReview",
+    captionCheckStartedAt: undefined,
+  });
   // Read it back so the cleared field is absent rather than `undefined`.
   return (await ctx.db.get("posts", postId))!;
 }
@@ -311,6 +395,12 @@ export async function updatePostViews(
   requireActive(post);
   requireCount(views, "invalid_views");
   const patch = { views, viewsUpdatedAt: Date.now() };
+  await recordPostViewSnapshot(ctx, {
+    postId,
+    observedAt: patch.viewsUpdatedAt,
+    views,
+    sourceKey: `metrics:${patch.viewsUpdatedAt}`,
+  });
   await ctx.db.patch("posts", postId, patch);
   return { ...post, ...patch };
 }
@@ -433,4 +523,90 @@ export async function getPostCaptionInput(ctx: QueryCtx, postId: Id<"posts">) {
   if (submission?.status !== "approved")
     throw apiError("invalid_state", { reason: "submission_not_approved" });
   return { xPostId: post.xPostId, caption: submission.caption };
+}
+
+const captionCheckRetryMs = 30_000;
+
+export const creatorCaptionCheck = v.union(
+  v.literal("alreadyChecked"),
+  v.literal("inProgress"),
+  postCaptionCheck,
+);
+
+export const captionCheckReservation = v.union(
+  v.object({ status: creatorCaptionCheck }),
+  v.object({
+    status: v.literal("lookup"),
+    xPostId: v.string(),
+    startedAt: v.number(),
+  }),
+);
+
+/** Authorizes and reserves an X read; drafts with no caption go straight to manual review. */
+export async function startCreatorCaptionCheck(
+  ctx: MutationCtx,
+  creatorId: Id<"creators">,
+  postId: Id<"posts">,
+): Promise<Infer<typeof captionCheckReservation>> {
+  const { post, assignment } = await requirePostAccess(ctx, { role: "creator", creatorId }, postId);
+  requireActive(post);
+  if (assignment.status !== "active")
+    throw apiError("invalid_state", { reason: "assignment_not_active" });
+  if (post.isVerified || post.captionCheck === "match" || post.captionCheck === "manualReview")
+    return { status: "alreadyChecked" };
+  const submission = await ctx.db.get("submissions", post.submissionId);
+  if (submission?.status !== "approved")
+    throw apiError("invalid_state", { reason: "submission_not_approved" });
+  const account = submission.caption ? await getXAccountByCreatorId(ctx, creatorId) : null;
+  if (!submission.caption || account?.status !== "connected") {
+    await ctx.db.patch("posts", postId, { captionCheck: "manualReview" });
+    return { status: "manualReview" };
+  }
+  const startedAt = Date.now();
+  if (
+    post.captionCheckStartedAt !== undefined &&
+    startedAt - post.captionCheckStartedAt < captionCheckRetryMs
+  ) {
+    return { status: "inProgress" };
+  }
+  await ctx.db.patch("posts", postId, { captionCheckStartedAt: startedAt });
+  return { status: "lookup", xPostId: post.xPostId, startedAt };
+}
+
+/** Rechecks ownership and the active link before applying a result from X. */
+export async function finishCreatorCaptionCheck(
+  ctx: MutationCtx,
+  creatorId: Id<"creators">,
+  postId: Id<"posts">,
+  startedAt: number,
+  published: Awaited<ReturnType<typeof getXPostForCaptionCheck>>,
+): Promise<Infer<typeof creatorCaptionCheck>> {
+  const { post, assignment } = await requirePostAccess(ctx, { role: "creator", creatorId }, postId);
+  requireActive(post);
+  if (assignment.status !== "active")
+    throw apiError("invalid_state", { reason: "assignment_not_active" });
+  if (post.isVerified || post.captionCheck === "match" || post.captionCheck === "manualReview")
+    return "alreadyChecked";
+  if (post.captionCheckStartedAt !== startedAt) return "inProgress";
+  const submission = await ctx.db.get("submissions", post.submissionId);
+  if (submission?.status !== "approved" || !submission.caption)
+    throw apiError("invalid_state", { reason: "submission_not_approved" });
+  const account = await getXAccountByCreatorId(ctx, creatorId);
+  const sameAuthor = account?.status === "connected" && account.xUserId === published.authorId;
+  const status =
+    sameAuthor && normalizeCaption(submission.caption) === normalizeCaption(published.text)
+      ? "match"
+      : "mismatch";
+
+  // A caption match cannot verify a video's content. Extra media and reposts also need review.
+  if (
+    status === "match" &&
+    !submission.mediaId &&
+    !published.hasExtraContent &&
+    published.postedAt >= Math.floor(submission._creationTime / 1000) * 1000
+  ) {
+    await verifyPost(ctx, postId, { postedAt: published.postedAt });
+  }
+  await ctx.db.patch("posts", postId, { captionCheck: status });
+  return status;
 }

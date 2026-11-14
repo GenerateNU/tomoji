@@ -117,13 +117,13 @@ export async function getXPostText(bearerToken: string, xPostId: string): Promis
     throw apiError("invalid_state", { reason: "x_post_id_invalid" });
   const response = await xJson(
     await xRequest(
-      `tweets/${xPostId}?tweet.fields=note_tweet,entities`,
+      `tweets/${xPostId}?post.fields=note_post,entities`,
       { headers: { Authorization: `Bearer ${bearerToken}` } },
       rateLimited,
     ),
   );
   const post = object(response.data);
-  const caption = post.note_tweet === undefined ? post : object(post.note_tweet);
+  const caption = post.note_post === undefined ? post : object(post.note_post);
   if (post.id !== xPostId || typeof caption.text !== "string")
     throw apiError("upstream_failure", { reason: "invalid_response" });
   const entities = caption.entities ?? post.entities;

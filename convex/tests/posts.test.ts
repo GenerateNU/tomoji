@@ -327,9 +327,10 @@ describe("posts.checkCaption", () => {
     const t = convexTest(schema, modules);
     const { postId, submissionId } = await seedPost(t);
     const asOperator = await seedOperator(t, "caption-operator");
+    const longIntro = "Here is how we built the Driftwood demo. ".repeat(8);
     await t.run((ctx) =>
       ctx.db.patch("submissions", submissionId, {
-        caption: "Café demo\r\n#ad https://example.com/launch",
+        caption: `${longIntro}Café demo\r\n#ad https://example.com/launch`,
       }),
     );
     vi.stubEnv("X_BEARER_TOKEN", "x-test");
@@ -339,9 +340,9 @@ describe("posts.checkCaption", () => {
         Response.json({
           data: {
             id: "1843000000000000001",
-            text: "Truncated preview",
-            note_tweet: {
-              text: " Cafe\u0301 demo\n#ad https://t.co/launch https://t.co/video ",
+            text: longIntro.slice(0, 280),
+            note_post: {
+              text: ` ${longIntro}Cafe\u0301 demo\n#ad https://t.co/launch https://t.co/video `,
               entities: {
                 urls: [
                   { url: "https://t.co/launch", expanded_url: "https://example.com/launch" },
@@ -367,7 +368,7 @@ describe("posts.checkCaption", () => {
     expect(await asOperator.action(api.posts.checkCaption, { postId })).toBe("mismatch");
     expect(fetch).toHaveBeenCalledTimes(2);
     expect(fetch).toHaveBeenCalledWith(
-      "https://api.x.com/2/tweets/1843000000000000001?tweet.fields=note_tweet,entities",
+      "https://api.x.com/2/tweets/1843000000000000001?post.fields=note_post,entities",
       expect.objectContaining({ headers: { Authorization: "Bearer x-test" } }),
     );
     expect(await t.run((ctx) => ctx.db.get("posts", postId))).toMatchObject({ isVerified: false });

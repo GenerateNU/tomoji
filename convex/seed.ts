@@ -4,6 +4,7 @@ import { internalMutation, type MutationCtx } from "./_generated/server";
 import { apiError } from "./lib/errors";
 import { HALF_HOUR_MS } from "./lib/validation";
 import { updateCreatorNiches } from "./models/creatorNiches";
+import { creatorName } from "./models/notifications";
 import { updateOpportunityNiches } from "./models/opportunityNiches";
 import { updateOpportunityLanguages } from "./models/opportunityLanguages";
 import { updateOpportunitySkills } from "./models/opportunitySkills";
@@ -389,54 +390,102 @@ async function seedCreatorContent(
   return { primary, applicationIds, gatedWithRoom, closingSoon };
 }
 
-/** Notifications for both sides of the marketplace, read and unread. */
+type SeedNotification = Omit<Doc<"notifications">, "_id" | "_creationTime" | "userId">;
+
+/**
+ * One notification per type whose target page exists, on both sides of the
+ * marketplace, read and unread. Titles follow the templates in `models/`.
+ * Assignment, submission, and dispute notifications are left out until those
+ * pages ship, since clicking one would open a missing page.
+ */
 async function seedNotifications(
   ctx: MutationCtx,
-  creatorUserId: Id<"users">,
-  adminUserId: Id<"users">,
+  primary: Doc<"creators">,
+  admin: Doc<"companyUsers">,
   applicationId: Id<"applications">,
-  opportunityId: Id<"opportunities">,
+  opportunity: Doc<"opportunities">,
+  campaignTitle: string,
 ) {
-  const target = { kind: "application" as const, applicationId, opportunityId };
+  const name = (await creatorName(ctx, primary._id)) || "A creator";
+  const title = opportunity.title;
+  const application = {
+    kind: "application" as const,
+    applicationId,
+    opportunityId: opportunity._id,
+  };
 
-  await ctx.db.insert("notifications", {
-    userId: creatorUserId,
-    type: "applicationOffered",
-    title: "You have an offer on Security review of our auth flow",
-    body: "Accept before the offer expires.",
-    target,
-    isRead: false,
-  });
-  await ctx.db.insert("notifications", {
-    userId: creatorUserId,
-    type: "applicationOpportunityFull",
-    title: "Explain our vector search in one minute filled up",
-    target,
-    isRead: false,
-  });
-  await ctx.db.insert("notifications", {
-    userId: creatorUserId,
-    type: "applicationRejected",
-    title: "Your application wasn't selected",
-    target,
-    isRead: true,
-  });
-
-  await ctx.db.insert("notifications", {
-    userId: adminUserId,
-    type: "applicationReceived",
-    title: "New application on Build an agent with our SDK",
-    body: "Two creators are waiting for a decision.",
-    target,
-    isRead: false,
-  });
-  await ctx.db.insert("notifications", {
-    userId: adminUserId,
-    type: "applicationAccepted",
-    title: "A creator accepted your offer",
-    target,
-    isRead: true,
-  });
+  // Oldest first: the list is newest first, so unread rows land on top.
+  const toCreator: SeedNotification[] = [
+    {
+      type: "applicationRejected",
+      title: `Your application for ${title} wasn't accepted`,
+      target: application,
+      isRead: true,
+    },
+    {
+      type: "applicationOpportunityClosed",
+      title: `${title} has closed`,
+      target: application,
+      isRead: true,
+    },
+    {
+      type: "applicationOfferExpired",
+      title: `Your offer for ${title} expired`,
+      target: application,
+      isRead: true,
+    },
+    {
+      type: "applicationOpportunityFull",
+      title: `${title} has filled all its slots`,
+      target: application,
+      isRead: false,
+    },
+    {
+      type: "applicationOffered",
+      title: `You received an offer for ${title}`,
+      body: "Accept before the offer expires.",
+      target: application,
+      isRead: false,
+    },
+  ];
+  const toAdmin: SeedNotification[] = [
+    {
+      type: "campaignClosed",
+      title: `${campaignTitle} ended`,
+      target: { kind: "campaign", campaignId: opportunity.campaignId },
+      isRead: true,
+    },
+    {
+      type: "applicationDeclined",
+      title: `${name} declined your offer for ${title}`,
+      target: application,
+      isRead: true,
+    },
+    {
+      type: "applicationOfferExpired",
+      title: `${name}'s offer for ${title} expired unanswered`,
+      target: application,
+      isRead: true,
+    },
+    {
+      type: "opportunityClosed",
+      title: `${title} closed at its deadline`,
+      target: { kind: "opportunity", opportunityId: opportunity._id },
+      isRead: false,
+    },
+    {
+      type: "applicationReceived",
+      title: `${name} applied to ${title}`,
+      target: application,
+      isRead: false,
+    },
+  ];
+  for (const notification of toCreator) {
+    await ctx.db.insert("notifications", { ...notification, userId: primary.userId });
+  }
+  for (const notification of toAdmin) {
+    await ctx.db.insert("notifications", { ...notification, userId: admin.userId });
+  }
 }
 
 /** Pending invitations for the team invites page. */
@@ -488,7 +537,12 @@ export const run = internalMutation({
       company,
       opportunityIds,
     );
-    await seedNotifications(ctx, primary.userId, admin.userId, applicationIds[0], gatedWithRoom);
+    const opportunity = await ctx.db.get("opportunities", gatedWithRoom);
+    const campaign = opportunity && (await ctx.db.get("campaigns", opportunity.campaignId));
+    if (opportunity === null || campaign === null) {
+      throw apiError("invalid_state", { reason: "seed_opportunity_missing" });
+    }
+    await seedNotifications(ctx, primary, admin, applicationIds[0], opportunity, campaign.title);
     await seedInvites(ctx, company._id);
 
     return {

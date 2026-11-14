@@ -26,8 +26,9 @@ import schema from "./schema";
  * Creators, company users, and operators can all open one, and an assignment
  * can have several. Creators and companies each have their own reasons;
  * operators can give either. Picking "other" requires a `customReason` in the
- * opener's own words. `postId` optionally says which post it's about; other
- * evidence goes in the description. Text is stored trimmed.
+ * opener's own words. `postId` optionally says which post it's about, and
+ * `evidenceMediaIds` attaches the opener's `dispute-evidence` uploads. Text is
+ * stored trimmed.
  *
  * @throws `not_found` if the assignment doesn't exist or isn't the caller's, or
  * `postId` isn't a post on that assignment.

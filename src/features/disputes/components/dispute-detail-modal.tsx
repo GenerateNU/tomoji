@@ -9,6 +9,7 @@ import { Tag } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { disputeTitle, formatDisputeDate } from "../lib/dispute-labels";
+import { DisputeEvidence } from "./dispute-evidence";
 import { DisputeStatusTag } from "./dispute-status-tag";
 
 /** A labelled value in the summary row. */
@@ -69,6 +70,9 @@ export function DisputeDetailModal({
             </h3>
             <p className="text-body-sm whitespace-pre-line text-gray-950">{dispute.description}</p>
           </section>
+          {dispute.evidenceMediaIds?.length ? (
+            <DisputeEvidence disputeId={dispute._id} mediaIds={dispute.evidenceMediaIds} />
+          ) : null}
           {dispute.status === "resolved" && dispute.note ? (
             <section aria-labelledby="dispute-note" className="flex flex-col gap-3">
               <h3 id="dispute-note" className="text-body font-medium text-gray-500">

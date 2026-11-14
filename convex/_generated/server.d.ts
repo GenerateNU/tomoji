@@ -37,6 +37,7 @@ type Env = {
   readonly SITE_URL: string | undefined;
   readonly STRIPE_SECRET_KEY: string | undefined;
   readonly STRIPE_WEBHOOK_SECRET: string | undefined;
+  readonly TOMOJI_DEV_SEED: string | undefined;
   readonly TYPESAFE_API_KEY: string | undefined;
   readonly WORKOS_API_KEY: string | undefined;
   readonly WORKOS_OPERATOR_ORG_ID: string | undefined;

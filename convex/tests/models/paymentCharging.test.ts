@@ -194,6 +194,22 @@ describe("prepareCharge", () => {
     ]);
   });
 
+  // An expired card would only be declined; it needs replacing first.
+  test("records an expired company card and flags the payout", async () => {
+    const { t, payoutId, payout, attempts } = await seedChargeable({}, { paymentStatus: "queued" });
+    await t.run(async (ctx) => {
+      const customer = await ctx.db.query("stripeCustomers").first();
+      if (customer?.card === undefined) throw new Error("expected a saved card");
+      await ctx.db.patch("stripeCustomers", customer._id, {
+        card: { ...customer.card, expMonth: 1, expYear: 2020 },
+      });
+    });
+
+    expect(await prepare(t, payoutId)).toEqual({ kind: "blocked", reason: "company_card_expired" });
+    expect((await payout())?.paymentStatus).toBe("needsAttention");
+    expect(await attempts()).toMatchObject([{ failureCode: "company_card_expired" }]);
+  });
+
   test("records a creator whose Stripe account is not ready", async () => {
     const { t, payoutId, payout, attempts } = await seedChargeable(
       { creatorAccount: "pending" },

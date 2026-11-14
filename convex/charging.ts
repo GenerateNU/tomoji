@@ -3,11 +3,19 @@ import { internal } from "./_generated/api";
 import { env, internalAction, internalMutation, internalQuery } from "./_generated/server";
 import {
   chargeConnectAccount,
+  findAttemptCharge,
   isAccountAccessLost,
   stripeClient,
   stripeErrorDetails,
+  toChargeOutcome,
+  type ChargeOutcome,
 } from "./lib/stripe";
-import { claimDuePayouts, getChargeAccountId, prepareCharge } from "./models/payments";
+import {
+  claimDuePayouts,
+  failChargeAttempt,
+  getChargeAccountId,
+  prepareCharge,
+} from "./models/payments";
 import schema from "./schema";
 
 /**
@@ -30,6 +38,7 @@ const CHARGE_RETRIES = 3;
 
 const chargeBlock = v.union(
   v.literal("company_card_missing"),
+  v.literal("company_card_expired"),
   v.literal("creator_not_ready"),
   v.literal("creator_account_missing"),
   v.literal("payout_disputed"),
@@ -106,14 +115,45 @@ export const collect = internalAction({
     }
     if (plan.kind !== "charge") return null;
 
-    let outcome;
+    const paymentId = plan.payment._id;
+    let outcome: ChargeOutcome;
     try {
-      outcome = await chargeConnectAccount(stripe, plan);
+      // A resumed attempt may already have charged; its reply was lost. Use that
+      // charge rather than resend, which could charge twice once Stripe forgets
+      // the key. Only a charge Stripe confirms is absent may fail the attempt.
+      const existing = plan.resumed ? await findAttemptCharge(stripe, plan.payment) : null;
+      if (existing !== null) {
+        outcome = toChargeOutcome(existing);
+      } else if (plan.stripeCustomerId === null || plan.paymentMethodId === null) {
+        await ctx.runMutation(internal.charging.fail, {
+          paymentId,
+          failureCode: plan.cardBlock ?? "company_card_missing",
+        });
+        return null;
+      } else {
+        outcome = await chargeConnectAccount(stripe, {
+          payment: plan.payment,
+          stripeCustomerId: plan.stripeCustomerId,
+          paymentMethodId: plan.paymentMethodId,
+          amount: plan.amount,
+          currency: plan.currency,
+        });
+      }
     } catch (error) {
-      // The attempt stays `processing` without a charge id, so the retry resumes it.
+      // The outcome is unknown and the attempt stays `processing` without a charge
+      // id, so the retry resumes it and checks Stripe first.
       return await retryLater("request", error);
     }
-    const paymentId = plan.payment._id;
+    if (outcome.kind === "rejected") {
+      // Stripe refused the request itself, so no charge exists and retrying would
+      // fail the same way. The payout needs attention instead.
+      console.error("Stripe refused the payout charge", { paymentId, ...outcome });
+      await ctx.runMutation(internal.charging.fail, {
+        paymentId,
+        failureCode: outcome.failureCode,
+      });
+      return null;
+    }
     await ctx.runMutation(internal.payments.attachIntent, {
       paymentId,
       stripePaymentIntentId: outcome.paymentIntentId,
@@ -152,8 +192,10 @@ export const prepare = internalMutation({
     v.object({
       kind: v.literal("charge"),
       payment: schema.doc("payments"),
-      stripeCustomerId: v.string(),
-      paymentMethodId: v.string(),
+      resumed: v.boolean(),
+      stripeCustomerId: v.union(v.string(), v.null()),
+      paymentMethodId: v.union(v.string(), v.null()),
+      cardBlock: v.union(chargeBlock, v.null()),
       amount: v.number(),
       currency: v.string(),
     }),
@@ -161,4 +203,14 @@ export const prepare = internalMutation({
     v.object({ kind: v.literal("settled") }),
   ),
   handler: async (ctx, args) => await prepareCharge(ctx, args.payoutId, args.chargesEnabled),
+});
+
+/** Fails an attempt Stripe confirmed has no charge. See `failChargeAttempt`. */
+export const fail = internalMutation({
+  args: { paymentId: v.id("payments"), failureCode: v.string() },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    await failChargeAttempt(ctx, args.paymentId, args.failureCode);
+    return null;
+  },
 });

@@ -206,11 +206,49 @@ export async function findCreatedConnectAccount(
   return null;
 }
 
-/** What Stripe said about a payout charge. `pending` outcomes arrive by webhook. */
+/**
+ * What Stripe said about a payout charge. `pending` outcomes arrive by webhook.
+ * `rejected` means Stripe refused the request itself, so it made no charge.
+ */
 export type ChargeOutcome =
   | { kind: "succeeded"; paymentIntentId: string }
   | { kind: "failed"; paymentIntentId: string; failureCode: string }
-  | { kind: "pending"; paymentIntentId: string };
+  | { kind: "pending"; paymentIntentId: string }
+  | { kind: "rejected"; failureCode: string };
+
+/** The outcome a charge Stripe already made has reached. */
+export function toChargeOutcome(intent: Stripe.PaymentIntent): ChargeOutcome {
+  if (intent.status === "succeeded") return { kind: "succeeded", paymentIntentId: intent.id };
+  if (intent.status === "requires_payment_method" || intent.status === "canceled") {
+    return {
+      kind: "failed",
+      paymentIntentId: intent.id,
+      failureCode:
+        intent.last_payment_error?.decline_code ?? intent.last_payment_error?.code ?? intent.status,
+    };
+  }
+  return { kind: "pending", paymentIntentId: intent.id };
+}
+
+/**
+ * The charge Stripe made for a payout attempt, if any, found by the
+ * `metadata.paymentId` the charge carries. A resumed attempt checks this before
+ * sending anything: its first request may have charged with the reply lost, and
+ * Stripe forgets idempotency keys after about a day, so resending could charge
+ * twice. Stripe's search can lag by up to a minute; attempts resume later than that.
+ *
+ * @throws whatever Stripe throws if it cannot be asked, which proves nothing.
+ */
+export async function findAttemptCharge(
+  stripe: Stripe,
+  payment: Doc<"payments">,
+): Promise<Stripe.PaymentIntent | null> {
+  const found = await stripe.paymentIntents.search(
+    { query: `metadata['paymentId']:'${payment._id}'` },
+    { stripeAccount: payment.stripeAccountId },
+  );
+  return found.data[0] ?? null;
+}
 
 /**
  * Charges a company's saved card on the creator's Standard account for one
@@ -222,7 +260,8 @@ export type ChargeOutcome =
  * webhooks find the attempt.
  *
  * @throws whatever Stripe throws when the outcome is unknown, such as a network
- * error; a card decline is returned as `failed` instead.
+ * error. A card decline is returned as `failed`; a request Stripe refused,
+ * including an idempotency key reused with other parameters, as `rejected`.
  */
 export async function chargeConnectAccount(
   stripe: Stripe,
@@ -236,11 +275,16 @@ export async function chargeConnectAccount(
 ): Promise<ChargeOutcome> {
   const { payment } = charge;
   const onCreatorAccount = { stripeAccount: payment.stripeAccountId };
-  const card = await stripe.paymentMethods.create(
-    { customer: charge.stripeCustomerId, payment_method: charge.paymentMethodId },
-    { ...onCreatorAccount, idempotencyKey: `payment:${payment._id}:card` },
-  );
   try {
+    // The card in the key: a resumed attempt may send a card swapped in since.
+    // Copying a card moves no money, so a second copy is harmless.
+    const card = await stripe.paymentMethods.create(
+      { customer: charge.stripeCustomerId, payment_method: charge.paymentMethodId },
+      {
+        ...onCreatorAccount,
+        idempotencyKey: `payment:${payment._id}:card:${charge.paymentMethodId}`,
+      },
+    );
     const intent = await stripe.paymentIntents.create(
       {
         amount: charge.amount,
@@ -265,6 +309,13 @@ export async function chargeConnectAccount(
         paymentIntentId: error.payment_intent.id,
         failureCode: error.decline_code ?? error.code ?? "card_declined",
       };
+    }
+    // Refused outright, so no charge exists; retrying would fail the same way.
+    if (error instanceof Stripe.errors.StripeIdempotencyError) {
+      return { kind: "rejected", failureCode: "idempotency_error" };
+    }
+    if (error instanceof Stripe.errors.StripeInvalidRequestError) {
+      return { kind: "rejected", failureCode: error.code ?? "invalid_request" };
     }
     throw error;
   }

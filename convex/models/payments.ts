@@ -3,7 +3,7 @@ import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { apiError } from "../lib/errors";
 import { hasOpenDispute } from "./disputes";
 import { getStripeAccountByCreatorId, toStripeAccountStatus } from "./stripeAccounts";
-import { getStripeCustomerByCompanyId } from "./stripeCustomers";
+import { getStripeCustomerByCompanyId, isCardExpired } from "./stripeCustomers";
 
 /**
  * Attempts to collect approved payouts by charging the company's card on the
@@ -107,17 +107,26 @@ export async function getChargeAccountId(
 /** Why a queued payout cannot be charged now. Each is recorded as a failed attempt. */
 export type ChargeBlock =
   | "company_card_missing"
+  | "company_card_expired"
   | "creator_not_ready"
   | "creator_account_missing"
   | "payout_disputed";
 
-/** What to do with a payout: charge this attempt, nothing, or nothing because it is blocked. */
+/**
+ * What to do with a payout: charge this attempt, nothing, or nothing because it
+ * is blocked. A `resumed` attempt may already have charged, so Stripe is asked
+ * before anything is sent; if the company's card is no longer usable, the card
+ * fields are null and `cardBlock` says why, so the attempt fails only once
+ * Stripe confirms there is no charge.
+ */
 export type ChargePlan =
   | {
       kind: "charge";
       payment: Doc<"payments">;
-      stripeCustomerId: string;
-      paymentMethodId: string;
+      resumed: boolean;
+      stripeCustomerId: string | null;
+      paymentMethodId: string | null;
+      cardBlock: ChargeBlock | null;
       amount: number;
       currency: string;
     }
@@ -158,14 +167,19 @@ export async function prepareCharge(
     ) {
       return { kind: "settled" };
     }
-    if (customer === null || card === undefined) {
-      return await failAttempt(ctx, latest, "company_card_missing");
-    }
+    const cardBlock =
+      customer === null || card === undefined
+        ? "company_card_missing"
+        : isCardExpired(card, Date.now())
+          ? "company_card_expired"
+          : null;
     return {
       kind: "charge",
       payment: latest,
-      stripeCustomerId: customer.stripeCustomerId,
-      paymentMethodId: card.paymentMethodId,
+      resumed: true,
+      stripeCustomerId: cardBlock === null ? (customer?.stripeCustomerId ?? null) : null,
+      paymentMethodId: cardBlock === null ? (card?.paymentMethodId ?? null) : null,
+      cardBlock,
       amount: payout.amount,
       currency: payout.currency,
     };
@@ -191,11 +205,17 @@ export async function prepareCharge(
   if (customer === null || card === undefined) {
     return await blockPayout(ctx, payout, latest, account.stripeAccountId, "company_card_missing");
   }
+  // An expired card would only be declined; the company needs to replace it first.
+  if (isCardExpired(card, Date.now())) {
+    return await blockPayout(ctx, payout, latest, account.stripeAccountId, "company_card_expired");
+  }
   return {
     kind: "charge",
     payment: await startPayment(ctx, payoutId, account.stripeAccountId),
+    resumed: false,
     stripeCustomerId: customer.stripeCustomerId,
     paymentMethodId: card.paymentMethodId,
+    cardBlock: null,
     amount: payout.amount,
     currency: payout.currency,
   };
@@ -220,15 +240,20 @@ async function blockPayout(
   return { kind: "blocked", reason };
 }
 
-/** Fails an in-flight attempt that cannot be resumed, and flags its payout. */
-async function failAttempt(
+/**
+ * Fails an in-flight attempt once it is certain Stripe made no charge for it:
+ * Stripe found none for a resumed attempt, or refused the charge request
+ * outright. Only a `processing` attempt changes.
+ */
+export async function failChargeAttempt(
   ctx: MutationCtx,
-  payment: Doc<"payments">,
-  reason: ChargeBlock,
-): Promise<ChargePlan> {
-  await ctx.db.patch("payments", payment._id, { status: "failed", failureCode: reason });
+  paymentId: Id<"payments">,
+  failureCode: string,
+): Promise<void> {
+  const payment = await ctx.db.get("payments", paymentId);
+  if (payment === null || payment.status !== "processing") return;
+  await ctx.db.patch("payments", payment._id, { status: "failed", failureCode });
   await ctx.db.patch("payouts", payment.payoutId, { paymentStatus: "needsAttention" });
-  return { kind: "blocked", reason };
 }
 
 /** Saves the id of the charge Stripe created for an attempt. */

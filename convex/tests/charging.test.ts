@@ -33,6 +33,10 @@ function stubStripe() {
     createIntent: vi
       .spyOn(paymentIntents, "create")
       .mockResolvedValue({ id: "pi_test", object: "payment_intent", status: "succeeded" } as never),
+    // Charges Stripe already made for an attempt, found by its `paymentId` tag.
+    searchIntents: vi
+      .spyOn(paymentIntents, "search")
+      .mockResolvedValue({ object: "search_result", data: [] } as never),
   };
 }
 
@@ -121,7 +125,11 @@ describe("charging approved payouts", () => {
     // The company's saved card is copied onto the creator's account, once per attempt.
     expect(stripe.cloneCard).toHaveBeenCalledWith(
       { customer: COMPANY_CUSTOMER, payment_method: COMPANY_CARD },
-      { stripeAccount: CREATOR_ACCOUNT, idempotencyKey: `payment:${attempt._id}:card` },
+      // The card in the key: a resumed attempt may send a card the company swapped in.
+      {
+        stripeAccount: CREATOR_ACCOUNT,
+        idempotencyKey: `payment:${attempt._id}:card:${COMPANY_CARD}`,
+      },
     );
     // Exactly the earned amount, off-session, tagged so webhooks find the attempt.
     expect(stripe.createIntent).toHaveBeenCalledWith(
@@ -176,6 +184,129 @@ describe("charging approved payouts", () => {
     );
     expect(keys).toHaveLength(2);
     expect(keys[1]).toBe(keys[0]);
+    // Before resending, Stripe is asked whether the first request made a charge.
+    expect(stripe.searchIntents).toHaveBeenCalledWith(
+      { query: `metadata['paymentId']:'${(await attempts())[0]._id}'` },
+      { stripeAccount: CREATOR_ACCOUNT },
+    );
+  });
+
+  // The first request charged the company but its reply was lost. Resending could
+  // charge twice once Stripe forgets the key, so the existing charge is used instead.
+  test("uses the charge Stripe already made instead of charging again", async () => {
+    const { payout, attempts, run } = await seedDuePayout();
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    stripe.createIntent.mockRejectedValueOnce(
+      new Stripe.errors.StripeConnectionError({ message: "socket hang up" }),
+    );
+    stripe.searchIntents.mockResolvedValue({
+      object: "search_result",
+      data: [{ id: "pi_made_earlier", object: "payment_intent", status: "succeeded" }],
+    } as never);
+
+    await run();
+
+    expect(stripe.createIntent).toHaveBeenCalledTimes(1);
+    expect(await attempts()).toMatchObject([
+      { status: "succeeded", stripePaymentIntentId: "pi_made_earlier" },
+    ]);
+    expect((await payout())?.paymentStatus).toBe("transferred");
+  });
+
+  // Karim's case: the reply was lost, then the company removed its card. Failing the
+  // attempt without asking Stripe would let a later retry charge the company twice.
+  test("checks Stripe before failing a resumed attempt whose card was removed", async () => {
+    const { t, payout, attempts, run } = await seedDuePayout();
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    stripe.createIntent.mockRejectedValueOnce(
+      new Stripe.errors.StripeConnectionError({ message: "socket hang up" }),
+    );
+    // Before the retry runs, the company deletes its card in Tomoji.
+    stripe.searchIntents.mockImplementation((async () => {
+      await t.run(async (ctx) => {
+        const customer = await ctx.db.query("stripeCustomers").first();
+        if (customer !== null)
+          await ctx.db.patch("stripeCustomers", customer._id, { card: undefined });
+      });
+      return {
+        object: "search_result",
+        data: [{ id: "pi_went_through", object: "payment_intent", status: "succeeded" }],
+      };
+    }) as never);
+
+    await run();
+
+    expect(await attempts()).toMatchObject([
+      { status: "succeeded", stripePaymentIntentId: "pi_went_through" },
+    ]);
+    expect((await payout())?.paymentStatus).toBe("transferred");
+  });
+
+  test("fails a resumed attempt only once Stripe confirms there is no charge", async () => {
+    const { t, payout, attempts, run } = await seedDuePayout();
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    // The reply is lost, and the company deletes its card before the retry runs.
+    stripe.createIntent.mockImplementationOnce((async () => {
+      await t.run(async (ctx) => {
+        const customer = await ctx.db.query("stripeCustomers").first();
+        if (customer !== null)
+          await ctx.db.patch("stripeCustomers", customer._id, { card: undefined });
+      });
+      throw new Stripe.errors.StripeConnectionError({ message: "socket hang up" });
+    }) as never);
+
+    await run();
+
+    expect(stripe.searchIntents).toHaveBeenCalledTimes(1);
+    expect(stripe.createIntent).toHaveBeenCalledTimes(1);
+    expect(await attempts()).toMatchObject([
+      { status: "failed", failureCode: "company_card_missing" },
+    ]);
+    expect((await payout())?.paymentStatus).toBe("needsAttention");
+  });
+
+  // An idempotency error means the key's first request had other parameters, such
+  // as a card swapped since. Retrying would fail the same way forever, unseen.
+  test("flags the attempt when Stripe refuses the resent request", async () => {
+    const { payout, attempts, run } = await seedDuePayout();
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    stripe.createIntent
+      .mockRejectedValueOnce(new Stripe.errors.StripeConnectionError({ message: "socket hang up" }))
+      .mockRejectedValue(
+        new Stripe.errors.StripeIdempotencyError({
+          type: "idempotency_error",
+          message: "Keys for idempotent requests can only be used with the same parameters",
+        }),
+      );
+
+    await run();
+
+    expect(stripe.createIntent).toHaveBeenCalledTimes(2);
+    expect(await attempts()).toMatchObject([
+      { status: "failed", failureCode: "idempotency_error" },
+    ]);
+    expect((await payout())?.paymentStatus).toBe("needsAttention");
+  });
+
+  // An invalid request proves Stripe made no charge, so there is nothing to retry.
+  test("flags the attempt when Stripe rejects the charge request as invalid", async () => {
+    const { payout, attempts, run } = await seedDuePayout();
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    stripe.createIntent.mockRejectedValue(
+      new Stripe.errors.StripeInvalidRequestError({
+        type: "invalid_request_error",
+        code: "payment_method_unexpected_state",
+        message: "The payment method can't be used",
+      }),
+    );
+
+    await run();
+
+    expect(stripe.createIntent).toHaveBeenCalledTimes(1);
+    expect(await attempts()).toMatchObject([
+      { status: "failed", failureCode: "payment_method_unexpected_state" },
+    ]);
+    expect((await payout())?.paymentStatus).toBe("needsAttention");
   });
 
   // Stripe's live answer can lag our stored status, for example right after a pause.

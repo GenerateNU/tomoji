@@ -11,6 +11,8 @@ export const notificationType = v.union(
   v.literal("submissionApproved"),
   v.literal("submissionChangesRequested"),
   v.literal("payoutStripeSetupNeeded"), // Charging found their Stripe account not ready.
+  // To Tomoji operators
+  v.literal("payoutChargedTwice"), // Two attempts both charged; one needs refunding.
   // To the company member who created the opportunity or campaign
   v.literal("applicationReceived"),
   v.literal("applicationAccepted"),
@@ -63,6 +65,7 @@ export const notificationTargetKind = {
   submissionApproved: "submission",
   submissionChangesRequested: "submission",
   payoutStripeSetupNeeded: "assignment", // Payouts have no page; their assignment does.
+  payoutChargedTwice: "assignment",
   applicationReceived: "application",
   applicationAccepted: "assignment", // Opens the assignment the acceptance created.
   applicationDeclined: "application",

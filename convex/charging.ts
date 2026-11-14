@@ -131,23 +131,21 @@ export const collect = internalAction({
       } catch (error) {
         return await retryLater("status check", error);
       }
-      const outcome = {
+      const outcome = toChargeOutcome(intent);
+      const recorded = {
         paymentId: plan.payment._id,
         stripeAccountId: plan.payment.stripeAccountId,
         stripePaymentIntentId: intent.id,
       };
-      if (intent.status === "succeeded") {
+      if (outcome.kind === "succeeded") {
         await ctx.runMutation(internal.payments.recordSucceeded, {
-          ...outcome,
+          ...recorded,
           succeededAt: Date.now(),
         });
-      } else if (intent.status === "requires_payment_method" || intent.status === "canceled") {
+      } else if (outcome.kind === "failed") {
         await ctx.runMutation(internal.payments.recordFailed, {
-          ...outcome,
-          failureCode:
-            intent.last_payment_error?.decline_code ??
-            intent.last_payment_error?.code ??
-            intent.status,
+          ...recorded,
+          failureCode: outcome.failureCode,
         });
       }
       return null;

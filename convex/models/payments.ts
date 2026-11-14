@@ -2,7 +2,7 @@ import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { apiError } from "../lib/errors";
 import { hasOpenDispute } from "./disputes";
-import { creatorName, notifyCompanyUser, notifyCreator } from "./notifications";
+import { creatorName, notifyCompanyUser, notifyCreator, notifyOperators } from "./notifications";
 import { getStripeAccountByCreatorId, toStripeAccountStatus } from "./stripeAccounts";
 import { getStripeCustomerByCompanyId, isCardExpired } from "./stripeCustomers";
 
@@ -294,11 +294,25 @@ export async function recordPaymentSucceeded(
 ): Promise<"updated" | "unchanged" | "unknown"> {
   const payment = await getOwnPayment(ctx, outcome);
   if (payment === null) return "unknown";
-  if (payment.status !== "processing") return "unchanged";
+  if (payment.status === "succeeded") return "unchanged";
+  // A success Stripe confirms is money that moved, even for an attempt already
+  // marked failed: ignoring it would leave the payout open to another charge.
   await ctx.db.patch("payments", payment._id, {
     status: "succeeded",
     stripePaymentIntentId: outcome.stripePaymentIntentId,
   });
+  const payout = await ctx.db.get("payouts", payment.payoutId);
+  if (payout === null) return "updated";
+  if (payout.paymentStatus === "transferred") {
+    // Another attempt already paid it, so the company was charged twice.
+    await notifyOperators(ctx, {
+      type: "payoutChargedTwice",
+      title: `A ${formatAmount(payout.amount, payout.currency)} payout to ${await creatorName(ctx, payout.creatorId)} was charged twice`,
+      body: `Charge ${outcome.stripePaymentIntentId} succeeded after the payout was already paid. Refund one charge.`,
+      target: { kind: "assignment", assignmentId: payout.assignmentId },
+    });
+    return "updated";
+  }
   await ctx.db.patch("payouts", payment.payoutId, {
     paymentStatus: "transferred",
     transferredAt: outcome.succeededAt,
@@ -424,10 +438,22 @@ async function notifyPaymentProblem(
 export async function retryPayout(ctx: MutationCtx, payoutId: Id<"payouts">): Promise<void> {
   const payout = await ctx.db.get("payouts", payoutId);
   if (payout === null) throw apiError("not_found", { resource: "payout" });
-  if (payout.paymentStatus !== "needsAttention") {
+  if (payout.paymentStatus !== "needsAttention" || (await wasPaid(ctx, payoutId))) {
     throw apiError("invalid_state", { reason: "payout_not_retryable" });
   }
   await ctx.db.patch("payouts", payoutId, { paymentStatus: "notStarted" });
+}
+
+/**
+ * Whether any attempt charged the payout. A retry must never follow one, even
+ * if the payout's status has not caught up yet.
+ */
+async function wasPaid(ctx: QueryCtx, payoutId: Id<"payouts">): Promise<boolean> {
+  const attempts = await ctx.db
+    .query("payments")
+    .withIndex("by_payoutId_and_attempt", (q) => q.eq("payoutId", payoutId))
+    .collect();
+  return attempts.some((attempt) => attempt.status === "succeeded");
 }
 
 /**
@@ -487,7 +513,7 @@ async function requeueBlockedOn(
   let requeued = 0;
   for (const payout of payouts) {
     const latest = await latestAttempt(ctx, payout._id);
-    if (blockedOn(latest?.failureCode) !== party) continue;
+    if (blockedOn(latest?.failureCode) !== party || (await wasPaid(ctx, payout._id))) continue;
     await ctx.db.patch("payouts", payout._id, { paymentStatus: "notStarted" });
     requeued += 1;
   }
@@ -512,7 +538,9 @@ export async function requeueResolvedDisputes(
   for (const payout of page.page) {
     const latest = await latestAttempt(ctx, payout._id);
     if (blockedOn(latest?.failureCode) !== "dispute") continue;
-    if (await hasOpenDispute(ctx, payout.assignmentId)) continue;
+    if ((await hasOpenDispute(ctx, payout.assignmentId)) || (await wasPaid(ctx, payout._id))) {
+      continue;
+    }
     await ctx.db.patch("payouts", payout._id, { paymentStatus: "notStarted" });
     requeued += 1;
   }
@@ -536,18 +564,15 @@ export async function findStalePayouts(
       q.eq("approvalStatus", "approved").eq("paymentStatus", "queued").lt("approvedAt", cutoff),
     )
     .take(limit);
+  // Oldest attempts first, straight by age: payouts waiting legitimately on
+  // Stripe never fill the batch ahead of a newer one that stalled.
   const processing = await ctx.db
-    .query("payouts")
-    .withIndex("by_approvalStatus_and_paymentStatus_and_approvedAt", (q) =>
-      q.eq("approvalStatus", "approved").eq("paymentStatus", "processing"),
-    )
+    .query("payments")
+    .withIndex("by_status", (q) => q.eq("status", "processing").lt("_creationTime", cutoff))
     .take(limit);
   const stalled: Id<"payouts">[] = queued.map((payout) => payout._id);
-  for (const payout of processing) {
-    const latest = await latestAttempt(ctx, payout._id);
-    if (latest !== null && latest.status === "processing" && latest._creationTime < cutoff) {
-      stalled.push(payout._id);
-    }
+  for (const attempt of processing) {
+    if (!stalled.includes(attempt.payoutId)) stalled.push(attempt.payoutId);
   }
   return stalled.slice(0, limit);
 }

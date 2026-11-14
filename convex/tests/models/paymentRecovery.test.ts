@@ -1,12 +1,13 @@
 /// <reference types="vite/client" />
 import { convexTest } from "convex-test";
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import type { Id } from "../../_generated/dataModel";
 import {
   attachPaymentIntent,
   findStalePayouts,
   prepareCharge,
   recordPaymentFailed,
+  recordPaymentSucceeded,
   requeueCompanyPayouts,
   requeueCreatorPayouts,
   requeueResolvedDisputes,
@@ -19,6 +20,7 @@ import {
   expectApiError,
   seedAssignmentFixture,
   seedDispute,
+  seedOperator,
   seedPayout,
   type TestConvex,
 } from "../helpers";
@@ -263,5 +265,95 @@ describe("findStalePayouts", () => {
       kind: "check",
       payment: { stripePaymentIntentId: "pi_lost" },
     });
+  });
+});
+
+// Karim's backstops: a charge Stripe confirms late must never be lost, and must
+// never lead to charging the company a second time.
+describe("a success reported after the attempt was marked failed", () => {
+  test("still marks the payout paid", async () => {
+    const { t, payoutId, payout } = await seedQueued();
+    await declineWith(t, payoutId, "card_declined");
+    const [attempt] = await t.run((ctx) => ctx.db.query("payments").collect());
+
+    expect(
+      await t.run((ctx) =>
+        recordPaymentSucceeded(ctx, {
+          paymentId: attempt._id,
+          stripeAccountId: CREATOR_ACCOUNT,
+          stripePaymentIntentId: "pi_declined",
+          succeededAt: 1_700_000_200_000,
+        }),
+      ),
+    ).toBe("updated");
+
+    expect((await payout())?.paymentStatus).toBe("transferred");
+    await expectApiError(
+      () => t.run((ctx) => retryPayout(ctx, payoutId)),
+      "invalid_state",
+      "payout_not_retryable",
+    );
+  });
+
+  // Both attempts charged the company: staff need to refund one.
+  test("alerts operators when another attempt already paid the payout", async () => {
+    const { t, payoutId, payout, notifications } = await seedQueued();
+    await seedOperator(t, "double_charge_operator");
+    await declineWith(t, payoutId, "card_declined");
+    const [first] = await t.run((ctx) => ctx.db.query("payments").collect());
+    await t.run((ctx) => retryPayout(ctx, payoutId));
+    await t.run((ctx) => ctx.db.patch("payouts", payoutId, { paymentStatus: "queued" }));
+    const second = await t.run((ctx) => prepareCharge(ctx, payoutId, true));
+    if (second.kind !== "charge") throw new Error("expected a charge");
+    await t.run((ctx) =>
+      recordPaymentSucceeded(ctx, {
+        paymentId: second.payment._id,
+        stripeAccountId: CREATOR_ACCOUNT,
+        stripePaymentIntentId: "pi_second",
+        succeededAt: 1_700_000_300_000,
+      }),
+    );
+
+    await t.run((ctx) =>
+      recordPaymentSucceeded(ctx, {
+        paymentId: first._id,
+        stripeAccountId: CREATOR_ACCOUNT,
+        stripePaymentIntentId: "pi_declined",
+        succeededAt: 1_700_000_400_000,
+      }),
+    );
+
+    expect((await payout())?.transferredAt).toBe(1_700_000_300_000);
+    expect((await notifications()).filter((n) => n.type === "payoutChargedTwice")).toHaveLength(1);
+  });
+});
+
+describe("findStalePayouts ordering", () => {
+  // Payouts legitimately waiting on Stripe must not fill the batch and hide a
+  // newer payout whose charge stalled.
+  test("finds a stalled attempt behind many recent ones", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(1_800_000_000_000);
+      const { t, fixture, payoutId } = await seedQueued();
+      await t.run((ctx) => ctx.db.patch("payouts", payoutId, { approvedAt: 1_799_000_000_000 }));
+      await t.run((ctx) => prepareCharge(ctx, payoutId, true)); // Stalls from now on.
+
+      vi.setSystemTime(1_800_000_000_000 + 30 * 60_000);
+      for (let i = 0; i < 3; i++) {
+        const recent = await seedPayout(t, fixture.assignmentId, {
+          approvalStatus: "approved",
+          approvalSource: "automatic",
+          approvedAt: 1_700_000_000_000 + i, // Approved long before the stalled one.
+          paymentStatus: "queued",
+        });
+        await t.run((ctx) => prepareCharge(ctx, recent, true)); // Started just now.
+      }
+
+      const cutoff = 1_800_000_000_000 + 15 * 60_000;
+      expect(await t.run((ctx) => findStalePayouts(ctx, cutoff, 2))).toEqual([payoutId]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

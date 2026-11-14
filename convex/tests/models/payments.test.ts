@@ -173,15 +173,17 @@ describe("recordPaymentSucceeded", () => {
   });
 
   // A failed attempt is final; a retry is a new attempt.
-  test("leaves a failed attempt failed", async () => {
+  // A success Stripe confirms is money that moved, even after the attempt was
+  // marked failed; ignoring it would let a retry charge the company again.
+  test("records a success Stripe confirms after the attempt was marked failed", async () => {
     const { t, payoutId, payout } = await seedApprovedPayout();
     const payment = await start(t, payoutId);
     await t.run((ctx) => recordPaymentFailed(ctx, failed(payment._id)));
 
     expect(await t.run((ctx) => recordPaymentSucceeded(ctx, succeeded(payment._id)))).toBe(
-      "unchanged",
+      "updated",
     );
-    expect((await payout())?.paymentStatus).toBe("needsAttention");
+    expect((await payout())?.paymentStatus).toBe("transferred");
   });
 
   // Other deployments share the Stripe sandbox and receive each other's events.

@@ -44,4 +44,7 @@ export const paymentsTable = defineTable({
   // The creator account's currency, such as `usd` or `cad`. A creator outside
   // the US is paid in their own currency after Stripe converts the USD charge.
   settlementCurrency: v.optional(v.string()),
-}).index("by_payoutId_and_attempt", ["payoutId", "attempt"]);
+})
+  .index("by_payoutId_and_attempt", ["payoutId", "attempt"])
+  // Recovery finds attempts left `processing` past a cutoff, oldest first.
+  .index("by_status", ["status"]);

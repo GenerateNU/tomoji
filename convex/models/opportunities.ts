@@ -569,6 +569,12 @@ async function hasOpportunityScore(
  * Discovers open briefs across active companies. With a creator, briefs that
  * match their profile come first, best match first; the rest follow by
  * deadline. Without one, every brief is in deadline order.
+ *
+ * Cursors, end cursors, and split cursors all name the section they belong
+ * to, and each section's stream gets the caller's full pagination options. So
+ * `usePaginatedQuery` can pin each loaded page to its range: a brief whose
+ * score changes moves into whichever loaded page now covers it, instead of
+ * showing twice or not at all.
  */
 export async function discoverOpportunities(
   ctx: QueryCtx,
@@ -576,7 +582,7 @@ export async function discoverOpportunities(
   creatorId?: Id<"creators">,
 ): Promise<PaginationResult<CreatorOpportunity>> {
   const niche = options.niche === undefined ? undefined : requireNiche(options.niche);
-  const { numItems } = options.paginationOpts;
+  const paginationOpts = withRowsReadCap(options.paginationOpts);
   const visible = async (opportunity: Doc<"opportunities"> | null) => {
     if (opportunity === null) return null;
     if (niche !== undefined && !(await hasOpportunityNiche(ctx, opportunity._id, niche))) {
@@ -584,37 +590,7 @@ export async function discoverOpportunities(
     }
     return await getVisibleCreatorOpportunity(ctx, opportunity);
   };
-  const start: DiscoverCursor =
-    creatorId === undefined
-      ? { section: "rest", cursor: options.paginationOpts.cursor }
-      : parseDiscoverCursor(options.paginationOpts.cursor);
-
-  let matches: CreatorOpportunity[] = [];
-  if (start.section === "matches" && creatorId !== undefined) {
-    // Filter inside the stream so hidden or off-niche matches don't leave pages short.
-    const page = await stream(ctx.db, schema)
-      .query("opportunityScores")
-      .withIndex("by_creatorId_and_score", (q) => q.eq("creatorId", creatorId))
-      .order("desc")
-      .map(async (score) => await visible(await ctx.db.get("opportunities", score.opportunityId)))
-      .paginate(withRowsReadCap({ numItems, cursor: start.cursor }));
-    if (!page.isDone || page.page.length >= numItems) {
-      return {
-        page: page.page,
-        isDone: false,
-        continueCursor: formatDiscoverCursor(
-          page.isDone
-            ? { section: "rest", cursor: null }
-            : { section: "matches", cursor: page.continueCursor },
-        ),
-      };
-    }
-    // The matches ran out mid-page; fill the rest of it from the deadline list.
-    matches = page.page;
-  }
-
-  const restCursor = start.section === "rest" ? start.cursor : null;
-  const rest = await stream(ctx.db, schema)
+  const rest = stream(ctx.db, schema)
     .query("opportunities")
     .withIndex("by_status_and_deadline", (q) => q.eq("status", "open"))
     .map(async (opportunity) => {
@@ -623,16 +599,58 @@ export async function discoverOpportunities(
         return null;
       }
       return await visible(opportunity);
-    })
-    .paginate(withRowsReadCap({ numItems: numItems - matches.length, cursor: restCursor }));
-  return {
-    page: [...matches, ...rest.page],
-    isDone: rest.isDone,
-    continueCursor:
-      creatorId === undefined
-        ? rest.continueCursor
-        : formatDiscoverCursor({ section: "rest", cursor: rest.continueCursor }),
-  };
+    });
+
+  if (creatorId === undefined) return await rest.paginate(paginationOpts);
+
+  const start = parseDiscoverCursor(paginationOpts.cursor);
+  const end = paginationOpts.endCursor ? parseDiscoverCursor(paginationOpts.endCursor) : null;
+  const inSection = (
+    section: DiscoverCursor["section"],
+    page: PaginationResult<CreatorOpportunity>,
+  ): PaginationResult<CreatorOpportunity> => ({
+    ...page,
+    continueCursor: formatDiscoverCursor({ section, cursor: page.continueCursor }),
+    splitCursor: page.splitCursor && formatDiscoverCursor({ section, cursor: page.splitCursor }),
+  });
+  // A rest section that starts at its beginning ends this page right after the matches.
+  const endsAtMatches = end?.section === "rest" && end.cursor === null;
+
+  let matches: CreatorOpportunity[] = [];
+  if (start.section === "matches") {
+    // Filter inside the stream so hidden or off-niche matches don't leave pages short.
+    const page = await stream(ctx.db, schema)
+      .query("opportunityScores")
+      .withIndex("by_creatorId_and_score", (q) => q.eq("creatorId", creatorId))
+      .order("desc")
+      .map(async (score) => await visible(await ctx.db.get("opportunities", score.opportunityId)))
+      .paginate({
+        ...paginationOpts,
+        cursor: start.cursor,
+        endCursor: end?.section === "matches" ? end.cursor : undefined,
+      });
+    if (end?.section === "matches" || !page.isDone) {
+      return inSection("matches", { ...page, isDone: false });
+    }
+    // The matches ran out; the rest list starts after them, on this page if there's room.
+    const room = paginationOpts.numItems - page.page.length;
+    if (endsAtMatches || (end === null && room <= 0)) {
+      return {
+        page: page.page,
+        isDone: false,
+        continueCursor: formatDiscoverCursor({ section: "rest", cursor: null }),
+      };
+    }
+    matches = page.page;
+  }
+
+  const restPage = await rest.paginate({
+    ...paginationOpts,
+    numItems: Math.max(paginationOpts.numItems - matches.length, 1),
+    cursor: start.section === "rest" ? start.cursor : null,
+    endCursor: end?.section === "rest" ? end.cursor : undefined,
+  });
+  return inSection("rest", { ...restPage, page: [...matches, ...restPage.page] });
 }
 
 /** Lists the company's opportunities, optionally scoped to an owned campaign and status. */

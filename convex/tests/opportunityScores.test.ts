@@ -174,4 +174,47 @@ describe("opportunities.discover", () => {
     expect(first.page.map(({ _id }) => _id)).toEqual([later.opportunityId]);
     expect(second.page.map(({ _id }) => _id)).toEqual([sooner.opportunityId]);
   });
+
+  test("pinned pages keep every brief exactly once when scores change between loads", async () => {
+    const t = convexTest(schema, modules);
+    const ids = [];
+    for (const subject of ["pinned_a", "pinned_b", "pinned_c"]) {
+      ids.push((await seedOpportunity(t, { subject })).opportunityId);
+    }
+    const unscored = (await seedOpportunity(t, { subject: "pinned_rest" })).opportunityId;
+    const asCreator = await seedUser(t, { subject: "pinned_creator" });
+    const creatorId = await seedCreatorId(t, "pinned_creator");
+    const scoreIds = await t.run(async (ctx) =>
+      Promise.all(
+        ids.map((opportunityId, index) =>
+          ctx.db.insert("opportunityScores", {
+            creatorId,
+            opportunityId,
+            score: 0.9 - index * 0.1,
+          }),
+        ),
+      ),
+    );
+    const load = (cursor: string | null, endCursor?: string) =>
+      asCreator.query(api.opportunities.discover, {
+        paginationOpts: { numItems: 2, cursor, endCursor },
+      });
+    const first = await load(null);
+    const second = await load(first.continueCursor);
+    const third = await load(second.continueCursor);
+
+    // The last match jumps to the top, as a rescore after a profile edit would.
+    await t.run((ctx) => ctx.db.patch("opportunityScores", scoreIds[2], { score: 1 }));
+    // usePaginatedQuery reruns each loaded page pinned to the cursor it ended at.
+    const pages = [
+      await load(null, first.continueCursor),
+      await load(first.continueCursor, second.continueCursor),
+      await load(second.continueCursor, third.continueCursor),
+    ];
+
+    const shown = pages.flatMap((page) => page.page.map((brief) => brief._id));
+    expect(shown).toHaveLength(4);
+    expect(new Set(shown)).toEqual(new Set([...ids, unscored]));
+    expect(shown[0]).toBe(ids[2]);
+  });
 });

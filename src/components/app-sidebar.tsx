@@ -4,6 +4,8 @@ import Link from "next/link";
 import {
   RiAuctionFill,
   RiAuctionLine,
+  RiBuilding2Fill,
+  RiBuilding2Line,
   RiCheckboxMultipleFill,
   RiCheckboxMultipleLine,
   RiFolderFill,
@@ -84,6 +86,13 @@ export const creatorNavItems = [
   },
   { id: "posts", label: "Posts", icon: RiPlayLargeLine, activeIcon: RiPlayLargeFill },
   { id: "earnings", label: "Earnings", icon: RiWallet3Line, activeIcon: RiWallet3Fill },
+  {
+    id: "companies",
+    label: "Companies",
+    icon: RiBuilding2Line,
+    activeIcon: RiBuilding2Fill,
+    href: "/companies",
+  },
   {
     id: "disputes",
     label: "Disputes",

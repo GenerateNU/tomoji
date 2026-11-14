@@ -209,6 +209,7 @@ test("rejects incomplete AI configuration before changing the deployment", async
 const stripe = {
   STRIPE_SECRET_KEY: "sk_test_tomoji",
   STRIPE_WEBHOOK_SECRET: "whsec_test_tomoji",
+  STRIPE_PLATFORM_WEBHOOK_SECRET: "whsec_platform_tomoji",
   SITE_URL: "http://localhost:3000",
 };
 
@@ -226,7 +227,7 @@ test("copies a complete Stripe configuration", async () => {
       expect.any(Object),
     );
   }
-  expect(spawnSync).toHaveBeenCalledTimes(9);
+  expect(spawnSync).toHaveBeenCalledTimes(10);
 });
 
 // The template ships a SITE_URL default, so its presence alone must not opt a
@@ -295,4 +296,28 @@ test("prints the Stripe webhook url when the signing secret is missing", async (
   expect(console.error).toHaveBeenCalledWith(
     expect.stringContaining("https://tomoji-dev.convex.site/stripe/webhook"),
   );
+});
+
+test("prints the platform webhook url when its signing secret is missing", async () => {
+  vi.mocked(readFileSync).mockReturnValue(
+    Object.entries({ ...values, ...stripe, STRIPE_PLATFORM_WEBHOOK_SECRET: "" })
+      .map(([key, value]) => `${key}=${value}`)
+      .join("\n"),
+  );
+  vi.mocked(spawnSync).mockImplementation(
+    (_command, args) =>
+      ({
+        status: 0,
+        stdout: args?.[2] === "get" ? "https://tomoji-dev.convex.site\n" : "",
+        stderr: "",
+        pid: 0,
+        output: [],
+        signal: null,
+      }) as never,
+  );
+  await expect(import("../set-convex-env")).rejects.toThrow("exit 1");
+  expect(console.error).toHaveBeenCalledWith(
+    expect.stringContaining("https://tomoji-dev.convex.site/stripe/webhook/platform"),
+  );
+  expect(console.error).not.toHaveBeenCalledWith(expect.stringContaining("whsec_test_tomoji"));
 });

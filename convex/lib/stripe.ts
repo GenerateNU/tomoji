@@ -2,6 +2,7 @@ import Stripe from "stripe";
 import type { Doc } from "../_generated/dataModel";
 import { env } from "../_generated/server";
 import type { StripeAccountState } from "../models/stripeAccounts";
+import type { SavedPaymentMethod } from "../models/stripeCustomers";
 import { apiError } from "./errors";
 
 // How far before an attempt's start to look for the account it made: our clock
@@ -32,6 +33,57 @@ export function siteUrl(path: string): string {
   const base = env.SITE_URL;
   if (!base) throw apiError("misconfigured", { reason: "site_url_missing" });
   return new URL(path, base).toString();
+}
+
+/**
+ * The page on the Tomoji site Checkout sends the admin back to, marked with
+ * `stripe=return` or `stripe=cancel`. Returning does not mean the card is
+ * saved; `me` updates when the webhook arrives.
+ *
+ * @throws `invalid_state` with reason `return_path_invalid` unless `returnPath`
+ * is a path on the Tomoji site, so the flow cannot redirect to another site.
+ */
+export function checkoutReturnUrl(returnPath: string, outcome: "return" | "cancel"): string {
+  const url = new URL(siteUrl(returnPath));
+  // `//host` and `/\host` resolve to another origin, so compare origins too.
+  if (!returnPath.startsWith("/") || url.origin !== new URL(siteUrl("/")).origin) {
+    throw apiError("invalid_state", { reason: "return_path_invalid" });
+  }
+  url.searchParams.set("stripe", outcome);
+  return url.toString();
+}
+
+/** Acknowledges a webhook event: anything but 2xx makes Stripe retry for days. */
+export const webhookOk = () => new Response(null, { status: 200 });
+
+/**
+ * The verified Stripe event in a webhook request, or the response to send
+ * when it cannot be verified: 500 while the signing secret is unset, so Stripe
+ * keeps the events, and 400 for a missing or wrong signature.
+ */
+export async function verifyWebhookEvent(
+  request: Request,
+  secret: string | undefined,
+  secretName: string,
+): Promise<Stripe.Event | Response> {
+  if (!secret) {
+    console.error(`Stripe webhook received but ${secretName} is not set`);
+    return new Response("Webhook not configured", { status: 500 });
+  }
+  const signature = request.headers.get("Stripe-Signature");
+  if (signature === null) return new Response("Missing signature", { status: 400 });
+  try {
+    // The raw body: re-serialized JSON would not match the signature.
+    return await Stripe.webhooks.constructEventAsync(
+      await request.text(),
+      signature,
+      secret,
+      undefined,
+      Stripe.createSubtleCryptoProvider(),
+    );
+  } catch {
+    return new Response("Invalid signature", { status: 400 });
+  }
 }
 
 /**
@@ -152,6 +204,136 @@ export async function findCreatedConnectAccount(
     throw apiError("upstream_failure", { reason: "stripe_account_failed" });
   }
   return null;
+}
+
+/**
+ * What Stripe said about a payout charge. `pending` outcomes arrive by webhook.
+ * `rejected` means Stripe refused the request itself, so it made no charge.
+ */
+export type ChargeOutcome =
+  | { kind: "succeeded"; paymentIntentId: string }
+  | { kind: "failed"; paymentIntentId: string; failureCode: string }
+  | { kind: "pending"; paymentIntentId: string }
+  | { kind: "rejected"; failureCode: string };
+
+/** The outcome a charge Stripe already made has reached. */
+export function toChargeOutcome(intent: Stripe.PaymentIntent): ChargeOutcome {
+  if (intent.status === "succeeded") return { kind: "succeeded", paymentIntentId: intent.id };
+  if (intent.status === "requires_payment_method" || intent.status === "canceled") {
+    return {
+      kind: "failed",
+      paymentIntentId: intent.id,
+      failureCode:
+        intent.last_payment_error?.decline_code ?? intent.last_payment_error?.code ?? intent.status,
+    };
+  }
+  return { kind: "pending", paymentIntentId: intent.id };
+}
+
+/**
+ * The charge Stripe made for a payout attempt, if any, found by the
+ * `metadata.paymentId` the charge carries. A resumed attempt checks this before
+ * sending anything: its first request may have charged with the reply lost, and
+ * Stripe forgets idempotency keys after about a day, so resending could charge
+ * twice. Stripe's search can lag by up to a minute; attempts resume later than that.
+ *
+ * @throws whatever Stripe throws if it cannot be asked, which proves nothing.
+ */
+export async function findAttemptCharge(
+  stripe: Stripe,
+  payment: Doc<"payments">,
+): Promise<Stripe.PaymentIntent | null> {
+  const found = await stripe.paymentIntents.search(
+    { query: `metadata['paymentId']:'${payment._id}'` },
+    { stripeAccount: payment.stripeAccountId },
+  );
+  return found.data[0] ?? null;
+}
+
+/**
+ * Charges a company's saved card on the creator's Standard account for one
+ * payout attempt. The card lives on Tomoji's account, so it is first copied
+ * onto the creator's; the charge then runs there off-session, since the
+ * company is not present. Both requests are keyed by the attempt, so repeating
+ * an attempt whose outcome was lost returns the original card and charge
+ * instead of charging twice. The charge carries `metadata.paymentId` so
+ * webhooks find the attempt.
+ *
+ * @throws whatever Stripe throws when the outcome is unknown, such as a network
+ * or idempotency error. A card decline is returned as `failed`; an invalid
+ * request Stripe refused, as `rejected`.
+ */
+export async function chargeConnectAccount(
+  stripe: Stripe,
+  charge: {
+    payment: Doc<"payments">;
+    stripeCustomerId: string;
+    paymentMethodId: string;
+    amount: number;
+    currency: string;
+  },
+): Promise<ChargeOutcome> {
+  const { payment } = charge;
+  const onCreatorAccount = { stripeAccount: payment.stripeAccountId };
+  try {
+    // Always the attempt's own card (see `paymentMethodId` on `payments`), so
+    // a resumed attempt repeats exactly the same request under each key.
+    const card = await stripe.paymentMethods.create(
+      { customer: charge.stripeCustomerId, payment_method: charge.paymentMethodId },
+      { ...onCreatorAccount, idempotencyKey: `payment:${payment._id}:card` },
+    );
+    const intent = await stripe.paymentIntents.create(
+      {
+        amount: charge.amount,
+        currency: charge.currency,
+        payment_method: card.id,
+        confirm: true,
+        off_session: true,
+        // Off-session charges cannot redirect the company to their bank.
+        automatic_payment_methods: { enabled: true, allow_redirects: "never" },
+        metadata: { paymentId: payment._id, payoutId: payment.payoutId },
+      },
+      { ...onCreatorAccount, idempotencyKey: `payment:${payment._id}` },
+    );
+    return intent.status === "succeeded"
+      ? { kind: "succeeded", paymentIntentId: intent.id }
+      : { kind: "pending", paymentIntentId: intent.id };
+  } catch (error) {
+    // Stripe made the charge and the card refused it; the outcome is known.
+    if (error instanceof Stripe.errors.StripeCardError && error.payment_intent !== undefined) {
+      return {
+        kind: "failed",
+        paymentIntentId: error.payment_intent.id,
+        failureCode: error.decline_code ?? error.code ?? "card_declined",
+      };
+    }
+    // Refused outright, so no charge exists; retrying would fail the same way.
+    // An idempotency error is thrown instead: Stripe saw a request with this
+    // key, so the first may have charged, and Stripe must be asked.
+    if (error instanceof Stripe.errors.StripeInvalidRequestError) {
+      return { kind: "rejected", failureCode: error.code ?? "invalid_request" };
+    }
+    throw error;
+  }
+}
+
+/**
+ * The card details Tomoji keeps from a payment method, or null if it is not a
+ * card. The brand is the one Stripe displays, which for a co-branded card is
+ * the network the cardholder chose.
+ */
+export function toSavedCard(
+  paymentMethod: Stripe.PaymentMethod,
+): SavedPaymentMethod["card"] | null {
+  const card = paymentMethod.card;
+  if (!card) return null;
+  return {
+    paymentMethodId: paymentMethod.id,
+    brand: card.display_brand ?? card.brand,
+    last4: card.last4,
+    expMonth: card.exp_month,
+    expYear: card.exp_year,
+  };
 }
 
 /**

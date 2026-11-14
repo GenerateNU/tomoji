@@ -3,7 +3,8 @@ import { apiError, type ApiErrorData } from "./errors";
 import type { PostEngagement } from "../models/posts";
 
 /**
- * Days a post keeps earning after it goes live - number of days the metrics are tracked on the X post.
+ * Default earning duration from the original live-post verification, not publication.
+ * Collection must follow the stored agreement's window and any earlier cutoff.
  */
 export const X_POST_EARNING_DAYS = 30;
 

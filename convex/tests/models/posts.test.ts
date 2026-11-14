@@ -1045,9 +1045,20 @@ describe("unverifyPost", () => {
 describe("listEarningPosts", () => {
   const day = 24 * 60 * 60 * 1000;
 
-  /** Verifies a post as having gone live at `postedAt`. */
-  async function verifyAt(t: TestConvex, postId: Id<"posts">, postedAt: number) {
+  /**
+   * Verifies a post with the clock set to `verifiedAt`, which `verifyPost` records
+   * as `firstVerifiedAt`. `postedAt` defaults to the same moment.
+   */
+  async function verifyAt(
+    t: TestConvex,
+    postId: Id<"posts">,
+    verifiedAt: number,
+    postedAt = verifiedAt,
+  ) {
+    const now = Date.now();
+    vi.setSystemTime(verifiedAt);
     await t.run(async (ctx) => await verifyPost(ctx, postId, { postedAt }));
+    vi.setSystemTime(now);
   }
 
   /** The post as the sync sees it. */
@@ -1056,7 +1067,7 @@ describe("listEarningPosts", () => {
     return { postId, xPostId: post!.xPostId };
   }
 
-  test("returns verified, active posts that went live in the last 31 days", async () => {
+  test("returns verified, active posts first verified in the last 31 days", async () => {
     const t = convexTest(schema, modules);
     const { fixture, postId: recent } = await seedFixturePost(t);
     const atCutoff = await addPost(t, fixture, "cutoff_creator");
@@ -1077,6 +1088,41 @@ describe("listEarningPosts", () => {
 
     expect(result.isDone).toBe(true);
     expect(result.page).toEqual([await earning(t, atCutoff), await earning(t, recent)]);
+  });
+
+  test("a post verified late is synced for its full window, not cut short by postedAt", async () => {
+    const t = convexTest(schema, modules);
+    const { postId } = await seedFixturePost(t);
+    const now = Date.now();
+    // Went live 40 days ago but was only verified 15 days ago.
+    await verifyAt(t, postId, now - 15 * day, now - 40 * day);
+
+    const result = await t.run(
+      async (ctx) => await listEarningPosts(ctx, now, { numItems: 10, cursor: null }),
+    );
+
+    expect(result.page).toEqual([await earning(t, postId)]);
+  });
+
+  test("skips verified posts with no recorded first verification", async () => {
+    const t = convexTest(schema, modules);
+    const { postId } = await seedFixturePost(t);
+    const now = Date.now();
+    await verifyAt(t, postId, now - day);
+    // Legacy verifications have unknown timing and no `firstVerifiedAt`.
+    await t.run(
+      async (ctx) =>
+        await ctx.db.patch("posts", postId, {
+          firstVerifiedAt: undefined,
+          earningsTimingUnknown: true,
+        }),
+    );
+
+    const result = await t.run(
+      async (ctx) => await listEarningPosts(ctx, now, { numItems: 10, cursor: null }),
+    );
+
+    expect(result.page).toEqual([]);
   });
 
   test("skips posts on cancelled assignments but keeps completed and disputed ones", async () => {

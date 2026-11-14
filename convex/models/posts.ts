@@ -7,7 +7,8 @@ import { v, type Infer } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { apiError } from "../lib/errors";
-import { X_POST_EARNING_DAYS } from "../lib/xApi";
+import { EARNING_WINDOW_MS } from "../lib/earningsCalculator";
+import { DAY_MS } from "../lib/time";
 import { requireAssignment, type AssignmentViewer } from "./assignments";
 import { listOpportunityDeliverables } from "./deliverableDrafts";
 import { getLatestSubmission } from "./submissions";
@@ -616,21 +617,20 @@ export async function finishCreatorCaptionCheck(
   return status;
 }
 
-const DAY_MS = 24 * 60 * 60 * 1000;
-
-// The sync runs daily at 00:00 UTC, so the first run after a post's last earning
-// day is at most a day later. One day of margin keeps the post in that run, which
-// stores its final total.
+// The earnings window, measured from first verification, plus one day: the sync
+// runs daily at 00:00 UTC, so the first run after the window ends is at most a day
+// later, and the margin keeps the post in that run to store its final total.
 const SYNC_MARGIN_DAYS = 1;
-const SYNC_WINDOW_MS = (X_POST_EARNING_DAYS + SYNC_MARGIN_DAYS) * DAY_MS;
+const SYNC_WINDOW_MS = EARNING_WINDOW_MS + SYNC_MARGIN_DAYS * DAY_MS;
 
 /** What the daily X sync needs to fetch a post's counts and store them. */
 export const earningPost = v.object({ postId: v.id("posts"), xPostId: v.string() });
 export type EarningPost = Infer<typeof earningPost>;
 
 /**
- * One page of posts the daily X sync fetches at `now`: verified, active, within the
- * sync window, and not on a cancelled assignment. Posts with an open dispute stay in.
+ * One page of posts the daily X sync fetches at `now`: verified, active, first verified
+ * within the sync window, and not on a cancelled assignment. Posts with an open
+ * dispute stay in. Posts with no recorded first verification (legacy timing) are skipped.
  * Skipped posts make a page shorter than requested; `continueCursor` still moves past
  * them, so paging covers every eligible post once.
  */
@@ -641,11 +641,11 @@ export async function listEarningPosts(
 ): Promise<PaginationResult<EarningPost>> {
   const result = await ctx.db
     .query("posts")
-    .withIndex("by_isVerified_and_isActive_and_postedAt", (q) =>
+    .withIndex("by_isVerified_and_isActive_and_firstVerifiedAt", (q) =>
       q
         .eq("isVerified", true)
         .eq("isActive", true)
-        .gte("postedAt", now - SYNC_WINDOW_MS),
+        .gte("firstVerifiedAt", now - SYNC_WINDOW_MS),
     )
     .paginate(paginationOpts);
   // A page's posts often share an assignment, so each one is read once.

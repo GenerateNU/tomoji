@@ -163,20 +163,21 @@ copies each setting that is filled in and rejects `X_METRICS_SYNC_ENABLED=true` 
 token, but it never clears a deployment value. To turn an enabled deployment off, run
 `bunx convex env set X_METRICS_SYNC_ENABLED false`.
 
-`X_POST_EARNING_DAYS` (30) is the default duration from the original live-post
-verification, not publication. The stored earnings agreement determines the actual
-window; cancellation or confirmed removal can shorten it. Earnings are calculated
-every seven days, with a final partial period ending exactly at day 30 rather than
-the end of that week. Collectors must use the agreement's verification baseline
-and period/cutoff timestamps, and retain delayed evidence needed to settle earlier
-earnings. See [Earnings rules](EARNINGS.md) for the calculation and evidence contract.
+Earnings last 30 days (`EARNING_WINDOW_MS`) from a post's first verification, not
+its publication. The stored earnings agreement determines the actual window; cancellation
+or confirmed removal can shorten it. Earnings are calculated every seven days, with a
+final partial period ending exactly at day 30. Collectors must use the agreement's
+verification baseline and period/cutoff timestamps, and retain delayed evidence needed
+to settle earlier earnings. See [Earnings rules](EARNINGS.md) for the calculation and
+evidence contract.
 
-`X_POST_EARNING_DAYS` (30) is a placeholder for how long a post keeps earning after it
-goes live, pending product confirmation. The sync runs daily at 00:00 UTC and reads
-posts that went live within the last `X_POST_EARNING_DAYS` + 1 day. The extra day keeps a
-post in the first run after its last earning day, so its stored total covers day 30. If
-that run fails, the post keeps the previous day's total. `posts.listEarning` (internal)
-returns those verified, active posts a page at a time.
+The analytics sync uses the same clock. It runs daily at 00:00 UTC and reads verified,
+active posts whose `firstVerifiedAt` is within the last `EARNING_WINDOW_MS` + 1 day, so
+a post verified late is still followed for its whole earning window. The extra day keeps
+a post in the first run after its window ends, so its stored total covers day 30. If
+that run fails, the post keeps the previous day's total. Posts with no recorded first
+verification (legacy `earningsTimingUnknown` posts) are skipped. `posts.listEarning`
+(internal) returns the posts a page at a time.
 
 The daily sync's counts keep `posts` current for analytics; payouts don't settle from them.
 Earnings settle from view snapshots taken at each post's verification and period

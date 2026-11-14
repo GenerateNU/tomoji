@@ -63,7 +63,8 @@ export function PerformanceCard({
           </span>
         }
         aria-label={`Weekly views for ${title}`}
-        className="h-40"
+        // The plot sets its own height; the card is the tile, so the chart drops its own.
+        className="p-0 shadow-none"
       />
     </article>
   );

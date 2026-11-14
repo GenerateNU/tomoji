@@ -16,9 +16,9 @@ let profile: Profile = {
   githubLink: "https://github.com/zahra",
   countryOfResidence: "ID",
   additionalLinks: [],
-  isPrivate: false,
   niches: [],
   skills: [],
+  languages: [],
 };
 // A small stand-in for the real ISO list; the picker only needs a few rows.
 const COUNTRIES = [

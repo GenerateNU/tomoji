@@ -6,6 +6,7 @@ import { companiesTable } from "./schemas/companies.schema";
 import { invitesTable } from "./schemas/invites.schema";
 import { companyUsersTable } from "./schemas/companyUsers.schema";
 import { creatorsTable } from "./schemas/creators.schema";
+import { creatorLanguagesTable } from "./schemas/creatorLanguages.schema";
 import { creatorNichesTable } from "./schemas/creatorNiches.schema";
 import { creatorSkillsTable } from "./schemas/creatorSkills.schema";
 import { disputesTable } from "./schemas/disputes.schema";
@@ -32,6 +33,7 @@ export default defineSchema({
   companyUsers: companyUsersTable,
   creators: creatorsTable,
   creatorNiches: creatorNichesTable,
+  creatorLanguages: creatorLanguagesTable,
   creatorSkills: creatorSkillsTable,
   companies: companiesTable,
   invites: invitesTable,

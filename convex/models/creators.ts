@@ -5,6 +5,7 @@ import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { apiError } from "../lib/errors";
 import { requireUrl } from "../lib/urls";
+import { listCreatorLanguages, updateCreatorLanguages } from "./creatorLanguages";
 import { listCreatorNiches, updateCreatorNiches } from "./creatorNiches";
 import { listCreatorSkills, updateCreatorSkills } from "./creatorSkills";
 import { MAX_NICHES } from "./niches";
@@ -32,9 +33,9 @@ export const creatorProfile = v.object({
   linkedinLink: v.optional(v.string()),
   additionalLinks: v.array(v.string()),
   countryOfResidence: v.optional(v.string()),
-  isPrivate: v.boolean(),
   niches: v.array(v.string()),
   skills: v.array(v.string()),
+  languages: v.array(v.string()),
   followerRange: v.optional(followerRange),
 });
 
@@ -52,10 +53,10 @@ export const creatorProfileUpdate = v.object({
   additionalLinks: v.optional(v.array(v.string())),
   dateOfBirth: v.optional(v.number()),
   countryOfResidence: v.optional(v.union(v.string(), v.null())),
-  isPrivate: v.optional(v.boolean()),
   // Names from models/niches.ts. An empty list clears them.
   niches: v.optional(v.array(v.string())),
   skills: v.optional(v.array(v.string())),
+  languages: v.optional(v.array(v.string())),
   // Null clears it, like the links.
   followerRange: v.optional(v.union(followerRange, v.null())),
 });
@@ -72,7 +73,7 @@ const MAX_CREATOR_LIST_ROWS = Math.min(100, Math.floor(16_000 / (3 + MAX_NICHES 
 function toCreatorProfile(
   user: Doc<"users">,
   creator: Doc<"creators">,
-  details: Pick<CreatorProfile, "xId" | "niches" | "skills">,
+  details: Pick<CreatorProfile, "xId" | "niches" | "skills" | "languages">,
 ): CreatorProfile {
   return {
     creatorId: creator._id,
@@ -86,9 +87,9 @@ function toCreatorProfile(
     linkedinLink: creator.linkedinLink,
     additionalLinks: creator.additionalLinks ?? [],
     countryOfResidence: creator.countryOfResidence,
-    isPrivate: creator.isPrivate ?? false,
     niches: details.niches,
     skills: details.skills,
+    languages: details.languages,
     followerRange: creator.followerRange,
   };
 }
@@ -97,7 +98,7 @@ function toCreatorProfile(
 function toOwnCreatorProfile(
   user: Doc<"users">,
   creator: Doc<"creators">,
-  details: Pick<CreatorProfile, "xId" | "niches" | "skills">,
+  details: Pick<CreatorProfile, "xId" | "niches" | "skills" | "languages">,
 ): OwnCreatorProfile {
   return { ...toCreatorProfile(user, creator, details), dateOfBirth: creator.dateOfBirth };
 }
@@ -106,13 +107,14 @@ function toOwnCreatorProfile(
 async function creatorDetails(
   ctx: QueryCtx | MutationCtx,
   creator: Doc<"creators">,
-): Promise<Pick<CreatorProfile, "xId" | "niches" | "skills">> {
-  const [account, niches, skills] = await Promise.all([
+): Promise<Pick<CreatorProfile, "xId" | "niches" | "skills" | "languages">> {
+  const [account, niches, skills, languages] = await Promise.all([
     getXAccountByCreatorId(ctx, creator._id),
-    listCreatorNiches(ctx, creator),
+    listCreatorNiches(ctx, creator._id),
     listCreatorSkills(ctx, creator._id),
+    listCreatorLanguages(ctx, creator._id),
   ]);
-  return { xId: account?.xUserId, niches, skills };
+  return { xId: account?.xUserId, niches, skills, languages };
 }
 
 async function getCreatorProfile(
@@ -187,17 +189,12 @@ export async function listCreators(
   ctx: QueryCtx,
   options: { paginationOpts: PaginationOptions },
 ): Promise<PaginationResult<CreatorProfile>> {
-  // Private creators are dropped inside the stream, before the page is cut, so
-  // a run of them shortens what is scanned rather than emptying the page. Every
-  // scanned row hydrates its associations, so the scan is capped by the document
-  // budget rather than the shared default.
+  // Every scanned row hydrates its associations, so the scan is capped by the
+  // document budget rather than the shared default.
   return await stream(ctx.db, schema)
     .query("users")
     .withIndex("by_role_and_isActive", (q) => q.eq("role", "creator").eq("isActive", true))
-    .map(async (user) => {
-      const profile = await getCreatorProfile(ctx, user, await requireCreatorRow(ctx, user));
-      return profile.isPrivate ? null : profile;
-    })
+    .map(async (user) => await getCreatorProfile(ctx, user, await requireCreatorRow(ctx, user)))
     .paginate({
       ...options.paginationOpts,
       maximumRowsRead: Math.min(
@@ -268,7 +265,6 @@ export async function updateCreatorProfile(
   if (updates.dateOfBirth !== undefined) {
     patch.dateOfBirth = requireAdultBirthdate(updates.dateOfBirth);
   }
-  if (updates.isPrivate !== undefined) patch.isPrivate = updates.isPrivate;
   if (updates.followerRange !== undefined) {
     patch.followerRange = updates.followerRange ?? undefined;
   }
@@ -294,18 +290,22 @@ export async function updateCreatorProfile(
 
   const niches =
     updates.niches === undefined
-      ? await listCreatorNiches(ctx, creator)
+      ? await listCreatorNiches(ctx, creator._id)
       : await updateCreatorNiches(ctx, creator._id, updates.niches);
   const skills =
     updates.skills === undefined
       ? await listCreatorSkills(ctx, creator._id)
       : await updateCreatorSkills(ctx, creator._id, updates.skills);
+  const languages =
+    updates.languages === undefined
+      ? await listCreatorLanguages(ctx, creator._id)
+      : await updateCreatorLanguages(ctx, creator._id, updates.languages);
   await ctx.db.patch("creators", creator._id, patch);
   const account = await getXAccountByCreatorId(ctx, creator._id);
   return toOwnCreatorProfile(
     user,
     { ...creator, ...patch },
-    { xId: account?.xUserId, niches, skills },
+    { xId: account?.xUserId, niches, skills, languages },
   );
 }
 
@@ -324,15 +324,5 @@ export async function requireCreatorProfileById(
   if (user === null || !user.isActive || user.role !== "creator") {
     throw apiError("not_found", { resource: "creator" });
   }
-  // `not_found` rather than `forbidden`, so a company cannot use this route to
-  // discover that a private creator exists.
-  if (
-    (creator.isPrivate ?? false) &&
-    viewingCompanyId !== undefined &&
-    !(await hasCompanyRelationship(ctx, creatorId, viewingCompanyId))
-  ) {
-    throw apiError("not_found", { resource: "creator" });
-  }
-
   return await getCreatorProfile(ctx, user, creator);
 }

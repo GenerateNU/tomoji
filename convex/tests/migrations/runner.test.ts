@@ -26,8 +26,6 @@ const modules = import.meta.glob("../../**/*.ts");
 
 const removeUserProfilePictures =
   internal.migrations["2026_10_07_remove_user_profile_pictures"].removeUserProfilePictures;
-const backfillCreatorNiches =
-  internal.migrations["2026_10_25_backfill_creator_niches"].backfillCreatorNiches;
 
 afterEach(() => vi.useRealTimers());
 
@@ -57,10 +55,6 @@ describe("identity schema migrations", () => {
     vi.useFakeTimers();
     const t = setup();
     const userId = await seedUser(t, "workos_runner");
-    const creatorId = await t.run(
-      async (ctx) =>
-        await ctx.db.insert("creators", { userId, isPrivate: false, niches: ["databases"] }),
-    );
 
     await t.mutation(internal.migrations.runner.runAll, {});
     await t.finishAllScheduledFunctions(vi.runAllTimers);
@@ -68,32 +62,17 @@ describe("identity schema migrations", () => {
     expect(await t.run(async (ctx) => ctx.db.get("users", userId))).not.toHaveProperty(
       "profilePicture",
     );
-    expect(await t.run(async (ctx) => ctx.db.get("creators", creatorId))).not.toHaveProperty(
-      "niches",
-    );
-    expect(await t.run((ctx) => ctx.db.query("creatorNiches").take(2))).toMatchObject([
-      { creatorId, name: "databases" },
-    ]);
     const statuses = await t.query(components.migrations.lib.getStatus, {
-      names: [getFunctionName(removeUserProfilePictures), getFunctionName(backfillCreatorNiches)],
+      names: [getFunctionName(removeUserProfilePictures)],
     });
-    expect(statuses).toHaveLength(2);
-    expect(statuses).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          name: getFunctionName(removeUserProfilePictures),
-          isDone: true,
-          state: "success",
-          processed: 1,
-        }),
-        expect.objectContaining({
-          name: getFunctionName(backfillCreatorNiches),
-          isDone: true,
-          state: "success",
-          processed: 1,
-        }),
-      ]),
-    );
+    expect(statuses).toEqual([
+      expect.objectContaining({
+        name: getFunctionName(removeUserProfilePictures),
+        isDone: true,
+        state: "success",
+        processed: 1,
+      }),
+    ]);
   });
 
   test("run executes only the migration selected by fn", async () => {

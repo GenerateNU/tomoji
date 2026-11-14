@@ -1,21 +1,20 @@
-import type { Doc, Id } from "../_generated/dataModel";
+import type { Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { MAX_NICHES, requireNiches } from "./niches";
 
-/** Reads legacy selections until backfilled, otherwise returns association names in selection order. */
+/** Lists a creator's niches in selection order, bounded by `MAX_NICHES`. */
 export async function listCreatorNiches(
   ctx: QueryCtx | MutationCtx,
-  creator: Doc<"creators">,
+  creatorId: Id<"creators">,
 ): Promise<string[]> {
-  if (creator.niches !== undefined) return creator.niches;
   const rows = await ctx.db
     .query("creatorNiches")
-    .withIndex("by_creatorId", (q) => q.eq("creatorId", creator._id))
+    .withIndex("by_creatorId", (q) => q.eq("creatorId", creatorId))
     .take(MAX_NICHES);
   return rows.map((row) => row.name);
 }
 
-/** Replaces a creator's niche selections and removes the legacy array in the same transaction. */
+/** Replaces a creator's validated niche selections without leaving duplicate rows. */
 export async function updateCreatorNiches(
   ctx: MutationCtx,
   creatorId: Id<"creators">,
@@ -28,6 +27,5 @@ export async function updateCreatorNiches(
     .take(MAX_NICHES);
   for (const row of rows) await ctx.db.delete("creatorNiches", row._id);
   for (const name of niches) await ctx.db.insert("creatorNiches", { creatorId, name });
-  await ctx.db.patch("creators", creatorId, { niches: undefined });
   return niches;
 }

@@ -49,19 +49,13 @@ Alternatively, use `just bd` to deploy and watch the backend, and run the migrat
 command in a second terminal after deployment succeeds.
 
 `runAll` removes legacy user profile-picture URLs (see the compatibility rollout
-below), then moves legacy creator niches into association rows. It skips
-completed migrations and resumes interrupted ones.
+below). It skips completed migrations and resumes interrupted ones.
 
 Available migrations:
 
 - [2026_10_07_remove_user_profile_pictures.ts](../convex/migrations/2026_10_07_remove_user_profile_pictures.ts)
   exports `removeUserProfilePictures`. It drops the legacy `profilePicture` URL
   from each user, preserving `profilePictureMediaId` and every other field.
-- [2026_10_25_backfill_creator_niches.ts](../convex/migrations/2026_10_25_backfill_creator_niches.ts)
-  exports `backfillCreatorNiches`. It moves a creator's legacy `niches` array into
-  `creatorNiches` association rows through `updateCreatorNiches`, which also
-  removes the legacy field. Creators without the field are left alone, so it is
-  safe to rerun.
 
 These preserve document IDs and relationships. To select one migration, use `run`
 with its full function path:
@@ -76,7 +70,7 @@ added after an earlier completed run:
 
 ```bash
 bunx convex run --deployment dev migrations/runner:run \
-  '{"fn":"migrations/2026_10_25_backfill_creator_niches:backfillCreatorNiches","reset":true}'
+  '{"fn":"migrations/2026_10_07_remove_user_profile_pictures:removeUserProfilePictures","reset":true}'
 ```
 
 Passing `{"reset":true}` to `runAll` resets the entire registered sequence.
@@ -84,11 +78,11 @@ Passing `{"reset":true}` to `runAll` resets the entire registered sequence.
 Add `"dryRun": true` to preview one batch without saving changes. The intentional
 `DRY RUN` result rolls the batch back. Preview each migration separately, since a
 dry run does not execute the full sequence. For example, preview the first batch
-of the niche backfill even if it has already completed:
+of the profile-picture migration even if it has already completed:
 
 ```bash
 bunx convex run --deployment dev migrations/runner:run \
-  '{"fn":"migrations/2026_10_25_backfill_creator_niches:backfillCreatorNiches","dryRun":true,"reset":true}'
+  '{"fn":"migrations/2026_10_07_remove_user_profile_pictures:removeUserProfilePictures","dryRun":true,"reset":true}'
 ```
 
 ## Check completion and resume
@@ -97,7 +91,7 @@ The runner can return before scheduled batches finish. Check status:
 
 ```bash
 bunx convex run --deployment dev --component migrations lib:getStatus \
-  '{"names":["migrations/2026_10_07_remove_user_profile_pictures:removeUserProfilePictures","migrations/2026_10_25_backfill_creator_niches:backfillCreatorNiches"]}'
+  '{"names":["migrations/2026_10_07_remove_user_profile_pictures:removeUserProfilePictures"]}'
 ```
 
 Wait until each entry reports `isDone: true` and `state: "success"`. If a batch
@@ -162,6 +156,13 @@ a deployment that never ran it, so each removal is recorded here.
   `creator_<userId>` value with `creator_` plus a random suffix. Removed with
   `creators.username` and its `by_username` index, which the creator profile
   rework deleted.
+- `2026_10_25_backfill_opportunity_niches.ts` and
+  `2026_10_25_backfill_creator_niches.ts` exported `backfillOpportunityNiches`
+  and `backfillCreatorNiches`. Each moved a legacy `niches` array into
+  association rows, through `updateOpportunityNiches` and `updateCreatorNiches`,
+  which also removed the legacy field. Removed with the two `niches` columns
+  themselves. `creators.isPrivate` was dropped in the same change and never had
+  a migration.
 
 ### Recovering an unmigrated deployment
 

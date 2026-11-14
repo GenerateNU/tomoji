@@ -167,10 +167,9 @@ Post metrics come from X's public post lookup, which accepts the app-only bearer
 token, so the sync never decrypts creator credentials. Every read is billed against
 the team's X credits.
 
-Nothing calls the lookup yet: no cron runs and no post's counts are updated. A daily
-analytics sync will call it, and earnings will request their own boundary readings. The
-X field names below come from X's documentation and haven't been checked against a live
-response. Before enabling the sync anywhere, make one lookup for a post you own (about
+The daily analytics sync (`xMetrics.sync`, cron `sync X post metrics` at 00:00 UTC) calls
+the lookup; earnings will request their own boundary readings. The X field names below
+come from X's documentation and haven't been checked against a live response. Before enabling the sync anywhere, make one lookup for a post you own (about
 $0.005) and confirm `public_metrics` includes `impression_count`:
 
 ```bash
@@ -198,20 +197,50 @@ to settle earlier earnings. See [Earnings rules](EARNINGS.md) for the calculatio
 evidence contract.
 
 The analytics sync uses the same clock. It runs daily at 00:00 UTC and reads verified,
-active posts whose `firstVerifiedAt` is within the last `EARNING_WINDOW_MS` + 1 day, so
-a post verified late is still followed for its whole earning window. The extra day keeps
-a post in the first run after its window ends, so its stored total covers day 30. If
+active posts whose `firstVerifiedAt` is within the last `EARNING_WINDOW_MS` + 2 days, so
+a post verified late is still followed for its whole earning window. The extra days keep
+a post in the first run after its window ends, even a late one, so its stored total
+covers day 30. If
 that run fails, the post keeps the previous day's total. Posts with no recorded first
 verification (legacy `earningsTimingUnknown` posts) are skipped. `posts.listEarning`
 (internal) returns the posts a page at a time.
 
-The daily sync's counts keep `posts` current for analytics; payouts don't settle from them.
-Earnings settle from view snapshots taken at each post's verification and period
-boundaries (`postViewSnapshots`), recorded through the earnings flow rather than this sync.
+The daily sync keeps `posts` current for analytics, and every views save is also recorded
+as an earnings snapshot (`updatePostViews` → `postViewSnapshots`). A count lower than an
+earlier one in the earnings window holds that post's variable earnings for reconciliation.
+
+Earnings also need readings near the start and end of each window, so a post's first
+verification schedules extra reads through the same helper, but only while
+`X_METRICS_SYNC_ENABLED` is `"true"`:
+
+| Read                          | When                          | Function                                            |
+| ----------------------------- | ----------------------------- | --------------------------------------------------- |
+| Views at verification         | Immediately                   | `xMetrics.collect`                                  |
+| Views before the final cutoff | 4 and 2 minutes before day 30 | `xMetrics.collectForCutoff` (the second is a retry) |
+
+Settlement takes the final period's views from the latest reading in the 5 minutes before
+the cutoff; without one, the remaining earnings stay pending for admin review. The retry
+is skipped when the first read already landed in that window, and neither runs after the
+cutoff. Re-verification keeps the original clock, so it schedules nothing new.
+Replaced posts are held for review, and earnings reads aren't rescheduled for the new
+post: verifying a replacement schedules one `xMetrics.collect` read of the new link for
+the reviewer, and the daily sync follows it as usual. Weekly boundaries and early
+cutoffs (cancellation or removal) use the last daily reading before them. How settlement
+picks readings is defined in [Earnings rules](EARNINGS.md).
 The analytics sync skips posts on cancelled assignments and posts with a recorded removal
 (`removedAt`), since X no longer has them; posts with an open dispute stay in. Payouts decide eligibility separately: a cancellation stops accrual at its cutoff,
 and any readings earnings need around that cutoff come from the earnings flow, not this
 sync.
+
+Each run reads one page of 100 posts from `posts.listEarning`, looks them up in one X
+request, and stores views and engagement through `xMetrics.saveCounts`, skipping posts
+replaced since they were listed. It then schedules the next page with the same `now`
+until every page is done. Posts X leaves out keep their stored counts and are logged by
+reason. A page X can't answer, or whose counts can't be saved, is logged and skipped so
+it can't block later pages. A rate limit is logged and stops the run, since it applies to
+every page. Nothing is retried, since each read is billed; the next day's run reads the
+same posts again. With
+`X_METRICS_SYNC_ENABLED` off, the cron does nothing and calls nothing.
 
 `getXPostMetrics` looks up at most 100 post IDs per call through `GET /2/tweets` with
 `tweet.fields=public_metrics`. Each post's counts come back in two parts, stored

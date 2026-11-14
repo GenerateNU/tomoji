@@ -3,9 +3,10 @@ import {
   type PaginationOptions,
   type PaginationResult,
 } from "convex/server";
-import { v, type Infer } from "convex/values";
+import { ConvexError, v, type Infer } from "convex/values";
+import { internal } from "../_generated/api";
 import type { Doc, Id } from "../_generated/dataModel";
-import type { MutationCtx, QueryCtx } from "../_generated/server";
+import { env, type MutationCtx, type QueryCtx } from "../_generated/server";
 import { apiError } from "../lib/errors";
 import { EARNING_WINDOW_MS } from "../lib/earningsCalculator";
 import { DAY_MS } from "../lib/time";
@@ -348,7 +349,56 @@ export async function verifyPost(
     ...(firstVerifiedAt === undefined ? { earningsTimingUnknown: true } : { firstVerifiedAt }),
   };
   await ctx.db.patch("posts", postId, patch);
+  // Re-verification keeps the original clock, so its reads are already scheduled.
+  if (post.firstVerifiedAt === undefined && firstVerifiedAt !== undefined) {
+    await scheduleEarningsReads(ctx, postId, firstVerifiedAt);
+  } else if (earnings !== null && earnings.postId !== postId) {
+    // A replacement: settlement keeps reading the original post and holds variable
+    // earnings for review, so the reviewer just gets one current reading of the new link.
+    await scheduleReadNow(ctx, postId);
+  }
   return { ...post, ...patch };
+}
+
+/** Earnings settle the final period from a reading in the 5 minutes before the cutoff. */
+export const CUTOFF_READ_WINDOW_MS = 5 * 60 * 1000;
+// Read 4 minutes before the cutoff, leaving room for X's response, and again 2 minutes
+// before in case the first read failed, so even a slow retry lands before the cutoff.
+const CUTOFF_READ_OFFSETS_MS = [4 * 60 * 1000, 2 * 60 * 1000];
+
+/**
+ * Earnings reads run only while the sync is switched on. This checks the flag
+ * alone so X configuration can never fail a verification; the reads validate it
+ * when they run.
+ */
+function earningsReadsEnabled(): boolean {
+  return env.X_METRICS_SYNC_ENABLED === "true";
+}
+
+/** Schedules one X read of the post right away. */
+async function scheduleReadNow(ctx: MutationCtx, postId: Id<"posts">): Promise<void> {
+  if (!earningsReadsEnabled()) return;
+  await ctx.scheduler.runAfter(0, internal.xMetrics.collect, { postIds: [postId] });
+}
+
+/**
+ * Schedules the X reads earnings need beyond the daily sync: one now, for the
+ * views at verification, and two just before the earnings window ends.
+ */
+async function scheduleEarningsReads(
+  ctx: MutationCtx,
+  postId: Id<"posts">,
+  firstVerifiedAt: number,
+): Promise<void> {
+  if (!earningsReadsEnabled()) return;
+  await scheduleReadNow(ctx, postId);
+  const cutoffAt = firstVerifiedAt + EARNING_WINDOW_MS;
+  for (const offset of CUTOFF_READ_OFFSETS_MS) {
+    await ctx.scheduler.runAt(cutoffAt - offset, internal.xMetrics.collectForCutoff, {
+      postId,
+      cutoffAt,
+    });
+  }
 }
 
 /**
@@ -437,7 +487,7 @@ export async function updatePostEngagement(
   if (post === null) throw apiError("not_found", { resource: "post" });
   requireActive(post);
   const patch: PostEngagement = {};
-  for (const field of ["likes", "comments", "reposts", "quotes"] as const) {
+  for (const field of ENGAGEMENT_FIELDS) {
     const count = engagement[field];
     if (count === undefined) continue;
     requireCount(count, "invalid_engagement", field);
@@ -617,10 +667,11 @@ export async function finishCreatorCaptionCheck(
   return status;
 }
 
-// The earnings window, measured from first verification, plus one day: the sync
+// The earnings window, measured from first verification, plus two days: the sync
 // runs daily at 00:00 UTC, so the first run after the window ends is at most a day
-// later, and the margin keeps the post in that run to store its final total.
-const SYNC_MARGIN_DAYS = 1;
+// later. The second day keeps the post in that run even if it starts late, so its
+// final total is stored.
+const SYNC_MARGIN_DAYS = 2;
 const SYNC_WINDOW_MS = EARNING_WINDOW_MS + SYNC_MARGIN_DAYS * DAY_MS;
 
 /** What the daily X sync needs to fetch a post's counts and store them. */
@@ -648,21 +699,119 @@ export async function listEarningPosts(
         .gte("firstVerifiedAt", now - SYNC_WINDOW_MS),
     )
     .paginate(paginationOpts);
-  // A page's posts often share an assignment, so each one is read once.
   const cancelled = new Map<Id<"assignments">, boolean>();
   const page: EarningPost[] = [];
   for (const post of result.page) {
     // A removed post is gone from X, so a lookup would only spend credits.
     if (post.removedAt !== undefined) continue;
-    const submission = await ctx.db.get("submissions", post.submissionId);
-    if (submission === null) continue;
-    let isCancelled = cancelled.get(submission.assignmentId);
-    if (isCancelled === undefined) {
-      const assignment = await ctx.db.get("assignments", submission.assignmentId);
-      isCancelled = assignment === null || assignment.status === "cancelled";
-      cancelled.set(submission.assignmentId, isCancelled);
+    if (!(await isOnCancelledAssignment(ctx, post, cancelled))) {
+      page.push({ postId: post._id, xPostId: post.xPostId });
     }
-    if (!isCancelled) page.push({ postId: post._id, xPostId: post.xPostId });
   }
   return { ...result, page };
+}
+
+/**
+ * Whether the post's assignment is cancelled; a missing submission or assignment
+ * counts as cancelled. Posts often share an assignment, so `cache` reads each once.
+ */
+async function isOnCancelledAssignment(
+  ctx: QueryCtx,
+  post: Doc<"posts">,
+  cache: Map<Id<"assignments">, boolean>,
+): Promise<boolean> {
+  const submission = await ctx.db.get("submissions", post.submissionId);
+  if (submission === null) return true;
+  let cancelled = cache.get(submission.assignmentId);
+  if (cancelled === undefined) {
+    const assignment = await ctx.db.get("assignments", submission.assignmentId);
+    cancelled = assignment === null || assignment.status === "cancelled";
+    cache.set(submission.assignmentId, cancelled);
+  }
+  return cancelled;
+}
+
+/**
+ * The verified, active posts among `postIds` the X collector should read now,
+ * skipping removed posts, cancelled assignments, and, with `readSince`, posts that already have a
+ * view reading at or after that time.
+ *
+ * @throws `invalid_state` for more than 100 posts, X's limit for one lookup.
+ */
+export async function listCollectionTargets(
+  ctx: QueryCtx,
+  postIds: Id<"posts">[],
+  readSince?: number,
+): Promise<EarningPost[]> {
+  if (postIds.length > 100) throw apiError("invalid_state", { reason: "too_many_posts" });
+  const cancelled = new Map<Id<"assignments">, boolean>();
+  const targets: EarningPost[] = [];
+  for (const postId of postIds) {
+    const post = await ctx.db.get("posts", postId);
+    if (post === null || !post.isActive || !post.isVerified) continue;
+    // A removed post is gone from X, so a lookup would only spend credits.
+    if (post.removedAt !== undefined) continue;
+    if (await isOnCancelledAssignment(ctx, post, cancelled)) continue;
+    if (readSince !== undefined) {
+      const recent = await ctx.db
+        .query("postViewSnapshots")
+        .withIndex("by_postId_and_observedAt", (q) =>
+          q.eq("postId", postId).gte("observedAt", readSince),
+        )
+        .first();
+      if (recent !== null) continue;
+    }
+    targets.push({ postId, xPostId: post.xPostId });
+  }
+  return targets;
+}
+
+const ENGAGEMENT_FIELDS = ["likes", "comments", "reposts", "quotes"] as const;
+
+/** One post's counts from the daily X sync. */
+export const syncedCounts = v.object({
+  postId: v.id("posts"),
+  views: v.number(),
+  engagement: postEngagement,
+});
+export type SyncedCounts = Infer<typeof syncedCounts>;
+
+/** What `saveSyncedCounts` stored, and which posts it skipped and why. */
+export const syncedCountsResult = v.object({
+  saved: v.number(),
+  skipped: v.array(v.object({ postId: v.id("posts"), reason: v.string() })),
+});
+export type SyncedCountsResult = Infer<typeof syncedCountsResult>;
+
+/**
+ * Stores the sync's counts for each post that's still active, skipping posts
+ * replaced or removed since they were listed. Each post is saved on its own: an
+ * expected failure (an invalid count, a snapshot conflict) skips just that post,
+ * and these are all raised before anything is written for it. Engagement is
+ * checked first so a bad engagement count can't leave the views saved alone.
+ */
+export async function saveSyncedCounts(
+  ctx: MutationCtx,
+  counts: SyncedCounts[],
+): Promise<SyncedCountsResult> {
+  let saved = 0;
+  const skipped: SyncedCountsResult["skipped"] = [];
+  for (const { postId, views, engagement } of counts) {
+    const post = await ctx.db.get("posts", postId);
+    if (post === null || !post.isActive) continue;
+    try {
+      for (const field of ENGAGEMENT_FIELDS) {
+        const count = engagement[field];
+        if (count !== undefined) requireCount(count, "invalid_engagement", field);
+      }
+      await updatePostViews(ctx, postId, views);
+      await updatePostEngagement(ctx, postId, engagement);
+      saved++;
+    } catch (error) {
+      if (!(error instanceof ConvexError)) throw error;
+      const data = error.data as { reason?: unknown; code?: unknown };
+      skipped.push({ postId, reason: String(data.reason ?? data.code) });
+    }
+  }
+  return { saved, skipped };
 }

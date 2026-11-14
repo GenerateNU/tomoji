@@ -50,3 +50,13 @@ describe("application offer expiry cron", () => {
     });
   });
 });
+
+describe("X metrics sync cron", () => {
+  test("runs the internal analytics sync daily at 00:00 UTC", () => {
+    expect(crons.crons["sync X post metrics"]).toEqual({
+      name: "xMetrics:sync",
+      args: [{}],
+      schedule: { type: "cron", cron: "0 0 * * *" },
+    });
+  });
+});

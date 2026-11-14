@@ -25,4 +25,8 @@ crons.interval("charge approved payouts", { minutes: 1 }, internal.charging.char
 // Recovers stalled charges and payouts whose dispute has closed.
 crons.interval("recover payout charges", { minutes: 15 }, internal.charging.sweep, {});
 
+// Analytics only: payouts settle from their own readings. Does nothing unless
+// X_METRICS_SYNC_ENABLED is "true", so personal deployments don't spend X credits.
+crons.cron("sync X post metrics", "0 0 * * *", internal.xMetrics.sync, {});
+
 export default crons;

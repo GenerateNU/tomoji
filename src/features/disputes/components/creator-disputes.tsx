@@ -12,10 +12,7 @@ import { DisputeDetailModal } from "./dispute-detail-modal";
 import { DisputeSubmittedModal } from "./dispute-submitted-modal";
 import { DisputesTable } from "./disputes-table";
 
-/**
- * The creator's disputes: open ones under Active, resolved ones under Past.
- * Filing one shows a thank-you, then a toast that links to the new dispute.
- */
+/** Active and Past tabs, plus the create, thank-you and detail modals. */
 export function CreatorDisputes() {
   const [creating, setCreating] = useState(false);
   const [submitted, setSubmitted] = useState<CreatedDispute | null>(null);

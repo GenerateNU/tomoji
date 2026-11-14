@@ -20,11 +20,7 @@ import { cn } from "@/lib/utils";
 
 export type AssignmentOption = FunctionReturnType<typeof api.assignments.searchMine>[number];
 
-/**
- * The Assignment search in Create a Dispute (Figma's "Company" field). A dispute is about one of the
- * creator's assignments, so this searches those by company name on the server
- * and shows the opportunity under each company to tell repeat brands apart.
- */
+/** Searches the creator's assignments by company name (Figma's "Company" field). */
 export function AssignmentPicker({
   value,
   onValueChange,
@@ -51,7 +47,7 @@ export function AssignmentPicker({
       </Label>
       <Combobox.Root
         items={options ?? []}
-        // The server already filtered by company name.
+        // Filtered on the server.
         filter={null}
         value={value}
         onValueChange={onValueChange}

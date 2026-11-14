@@ -49,7 +49,7 @@ export type DisputeOverride = Infer<typeof disputeOverride>;
 
 /**
  * User IDs are optional because creators never get them (see `toCreatorView`).
- * `companyName` is read from the company, since creators can't look companies up.
+ * `companyName` is joined in because creators can't read companies.
  */
 export const disputeView = v.union(
   ...disputeShapes(v.optional(v.id("users")), v.optional(v.id("users")), {
@@ -355,7 +355,7 @@ export async function listDisputes(
   const result = await disputesOf(ctx, viewer, status, openedByRole)
     .order(order)
     .paginate(paginationOpts);
-  // A page often repeats a company, so each name is read once.
+  // Read each company once per page.
   const companyNames = new Map<Id<"companies">, Promise<string>>();
   const page = await Promise.all(
     result.page.map((dispute) => {
@@ -423,7 +423,7 @@ async function toDisputeView(
   }
 }
 
-/** Companies are deactivated, never deleted, so a dispute's company always exists. */
+/** Companies are deactivated, never deleted. */
 async function requireCompanyName(ctx: QueryCtx, companyId: Id<"companies">): Promise<string> {
   const company = await ctx.db.get("companies", companyId);
   if (company === null) throw apiError("misconfigured");

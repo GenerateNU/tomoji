@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 
-/** `value`, updated only once it has stopped changing for `delayMs`. For search inputs. */
+/** `value`, once it stops changing for `delayMs`. */
 export function useDebouncedValue<T>(value: T, delayMs = 250): T {
   const [debounced, setDebounced] = useState(value);
   useEffect(() => {

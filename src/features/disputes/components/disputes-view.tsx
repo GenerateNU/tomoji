@@ -1,7 +1,7 @@
 import { RequireAccount } from "@/features/users/components/require-account";
 import { CreatorDisputes } from "./creator-disputes";
 
-/** Picks the disputes view for the signed-in user's role. Only creators have one so far. */
+/** Creators only, for now. */
 export function DisputesView() {
   return (
     <RequireAccount

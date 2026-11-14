@@ -3,7 +3,7 @@
 import { Modal } from "@/components/modal";
 import { Button } from "@/components/ui/button";
 
-/** Thanks the creator once a dispute is filed and says what happens next. */
+/** Shown after a dispute is filed. */
 export function DisputeSubmittedModal({
   open,
   onDismiss,

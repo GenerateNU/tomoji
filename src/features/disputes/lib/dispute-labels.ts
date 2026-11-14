@@ -8,8 +8,7 @@ import type { IconComponent } from "@/lib/icons";
 export type DisputeView = FunctionReturnType<typeof api.disputes.get>;
 type DisputeReason = Infer<typeof disputeReason>;
 
-// A dispute has no title of its own; its reason stands in for one. Company
-// reasons are listed too, because creators also see disputes a company opened.
+// Labels for every reason; creators also see disputes a company opened.
 const REASON_LABELS: Record<DisputeReason, string> = {
   payoutAmount: "Incorrect payout amount",
   paymentNotReceived: "Payment not received",
@@ -22,7 +21,7 @@ const REASON_LABELS: Record<DisputeReason, string> = {
   other: "Other",
 };
 
-/** The dispute's title: the opener's own words for "other", else the reason's label. */
+/** `customReason` for "other", else the reason's label. */
 export function disputeTitle(dispute: Pick<DisputeView, "reason" | "customReason">): string {
   return dispute.reason === "other" && dispute.customReason
     ? dispute.customReason
@@ -31,7 +30,7 @@ export function disputeTitle(dispute: Pick<DisputeView, "reason" | "customReason
 
 type DisputeStatus = { label: string; icon: IconComponent };
 
-/** Open disputes are under review; resolved ones show how they ended. */
+/** "Under Review" while open, else the outcome. */
 export function disputeStatus(dispute: DisputeView): DisputeStatus {
   if (dispute.status === "open") return { label: "Under Review", icon: RiTimeLine };
   switch (dispute.outcome) {

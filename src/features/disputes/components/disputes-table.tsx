@@ -31,12 +31,8 @@ import { NoDisputes } from "./no-disputes";
 const PAGE_SIZE = 10;
 
 /**
- * One tab of the caller's disputes, a page at a time. Choosing a row's title
- * opens it; the whole row is clickable for pointer users.
- *
- * Pages are cut client-side from `usePaginatedQuery`'s results. A live Convex
- * page keeps the range it first loaded, so it grows as disputes are filed;
- * fetching each page with a fixed cursor showed 12 rows on a page of 10.
+ * One tab of disputes, 10 per page. Pages are sliced from `usePaginatedQuery`
+ * because a live fixed-cursor page grows as disputes are added.
  */
 export function DisputesTable({
   status,
@@ -56,8 +52,7 @@ export function DisputesTable({
   const start = pageIndex * PAGE_SIZE;
   const rows = results.slice(start, start + PAGE_SIZE);
   const lastPageIndex = Math.max(0, Math.ceil(results.length / PAGE_SIZE) - 1);
-  // Disputes can leave this tab (one resolves) or a load can come back empty,
-  // leaving the current page past the end. Step back to the last real page.
+  // Step back if this page is now past the end, e.g. after a dispute resolves.
   const fetching = loadStatus === "LoadingFirstPage" || loadStatus === "LoadingMore";
   if (!fetching && pageIndex > lastPageIndex) setPageIndex(lastPageIndex);
 
@@ -69,7 +64,7 @@ export function DisputesTable({
 
   function goNext() {
     if (!hasNext) return;
-    // Fetch the next chunk only when the following page isn't loaded yet.
+    // Load the next chunk only if it isn't loaded yet.
     if (results.length < start + 2 * PAGE_SIZE && loadStatus === "CanLoadMore") loadMore(PAGE_SIZE);
     setPageIndex(pageIndex + 1);
   }

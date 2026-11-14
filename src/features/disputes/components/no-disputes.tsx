@@ -11,7 +11,7 @@ const COPY = {
   },
 } as const;
 
-/** Shown in place of the table when a tab has no disputes. */
+/** Empty state for a tab. */
 export function NoDisputes({ status }: { status: keyof typeof COPY }) {
   const { title, body } = COPY[status];
   return (

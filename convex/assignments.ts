@@ -112,11 +112,9 @@ export const listMine = creatorQuery({
 });
 
 /**
- * Searches the calling creator's assignments, in any status, by company name:
- * up to 20 whose company name contains `companyName` (trimmed, ignoring case),
- * newest first. A blank or missing search lists the newest ones. Each result
- * names the company and opportunity so the creator can pick one, for example
- * to open a dispute. Only the creator's newest 200 assignments are searched.
+ * Searches the caller's assignments, in any status, by company name (substring,
+ * ignoring case; blank lists all). Returns up to 20, newest first, from their
+ * newest 200.
  */
 export const searchMine = creatorQuery({
   args: creatorAssignmentSearch.fields,

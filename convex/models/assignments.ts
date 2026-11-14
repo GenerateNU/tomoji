@@ -463,8 +463,7 @@ export async function listCreatorAssignments(
   return await mergedStream(streams, ["_creationTime"]).paginate(options.paginationOpts);
 }
 
-// A creator rarely has more than a few dozen assignments, so a search reads
-// their newest ones and matches in memory instead of keeping a search index.
+// Creators have few assignments, so match in memory instead of a search index.
 const ASSIGNMENT_SEARCH_SCAN_LIMIT = 200;
 const ASSIGNMENT_SEARCH_RESULT_LIMIT = 20;
 
@@ -472,7 +471,7 @@ export const creatorAssignmentSearch = v.object({
   companyName: v.optional(v.string()),
 });
 
-/** One of a creator's assignments, labeled for a picker such as opening a dispute. */
+/** A creator's assignment, labeled for a picker. */
 export const creatorAssignmentOption = v.object({
   assignmentId: v.id("assignments"),
   companyId: v.id("companies"),
@@ -482,12 +481,7 @@ export const creatorAssignmentOption = v.object({
 });
 export type CreatorAssignmentOption = Infer<typeof creatorAssignmentOption>;
 
-/**
- * Returns up to 20 of a creator's assignments, in any status, whose company
- * name contains `companyName` (trimmed, ignoring case), newest first. A blank
- * or missing search matches all of them. Only the creator's newest 200
- * assignments are searched.
- */
+/** See `assignments.searchMine`. */
 export async function searchCreatorAssignments(
   ctx: QueryCtx,
   creatorId: Id<"creators">,

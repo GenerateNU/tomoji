@@ -11,7 +11,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { disputeTitle, formatDisputeDate } from "../lib/dispute-labels";
 import { DisputeStatusTag } from "./dispute-status-tag";
 
-/** One labelled fact in the modal's summary row, e.g. Company: Anthropic. */
+/** A labelled value in the summary row. */
 function Fact({ label, children }: { label: string; children: ReactNode }) {
   return (
     <div className="flex flex-col gap-2">
@@ -21,10 +21,7 @@ function Fact({ label, children }: { label: string; children: ReactNode }) {
   );
 }
 
-/**
- * A dispute's details, read by ID so it stays live while open. Closed when
- * `disputeId` is null.
- */
+/** A dispute's details. Closed when `disputeId` is null. */
 export function DisputeDetailModal({
   disputeId,
   onClose,

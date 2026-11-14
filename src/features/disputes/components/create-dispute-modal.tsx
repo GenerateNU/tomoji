@@ -11,19 +11,19 @@ import { Button } from "@/components/ui/button";
 import { errorMessage } from "@/lib/errors";
 import { AssignmentPicker, type AssignmentOption } from "./assignment-picker";
 
-// The title is stored as an "other" reason's custom text, which the backend
-// caps at 200. It allows 5000 for the description; the cap here follows the design.
+// The title is saved as `customReason` (backend max 200). The description cap
+// follows the design; the backend allows 5000.
 const TITLE_MAX = 200;
 const DESCRIPTION_MAX = 1000;
 
-// The design draws required markers in gray, not the fields' default red.
+// The design's required markers are gray.
 const grayRequiredMark = "[&_label>span]:text-gray-500";
 
 type Errors = Partial<Record<"assignment" | "title" | "description", string>>;
 
 export type CreatedDispute = { disputeId: Id<"disputes">; companyName: string };
 
-/** Figma "Create a Dispute". Remounts when reopened, so it always starts blank. */
+/** Figma "Create a Dispute". Remounts on open, so it starts blank. */
 export function CreateDisputeModal({
   open,
   onOpenChange,
@@ -79,7 +79,7 @@ function CreateDisputeForm({
     try {
       const disputeId = await create({
         assignmentId: assignment.assignmentId,
-        // Creators write their own title, so every reason they file is "other".
+        // Free-form titles are filed as reason "other".
         reason: "other",
         customReason: title.trim(),
         description: description.trim(),

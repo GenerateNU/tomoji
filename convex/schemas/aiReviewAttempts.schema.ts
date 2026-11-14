@@ -17,7 +17,8 @@ export const aiReviewFailureReason = v.union(
 /** Operational review data stays separate from the submission's business status. */
 export const aiReviewAttemptsTable = defineTable({
   submissionId: v.id("submissions"),
-  mediaId: v.id("mediaUploads"),
+  mediaId: v.optional(v.id("mediaUploads")),
+  caption: v.optional(v.string()),
   criteria: v.array(reviewCriterion),
   // Point-in-time snapshot of the brief; later edits never rewrite an attempt.
   context: v.object({

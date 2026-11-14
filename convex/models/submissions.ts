@@ -23,7 +23,8 @@ import {
 export const submissionDraft = v.object({
   assignmentId: v.id("assignments"),
   deliverableId: v.id("deliverables"),
-  mediaId: v.id("mediaUploads"),
+  mediaId: v.optional(v.id("mediaUploads")),
+  caption: v.optional(v.string()),
   draftDescription: v.string(),
 });
 
@@ -67,6 +68,7 @@ export type SubmissionViewer = AssignmentViewer;
 // Limits on free text after trimming. `.length` counts UTF-16 units, so an emoji counts as two.
 const MAX_LENGTH = {
   draftDescription: 5000,
+  caption: 25_000,
 } as const;
 
 function requireText(value: string, field: keyof typeof MAX_LENGTH): string {
@@ -136,6 +138,7 @@ function toCreatorView(
     assignmentId: submission.assignmentId,
     deliverableId: submission.deliverableId,
     mediaId: submission.mediaId,
+    caption: submission.caption,
     draftDescription: submission.draftDescription,
     usesAiReview: submission.usesAiReview,
     closedWithoutReview,
@@ -227,12 +230,15 @@ export async function createSubmission(
     throw apiError("invalid_state", { reason: "already_approved" });
   }
 
-  await requireSubmissionVideo(ctx, assignment, draft.mediaId);
+  const caption = optionalNonBlank(draft.caption, "caption", MAX_LENGTH.caption);
+  if (draft.mediaId) await requireSubmissionVideo(ctx, assignment, draft.mediaId);
+  else if (!caption) throw apiError("invalid_state", { reason: "submission_evidence_required" });
 
   const submissionId = await ctx.db.insert("submissions", {
     assignmentId: assignment._id,
     deliverableId: deliverable._id,
     mediaId: draft.mediaId,
+    caption,
     draftDescription: requireText(draft.draftDescription, "draftDescription"),
     status: "pending",
     usesAiReview: assignment.usesAiReview,
@@ -420,8 +426,10 @@ export async function finishAiReview(
 ): Promise<void> {
   const attempt = await requireCurrentAiReviewAttempt(ctx, attemptId, "evaluating");
   if (
-    !attempt.transcription?.text.trim() ||
-    attempt.transcription.durationSeconds > AI_REVIEW_MAX_DURATION_SECONDS
+    (!attempt.caption && !attempt.transcription?.text.trim()) ||
+    (attempt.mediaId && !attempt.transcription) ||
+    (attempt.transcription &&
+      attempt.transcription.durationSeconds > AI_REVIEW_MAX_DURATION_SECONDS)
   )
     throw apiError("invalid_state", { reason: "review_input_invalid" });
   if (attempt.deadlineAt !== undefined && Date.now() >= attempt.deadlineAt)
@@ -460,7 +468,7 @@ export async function finishAiReview(
       ? { status: "approved" as const }
       : {
           status: "changesRequested" as const,
-          reviewNote: `Please address these spoken requirements: ${attempt.criteria
+          reviewNote: `Please address these requirements: ${attempt.criteria
             .filter((c) => decision.failedCriterionIds.includes(c.id))
             .map((c) => c.description)
             .join("; ")}`.slice(0, 2000),

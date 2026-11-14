@@ -111,6 +111,62 @@ export type XMissingPost = { xPostId: string; reason: XMissingReason };
 // links that can never be looked up are stored; tighten it to this format.
 const xPostIdPattern = /^[1-9]\d{0,18}$/;
 
+/** Reads the exact linked post's full caption, including long-form text. */
+export async function getXPostText(bearerToken: string, xPostId: string): Promise<string> {
+  if (!xPostIdPattern.test(xPostId))
+    throw apiError("invalid_state", { reason: "x_post_id_invalid" });
+  const response = await xJson(
+    await xRequest(
+      `tweets/${xPostId}?post.fields=note_post,entities`,
+      { headers: { Authorization: `Bearer ${bearerToken}` } },
+      rateLimited,
+    ),
+  );
+  const post = object(response.data);
+  const caption = post.note_post === undefined ? post : object(post.note_post);
+  if (post.id !== xPostId || typeof caption.text !== "string")
+    throw apiError("upstream_failure", { reason: "invalid_response" });
+  const entities = caption.entities ?? post.entities;
+  const urls = entities === undefined ? undefined : object(entities).urls;
+  return restoreCaptionLinks(caption.text.trimEnd(), urls);
+}
+
+/** Drops X's trailing media link and restores creator links before exact comparison. */
+function restoreCaptionLinks(text: string, urls: unknown): string {
+  if (!Array.isArray(urls)) return text;
+  const destinations = new Map<string, string>();
+  for (const entry of urls) {
+    const { url, expanded_url: expandedUrl, media_key: mediaKey } = object(entry);
+    if (typeof url !== "string" || !/^https:\/\/t\.co\/[A-Za-z0-9]+$/.test(url)) continue;
+    if (typeof mediaKey === "string") {
+      if (text.endsWith(` ${url}`)) text = text.slice(0, -url.length - 1);
+      continue;
+    }
+    if (typeof expandedUrl === "string" && isCaptionDestination(expandedUrl)) {
+      destinations.set(url, expandedUrl);
+    }
+  }
+  // Match short links as tokens so one entity cannot rewrite part of another URL.
+  return text.replace(
+    /(^|[\s([{“"'])(https:\/\/t\.co\/[A-Za-z0-9]+)(?=$|[\s.,!?;:)\]}”"'])/g,
+    (match, prefix: string, shortUrl: string) => {
+      const destination = destinations.get(shortUrl);
+      return destination === undefined ? match : prefix + destination;
+    },
+  );
+}
+
+/** Checks that X returned an HTTP(S) destination and preserves its exact spelling for comparison. */
+function isCaptionDestination(value: string): boolean {
+  if (!/^https?:\/\/[^\s]+$/i.test(value)) return false;
+  try {
+    const url = new URL(value);
+    return url.username === "" && url.password === "";
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Looks up current public counts for up to 100 posts with the app-only token.
  * One unusable post never fails the batch: ids X would reject, posts X leaves

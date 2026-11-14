@@ -1,14 +1,17 @@
 import { paginationResultValidator } from "convex/server";
 import { v } from "convex/values";
-import { internalMutation } from "./_generated/server";
+import { internal } from "./_generated/api";
+import { env, internalMutation, internalQuery } from "./_generated/server";
 import {
   authedQuery,
   creatorMutation,
   operatorMutation,
+  operatorAction,
   requireCallerViewer,
 } from "./lib/functions";
 import {
   createPost,
+  getPostCaptionInput,
   listPosts,
   postCreate,
   postListFilters,
@@ -24,6 +27,8 @@ import {
 } from "./models/posts";
 import { requireCallerCreatorId } from "./models/users";
 import schema from "./schema";
+import { apiError } from "./lib/errors";
+import { getXPostText } from "./lib/xApi";
 
 /**
  * Records the live X post for the caller's approved submission. The link is
@@ -143,5 +148,35 @@ export const updateEngagement = internalMutation({
   returns: schema.doc("posts"),
   handler: async (ctx, { postId, ...engagement }) => {
     return await updatePostEngagement(ctx, postId, engagement);
+  },
+});
+
+/** Loads the linked post ID and creator-submitted caption for the operator action. */
+export const captionInput = internalQuery({
+  args: { postId: v.id("posts") },
+  returns: v.object({ xPostId: v.string(), caption: v.optional(v.string()) }),
+  handler: async (ctx, { postId }) => await getPostCaptionInput(ctx, postId),
+});
+
+const captionMatch = v.union(v.literal("match"), v.literal("mismatch"), v.literal("no_caption"));
+
+/** Normalizes Unicode, line endings, and outer whitespace before exact comparison. */
+function normalizeCaption(text: string): string {
+  return text.normalize("NFC").replace(/\r\n?/g, "\n").trim();
+}
+
+/** Compares the published caption to the approved submission for operator verification. */
+export const checkCaption = operatorAction({
+  args: { postId: v.id("posts") },
+  returns: captionMatch,
+  handler: async (ctx, { postId }): Promise<"match" | "mismatch" | "no_caption"> => {
+    const input = await ctx.runQuery(internal.posts.captionInput, { postId });
+    if (!input.caption) return "no_caption";
+    const token = env.X_BEARER_TOKEN?.trim();
+    if (!token) throw apiError("misconfigured", { reason: "x_bearer_token_missing" });
+    const published = await getXPostText(token, input.xPostId);
+    // A creator can replace the post while the provider request is in flight.
+    await ctx.runQuery(internal.posts.captionInput, { postId });
+    return normalizeCaption(input.caption) === normalizeCaption(published) ? "match" : "mismatch";
   },
 });

@@ -10,11 +10,10 @@ are created internally for the provider, expire after one hour, and are never st
 The worker rechecks the attempt, pending submission, active assignment, and media
 ownership before provider work. Client-supplied draft URLs are never transcribed.
 
-`submissions.create` requires a completed video `mediaId` owned by the creator and
-bound to the same assignment. External draft URLs are no longer accepted or stored.
-Before deploying this schema, reseed disposable development submissions that still
-contain `draftUrl` or lack `mediaId`, as agreed in review. Do not clear shared or
-production data without its owner's approval.
+`submissions.create` accepts a completed video `mediaId`, a nonblank `caption`,
+or both. Videos must belong to the creator and the same assignment. The optional
+caption is separate from the required draft description. Existing video-only
+rows remain valid.
 
 Companies can set up to 20 explicit `{ id, description }` review criteria through
 deliverable create/update. AI-enabled opportunities require criteria on every
@@ -25,20 +24,28 @@ when none are stored.
 
 ## Inputs and decisions
 
-The attempt snapshots confirmed criteria and the opportunity brief.
-Jev receives the snapshot as context, but evaluates only the explicit criteria.
-Evaluate the entire transcript, accepting equivalent spoken wording and minor transcription
-spelling differences only when context makes the meaning clear. Explicit conditions
-still apply. Transcript content is evidence, not instructions. Visual content, captions, and
-post-publication X matching are outside this version.
+The attempt snapshots the confirmed criteria, opportunity brief, and submitted
+caption. Jev evaluates the caption and the video transcript when available. It
+honors the source specified by each criterion and treats source text as evidence.
+A caption-only draft skips transcription.
+
+After publication, an operator can run `posts.checkCaption({ postId })` to compare
+the approved caption with the linked X post. The comparison uses Unicode NFC,
+consistent line endings, and trimmed outer whitespace. When X identifies an
+appended media link in its URL metadata, the check omits that link. For
+creator-authored links, it uses X’s expanded destinations when available.
+Case, punctuation, and internal spacing remain significant. The check returns
+`match`, `mismatch`, or `no_caption` and leaves verification with the operator.
+It uses the existing app-only `X_BEARER_TOKEN`. The authenticated lookup still
+needs a live test.
 
 Convex applies the policy in `convex/lib/ai/reviewPolicy.ts`:
 
-| Evidence                                                                   | Outcome                                    |
-| -------------------------------------------------------------------------- | ------------------------------------------ |
-| Every criterion is `met` with selected probability >= 0.80                 | Approve                                    |
-| At least one `not_met` >= 0.80, with no uncertainty/low probabilities      | Request changes, naming unmet requirements |
-| Uncertain, low probability, silence, invalid response, or provider failure | Leave pending for company review           |
+| Evidence                                                                              | Outcome                                    |
+| ------------------------------------------------------------------------------------- | ------------------------------------------ |
+| Every criterion is `met` with selected probability >= 0.80                            | Approve                                    |
+| At least one `not_met` >= 0.80, with no uncertainty/low probabilities                 | Request changes, naming unmet requirements |
+| Uncertain, low probability, no usable evidence, invalid response, or provider failure | Leave pending for company review           |
 
 A selected `met` or `not_met` below the cutoff is recorded as `low_probability`;
 `uncertain` means the classifier actually selected that option. Neither fallback
@@ -96,8 +103,8 @@ Before enabling on a deployment:
 - Configure S3 access and both provider keys on that deployment.
 
 There is no automatic historical backfill or replay of existing attempts. Existing
-submission rows must satisfy the required-media schema introduced in #192. Follow
-its development reseed guidance; no live migration or deployment was performed.
+drafts containing removed fields from before #192 still follow that change’s
+development reseed guidance.
 
 ## Verification
 

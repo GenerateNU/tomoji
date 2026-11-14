@@ -9,9 +9,9 @@ import { matchTag } from "../lib/feed-status";
 import type { FeedOpportunity } from "../lib/types";
 
 /**
- * How well the brief fits the creator, and what's missing. It only informs:
- * a creator below the follower minimum or missing a skill can still apply or
- * claim a spot.
+ * How well the brief fits the creator, and what's missing. A creator below
+ * the follower minimum or missing a skill can still apply, but can't claim
+ * an open spot.
  */
 export function MatchPanel({ opportunity }: { opportunity: FeedOpportunity }) {
   const skills = useQuery(api.skills.list, {});
@@ -66,7 +66,10 @@ export function MatchPanel({ opportunity }: { opportunity: FeedOpportunity }) {
               <p key={gap}>{gap}</p>
             ))}
             <p className="text-gray-500">
-              You can still {opportunity.isGated ? "apply" : "claim a spot"}.
+              {/* Gaps only appear when the creator isn't eligible. */}
+              {opportunity.isGated
+                ? "You can still apply."
+                : "You need these to claim a spot, since claiming skips the company's review."}
             </p>
           </div>
         </div>

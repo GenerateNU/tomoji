@@ -61,6 +61,9 @@ export function feedAction(opportunity: FeedOpportunity): FeedAction {
     return { kind: "view-application", label: "View application" };
   }
   if (opportunity.isGated) return { kind: "apply", label: "Apply" };
-  if (spotsLeft(opportunity) === 0) return { kind: "view", label: "View opportunity" };
+  // Claiming skips company review, so it needs the follower minimum and every skill.
+  if (spotsLeft(opportunity) === 0 || !opportunity.match.isEligible) {
+    return { kind: "view", label: "View opportunity" };
+  }
   return { kind: "claim", label: "Claim spot" };
 }

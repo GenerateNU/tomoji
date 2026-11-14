@@ -124,6 +124,16 @@ verification time from publication time or infer historical view counts from
 today's total. Preserve records needed to settle an outstanding obligation even
 when the assignment is cancelled or the external post is removed.
 
+Before enabling automatic earnings for these legacy posts, a Tomoji admin must
+review the available evidence and record the reviewer, source evidence, and
+determination of the original verification time, including any unresolved gaps.
+A separately approved, evidence-backed conversion plan must establish the earning
+window and first due settlement using the rules above. If the original time
+cannot be established, leave the case unresolved for a product decision; do not
+substitute publication time or a new verification date. Preserve existing
+obligations throughout. This contract does not introduce a correction endpoint
+or authorize an automatic historical backfill.
+
 ## Earnings-to-payment handoff
 
 The existing internal operation is:

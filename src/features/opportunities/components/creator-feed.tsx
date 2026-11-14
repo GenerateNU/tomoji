@@ -7,6 +7,7 @@ import {
   RiLayoutGridLine,
   RiListUnordered,
   RiSearchLine,
+  RiListCheck2,
   RiStarLine,
 } from "@remixicon/react";
 import { useState } from "react";
@@ -81,6 +82,13 @@ export function CreatorFeed() {
             onPressedChange={(starred) => update({ starred })}
           >
             Starred
+          </FilterChip>
+          <FilterChip
+            icon={RiListCheck2}
+            selected={filters.eligible}
+            onPressedChange={(eligible) => update({ eligible })}
+          >
+            Jobs I&apos;m eligible for
           </FilterChip>
           <Button
             variant={drawerCount > 0 ? "primary-subtle" : "secondary-subtle"}

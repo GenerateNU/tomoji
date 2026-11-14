@@ -11,7 +11,7 @@ import { listCreatorSkills, updateCreatorSkills } from "./models/creatorSkills";
 import { creatorName, type NotificationContent } from "./models/notifications";
 import { updateOpportunityLanguages } from "./models/opportunityLanguages";
 import { updateOpportunityNiches } from "./models/opportunityNiches";
-import { scoreOpportunityMatch, type CreatorSignals } from "./models/opportunityScores";
+import { scoreOpportunityMatch, type CreatorSignals } from "./models/opportunityMatch";
 import { updateOpportunitySkills } from "./models/opportunitySkills";
 import { createPayout } from "./models/payouts";
 import { getStripeCustomerByCompanyId } from "./models/stripeCustomers";

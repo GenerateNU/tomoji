@@ -2,6 +2,14 @@ import { getFunctionName, type FunctionReference } from "convex/server";
 
 /** Feed items shaped like `opportunities.discover`; no calls reach a Convex deployment. */
 const DAY = 86_400_000;
+const NO_MATCH = {
+  isGreatMatch: false,
+  matchedSkills: ["python"],
+  missingSkills: [] as string[],
+  matchedNiches: [] as string[],
+  meetsFollowerMinimum: null as boolean | null,
+  isEligible: true,
+};
 const now = Date.UTC(2026, 9, 1);
 
 function brief(
@@ -20,6 +28,7 @@ function brief(
     niches?: string[];
     skills?: string[];
     minFollowerRange?: string;
+    match?: Partial<typeof NO_MATCH>;
   },
 ) {
   return {
@@ -44,6 +53,7 @@ function brief(
       : null,
     assignment: fields.assignment ? { _id: `assignment${index}`, status: fields.assignment } : null,
     ...fields,
+    match: { ...NO_MATCH, ...fields.match },
   };
 }
 
@@ -74,6 +84,7 @@ const FEED = [
     numFilledSlots: 7,
     fixedFeeCents: 50_000,
     cpmRateCents: 400,
+    match: { isGreatMatch: true, matchedNiches: ["generative-ai-llms"] },
   }),
   brief(3, {
     title: "v0 by Vercel",
@@ -91,6 +102,12 @@ const FEED = [
     fixedFeeCents: 45_000,
     cpmRateCents: 325,
     minFollowerRange: "50k-100k",
+    skills: ["python", "typescript"],
+    match: {
+      missingSkills: ["typescript"],
+      meetsFollowerMinimum: false,
+      isEligible: false,
+    },
   }),
   brief(5, {
     title: "Figma Make with a much longer title than fits",

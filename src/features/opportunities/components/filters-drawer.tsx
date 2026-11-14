@@ -1,7 +1,7 @@
 "use client";
 
 import { api } from "@convex/_generated/api";
-import { RiCheckboxCircleLine, RiStarLine } from "@remixicon/react";
+import { RiCheckboxCircleLine, RiListCheck2, RiStarLine } from "@remixicon/react";
 import { useQuery } from "convex/react";
 import { useState } from "react";
 import { FilterChip } from "@/components/filter-chip";
@@ -64,6 +64,13 @@ export function FiltersDrawer({
             onPressedChange={(starred) => update({ starred })}
           >
             Starred
+          </FilterChip>
+          <FilterChip
+            icon={RiListCheck2}
+            selected={draft.eligible}
+            onPressedChange={(eligible) => update({ eligible })}
+          >
+            Jobs I&apos;m eligible for
           </FilterChip>
         </div>
         <div className="flex flex-col gap-6">

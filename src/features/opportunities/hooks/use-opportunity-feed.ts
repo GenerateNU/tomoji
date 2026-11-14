@@ -11,7 +11,8 @@ function matches(opportunity: FeedOpportunity, filters: FeedFilters): boolean {
     (filters.type === "all" || opportunity.isGated === (filters.type === "gated")) &&
     (filters.niches.length === 0 || filters.niches.some((n) => opportunity.niches.includes(n))) &&
     (filters.skills.length === 0 || filters.skills.some((s) => opportunity.skills.includes(s))) &&
-    (!filters.applied || opportunity.application !== null)
+    (!filters.applied || opportunity.application !== null) &&
+    (!filters.eligible || opportunity.match.isEligible)
   );
 }
 
@@ -34,6 +35,7 @@ export function useOpportunityFeed(filters: FeedFilters) {
           niches: filters.niches.length > 0 ? filters.niches : undefined,
           skills: filters.skills.length > 0 ? filters.skills : undefined,
           applied: filters.applied || undefined,
+          eligible: filters.eligible || undefined,
         },
     { initialNumItems: PAGE_SIZE },
   );

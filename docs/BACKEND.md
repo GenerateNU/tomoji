@@ -185,7 +185,14 @@ and error reasons.
 combine with AND; within `niches` or `skills` a brief needs any one. `isGated` picks
 briefs that need an application (true) or have spots to claim (false), and `applied`
 keeps only briefs the caller applied to. Each item carries the caller's `isStarred`,
-`application`, and `assignment`.
+`application`, `assignment`, and `match`.
+
+`match` (`models/opportunityMatch.ts`) describes the fit in terms a creator can act on:
+`isGreatMatch` (eligible and a weighted score of at least 90%, kept rare on purpose), the
+skills and niches that match, missing skills, and whether they meet the follower minimum. A creator
+is `isEligible` when they meet the minimum and have every skill; `eligible: true` keeps
+only those briefs. Applying never checks eligibility; `assignments.claim` rejects an
+ineligible creator (`invalid_state` `not_eligible`), since a claim skips company review.
 
 `search` matches title words through the `search_title` index, best match first. Search
 results can't be streamed, so it reads the top 200 matches, filters them, and pages by

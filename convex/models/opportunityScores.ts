@@ -1,65 +1,12 @@
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
-import { listCreatorNiches } from "./creatorNiches";
-import { listCreatorSkills } from "./creatorSkills";
-import { followerRangeFit, type FollowerRange } from "./followerRanges";
 import { listOpportunityNiches } from "./opportunityNiches";
+import {
+  getCreatorSignals,
+  scoreOpportunityMatch,
+  type OpportunitySignals,
+} from "./opportunityMatch";
 import { listOpportunitySkills } from "./opportunitySkills";
-
-/**
- * How much each signal counts toward a match. Followers weigh most because reach
- * decides eligibility; niches least because briefs may not set them. Signals an
- * opportunity doesn't ask for are left out and the rest re-normalized, so the
- * weights only need to be right relative to each other.
- */
-export const SCORE_WEIGHTS = { followers: 0.45, skills: 0.35, niches: 0.2 } as const;
-
-export type CreatorSignals = {
-  niches: readonly string[];
-  skills: readonly string[];
-  followerRange?: FollowerRange;
-};
-
-export type OpportunitySignals = {
-  niches: readonly string[];
-  skills: readonly string[];
-  minFollowerRange?: FollowerRange;
-};
-
-/** Share of the opportunity's selections the creator also has. */
-function overlap(wanted: readonly string[], offered: readonly string[]): number {
-  const offeredSet = new Set(offered);
-  return wanted.filter((name) => offeredSet.has(name)).length / wanted.length;
-}
-
-/**
- * Scores how well an opportunity fits a creator, from 0 to 1. Only signals the
- * opportunity asks for count, so a brief with no skills isn't marked down for
- * it. A brief that asks for nothing scores 0 and falls back to deadline order.
- */
-export function scoreOpportunityMatch(
-  creator: CreatorSignals,
-  opportunity: OpportunitySignals,
-): number {
-  let total = 0;
-  let weight = 0;
-  if (opportunity.niches.length > 0) {
-    total += SCORE_WEIGHTS.niches * overlap(opportunity.niches, creator.niches);
-    weight += SCORE_WEIGHTS.niches;
-  }
-  if (opportunity.skills.length > 0) {
-    total += SCORE_WEIGHTS.skills * overlap(opportunity.skills, creator.skills);
-    weight += SCORE_WEIGHTS.skills;
-  }
-  // An under-1K minimum excludes nobody, so it isn't a requirement.
-  if (opportunity.minFollowerRange !== undefined && opportunity.minFollowerRange !== "under-1k") {
-    total +=
-      SCORE_WEIGHTS.followers *
-      followerRangeFit(creator.followerRange, opportunity.minFollowerRange);
-    weight += SCORE_WEIGHTS.followers;
-  }
-  return weight === 0 ? 0 : total / weight;
-}
 
 /**
  * Company users keep the creator row made when they first signed in, and
@@ -68,17 +15,6 @@ export function scoreOpportunityMatch(
 async function hasCreatorFeed(ctx: MutationCtx, creator: Doc<"creators">): Promise<boolean> {
   const user = await ctx.db.get("users", creator.userId);
   return user !== null && user.isActive && user.role === "creator";
-}
-
-async function getCreatorSignals(
-  ctx: MutationCtx,
-  creator: Doc<"creators">,
-): Promise<CreatorSignals> {
-  const [niches, skills] = await Promise.all([
-    listCreatorNiches(ctx, creator._id),
-    listCreatorSkills(ctx, creator._id),
-  ]);
-  return { niches, skills, followerRange: creator.followerRange };
 }
 
 async function getOpportunitySignals(

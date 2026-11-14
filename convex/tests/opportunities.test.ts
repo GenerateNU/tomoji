@@ -905,6 +905,51 @@ describe("opportunities.discover", () => {
     });
   });
 
+  test("says how well each brief matches the caller's profile", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(
+      t,
+      { subject: "match_owner" },
+      { skills: ["python", "go"], minFollowerRange: "50k-100k" },
+    );
+    const asCreator = await seedUser(t, { subject: "match_creator" });
+    await asCreator.mutation(api.creators.update, { skills: ["python"], followerRange: "10k-50k" });
+
+    const [brief] = (
+      await asCreator.query(api.opportunities.discover, {
+        paginationOpts: { numItems: 10, cursor: null },
+      })
+    ).page;
+
+    expect(brief._id).toBe(owner.opportunityId);
+    expect(brief.match).toMatchObject({
+      matchedSkills: ["python"],
+      missingSkills: ["go"],
+      meetsFollowerMinimum: false,
+      isEligible: false,
+    });
+  });
+
+  test("keeps only briefs the caller is eligible for", async () => {
+    const t = convexTest(schema, modules);
+    const open = await seedOpportunity(t, { subject: "eligible_open" }, { skills: ["python"] });
+    await seedOpportunity(t, { subject: "eligible_missing" }, { skills: ["go"] });
+    await seedOpportunity(
+      t,
+      { subject: "eligible_reach" },
+      { skills: ["python"], minFollowerRange: "100k-500k" },
+    );
+    const asCreator = await seedUser(t, { subject: "eligible_creator" });
+    await asCreator.mutation(api.creators.update, { skills: ["python"] });
+
+    const result = await asCreator.query(api.opportunities.discover, {
+      eligible: true,
+      paginationOpts: { numItems: 10, cursor: null },
+    });
+
+    expect(result.page.map((brief) => brief._id)).toEqual([open.opportunityId]);
+  });
+
   test("returns public briefs with company names to a creator", async () => {
     const t = convexTest(schema, modules);
     const owner = await seedOpportunity(
@@ -936,6 +981,7 @@ describe("opportunities.discover", () => {
         "isStarred",
         "application",
         "assignment",
+        "match",
         "niches",
         "skills",
         "languages",
@@ -1436,6 +1482,7 @@ describe("opportunities.get", () => {
         "isStarred",
         "application",
         "assignment",
+        "match",
         "niches",
         "skills",
         "languages",

@@ -14,6 +14,7 @@ import { updateOpportunityNiches } from "./models/opportunityNiches";
 import { scoreOpportunityMatch, type CreatorSignals } from "./models/opportunityScores";
 import { updateOpportunitySkills } from "./models/opportunitySkills";
 import { createPayout } from "./models/payouts";
+import { getStripeCustomerByCompanyId } from "./models/stripeCustomers";
 import { applyMembership, getEmailOwner, normalizeEmail, upsertUser } from "./models/users";
 
 const dayMs = 24 * 60 * 60 * 1000;
@@ -123,6 +124,7 @@ async function seedWorkspace(
     company,
     campaign,
     isSyntheticCreator: creatorUser.workosId === demoCreator.workosId,
+    isSyntheticCompany: adminUser.workosId === demoAdmin.workosId,
   };
 }
 
@@ -517,10 +519,8 @@ export const run = internalMutation({
   }),
   handler: async (ctx, args) => {
     requireDevSeed();
-    const { creator, admin, company, campaign, isSyntheticCreator } = await seedWorkspace(
-      ctx,
-      args,
-    );
+    const { creator, admin, company, campaign, isSyntheticCreator, isSyntheticCompany } =
+      await seedWorkspace(ctx, args);
     const ids = { companyId: company._id, creatorId: creator._id };
     if (campaign !== null) return { ...ids, campaignId: campaign._id, created: false };
 
@@ -565,6 +565,16 @@ export const run = internalMutation({
       role: "member",
       expiresAt: now - dayMs,
     });
+
+    // Only the synthetic company: a real one's card setup would reuse this
+    // customer, which doesn't exist in Stripe. No card, so it shows `missing`.
+    if (isSyntheticCompany && (await getStripeCustomerByCompanyId(ctx, company._id)) === null) {
+      await ctx.db.insert("stripeCustomers", {
+        companyId: company._id,
+        stripeCustomerId: "cus_tomoji_seed",
+        stripeUpdatedAt: now,
+      });
+    }
 
     return { ...ids, campaignId, created: true };
   },

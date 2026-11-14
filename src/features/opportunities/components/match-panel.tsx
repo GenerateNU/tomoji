@@ -29,7 +29,9 @@ export function MatchPanel({ opportunity }: { opportunity: FeedOpportunity }) {
   }
   if (match.missingSkills.length > 0) {
     gaps.push(
-      `It asks for ${match.missingSkills.map((name) => label(skills, name)).join(", ")}, which isn't on your profile.`,
+      `It asks for ${match.missingSkills.map((name) => label(skills, name)).join(", ")}, which ${
+        match.missingSkills.length === 1 ? "isn't" : "aren't"
+      } on your profile.`,
     );
   }
   const matched = [

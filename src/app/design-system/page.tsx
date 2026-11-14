@@ -12,6 +12,7 @@ import {
 } from "@/features/design-system/components/form-controls";
 import {
   AvatarPreview,
+  IconContainerPreview,
   NavigationPreview,
   ProgressPreview,
   TagPreview,
@@ -42,6 +43,7 @@ export default function DesignSystemPage() {
       <TagPreview />
       <AvatarPreview />
       <NavigationPreview />
+      <IconContainerPreview />
       <ProgressPreview />
       <MenuPreview />
       <SidebarPreview />

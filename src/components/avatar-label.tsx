@@ -29,7 +29,7 @@ export function AvatarLabel({
     props: mergeProps<"div">(
       {
         className: cn(
-          "inline-flex items-center gap-2 rounded-lg px-2 py-1.5 text-left outline-none focus-visible:ring-3 focus-visible:ring-ring/50",
+          "inline-flex items-center gap-2 rounded-sm px-2 py-1.5 text-left outline-none focus-visible:ring-4 focus-visible:ring-ring/25",
           className,
         ),
         children: (

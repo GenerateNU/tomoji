@@ -3,18 +3,26 @@ import { useRender } from "@base-ui/react/use-render";
 import { cva, type VariantProps } from "class-variance-authority";
 import { cn } from "@/lib/utils";
 
-// Figma "Tag": a small grey pill for statuses and metadata.
+// Figma "Tag": a compact, non-interactive label for status or metadata. Tone
+// primary is for active or in-progress states, destructive for overdue or
+// blocking ones, neutral for everything else.
 const badgeVariants = cva(
-  "group/badge inline-flex w-fit shrink-0 items-center justify-center gap-1 overflow-hidden rounded-full bg-muted whitespace-nowrap text-gray-600 transition-colors focus-visible:ring-3 focus-visible:ring-ring/50 [&>svg]:pointer-events-none [&>svg]:shrink-0",
+  "group/badge inline-flex w-fit shrink-0 items-center justify-center gap-1 overflow-hidden rounded-sm px-2 py-1.5 font-medium whitespace-nowrap transition-colors focus-visible:ring-4 focus-visible:ring-ring/25 [&>svg]:pointer-events-none [&>svg]:shrink-0",
   {
     variants: {
       size: {
-        sm: "px-2 py-0.5 text-body-xs [&>svg]:size-3",
-        md: "px-2.5 py-1 text-body-sm [&>svg]:size-3.5",
+        sm: "text-body-xs [&>svg]:size-3",
+        md: "text-body-sm [&>svg]:size-3.5",
+      },
+      tone: {
+        neutral: "bg-gray-50 text-gray-700",
+        primary: "bg-blue-subtle text-primary",
+        destructive: "bg-red-100 text-red-700",
       },
     },
     defaultVariants: {
       size: "sm",
+      tone: "neutral",
     },
   },
 );
@@ -22,6 +30,7 @@ const badgeVariants = cva(
 function Badge({
   className,
   size = "sm",
+  tone = "neutral",
   render,
   ...props
 }: useRender.ComponentProps<"span"> & VariantProps<typeof badgeVariants>) {
@@ -29,7 +38,7 @@ function Badge({
     defaultTagName: "span",
     props: mergeProps<"span">(
       {
-        className: cn(badgeVariants({ size }), className),
+        className: cn(badgeVariants({ size, tone }), className),
       },
       props,
     ),
@@ -37,6 +46,7 @@ function Badge({
     state: {
       slot: "badge",
       size,
+      tone,
     },
   });
 }

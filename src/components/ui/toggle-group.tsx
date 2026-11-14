@@ -43,7 +43,7 @@ function ToggleGroup({
       style={{ "--gap": spacing } as React.CSSProperties}
       className={cn(
         // A segmented control sits on a grey track (Figma "Segmented Control").
-        "group/toggle-group flex w-fit flex-row items-center gap-[--spacing(var(--gap))] rounded-lg data-vertical:flex-col data-vertical:items-stretch data-[variant=segment]:gap-0.5 data-[variant=segment]:bg-muted data-[variant=segment]:p-[3px]",
+        "group/toggle-group flex w-fit flex-row items-center gap-[--spacing(var(--gap))] rounded-lg data-vertical:flex-col data-vertical:items-stretch data-[variant=segment]:gap-0.5 data-[variant=segment]:bg-gray-50 data-[variant=segment]:p-1",
         className,
       )}
       {...props}

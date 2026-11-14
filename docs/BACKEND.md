@@ -74,9 +74,10 @@ Default to internal for anything that is not intentionally part of the public AP
 | `companyScopedQuery` / `companyScopedMutation` | a company user, or an operator naming a `companyId` | `ctx.user`, `ctx.companyId`, `ctx.membership` (`null` for an operator) |
 | `operatorQuery` / `operatorMutation`           | a Tomoji operator                                   | `ctx.user`                                                             |
 | `operatorAction`                               | a Tomoji operator                                   | `ctx.user`                                                             |
+| `creatorAction`                                | a creator                                           | `ctx.user`, `ctx.creatorId`                                            |
 | `companyAdminAction`                           | a company **admin**                                 | `ctx.user`, `ctx.membership`, `ctx.orgId`                              |
 
-Actions have no `ctx.db`, so the two action builders run the same check through an
+Actions have no `ctx.db`, so the action builders run the same check through an
 internal query in `convex/authorize.ts` first. That keeps an action from being looser
 than the query or mutation it mirrors.
 

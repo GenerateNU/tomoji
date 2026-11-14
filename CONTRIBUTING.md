@@ -126,6 +126,10 @@ but the backend reads the copied deployment values. Do not prefix them with
 `NEXT_PUBLIC_`. See [S3 media foundation](docs/S3.md) for production/preview setup
 and the separate credentials and browser-upload prerequisites.
 
+Stripe settings are optional; `just convex-env` copies them only when `STRIPE_SECRET_KEY`
+is set. To work on payments, follow the setup in [Stripe creator payouts](docs/STRIPE.md)
+first.
+
 Restart `just bd` and it should print `Convex functions ready!`.
 
 ## Step 5 — Run the app

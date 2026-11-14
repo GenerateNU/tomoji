@@ -308,7 +308,7 @@ count for each tab. It is a creator-only query; the creator always comes from th
 `applications.getMineDetail({ applicationId })` is a creator-only query returning one of
 the caller's applications with its opportunity brief (`creatorOpportunity`, including
 `companyName`, with niches, skills and languages as names), `offerExpiresAt`,
-`offerAcceptedAt`, `companyLogoMediaId`, and `minFollowerRange`.
+`offerAcceptedAt`, `companyLogoMediaId`, `minFollowerRange`, and `termsRequired`.
 
 - **Ownership.** Another creator's application, a missing one, and one whose opportunity was
   deleted are all `not_found`. A missing company gives an empty `companyName`.
@@ -323,6 +323,26 @@ the caller's applications with its opportunity brief (`creatorOpportunity`, incl
   that the cron has not yet marked `offerExpired` still reports `canAccept: true`; the client
   compares `offerExpiresAt` to its own clock and `accept` refuses with `offer_expired`.
 - **Follower range.** `minFollowerRange` is the stored enum value; the client labels it.
+- **Terms.** `termsRequired` is true when the opportunity's `reviewPolicy` is not blank
+  after trimming (`hasReviewPolicy`), for any application status. The terms text shown to
+  the creator is `opportunity.reviewPolicy`.
+
+### Accepting an offer (`applications.accept`)
+
+`applications.accept({ applicationId, acceptedTerms? })` returns
+`{ application, assignmentId }`. When the opportunity has a review policy, `acceptedTerms`
+must be `true`, otherwise it fails with `invalid_state` and reason `terms_not_accepted`; the
+argument is ignored when the policy is blank. Checks run in this order: `not_found`,
+`application_not_offered`, `offer_expired`, `opportunity_closed` or `opportunity_full`, then
+`terms_not_accepted`. `createAssignmentFromOffer` re-checks and can still throw `conflict`
+(`already_assigned`).
+
+In one transaction the call marks the application accepted, takes a slot, and creates the
+assignment already `active` with `termsAcceptedAt` set to the acceptance time, and sends a
+single `applicationAccepted` notice (no `assignmentTermsAccepted`). Only claimed (ungated)
+assignments start `termsPending`, so `assignments.acceptTerms`, `declineTerms` and `cancel`
+apply only to those; on an accepted offer's assignment they fail with
+`assignment_not_pending`. Declining an offer is `applications.decline`.
 
 ## Payout records
 

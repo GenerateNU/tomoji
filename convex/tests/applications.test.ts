@@ -317,11 +317,32 @@ describe("applications.accept", () => {
 
     const accepted = await asCreator.mutation(api.applications.accept, {
       applicationId,
+      acceptedTerms: true,
     });
 
-    expect(accepted).toMatchObject({ _id: applicationId, status: "accepted" });
+    expect(accepted).toMatchObject({
+      application: { _id: applicationId, status: "accepted" },
+      assignmentId: expect.any(String),
+    });
     expect(await asCompany.query(api.applications.get, { applicationId })).toMatchObject({
       status: "accepted",
+    });
+    expect(
+      await asCompany.query(api.assignments.get, { assignmentId: accepted.assignmentId }),
+    ).toMatchObject({ _id: accepted.assignmentId, status: "active" });
+  });
+
+  test("refuses an offer with a review policy unless acceptedTerms is true", async () => {
+    const t = convexTest(schema, modules);
+    const { asCompany, asCreator, applicationId } = await seedOfferedApplication(t);
+
+    await expectApiError(
+      () => asCreator.mutation(api.applications.accept, { applicationId }),
+      "invalid_state",
+      "terms_not_accepted",
+    );
+    expect(await asCompany.query(api.applications.get, { applicationId })).toMatchObject({
+      status: "offered",
     });
   });
 
@@ -676,6 +697,7 @@ describe("applications.getMineDetail", () => {
       offerExpiresAt: offered.offerExpiresAt,
       canAccept: true,
       canDecline: true,
+      termsRequired: true,
       opportunity: { _id: opportunityId, title: "Moisturizer launch video" },
     });
   });

@@ -56,7 +56,31 @@ export function formatOfferExpiry(
   return relative.format(Math.floor(remaining / DAY), "day");
 }
 
-export type OfferTag = { label: string; tone: "neutral" | "primary" | "destructive" };
+export type OfferTag = {
+  label: string;
+  tone: "neutral" | "primary" | "destructive";
+  /** The label is a live countdown, so the modal renders it as a timer. */
+  countdown?: boolean;
+};
+
+/** Milliseconds as zero-padded HH:MM:SS, rounded up so it never reads 00:00:00 before the deadline. */
+export function formatCountdown(ms: number): string {
+  const total = Math.max(0, Math.ceil(ms / 1000));
+  const pad = (value: number) => String(value).padStart(2, "0");
+  return `${pad(Math.floor(total / 3600))}:${pad(Math.floor((total % 3600) / 60))}:${pad(total % 60)}`;
+}
+
+/**
+ * A review policy as a list: one item per line, with any leading "1.", "2)",
+ * "-", "*" or bullet removed.
+ */
+export function reviewPolicyItems(text: string): string[] {
+  return text
+    .replace(/\r\n/g, "\n")
+    .split("\n")
+    .map((line) => line.trim().replace(/^(\d+[.)]|[-*•])\s+/, ""))
+    .filter((line) => line !== "");
+}
 
 /** The tag beside the offer's title in its modal, or null when there is nothing to say. */
 export function offerStatusTag(
@@ -80,13 +104,12 @@ export function offerStatusTag(
       };
     case "urgent":
       return {
-        label: `Offer expires ${formatOfferExpiry(status, offerExpiresAt, now)}`,
+        label: `Offer expires in ${formatCountdown((offerExpiresAt ?? now) - now)}`,
         tone: "destructive",
+        countdown: true,
       };
     case "live":
-      return offerExpiresAt === undefined
-        ? null
-        : { label: `Offer expires ${formatOfferDeadline(offerExpiresAt)}`, tone: "neutral" };
+      return null;
     default:
       return null;
   }

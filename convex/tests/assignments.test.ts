@@ -719,12 +719,21 @@ describe("assignments.acceptTerms", () => {
       }
       const before = await t.run(async (ctx) => await ctx.db.get("assignments", assignmentId));
 
+      const beforeCallAt = Date.now();
+
       const result = await asCreator.mutation(api.assignments.acceptTerms, { assignmentId });
 
       const stored = await t.run(async (ctx) => await ctx.db.get("assignments", assignmentId));
-      expect(stored).toStrictEqual({ ...before, status: "active" });
+      expect(stored).toStrictEqual({
+        ...before,
+        status: "active",
+        termsAcceptedAt: expect.any(Number),
+      });
+      expect(stored?.termsAcceptedAt).toBeGreaterThanOrEqual(beforeCallAt);
+      // toCreatorAssignment omits termsAcceptedAt along with the audit actor.
       const creatorFields = { ...stored };
       delete creatorFields.productAccessDeliveredBy;
+      delete creatorFields.termsAcceptedAt;
       expect(result).toStrictEqual(creatorFields);
       expect(result).not.toHaveProperty("productAccessDeliveredBy");
       if (!delivered) expect(result).not.toHaveProperty("productAccessDeliveredAt");

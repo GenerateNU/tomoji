@@ -629,7 +629,7 @@ export type EarningPost = Infer<typeof earningPost>;
 
 /**
  * One page of posts the daily X sync fetches at `now`: verified, active, first verified
- * within the sync window, and not on a cancelled assignment. Posts with an open
+ * within the sync window, not removed, and not on a cancelled assignment. Posts with an open
  * dispute stay in. Posts with no recorded first verification (legacy timing) are skipped.
  * Skipped posts make a page shorter than requested; `continueCursor` still moves past
  * them, so paging covers every eligible post once.
@@ -652,6 +652,8 @@ export async function listEarningPosts(
   const cancelled = new Map<Id<"assignments">, boolean>();
   const page: EarningPost[] = [];
   for (const post of result.page) {
+    // A removed post is gone from X, so a lookup would only spend credits.
+    if (post.removedAt !== undefined) continue;
     const submission = await ctx.db.get("submissions", post.submissionId);
     if (submission === null) continue;
     let isCancelled = cancelled.get(submission.assignmentId);

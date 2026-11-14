@@ -182,8 +182,8 @@ verification (legacy `earningsTimingUnknown` posts) are skipped. `posts.listEarn
 The daily sync's counts keep `posts` current for analytics; payouts don't settle from them.
 Earnings settle from view snapshots taken at each post's verification and period
 boundaries (`postViewSnapshots`), recorded through the earnings flow rather than this sync.
-The analytics sync skips posts on cancelled assignments; posts with an open dispute stay
-in. Payouts decide eligibility separately: a cancellation stops accrual at its cutoff,
+The analytics sync skips posts on cancelled assignments and posts with a recorded removal
+(`removedAt`), since X no longer has them; posts with an open dispute stay in. Payouts decide eligibility separately: a cancellation stops accrual at its cutoff,
 and any readings earnings need around that cutoff come from the earnings flow, not this
 sync.
 

@@ -14,6 +14,7 @@ import {
   verifyPost,
 } from "../../models/posts";
 import { listOpportunityDeliverables } from "../../models/deliverableDrafts";
+import { recordPostRemoval } from "../../models/earningSources";
 import schema from "../../schema";
 import {
   expectApiError,
@@ -1123,6 +1124,28 @@ describe("listEarningPosts", () => {
     );
 
     expect(result.page).toEqual([]);
+  });
+
+  test("skips posts with a recorded removal", async () => {
+    const t = convexTest(schema, modules);
+    const { fixture, postId: kept } = await seedFixturePost(t);
+    const removed = await addPost(t, fixture, "removed_post");
+    const now = Date.now();
+    for (const id of [kept, removed]) await verifyAt(t, id, now - 2 * day);
+    await t.run(
+      async (ctx) =>
+        await recordPostRemoval(ctx, {
+          postId: removed,
+          removedAt: now - day,
+          sourceKey: "test-removal",
+        }),
+    );
+
+    const result = await t.run(
+      async (ctx) => await listEarningPosts(ctx, now, { numItems: 10, cursor: null }),
+    );
+
+    expect(result.page).toEqual([await earning(t, kept)]);
   });
 
   test("skips posts on cancelled assignments but keeps completed and disputed ones", async () => {

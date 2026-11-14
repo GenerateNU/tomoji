@@ -27,7 +27,7 @@ function mockEnvFile(settings: Record<string, string>) {
 function expectCopied(key: string, value: string) {
   expect(spawnSync).toHaveBeenCalledWith(
     "bunx",
-    ["convex", "env", "set", key, value],
+    ["convex", "env", "set", "--", key, value],
     expect.any(Object),
   );
 }
@@ -180,10 +180,20 @@ test("copies both AI credentials and the explicit enable flag without printing s
   for (const key of ["ASSEMBLYAI_API_KEY", "TYPESAFE_API_KEY", "AI_REVIEW_ENABLED"] as const) {
     expect(spawnSync).toHaveBeenCalledWith(
       "bunx",
-      ["convex", "env", "set", key, all[key]],
+      ["convex", "env", "set", "--", key, all[key]],
       expect.any(Object),
     );
   }
+});
+
+test("copies a secret that begins with a dash instead of reading it as a flag", async () => {
+  // The Convex CLI parses a leading `-` as an option, so the script has to stop
+  // option parsing with `--` before the key and value.
+  mockEnvFile({ ...values, WORKOS_API_KEY: "-dash-leading-secret" });
+
+  await import("../set-convex-env");
+
+  expectCopied("WORKOS_API_KEY", "-dash-leading-secret");
 });
 
 test("rejects incomplete AI configuration before changing the deployment", async () => {

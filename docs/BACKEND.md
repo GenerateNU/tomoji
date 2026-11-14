@@ -237,6 +237,11 @@ deliverable separately:
   assignment returns every active post on it in one page, newest first, which
   the 20-deliverable cap keeps bounded.
 
+Public post reads and mutation responses use the explicit `postView` projection.
+They include verification/removal times and caption-check status, but omit earnings
+tracking markers, removal evidence keys, and the in-flight caption reservation.
+Internal operations retain the full stored post for reconciliation.
+
 `deliverableId` is required with no migration, since nothing is deployed yet. A
 dev deployment holding submissions from before it won't accept the schema:
 clear its `submissions`, `posts`, and `disputes` tables, then push again.

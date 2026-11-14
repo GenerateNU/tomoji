@@ -5,6 +5,7 @@ import { EARNING_WINDOW_MS } from "../lib/earningsCalculator";
 import { apiError } from "../lib/errors";
 import { requireNonBlank } from "../lib/validation";
 import type { earningsVariableHoldReason } from "../schemas/deliverableEarnings.schema";
+import { MAX_DELIVERABLES } from "./deliverableDrafts";
 
 /** One durable agreement per assigned deliverable, independent of post replacement. */
 export async function getDeliverableEarnings(
@@ -18,6 +19,29 @@ export async function getDeliverableEarnings(
       q.eq("assignmentId", assignmentId).eq("deliverableId", deliverableId),
     )
     .unique();
+}
+
+/** Persists cancellation on every agreement in the same transaction as the assignment. */
+export async function recordAssignmentEarningsCancellation(
+  ctx: MutationCtx,
+  assignmentId: Id<"assignments">,
+  cancelledAt: number,
+): Promise<void> {
+  const agreements = await ctx.db
+    .query("deliverableEarnings")
+    .withIndex("by_assignmentId_and_deliverableId", (q) => q.eq("assignmentId", assignmentId))
+    .take(MAX_DELIVERABLES + 1);
+  if (agreements.length > MAX_DELIVERABLES) {
+    throw apiError("conflict", { reason: "earning_agreement_assignment_limit" });
+  }
+  for (const earnings of agreements) {
+    if (earnings.cutoffAt === undefined || cancelledAt < earnings.cutoffAt) {
+      await ctx.db.patch("deliverableEarnings", earnings._id, {
+        cutoffAt: cancelledAt,
+        cutoffReason: "cancelled",
+      });
+    }
+  }
 }
 
 async function requirePostContext(ctx: MutationCtx, postId: Id<"posts">) {
@@ -128,6 +152,9 @@ async function holdRegressingViewEvidence(
     submission.assignmentId,
     submission.deliverableId,
   );
+  // Every observation is still stored while held. Attribution holds never clear
+  // automatically; the metric-hold clearer rechecks all eligible evidence before
+  // releasing it, including observations received while this check was skipped.
   if (
     earnings === null ||
     earnings.postId !== post._id ||

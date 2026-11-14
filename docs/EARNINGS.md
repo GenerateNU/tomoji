@@ -126,8 +126,12 @@ times, source keys, and receipt times.
 The [verification operation](../convex/models/posts.ts) stores `firstVerifiedAt`
 and initializes the agreement in the same transaction. `postedAt` remains the
 publication time. [Cancellation](../convex/models/assignments.ts) stores
-`cancelledAt`; confirmed removal records `removedAt` and its source key. Neither
-operation cancels previously earned obligations. Reverification and replacement
+`cancelledAt` and atomically records that cutoff on each earnings agreement, keeping
+an earlier removal cutoff if one exists. The read is bounded by the 20-deliverable
+limit; excess agreements reject the cancellation rather than partially updating
+them. Confirmed removal records `removedAt` and its source key; a delayed report
+can shorten an existing cancellation cutoff. Neither operation cancels previously
+earned obligations. Reverification and replacement
 preserve the original agreement, fixed fee, cap, and clock; uncertain attribution
 holds variable earnings for reconciliation.
 
@@ -164,7 +168,10 @@ eligible window hold variable earnings for reconciliation. Confirmed removal,
 including an identical retry, rechecks metric-regression holds within the shortened
 window. A hold clears only after the complete eligible history is checked and no
 decline remains. The read is capped at 1,000 observations; longer histories retain
-the hold for reconciliation. Replacement and verification-change holds remain.
+the hold for reconciliation. Observations received while held are still stored
+and included in that recheck. Replacement and verification-change holds never
+clear automatically; any future resolution operation must revalidate the retained
+view evidence before releasing variable earnings.
 Live X collection must
 supply verification and cutoff evidence; fixture tests do not prove its availability.
 

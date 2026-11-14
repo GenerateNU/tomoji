@@ -10,6 +10,60 @@ import { getXAccountByCreatorId } from "./xAccountLookup";
 import { postCaptionCheck } from "../schemas/posts.schema";
 import { normalizeCaption, type getXPostForCaptionCheck } from "../lib/xApi";
 import { holdPostEarnings, initializePostEarnings, recordPostViewSnapshot } from "./earningSources";
+import schema from "../schema";
+
+/** Client-facing post fields; earnings evidence and lookup reservations stay internal. */
+export const postView = schema
+  .doc("posts")
+  .pick(
+    "_id",
+    "_creationTime",
+    "submissionId",
+    "campaignId",
+    "url",
+    "xPostId",
+    "isActive",
+    "isVerified",
+    "postedAt",
+    "firstVerifiedAt",
+    "removedAt",
+    "captionCheck",
+    "views",
+    "viewsUpdatedAt",
+    "likes",
+    "comments",
+    "reposts",
+    "quotes",
+  );
+export type PostView = Infer<typeof postView>;
+
+export function toPostView(post: Doc<"posts">): PostView {
+  const result: PostView = {
+    _id: post._id,
+    _creationTime: post._creationTime,
+    submissionId: post.submissionId,
+    campaignId: post.campaignId,
+    url: post.url,
+    xPostId: post.xPostId,
+    isActive: post.isActive,
+    isVerified: post.isVerified,
+  };
+  for (const key of [
+    "postedAt",
+    "firstVerifiedAt",
+    "removedAt",
+    "captionCheck",
+    "views",
+    "viewsUpdatedAt",
+    "likes",
+    "comments",
+    "reposts",
+    "quotes",
+  ] as const) {
+    if (post[key] !== undefined) Object.assign(result, { [key]: post[key] });
+  }
+  return result;
+}
 
 /** The creator-supplied fields of a new post. */
 export const postCreate = v.object({

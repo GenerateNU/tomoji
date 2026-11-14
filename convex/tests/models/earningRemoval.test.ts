@@ -189,6 +189,42 @@ test.each(["verification_changed", "post_replaced"] as const)(
   },
 );
 
+test("removal rechecks a second regression received while the original hold was active", async () => {
+  const t = convexTest(schema, modules);
+  const { postId } = await verifiedPost(t);
+  vi.setSystemTime(NOW + 6 * DAY_MS);
+  // The day-four decline establishes the hold; older evidence arrives while held.
+  for (const [day, views] of [
+    [4, 300],
+    [5, 250],
+    [0, 100],
+    [1, 200],
+    [2, 150],
+    [3, 220],
+  ]) {
+    await t.run((ctx) =>
+      recordPostViewSnapshot(ctx, {
+        postId,
+        observedAt: NOW + day * DAY_MS,
+        views,
+        sourceKey: `view:${day}`,
+      }),
+    );
+  }
+  await t.run((ctx) =>
+    recordPostRemoval(ctx, {
+      postId,
+      removedAt: NOW + 3 * DAY_MS,
+      sourceKey: "removal",
+    }),
+  );
+  // The original decline is outside the shortened window, but day one to two remains.
+  expect((await t.run((ctx) => ctx.db.query("deliverableEarnings").take(1)))[0]).toMatchObject({
+    variableHoldReason: "metric_count_regressed",
+  });
+  expect(await t.run((ctx) => ctx.db.query("postViewSnapshots").take(7))).toHaveLength(6);
+});
+
 test.each([1_000, 1_001])(
   "removal clears a hold only after inspecting the complete %i-observation history",
   async (historySize) => {

@@ -115,7 +115,9 @@ test("cancellation records a cutoff while retaining the earned agreement", async
     return await cancelAssignment(ctx, assignment);
   });
   expect(cancelled).toMatchObject({ status: "cancelled", cancelledAt: NOW + 3 * 86_400_000 });
-  expect(await t.run((ctx) => ctx.db.query("deliverableEarnings").take(2))).toEqual(original);
+  expect(await t.run((ctx) => ctx.db.query("deliverableEarnings").take(2))).toEqual([
+    { ...original[0], cutoffAt: cancelled.cancelledAt, cutoffReason: "cancelled" },
+  ]);
 });
 
 test("view updates retain immutable evidence without engagement-only observations", async () => {

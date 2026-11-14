@@ -1199,3 +1199,583 @@ export const clearDemo = internalMutation({
     return { campaigns: demos.length, documents };
   },
 });
+
+/**
+ * A demo review queue for the company submissions screen.
+ *
+ * The main `run` seed builds one creator's workspace; this builds the other
+ * side of the same workflow — enough drafts across enough campaigns that the
+ * queue's tabs, campaign filter, search and sort all have something to do, and
+ * one deliverable deep enough to show the round history.
+ */
+
+const reviewQueuePrefix = "[Review demo]";
+
+const reviewCreators = [
+  {
+    workosId: "user_tomoji_review_priya",
+    email: "priya.raman@tomoji-seed.example",
+    firstName: "Priya",
+    lastName: "Raman",
+  },
+  {
+    workosId: "user_tomoji_review_marcus",
+    email: "marcus.hale@tomoji-seed.example",
+    firstName: "Marcus",
+    lastName: "Hale",
+  },
+  {
+    workosId: "user_tomoji_review_ana",
+    email: "ana.silva@tomoji-seed.example",
+    firstName: "Ana",
+    lastName: "Silva",
+  },
+  {
+    workosId: "user_tomoji_review_tom",
+    email: "tom.okafor@tomoji-seed.example",
+    firstName: "Tom",
+    lastName: "Okafor",
+  },
+  {
+    workosId: "user_tomoji_review_zoe",
+    email: "zoe.lindqvist@tomoji-seed.example",
+    firstName: "Zoe",
+    lastName: "Lindqvist",
+  },
+] as const;
+
+/** One draft. `note` is the reviewer's feedback and is required by a change request. */
+type Round = {
+  status: "pending" | "approved" | "changesRequested";
+  daysAgo: number;
+  description: string;
+  caption?: string;
+  note?: string;
+  video?: boolean;
+};
+
+type QueueEntry = { creator: number; deliverable: number; rounds: Round[] };
+
+const reviewCampaigns: {
+  title: string;
+  description: string;
+  deliverables: { title: string; description: string }[];
+  entries: QueueEntry[];
+}[] = [
+  {
+    title: `${reviewQueuePrefix} Studio launch week`,
+    description: "Short walkthroughs for the Studio launch, one workflow each.",
+    deliverables: [
+      {
+        title: "Install to first deploy",
+        description: "Take it from an empty folder to something running, under two minutes.",
+      },
+      {
+        title: "Build a dashboard from a starter",
+        description: "Start from a template and make it yours.",
+      },
+      {
+        title: "Hand off a design",
+        description: "Show the handoff from the designer's side and the developer's.",
+      },
+    ],
+    entries: [
+      {
+        creator: 0,
+        deliverable: 0,
+        rounds: [
+          {
+            status: "pending",
+            daysAgo: 1,
+            description: "First cut. Ends on the deploy URL opening in a new tab.",
+            caption:
+              "Empty folder to a live URL in 90 seconds with Northstar Studio. #ad @northstar",
+            video: true,
+          },
+        ],
+      },
+      {
+        creator: 0,
+        deliverable: 1,
+        rounds: [
+          {
+            status: "changesRequested",
+            daysAgo: 9,
+            description: "Walkthrough of the starter, ending on the finished dashboard.",
+            caption: "Built this dashboard before my coffee went cold.",
+            note: "Great pacing, but the caption is missing #ad. Please add it and resubmit.",
+            video: true,
+          },
+          {
+            status: "pending",
+            daysAgo: 2,
+            description: "Re-uploaded with the disclosure in the caption.",
+            caption: "Built this dashboard before my coffee went cold. #ad @northstar",
+            video: true,
+          },
+        ],
+      },
+      {
+        creator: 0,
+        deliverable: 2,
+        rounds: [
+          {
+            status: "approved",
+            daysAgo: 12,
+            description: "Split screen: the design on the left, the generated code on the right.",
+            caption: "Designer to developer with nothing lost in between. #ad @northstar",
+            note: "Exactly what we asked for. Approved.",
+            video: true,
+          },
+        ],
+      },
+      {
+        creator: 1,
+        deliverable: 0,
+        rounds: [
+          {
+            status: "approved",
+            daysAgo: 14,
+            description: "Terminal-first take, no editor until the very end.",
+            caption: "One command, one deploy. #ad @northstar",
+            note: "Love the terminal angle. Approved.",
+            video: true,
+          },
+        ],
+      },
+      {
+        creator: 1,
+        deliverable: 1,
+        rounds: [
+          {
+            status: "pending",
+            daysAgo: 3,
+            description: "Longer cut — I kept the part where the first build fails.",
+            caption: "The first build failed. Here's the fix. #ad @northstar",
+            video: true,
+          },
+        ],
+      },
+      {
+        creator: 1,
+        deliverable: 2,
+        rounds: [
+          {
+            status: "changesRequested",
+            daysAgo: 5,
+            description: "Handoff demo, recorded on the staging project.",
+            caption: "From Figma to shipped. #ad @northstar",
+            note: "The staging URL is visible at 0:42 — please blur it or re-record.",
+            video: true,
+          },
+        ],
+      },
+    ],
+  },
+  {
+    title: `${reviewQueuePrefix} Developer tooling series`,
+    description: "Everyday tooling, shown by people who actually use it.",
+    deliverables: [
+      {
+        title: "Terminal setup tour",
+        description: "What's in your terminal and why.",
+      },
+      {
+        title: "Debugging a failing build",
+        description: "A real failure, start to fix.",
+      },
+    ],
+    entries: [
+      {
+        creator: 2,
+        deliverable: 0,
+        rounds: [
+          {
+            status: "pending",
+            daysAgo: 1,
+            description: "Quick tour, finishes on the Studio integration.",
+            caption: "My terminal setup, and the one tool I'd keep. #ad @northstar",
+            video: true,
+          },
+        ],
+      },
+      {
+        creator: 2,
+        deliverable: 1,
+        rounds: [
+          {
+            status: "changesRequested",
+            daysAgo: 16,
+            description: "First attempt. The failure takes a while to reproduce.",
+            caption: "Debugging a build failure the slow way.",
+            note: "Too long before the failure shows. Can you cut the first 40 seconds?",
+            video: true,
+          },
+          {
+            status: "changesRequested",
+            daysAgo: 8,
+            description: "Trimmed the intro as asked.",
+            caption: "Debugging a build failure, no filler. #ad",
+            note: "Much better. One more thing: please name Northstar Studio in the caption.",
+            video: true,
+          },
+          {
+            status: "pending",
+            daysAgo: 1,
+            description: "Caption updated. Same cut as round 2.",
+            caption: "Debugging a build failure, no filler. #ad @northstar Studio",
+            video: true,
+          },
+        ],
+      },
+      {
+        creator: 3,
+        deliverable: 0,
+        rounds: [
+          {
+            status: "approved",
+            daysAgo: 11,
+            description: "Minimal setup, one plugin at a time.",
+            caption: "Four tools, nothing else. #ad @northstar",
+            note: "Clean and clear. Approved.",
+            video: true,
+          },
+        ],
+      },
+      {
+        creator: 3,
+        deliverable: 1,
+        rounds: [
+          {
+            status: "pending",
+            daysAgo: 4,
+            description: "Caught a real flake on camera, left it in.",
+            caption: "The build failed twice. Here's why. #ad @northstar",
+            video: true,
+          },
+        ],
+      },
+    ],
+  },
+  {
+    title: `${reviewQueuePrefix} Launch recap`,
+    description: "Short recaps of what shipped, for the launch-week roundup.",
+    deliverables: [
+      { title: "Launch recap", description: "Sixty seconds on what shipped and why it matters." },
+      { title: "What shipped this week", description: "A written-through recap with b-roll." },
+    ],
+    entries: [
+      {
+        creator: 4,
+        deliverable: 0,
+        rounds: [
+          {
+            status: "pending",
+            daysAgo: 1,
+            description: "Recap cut. Happy to re-voice if the pacing is off.",
+            caption: "Everything Northstar shipped this week, in a minute. #ad",
+            video: true,
+          },
+        ],
+      },
+      {
+        creator: 4,
+        deliverable: 1,
+        rounds: [
+          {
+            status: "approved",
+            daysAgo: 10,
+            description: "Written-through version with b-roll over the voiceover.",
+            caption: "A week of shipping, recapped. #ad @northstar",
+            note: "Approved — the b-roll makes it.",
+            video: true,
+          },
+        ],
+      },
+      {
+        creator: 0,
+        deliverable: 0,
+        rounds: [
+          {
+            status: "changesRequested",
+            daysAgo: 6,
+            description: "My take on the recap, slightly over a minute.",
+            caption: "What shipped this week at Northstar.",
+            note: "Needs the disclosure, and please bring it under a minute.",
+            video: true,
+          },
+        ],
+      },
+      {
+        creator: 1,
+        deliverable: 1,
+        rounds: [
+          {
+            status: "pending",
+            daysAgo: 2,
+            description: "No voiceover on this one — captions carry it.",
+            caption: "Launch week, no talking. #ad @northstar",
+            video: true,
+          },
+        ],
+      },
+    ],
+  },
+];
+
+const reviewVideo = v.object({ key: v.string(), sizeBytes: v.number() });
+
+/**
+ * Builds the queue against the company the named admin already administers, so
+ * it lands in the workspace the reviewer will actually sign in to.
+ */
+export const seedReviewQueue = internalMutation({
+  args: {
+    companyAdminEmail: v.string(),
+    /** Uploaded by `scripts/upload-seed-videos.ts`; cycled across the drafts. */
+    videos: v.optional(v.array(reviewVideo)),
+  },
+  returns: v.object({
+    companyId: v.id("companies"),
+    campaigns: v.number(),
+    submissions: v.number(),
+    rows: v.number(),
+  }),
+  handler: async (ctx, args) => {
+    requireDevSeed();
+    const admin = await seedUser(ctx, args.companyAdminEmail, demoAdmin, "company");
+    const membership = await getCompanyUserByUserId(ctx, admin._id);
+    const company = membership && (await ctx.db.get("companies", membership.companyId));
+    if (membership?.role !== "admin" || !company?.isActive)
+      throw apiError("invalid_state", { reason: "seed_company_admin_required" });
+
+    const existing = await ctx.db
+      .query("campaigns")
+      .withIndex("by_companyId", (q) => q.eq("companyId", company._id))
+      .take(campaignReadLimit);
+    if (existing.some((row) => row.title.startsWith(reviewQueuePrefix)))
+      throw apiError("conflict", { reason: "review_queue_already_seeded" });
+
+    const now = Date.now();
+    const videos = args.videos ?? [];
+    let videoIndex = 0;
+
+    const creators = await Promise.all(
+      reviewCreators.map(async (profile) => {
+        const user = await seedUser(ctx, undefined, profile, "creator");
+        const creator = await getCreatorByUserId(ctx, user._id);
+        if (creator === null) throw apiError("not_found", { resource: "creator" });
+        await ctx.db.patch("creators", creator._id, {
+          countryOfResidence: "US",
+          followerRange: "10k-50k",
+          onboardingCompletedAt: now,
+        });
+        return { user, creator };
+      }),
+    );
+
+    let submissions = 0;
+    let rows = 0;
+    for (const [campaignIndex, plan] of reviewCampaigns.entries()) {
+      const campaignId = await ctx.db.insert("campaigns", {
+        companyId: company._id,
+        createdBy: membership._id,
+        title: plan.title,
+        description: plan.description,
+        status: "open",
+        budgetCents: 500_000,
+        startsAt: now - 30 * dayMs,
+      });
+      const deadline =
+        Math.ceil((now + (14 + campaignIndex) * dayMs) / HALF_HOUR_MS) * HALF_HOUR_MS;
+      const opportunityId = await ctx.db.insert("opportunities", {
+        ...brief,
+        ...compensation,
+        companyId: company._id,
+        campaignId,
+        createdBy: membership._id,
+        title: plan.title.replace(`${reviewQueuePrefix} `, ""),
+        description: plan.description,
+        deadline,
+        isGated: true,
+        usesAiReviewDefault: false,
+        status: "open",
+        maxSlots: 12,
+        numFilledSlots: 0,
+      });
+      await updateOpportunityNiches(ctx, opportunityId, matchTags.niches);
+      await updateOpportunitySkills(ctx, opportunityId, matchTags.skills);
+      await updateOpportunityLanguages(ctx, opportunityId, ["english"]);
+
+      const deliverableIds = await Promise.all(
+        plan.deliverables.map((deliverable) =>
+          ctx.db.insert("deliverables", {
+            opportunityId,
+            createdBy: membership._id,
+            title: deliverable.title,
+            description: deliverable.description,
+            reviewCriteria: [
+              { id: "sponsorship", description: "Disclose the sponsorship with #ad." },
+              { id: "product", description: "Name Northstar Studio in the caption." },
+            ],
+          }),
+        ),
+      );
+
+      // One assignment per creator in this campaign; several deliverables share it.
+      const assignments = new Map<number, Id<"assignments">>();
+      for (const entry of plan.entries) {
+        let assignmentId = assignments.get(entry.creator);
+        if (assignmentId === undefined) {
+          const { creator } = creators[entry.creator];
+          assignmentId = await ctx.db.insert("assignments", {
+            ...compensation,
+            companyId: company._id,
+            campaignId,
+            creatorId: creator._id,
+            opportunityId,
+            usesAiReview: false,
+            // Active, so a pending draft stays reviewable.
+            status: "active",
+          });
+          assignments.set(entry.creator, assignmentId);
+          await ctx.db.patch("opportunities", opportunityId, {
+            numFilledSlots: assignments.size,
+          });
+        }
+
+        for (const round of entry.rounds) {
+          const { user } = creators[entry.creator];
+          let mediaId: Id<"mediaUploads"> | undefined;
+          if (round.video && videos.length > 0) {
+            const video = videos[videoIndex++ % videos.length];
+            mediaId = await ctx.db.insert("mediaUploads", {
+              ownerUserId: user._id,
+              kind: "video-submission",
+              assignmentId,
+              stagingKey: video.key.replace("media/", "staging/"),
+              permanentKey: video.key,
+              contentType: "video/mp4",
+              grantExpiresAt: now - dayMs,
+              status: "complete",
+              sizeBytes: video.sizeBytes,
+            });
+          }
+          const draft = {
+            assignmentId,
+            deliverableId: deliverableIds[entry.deliverable],
+            usesAiReview: false,
+            draftDescription: round.description,
+            caption: round.caption,
+            mediaId,
+          };
+          const reviewedAt = now - round.daysAgo * dayMs + 2 * 60 * 60 * 1000;
+          await ctx.db.insert(
+            "submissions",
+            round.status === "pending"
+              ? { ...draft, status: "pending" }
+              : round.status === "approved"
+                ? {
+                    ...draft,
+                    status: "approved",
+                    reviewerType: "companyUser",
+                    reviewedBy: membership._id,
+                    reviewedAt,
+                    reviewNote: round.note,
+                  }
+                : {
+                    ...draft,
+                    status: "changesRequested",
+                    reviewerType: "companyUser",
+                    reviewedBy: membership._id,
+                    reviewedAt,
+                    reviewNote: round.note ?? "Please address the brief and resubmit.",
+                  },
+          );
+          submissions++;
+        }
+        rows++;
+      }
+    }
+
+    return { companyId: company._id, campaigns: reviewCampaigns.length, submissions, rows };
+  },
+});
+
+/** Deletes everything `seedReviewQueue` made for one company, so it can be rebuilt. */
+export const clearReviewQueue = internalMutation({
+  args: { companyAdminEmail: v.string() },
+  returns: v.object({ campaigns: v.number(), documents: v.number() }),
+  handler: async (ctx, args) => {
+    requireDevSeed();
+    const admin = await seedUser(ctx, args.companyAdminEmail, demoAdmin, "company");
+    const membership = await getCompanyUserByUserId(ctx, admin._id);
+    if (membership === null)
+      throw apiError("invalid_state", { reason: "seed_company_admin_required" });
+
+    const all = await ctx.db
+      .query("campaigns")
+      .withIndex("by_companyId", (q) => q.eq("companyId", membership.companyId))
+      .take(campaignReadLimit);
+    const demos = all.filter((row) => row.title.startsWith(reviewQueuePrefix));
+
+    let documents = 0;
+    const drop = async <T extends TableNames>(table: T, docs: { _id: Id<T> }[]) => {
+      for (const doc of docs) {
+        await ctx.db.delete(table, doc._id);
+        documents++;
+      }
+    };
+
+    for (const campaign of demos) {
+      const opportunities = await ctx.db
+        .query("opportunities")
+        .withIndex("by_campaignId_and_deadline", (q) => q.eq("campaignId", campaign._id))
+        .collect();
+      const assignments = await ctx.db
+        .query("assignments")
+        .withIndex("by_campaignId", (q) => q.eq("campaignId", campaign._id))
+        .collect();
+
+      for (const { _id: opportunityId } of opportunities) {
+        for (const table of [
+          "opportunityNiches",
+          "opportunitySkills",
+          "opportunityLanguages",
+          "opportunityScores",
+          "deliverables",
+        ] as const) {
+          await drop(
+            table,
+            await ctx.db
+              .query(table)
+              .withIndex("by_opportunityId", (q) => q.eq("opportunityId", opportunityId))
+              .collect(),
+          );
+        }
+      }
+      for (const { _id: assignmentId } of assignments) {
+        await drop(
+          "submissions",
+          await ctx.db
+            .query("submissions")
+            .withIndex("by_assignmentId_and_deliverableId", (q) =>
+              q.eq("assignmentId", assignmentId),
+            )
+            .collect(),
+        );
+      }
+      const media = await ctx.db.query("mediaUploads").collect();
+      const owned = new Set(assignments.map((row) => row._id as string));
+      await drop(
+        "mediaUploads",
+        media.filter((row) => row.assignmentId && owned.has(row.assignmentId)),
+      );
+      await drop("assignments", assignments);
+      await drop("opportunities", opportunities);
+      await drop("campaigns", [campaign]);
+    }
+
+    return { campaigns: demos.length, documents };
+  },
+});

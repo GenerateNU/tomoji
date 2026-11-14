@@ -4,7 +4,7 @@ import { api } from "@convex/_generated/api";
 import { useState } from "react";
 import { useStableQuery } from "@/hooks/use-stable-query";
 import { type ApplicationStatus } from "../lib/application-status";
-import { FIRST_PAGE, nextPage, previousPage } from "../lib/cursor-pages";
+import { FIRST_PAGE, nextPage, previousPage } from "@/lib/cursor-pages";
 import { ApplicationRow } from "./application-row";
 import { ApplicationStatusFilter } from "./application-status-filter";
 import { ApplicationsPagination, type PageSize } from "./applications-pagination";

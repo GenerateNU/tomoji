@@ -389,6 +389,62 @@ async function seedCreatorContent(
   return { primary, applicationIds, gatedWithRoom, closingSoon };
 }
 
+/**
+ * Assignments for the first creator, so the disputes page has companies to
+ * search: one active and one completed. The completed one has an approved
+ * dispute, so the Past Disputes tab isn't empty.
+ */
+async function seedAssignments(
+  ctx: MutationCtx,
+  creator: Doc<"creators">,
+  admin: Doc<"companyUsers">,
+  opportunityIds: Id<"opportunities">[],
+) {
+  // Both ungated; terms are copied from the opportunity, as claiming does.
+  const [, ungatedWithRoom, ungatedFull] = opportunityIds;
+  const assignmentIds: Partial<Record<"active" | "completed", Id<"assignments">>> = {};
+  for (const [opportunityId, status] of [
+    [ungatedFull, "completed"],
+    [ungatedWithRoom, "active"],
+  ] as const) {
+    const opportunity = await ctx.db.get("opportunities", opportunityId);
+    if (opportunity === null) throw apiError("misconfigured");
+    assignmentIds[status] = await ctx.db.insert("assignments", {
+      opportunityId,
+      creatorId: creator._id,
+      companyId: opportunity.companyId,
+      campaignId: opportunity.campaignId,
+      fixedFeeCents: opportunity.fixedFeeCents,
+      cpmRateCents: opportunity.cpmRateCents,
+      paymentCapCents: opportunity.paymentCapCents,
+      usesAiReview: opportunity.usesAiReviewDefault,
+      status,
+      productAccessDeliveredAt: Date.now() - 20 * DAY,
+      productAccessDeliveredBy: admin._id,
+    });
+  }
+
+  const completed = await ctx.db.get("assignments", assignmentIds.completed!);
+  if (completed === null) throw apiError("misconfigured");
+  await ctx.db.insert("disputes", {
+    assignmentId: completed._id,
+    companyId: completed.companyId,
+    creatorId: completed.creatorId,
+    campaignId: completed.campaignId,
+    openedBy: creator.userId,
+    openedByRole: "creator",
+    reason: "other",
+    customReason: "CPM bonus missing from payout",
+    description: "The video passed 100k views but the CPM portion wasn't added to my payout.",
+    status: "resolved",
+    resolvedBy: admin.userId,
+    resolvedByRole: "company",
+    resolvedAt: Date.now() - 2 * DAY,
+    outcome: "approved",
+    note: "Confirmed with finance; the CPM payment goes out with the next payout.",
+  });
+}
+
 /** Notifications for both sides of the marketplace, read and unread. */
 async function seedNotifications(
   ctx: MutationCtx,
@@ -488,6 +544,7 @@ export const run = internalMutation({
       company,
       opportunityIds,
     );
+    await seedAssignments(ctx, primary, admin, opportunityIds);
     await seedNotifications(ctx, primary.userId, admin.userId, applicationIds[0], gatedWithRoom);
     await seedInvites(ctx, company._id);
 

@@ -46,6 +46,25 @@ describe("assignments.claim", () => {
     });
   });
 
+  test("rejects a creator below the follower minimum or missing a skill", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(
+      t,
+      { subject: "owner" },
+      { skills: ["python"], minFollowerRange: "10k-50k" },
+    );
+    const asCreator = await seedUser(t, { subject: "creator" });
+    const claim = () =>
+      asCreator.mutation(api.assignments.claim, { opportunityId: owner.opportunityId });
+
+    await expectApiError(claim, "invalid_state", "not_eligible");
+    await asCreator.mutation(api.creators.update, { skills: ["python"] });
+    await expectApiError(claim, "invalid_state", "not_eligible");
+    await asCreator.mutation(api.creators.update, { followerRange: "10k-50k" });
+
+    await expect(claim()).resolves.toBeDefined();
+  });
+
   test("rejects a signed-out caller", async () => {
     const t = convexTest(schema, modules);
     const owner = await seedOpportunity(t, { subject: "owner" });

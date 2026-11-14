@@ -4,6 +4,8 @@ import Link from "next/link";
 import {
   RiAuctionFill,
   RiAuctionLine,
+  RiBuilding2Fill,
+  RiBuilding2Line,
   RiCheckboxMultipleFill,
   RiCheckboxMultipleLine,
   RiFolderFill,
@@ -117,6 +119,13 @@ export const operatorNavItems = [
     icon: RiGroupLine,
     activeIcon: RiGroupFill,
     href: "/users",
+  },
+  {
+    id: "companies",
+    label: "Companies",
+    icon: RiBuilding2Line,
+    activeIcon: RiBuilding2Fill,
+    href: "/companies",
   },
   {
     id: "disputes",

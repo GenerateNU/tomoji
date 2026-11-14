@@ -18,7 +18,7 @@ test.afterAll(() => {
 });
 test.use({ timezoneId: "America/New_York" });
 
-type View = "users" | "disputes";
+type View = "users" | "companies" | "disputes";
 
 /** Loads the real operator views against a local Convex double. */
 async function open(page: Page, view: View) {
@@ -80,6 +80,49 @@ test("deactivating an account calls setActive for that user and reflects it in t
   ]);
   await expect(page.getByRole("dialog")).toBeHidden();
   await expect(page.getByRole("row", { name: /Ada Lovelace/ })).toBeHidden();
+});
+
+test("company search filters the list and the detail modal lists that company's members", async ({
+  page,
+}) => {
+  await open(page, "companies");
+
+  await expect(page.getByRole("row", { name: /Birch & Co/ })).toBeVisible();
+  await page.getByLabel("Search companies").fill("acme");
+  await expect(page.getByRole("row", { name: /Acme Robotics/ })).toBeVisible();
+  await expect(page.getByRole("row", { name: /Lumen Labs/ })).toBeHidden();
+
+  await page.getByRole("button", { name: "Acme Robotics" }).click();
+  const modal = page.getByRole("dialog");
+  await expect(modal.getByText("Hardware")).toBeVisible();
+  // Only Acme's member, not Lumen's.
+  await expect(modal.getByText("jordan@acme.example.com")).toBeVisible();
+  await expect(modal.getByText("sam@lumen.example.com")).toBeHidden();
+});
+
+test("inviting a company requires a name and an email before it sends", async ({ page }) => {
+  await open(page, "companies");
+
+  await page.getByRole("button", { name: "Invite company" }).click();
+  const modal = page.getByRole("dialog");
+  await modal.getByRole("button", { name: "Send invitation" }).click();
+  await expect(modal.getByText("Company name required")).toBeVisible();
+  await expect(modal.getByText("Email required")).toBeVisible();
+  expect(await page.evaluate(() => window.operatorFixture.calls)).toEqual([]);
+
+  await modal.getByLabel("Company name").fill("Parallel Systems");
+  await modal.getByLabel("Email").fill("not-an-email");
+  await modal.getByRole("button", { name: "Send invitation" }).click();
+  expect(await page.evaluate(() => window.operatorFixture.calls)).toEqual([]);
+
+  await modal.getByLabel("Email").fill("owner@parallel.example.com");
+  await modal.getByRole("button", { name: "Send invitation" }).click();
+  expect(await page.evaluate(() => window.operatorFixture.calls)).toEqual([
+    {
+      name: "invites:inviteCompany",
+      args: { companyName: "Parallel Systems", email: "owner@parallel.example.com" },
+    },
+  ]);
 });
 
 test("an open dispute can be closed and a settled one overridden with a required reason", async ({

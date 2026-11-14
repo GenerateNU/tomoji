@@ -1,5 +1,6 @@
 import { createRoot } from "react-dom/client";
 import { Toaster } from "@/components/ui/sonner";
+import { OperatorCompanies } from "@/features/operator/components/operator-companies";
 import { OperatorDisputes } from "@/features/operator/components/operator-disputes";
 import { OperatorUsers } from "@/features/operator/components/operator-users";
 import { fixture } from "./operator-convex";
@@ -13,7 +14,11 @@ export {};
 
 window.operatorFixture = fixture;
 
-const VIEWS = { users: OperatorUsers, disputes: OperatorDisputes } as const;
+const VIEWS = {
+  users: OperatorUsers,
+  companies: OperatorCompanies,
+  disputes: OperatorDisputes,
+} as const;
 
 const view = (new URLSearchParams(location.search).get("view") ?? "users") as keyof typeof VIEWS;
 const View = VIEWS[view];

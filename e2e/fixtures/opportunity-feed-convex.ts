@@ -111,6 +111,9 @@ export function usePaginatedQuery(reference: FunctionReference<"query">, args: u
   if (args === "skip") return { results: [], status: "LoadingFirstPage", loadMore() {} };
   if (params().has("loading")) return { results: [], status: "LoadingFirstPage", loadMore() {} };
   if (params().has("empty")) return { results: [], status: "Exhausted", loadMore() {} };
+  // A search or filter that matches nothing.
+  const filters = args as { search?: string; niches?: string[] };
+  if (filters.search || filters.niches) return { results: [], status: "Exhausted", loadMore() {} };
   const name = getFunctionName(reference);
   const results = name === "opportunities:listStarred" ? FEED.filter((o) => o.isStarred) : FEED;
   return { results, status: "Exhausted", loadMore() {} };

@@ -3,6 +3,7 @@
 import type { Id } from "@convex/_generated/dataModel";
 import {
   RiCheckboxCircleLine,
+  RiEqualizer2Line,
   RiLayoutGridLine,
   RiListUnordered,
   RiSearchLine,
@@ -18,6 +19,7 @@ import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { useOpportunityFeed } from "../hooks/use-opportunity-feed";
 import { NO_FEED_FILTERS, type FeedFilters, type FeedView } from "../lib/types";
 import { FeedSkeleton } from "./feed-skeleton";
+import { FiltersDrawer } from "./filters-drawer";
 import { NoOpportunities } from "./no-opportunities";
 import { OpportunityCard } from "./opportunity-card";
 import { OpportunityTable } from "./opportunity-table";
@@ -29,6 +31,7 @@ export function CreatorFeed() {
   // Kept after closing so the dialog keeps its content while it animates out.
   const [selectedId, setSelectedId] = useState<Id<"opportunities"> | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
+  const [drawerOpen, setDrawerOpen] = useState(false);
   // Read once per render so every row's "posted N days ago" agrees.
   const [now] = useState(() => Date.now());
 
@@ -37,6 +40,9 @@ export function CreatorFeed() {
   const loading = feed.status === "LoadingFirstPage";
   const filtered =
     JSON.stringify({ ...filters, starred: false }) !== JSON.stringify(NO_FEED_FILTERS);
+  // Filters only the drawer shows, so the button can say some are on.
+  const drawerCount =
+    (filters.type === "all" ? 0 : 1) + filters.niches.length + filters.skills.length;
 
   function update(changes: Partial<FeedFilters>) {
     setFilters((current) => ({ ...current, ...changes }));
@@ -76,8 +82,24 @@ export function CreatorFeed() {
           >
             Starred
           </FilterChip>
+          <Button
+            variant={drawerCount > 0 ? "primary-subtle" : "secondary-subtle"}
+            size="icon-sm"
+            aria-label={drawerCount > 0 ? `More filters (${drawerCount} on)` : "More filters"}
+            title="More filters"
+            onClick={() => setDrawerOpen(true)}
+          >
+            <RiEqualizer2Line aria-hidden />
+          </Button>
         </div>
       </section>
+
+      <FiltersDrawer
+        open={drawerOpen}
+        onOpenChange={setDrawerOpen}
+        filters={filters}
+        onApply={setFilters}
+      />
 
       <section aria-labelledby="results-heading" className="flex flex-col gap-6">
         <div className="flex items-center justify-between gap-4">

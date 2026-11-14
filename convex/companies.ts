@@ -89,11 +89,12 @@ export const create = operatorMutation({
 
 /**
  * Lists companies for operators with cursor pagination. Includes inactive
- * companies unless `isActive` is given.
+ * companies unless `isActive` is given; `search` matches the company name.
  */
 export const list = operatorQuery({
   args: {
     isActive: v.optional(v.boolean()),
+    search: v.optional(v.string()),
     paginationOpts: paginationOptsValidator,
   },
   returns: paginationResultValidator(companyView),

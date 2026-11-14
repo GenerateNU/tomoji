@@ -28,7 +28,9 @@ function stripeAccount(overrides: Partial<Stripe.Account> = {}) {
     created: 1_700_000_000,
     details_submitted: false,
     payouts_enabled: false,
-    requirements: { currently_due: ["individual.first_name", "external_account"] },
+    requirements: {
+      currently_due: ["individual.first_name", "external_account"],
+    },
     ...overrides,
   } as Stripe.Account;
 }
@@ -46,9 +48,9 @@ function stubStripe() {
   return {
     createAccount: vi.spyOn(accounts, "create").mockResolvedValue(stripeAccount() as never),
     listAccounts: vi.spyOn(accounts, "list").mockReturnValue(listOf([]) as never),
-    createAccountLink: vi
-      .spyOn(accountLinks, "create")
-      .mockResolvedValue({ url: "https://connect.stripe.com/setup/e/acct_new/link" } as never),
+    createAccountLink: vi.spyOn(accountLinks, "create").mockResolvedValue({
+      url: "https://connect.stripe.com/setup/e/acct_new/link",
+    } as never),
   };
 }
 
@@ -105,7 +107,9 @@ async function seedCreator(
 
 async function setCountry(t: TestConvex, creatorId: Id<"creators">, country: string | null) {
   await t.run((ctx) =>
-    ctx.db.patch("creators", creatorId, { countryOfResidence: country ?? undefined }),
+    ctx.db.patch("creators", creatorId, {
+      countryOfResidence: country ?? undefined,
+    }),
   );
 }
 
@@ -114,14 +118,18 @@ describe("me", () => {
     const t = convexTest(schema, modules);
     const { asCreator } = await seedCreator(t, "stripe_me_new");
 
-    expect(await asCreator.query(api.stripeAccounts.me, {})).toEqual({ status: "notStarted" });
+    expect(await asCreator.query(api.stripeAccounts.me, {})).toEqual({
+      status: "notStarted",
+    });
   });
 
   test("reports the status derived from the stored account", async () => {
     const t = convexTest(schema, modules);
     const { asCreator } = await seedCreator(t, "stripe_me_ready", submitted);
 
-    expect(await asCreator.query(api.stripeAccounts.me, {})).toEqual({ status: "ready" });
+    expect(await asCreator.query(api.stripeAccounts.me, {})).toEqual({
+      status: "ready",
+    });
   });
 
   test("reports disconnected once the creator removes Tomoji in Stripe", async () => {
@@ -129,12 +137,17 @@ describe("me", () => {
     const { asCreator } = await seedCreator(t, "stripe_me_gone", submitted);
     await t.run((ctx) => disconnectStripeAccount(ctx, "acct_existing", 1_700_000_100_000));
 
-    expect(await asCreator.query(api.stripeAccounts.me, {})).toEqual({ status: "disconnected" });
+    expect(await asCreator.query(api.stripeAccounts.me, {})).toEqual({
+      status: "disconnected",
+    });
   });
 
   test("refuses a company user", async () => {
     const t = convexTest(schema, modules);
-    const asCompany = await seedUser(t, { subject: "stripe_me_company", org: { id: "org_acme" } });
+    const asCompany = await seedUser(t, {
+      subject: "stripe_me_company",
+      org: { id: "org_acme" },
+    });
 
     await expectApiError(() => asCompany.query(api.stripeAccounts.me, {}), "forbidden");
   });
@@ -147,7 +160,9 @@ describe("onboardingLink", () => {
 
     const link = await asCreator.action(api.stripeAccounts.onboardingLink, {});
 
-    expect(link).toEqual({ url: "https://connect.stripe.com/setup/e/acct_new/link" });
+    expect(link).toEqual({
+      url: "https://connect.stripe.com/setup/e/acct_new/link",
+    });
     // Exact, because Stripe rejects Standard accounts that request `transfers`
     // on its own; it picks their capabilities by country. No email: nothing that
     // can change between a failed attempt and its retry.
@@ -190,7 +205,10 @@ describe("onboardingLink", () => {
 
   test("refuses a company user before calling Stripe", async () => {
     const t = convexTest(schema, modules);
-    const asCompany = await seedUser(t, { subject: "stripe_onboard_co", org: { id: "org_acme" } });
+    const asCompany = await seedUser(t, {
+      subject: "stripe_onboard_co",
+      org: { id: "org_acme" },
+    });
 
     await expectApiError(
       () => asCompany.action(api.stripeAccounts.onboardingLink, {}),
@@ -220,7 +238,9 @@ describe("onboardingLink", () => {
       "upstream_failure",
       "stripe_account_failed",
     );
-    expect(await asCreator.query(api.stripeAccounts.me, {})).toEqual({ status: "notStarted" });
+    expect(await asCreator.query(api.stripeAccounts.me, {})).toEqual({
+      status: "notStarted",
+    });
   });
 
   // A double click must reach Stripe with one key, so it returns one account.
@@ -273,7 +293,10 @@ describe("onboardingLink", () => {
     );
     stripe.listAccounts.mockReturnValue(
       listOf([
-        stripeAccount({ id: "acct_someone_else", metadata: { creatorId: "k57other" } }),
+        stripeAccount({
+          id: "acct_someone_else",
+          metadata: { creatorId: "k57other" },
+        }),
         stripeAccount({ id: "acct_made_earlier", metadata: { creatorId } }),
       ]) as never,
     );
@@ -281,8 +304,10 @@ describe("onboardingLink", () => {
     await asCreator.action(api.stripeAccounts.onboardingLink, {});
 
     expect(stripe.createAccount).toHaveBeenCalledTimes(1);
+    // No upper bound: Stripe may have created the account well after the attempt
+    // started, and a retry can come hours later.
     expect(stripe.listAccounts).toHaveBeenCalledWith({
-      created: { gte: expect.any(Number), lte: expect.any(Number) },
+      created: { gte: expect.any(Number) },
       limit: 100,
     });
     expect(stripe.createAccountLink).toHaveBeenCalledWith(
@@ -342,6 +367,40 @@ describe("onboardingLink", () => {
     );
   });
 
+  // A failed lookup cannot prove no account exists; creating one could make a
+  // duplicate once Stripe has forgotten the original key.
+  test("stops without creating when the recovery lookup fails", async () => {
+    const t = convexTest(schema, modules);
+    const { asCreator } = await seedCreator(t, "stripe_onboard_lookup_down");
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+    stripe.createAccount.mockRejectedValueOnce(new Error("Network dropped"));
+    await expectApiError(
+      () => asCreator.action(api.stripeAccounts.onboardingLink, {}),
+      "upstream_failure",
+      "stripe_account_failed",
+    );
+    stripe.listAccounts.mockImplementation(() => {
+      throw new Error("Stripe is down");
+    });
+
+    await expectApiError(
+      () => asCreator.action(api.stripeAccounts.onboardingLink, {}),
+      "upstream_failure",
+      "stripe_account_failed",
+    );
+
+    expect(stripe.createAccount).toHaveBeenCalledTimes(1);
+    expect(logged).toHaveBeenCalledWith(
+      "Stripe refused to list accounts",
+      expect.objectContaining({ message: "Stripe is down" }),
+    );
+    // The attempt is kept, so the next retry repeats the same request.
+    stripe.listAccounts.mockReturnValue(listOf([]) as never);
+    await asCreator.action(api.stripeAccounts.onboardingLink, {});
+    const [first, second] = idempotencyKeys();
+    expect(second).toBe(first);
+  });
+
   // Any invalid-request refusal proves Stripe made no account, so the retry may
   // start a fresh attempt. Reusing the key would replay the same refusal for 24 hours.
   test("starts a fresh attempt after Stripe rejects the request", async () => {
@@ -388,6 +447,63 @@ describe("onboardingLink", () => {
 
     const [first, second] = idempotencyKeys();
     expect(second).toBe(first);
+  });
+
+  // Reconnecting soon after connecting puts the old account inside the lookup's
+  // window. Tomoji has lost access to it, so it must never be taken as the new one.
+  test("does not recover the disconnected account being replaced", async () => {
+    const t = convexTest(schema, modules);
+    const { creatorId, asCreator } = await seedCreator(
+      t,
+      "stripe_onboard_reconnect_soon",
+      submitted,
+    );
+    await t.run((ctx) => disconnectStripeAccount(ctx, "acct_existing", 1_700_000_100_000));
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    stripe.createAccount.mockRejectedValueOnce(new Error("Network dropped"));
+    await expectApiError(
+      () => asCreator.action(api.stripeAccounts.onboardingLink, {}),
+      "upstream_failure",
+      "stripe_account_failed",
+    );
+    stripe.listAccounts.mockReturnValue(
+      listOf([stripeAccount({ id: "acct_existing", metadata: { creatorId } })]) as never,
+    );
+
+    await asCreator.action(api.stripeAccounts.onboardingLink, {});
+
+    expect(stripe.createAccount).toHaveBeenCalledTimes(2);
+    expect(stripe.createAccountLink).toHaveBeenCalledWith(
+      expect.objectContaining({ account: "acct_new" }),
+    );
+  });
+
+  // Stripe refusing access proves the creator removed Tomoji, even if the
+  // disconnect event never arrived; without this they could never reconnect.
+  test("marks the account disconnected when Stripe refuses access to it", async () => {
+    const t = convexTest(schema, modules);
+    const { asCreator } = await seedCreator(t, "stripe_onboard_no_access", submitted);
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    stripe.createAccountLink.mockRejectedValueOnce(
+      new Stripe.errors.StripePermissionError({
+        type: "invalid_request_error",
+        code: "account_invalid",
+        message: "The provided key does not have access to account",
+      }),
+    );
+
+    await expectApiError(
+      () => asCreator.action(api.stripeAccounts.onboardingLink, {}),
+      "invalid_state",
+      "stripe_account_disconnected",
+    );
+    expect(await asCreator.query(api.stripeAccounts.me, {})).toEqual({
+      status: "disconnected",
+    });
+
+    // The next click reconnects with a new account.
+    await asCreator.action(api.stripeAccounts.onboardingLink, {});
+    expect(stripe.createAccount).toHaveBeenCalledTimes(1);
   });
 
   // The old account is gone for good; reconnecting means a new one.

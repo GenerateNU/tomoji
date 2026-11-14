@@ -15,6 +15,8 @@ import { requireCreatorProfileById } from "./creators";
  * - `inReview`: submitted and nothing due; Stripe is verifying asynchronously,
  *   usually minutes, occasionally a few business days for documents.
  * - `ready`: Stripe allows payouts.
+ * - `rejected`: Stripe declined the account for good, such as for fraud; the
+ *   creator has to contact Stripe, since onboarding again cannot fix it.
  * - `disconnected`: the creator removed Tomoji from their Stripe account, so
  *   Tomoji cannot pay into it; onboarding again creates a new account.
  */
@@ -23,6 +25,7 @@ export const stripeAccountStatus = v.union(
   v.literal("actionRequired"),
   v.literal("inReview"),
   v.literal("ready"),
+  v.literal("rejected"),
   v.literal("disconnected"),
 );
 
@@ -32,6 +35,7 @@ export const stripeAccountState = v.object({
   detailsSubmitted: v.boolean(),
   payoutsEnabled: v.boolean(),
   requirementsDue: v.boolean(),
+  rejected: v.optional(v.boolean()),
   stripeUpdatedAt: v.number(),
 });
 
@@ -62,6 +66,8 @@ export function toStripeAccountStatus(account: Doc<"stripeAccounts"> | null): St
   if (account === null) return "notStarted";
   // Stripe's last flags may still say payouts are on; they no longer apply to Tomoji.
   if (account.disconnectedAt !== undefined) return "disconnected";
+  // A declined account keeps flags that look like a form awaiting review.
+  if (account.rejected === true) return "rejected";
   // Requirements due by a future deadline do not stop payouts until then.
   if (account.payoutsEnabled) return "ready";
   if (!account.detailsSubmitted || account.requirementsDue) return "actionRequired";
@@ -82,7 +88,7 @@ async function getAccountCreation(
  * Records that Tomoji is about to ask Stripe for the creator's account, or
  * returns the attempt already pending with `retry: true`. A retry keeps the
  * original country, so the request repeats exactly and Stripe cannot create a
- * second account. `country` is the creator's profile country.
+ * second account. A new attempt uses the creator's profile country.
  *
  * Returns `{ account }` instead if a concurrent request saved a connected
  * account after the caller looked; another attempt would use a new key and
@@ -95,15 +101,15 @@ async function getAccountCreation(
 export async function beginAccountCreation(
   ctx: MutationCtx,
   creatorId: Id<"creators">,
-  country: string | undefined,
 ): Promise<
   { account: Doc<"stripeAccounts"> } | { attempt: Doc<"stripeAccountCreations">; retry: boolean }
 > {
-  await requireCreatorProfileById(ctx, creatorId);
+  const profile = await requireCreatorProfileById(ctx, creatorId);
   const account = await getStripeAccountByCreatorId(ctx, creatorId);
   if (account !== null && account.disconnectedAt === undefined) return { account };
   const pending = await getAccountCreation(ctx, creatorId);
   if (pending !== null) return { attempt: pending, retry: true };
+  const country = profile.countryOfResidence;
   if (country === undefined) throw apiError("invalid_state", { reason: "country_required" });
   const id = await ctx.db.insert("stripeAccountCreations", {
     creatorId,
@@ -137,9 +143,9 @@ async function finishAccountCreation(ctx: MutationCtx, creatorId: Id<"creators">
 }
 
 /**
- * Records the account Stripe just created for a creator and closes the pending
- * attempt. The index cannot enforce one row per creator, so the read and write
- * share this transaction. Saving the same account again returns the existing
+ * Records the account Stripe just created for a creator and closes the attempt
+ * it came from, `attemptId`. The index cannot enforce one row per creator, so
+ * the read and write share this transaction. Saving the same account again returns the existing
  * row: concurrent onboarding requests share an idempotency key and receive the
  * same account. A disconnected account is replaced; the creator reconnected.
  *
@@ -151,6 +157,7 @@ export async function createStripeAccount(
   ctx: MutationCtx,
   creatorId: Id<"creators">,
   state: StripeAccountState,
+  attemptId?: Id<"stripeAccountCreations">,
 ): Promise<Doc<"stripeAccounts">> {
   await requireCreatorProfileById(ctx, creatorId);
   const existing = await getStripeAccountByCreatorId(ctx, creatorId);
@@ -160,12 +167,17 @@ export async function createStripeAccount(
   } else if (existing.stripeAccountId === state.stripeAccountId) {
     id = existing._id;
   } else if (existing.disconnectedAt !== undefined) {
-    await ctx.db.replace("stripeAccounts", existing._id, { creatorId, ...state });
+    await ctx.db.replace("stripeAccounts", existing._id, {
+      creatorId,
+      ...state,
+    });
     id = existing._id;
   } else {
     throw apiError("conflict", { reason: "stripe_account_exists" });
   }
-  await finishAccountCreation(ctx, creatorId);
+  // Only the attempt this account came from: a delayed save of an old account
+  // must not close a newer attempt the creator started since.
+  if (attemptId !== undefined) await abandonAccountCreation(ctx, attemptId);
   const account = await ctx.db.get("stripeAccounts", id);
   if (account === null) throw new Error("saved Stripe account vanished");
   return account;
@@ -197,10 +209,11 @@ export async function disconnectStripeAccount(
  * reconnecting with a new account does.
  *
  * `taggedCreatorId` is the `metadata.creatorId` set when the account was
- * created. If the server stopped before saving a new account, this adopts it
- * for that creator. `unknown` means the account is not ours to record:
- * another deployment sharing the Stripe sandbox made it, or the creator
- * already has a different account.
+ * created. If the server stopped before saving a creator's first account, this
+ * adopts it. A creator reconnecting already has a (disconnected) row, so their
+ * new account is not adopted here; their next click recovers it instead.
+ * `unknown` means the account is not ours to record: another deployment
+ * sharing the Stripe sandbox made it, or the creator already has a row.
  */
 export async function updateStripeAccount(
   ctx: MutationCtx,
@@ -214,6 +227,7 @@ export async function updateStripeAccount(
     detailsSubmitted: state.detailsSubmitted,
     payoutsEnabled: state.payoutsEnabled,
     requirementsDue: state.requirementsDue,
+    rejected: state.rejected,
     stripeUpdatedAt: state.stripeUpdatedAt,
   });
   return "updated";

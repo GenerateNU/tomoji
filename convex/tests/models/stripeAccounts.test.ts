@@ -27,6 +27,17 @@ const created: StripeAccountState = {
   stripeUpdatedAt: 1_700_000_000_000,
 };
 
+/**
+ * Sets the creator's profile country (none if undefined) and begins an attempt,
+ * as `onboardingLink` does when the creator clicks.
+ */
+function beginWithCountry(t: TestConvex, creatorId: Id<"creators">, country: string | undefined) {
+  return t.run(async (ctx) => {
+    await ctx.db.patch("creators", creatorId, { countryOfResidence: country });
+    return await beginAccountCreation(ctx, creatorId);
+  });
+}
+
 describe("toStripeAccountStatus", () => {
   const row = (
     flags: Pick<StripeAccountState, "detailsSubmitted" | "payoutsEnabled" | "requirementsDue">,
@@ -39,13 +50,21 @@ describe("toStripeAccountStatus", () => {
   test("asks the creator to act while the onboarding form is unfinished", () => {
     expect(
       toStripeAccountStatus(
-        row({ detailsSubmitted: false, payoutsEnabled: false, requirementsDue: true }),
+        row({
+          detailsSubmitted: false,
+          payoutsEnabled: false,
+          requirementsDue: true,
+        }),
       ),
     ).toBe("actionRequired");
     // Not submitted is unfinished even when Stripe lists nothing as due yet.
     expect(
       toStripeAccountStatus(
-        row({ detailsSubmitted: false, payoutsEnabled: false, requirementsDue: false }),
+        row({
+          detailsSubmitted: false,
+          payoutsEnabled: false,
+          requirementsDue: false,
+        }),
       ),
     ).toBe("actionRequired");
   });
@@ -54,7 +73,11 @@ describe("toStripeAccountStatus", () => {
   test("asks the creator to act when Stripe needs more information after submission", () => {
     expect(
       toStripeAccountStatus(
-        row({ detailsSubmitted: true, payoutsEnabled: false, requirementsDue: true }),
+        row({
+          detailsSubmitted: true,
+          payoutsEnabled: false,
+          requirementsDue: true,
+        }),
       ),
     ).toBe("actionRequired");
   });
@@ -62,7 +85,11 @@ describe("toStripeAccountStatus", () => {
   test("is inReview while Stripe verifies a submitted form with nothing due", () => {
     expect(
       toStripeAccountStatus(
-        row({ detailsSubmitted: true, payoutsEnabled: false, requirementsDue: false }),
+        row({
+          detailsSubmitted: true,
+          payoutsEnabled: false,
+          requirementsDue: false,
+        }),
       ),
     ).toBe("inReview");
   });
@@ -71,14 +98,36 @@ describe("toStripeAccountStatus", () => {
   test("is ready whenever Stripe allows payouts", () => {
     expect(
       toStripeAccountStatus(
-        row({ detailsSubmitted: true, payoutsEnabled: true, requirementsDue: false }),
+        row({
+          detailsSubmitted: true,
+          payoutsEnabled: true,
+          requirementsDue: false,
+        }),
       ),
     ).toBe("ready");
     expect(
       toStripeAccountStatus(
-        row({ detailsSubmitted: true, payoutsEnabled: true, requirementsDue: true }),
+        row({
+          detailsSubmitted: true,
+          payoutsEnabled: true,
+          requirementsDue: true,
+        }),
       ),
     ).toBe("ready");
+  });
+
+  // Stripe declined the account for good (for example `rejected.fraud`); its flags
+  // then look like a submitted form awaiting review, which would never change.
+  test("is rejected once Stripe declines the account, whatever the flags say", () => {
+    const declined = {
+      ...created,
+      detailsSubmitted: true,
+      payoutsEnabled: false,
+      requirementsDue: false,
+      rejected: true,
+    } as Doc<"stripeAccounts">;
+
+    expect(toStripeAccountStatus(declined)).toBe("rejected");
   });
 
   // Stripe's last flags still say payouts are on, but Tomoji can no longer use the account.
@@ -98,7 +147,7 @@ describe("toStripeAccountStatus", () => {
 describe("beginAccountCreation", () => {
   /** Starts or resumes an attempt, failing the test if an account came back instead. */
   async function begin(t: TestConvex, creatorId: Id<"creators">, country: string | undefined) {
-    const result = await t.run((ctx) => beginAccountCreation(ctx, creatorId, country));
+    const result = await beginWithCountry(t, creatorId, country);
     if (!("attempt" in result)) throw new Error("expected an attempt, got an account");
     return result;
   }
@@ -134,9 +183,11 @@ describe("beginAccountCreation", () => {
     const creatorId = await seedCreatorId(t, "attempt_already_saved");
     await t.run((ctx) => createStripeAccount(ctx, creatorId, created));
 
-    const result = await t.run((ctx) => beginAccountCreation(ctx, creatorId, "US"));
+    const result = await beginWithCountry(t, creatorId, "US");
 
-    expect(result).toMatchObject({ account: { stripeAccountId: "acct_creator" } });
+    expect(result).toMatchObject({
+      account: { stripeAccountId: "acct_creator" },
+    });
     await t.run(async (ctx) => {
       expect(await ctx.db.query("stripeAccountCreations").first()).toBeNull();
     });
@@ -160,7 +211,7 @@ describe("beginAccountCreation", () => {
     const creatorId = await seedCreatorId(t, "attempt_no_country");
 
     await expectApiError(
-      () => t.run((ctx) => beginAccountCreation(ctx, creatorId, undefined)),
+      () => beginWithCountry(t, creatorId, undefined),
       "invalid_state",
       "country_required",
     );
@@ -235,7 +286,10 @@ describe("createStripeAccount", () => {
     await expectApiError(
       () =>
         t.run((ctx) =>
-          createStripeAccount(ctx, creatorId, { ...created, stripeAccountId: "acct_other" }),
+          createStripeAccount(ctx, creatorId, {
+            ...created,
+            stripeAccountId: "acct_other",
+          }),
         ),
       "conflict",
       "stripe_account_exists",
@@ -259,15 +313,38 @@ describe("createStripeAccount", () => {
     });
   });
 
-  test("closes the creator's pending attempt once the account is saved", async () => {
+  test("closes the attempt the account came from once it is saved", async () => {
     const t = convexTest(schema, modules);
     const creatorId = await seedCreatorId(t, "stripe_attempt_done");
-    await t.run((ctx) => beginAccountCreation(ctx, creatorId, "US"));
+    const begun = await beginWithCountry(t, creatorId, "US");
+    if (!("attempt" in begun)) throw new Error("expected an attempt");
 
-    await t.run((ctx) => createStripeAccount(ctx, creatorId, created));
+    await t.run((ctx) => createStripeAccount(ctx, creatorId, created, begun.attempt._id));
 
     await t.run(async (ctx) => {
       expect(await ctx.db.query("stripeAccountCreations").first()).toBeNull();
+    });
+  });
+
+  // Two clicks can share an attempt; the slower one may save after the creator
+  // has disconnected and started reconnecting. It must not close that newer
+  // attempt, or another click would start a third with yet another key.
+  test("a delayed save of an old account leaves the creator's newer attempt alone", async () => {
+    const t = convexTest(schema, modules);
+    const creatorId = await seedCreatorId(t, "stripe_attempt_delayed");
+    const first = await beginWithCountry(t, creatorId, "US");
+    if (!("attempt" in first)) throw new Error("expected an attempt");
+    await t.run((ctx) => createStripeAccount(ctx, creatorId, created, first.attempt._id));
+    await t.run((ctx) => disconnectStripeAccount(ctx, "acct_creator", 1_700_000_100_000));
+    const reconnect = await beginWithCountry(t, creatorId, "US");
+    if (!("attempt" in reconnect)) throw new Error("expected an attempt");
+
+    await t.run((ctx) => createStripeAccount(ctx, creatorId, created, first.attempt._id));
+
+    const again = await beginWithCountry(t, creatorId, "US");
+    expect(again).toMatchObject({
+      retry: true,
+      attempt: { _id: reconnect.attempt._id },
     });
   });
 
@@ -488,7 +565,7 @@ describe("updateStripeAccount adopting an unsaved account", () => {
   test("records the account for our creator who has none", async () => {
     const t = convexTest(schema, modules);
     const creatorId = await seedCreatorId(t, "stripe_adopt");
-    await t.run((ctx) => beginAccountCreation(ctx, creatorId, "US"));
+    await beginWithCountry(t, creatorId, "US");
 
     const result = await t.run((ctx) => updateStripeAccount(ctx, created, creatorId));
 

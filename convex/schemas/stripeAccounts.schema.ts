@@ -3,9 +3,9 @@ import { v } from "convex/values";
 
 /**
  * A creator's Stripe Connect Standard account. Onboarding status is derived
- * from the three flags and `disconnectedAt` rather than stored; only the
- * webhook changes them. A creator who reconnects gets a new account in place
- * of the disconnected one.
+ * from the flags and `disconnectedAt` rather than stored. `onboardingLink`
+ * saves a new account; after that, only what Stripe reports changes it. A
+ * creator who reconnects gets a new account in place of the disconnected one.
  */
 export const stripeAccountsTable = defineTable({
   creatorId: v.id("creators"),
@@ -21,6 +21,10 @@ export const stripeAccountsTable = defineTable({
   // Webhook deliveries can save in any order, so earlier reads are skipped
   // against this.
   stripeUpdatedAt: v.number(),
+  // Stripe declined the account for good (`requirements.disabled_reason` is
+  // `rejected.*`, such as fraud); the creator cannot fix it by onboarding.
+  // Absent on rows saved before this was tracked.
+  rejected: v.optional(v.boolean()),
   // When the creator removed Tomoji from their Stripe account, in Unix ms.
   // Tomoji can no longer use it, whatever the flags say.
   disconnectedAt: v.optional(v.number()),

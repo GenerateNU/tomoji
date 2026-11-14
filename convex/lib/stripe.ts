@@ -4,8 +4,9 @@ import { env } from "../_generated/server";
 import type { StripeAccountState } from "../models/stripeAccounts";
 import { apiError } from "./errors";
 
-// How far around an attempt's start to look for an account Stripe already made.
-// Stripe creates it within seconds of the request; the margin covers clock skew.
+// How far before an attempt's start to look for the account it made: our clock
+// and Stripe's can differ. There is no upper bound, because a retry can come
+// hours later and the account's creation time is whenever Stripe processed it.
 const RECOVERY_WINDOW_SECONDS = 10 * 60;
 
 /**
@@ -46,6 +47,16 @@ export async function fingerprint(value: unknown): Promise<string> {
   return Array.from(new Uint8Array(digest).slice(0, 8), (byte) =>
     byte.toString(16).padStart(2, "0"),
   ).join("");
+}
+
+/**
+ * Whether Stripe refused because Tomoji no longer has access to a connected
+ * account: the creator removed Tomoji in Stripe. Other permission errors mean
+ * our own key lacks a permission, which is a misconfiguration to retry after,
+ * not a disconnect.
+ */
+export function isAccountAccessLost(error: unknown): boolean {
+  return error instanceof Stripe.errors.StripePermissionError && error.code === "account_invalid";
 }
 
 /** Stripe's reason for a failed request, for the logs. Stripe errors carry no secrets. */
@@ -107,29 +118,38 @@ export async function createConnectAccount(
 
 /**
  * The account an earlier attempt made, if any, found by its creator tag among
- * accounts created around the attempt's start. Stripe offers no lookup by
+ * accounts created since the attempt started. Stripe offers no lookup by
  * idempotency key and its Search API does not cover accounts, so this lists
- * by creation time. Stripe forgets idempotency keys after 24 hours, so a late
- * retry relies on this rather than on the key.
+ * by creation time. Stripe can forget idempotency keys after 24 hours, so a
+ * late retry relies on this rather than on the key. `replacedAccountId` is the
+ * creator's disconnected account, if reconnecting, which is never returned.
+ *
+ * @throws `upstream_failure` with reason `stripe_account_failed` if Stripe
+ * cannot be asked, since that proves nothing about whether the account exists.
  */
 export async function findCreatedConnectAccount(
   stripe: Stripe,
   attempt: Doc<"stripeAccountCreations">,
+  replacedAccountId: string | undefined,
 ): Promise<Stripe.Account | null> {
   const startedAt = Math.floor(attempt.startedAt / 1000);
   try {
     for await (const account of stripe.accounts.list({
-      created: {
-        gte: startedAt - RECOVERY_WINDOW_SECONDS,
-        lte: startedAt + RECOVERY_WINDOW_SECONDS,
-      },
+      created: { gte: startedAt - RECOVERY_WINDOW_SECONDS },
       limit: 100,
     })) {
-      if (account.metadata?.creatorId === attempt.creatorId) return account;
+      // The disconnected account being replaced carries the same tag, and can fall
+      // inside the window if the creator reconnects soon after connecting.
+      if (account.metadata?.creatorId === attempt.creatorId && account.id !== replacedAccountId) {
+        return account;
+      }
     }
   } catch (error) {
-    // Creating again is safe within 24 hours, when the idempotency key still holds.
+    // Failing to look is not the same as finding nothing: creating now could make
+    // a second account once Stripe has forgotten the original key. Keep the
+    // attempt so the next retry looks again.
     console.error("Stripe refused to list accounts", stripeErrorDetails(error));
+    throw apiError("upstream_failure", { reason: "stripe_account_failed" });
   }
   return null;
 }
@@ -147,6 +167,7 @@ export function toStripeAccountState(
     detailsSubmitted: account.details_submitted,
     payoutsEnabled: account.payouts_enabled,
     requirementsDue: (account.requirements?.currently_due?.length ?? 0) > 0,
+    rejected: account.requirements?.disabled_reason?.startsWith("rejected") ?? false,
     stripeUpdatedAt: updatedAt,
   };
 }

@@ -86,7 +86,10 @@ async function deliver(t: TestConvex, payload: string, secret = SECRET) {
   });
   return await t.fetch("/stripe/webhook", {
     method: "POST",
-    headers: { "Stripe-Signature": signature, "Content-Type": "application/json" },
+    headers: {
+      "Stripe-Signature": signature,
+      "Content-Type": "application/json",
+    },
     body: payload,
   });
 }
@@ -145,12 +148,15 @@ describe("POST /stripe/webhook", () => {
 
     await deliver(t, accountUpdated({ payouts_enabled: true }));
 
-    expect(await account()).toMatchObject({ payoutsEnabled: false, requirementsDue: true });
+    expect(await account()).toMatchObject({
+      payoutsEnabled: false,
+      requirementsDue: true,
+    });
   });
 
-  // A disconnected account can no longer be read. Retrying would fail for days,
-  // and the deauthorization event records the disconnect.
-  test("acknowledges an update for an account Tomoji can no longer read", async () => {
+  // A disconnected account can no longer be read. Retrying would fail for days, and
+  // losing access proves the disconnect even if its own event is late or missing.
+  test("marks an account Tomoji can no longer read as disconnected", async () => {
     const { t, account } = await seedStoredAccount("webhook_no_access");
     vi.spyOn(console, "log").mockImplementation(() => {});
     retrieveAccount.mockRejectedValue(
@@ -164,7 +170,39 @@ describe("POST /stripe/webhook", () => {
     const response = await deliver(t, accountUpdated({}));
 
     expect(response.status).toBe(200);
-    expect(await account()).toMatchObject(stored);
+    expect(toStripeAccountStatus(await account())).toBe("disconnected");
+  });
+
+  test("records that Stripe declined the account", async () => {
+    const { t, account } = await seedStoredAccount("webhook_rejected");
+    retrieveAccount.mockResolvedValue(
+      currentAccount({
+        payouts_enabled: false,
+        requirements: { currently_due: [], disabled_reason: "rejected.fraud" },
+      }) as never,
+    );
+
+    await deliver(t, accountUpdated({}));
+
+    expect(toStripeAccountStatus(await account())).toBe("rejected");
+  });
+
+  // A key missing a permission is our misconfiguration, not the creator leaving;
+  // marking accounts disconnected then would wrongly stop every creator's payouts.
+  test("keeps the account and asks Stripe to retry when our key lacks a permission", async () => {
+    const { t, account } = await seedStoredAccount("webhook_key_restricted");
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    retrieveAccount.mockRejectedValue(
+      new Stripe.errors.StripePermissionError({
+        type: "invalid_request_error",
+        message: "The provided key does not have the required permissions for this endpoint",
+      }),
+    );
+
+    const response = await deliver(t, accountUpdated({}));
+
+    expect(response.status).toBe(500);
+    expect(toStripeAccountStatus(await account())).not.toBe("disconnected");
   });
 
   // A 500 makes Stripe redeliver, so the update is applied once Stripe recovers.
@@ -189,7 +227,9 @@ describe("POST /stripe/webhook", () => {
     const response = await deliver(t, deauthorized("acct_creator"));
 
     expect(response.status).toBe(200);
-    expect(await account()).toMatchObject({ disconnectedAt: 1_700_000_200_000 });
+    expect(await account()).toMatchObject({
+      disconnectedAt: 1_700_000_200_000,
+    });
     expect(toStripeAccountStatus(await account())).toBe("disconnected");
   });
 
@@ -240,7 +280,10 @@ describe("POST /stripe/webhook", () => {
   // retry for days.
   test("acknowledges an account from another deployment without storing it", async () => {
     const t = convexTest(schema, modules);
-    const foreign = { id: "acct_elsewhere", metadata: { creatorId: "k57notours" } };
+    const foreign = {
+      id: "acct_elsewhere",
+      metadata: { creatorId: "k57notours" },
+    };
     retrieveAccount.mockResolvedValue(currentAccount(foreign) as never);
 
     const response = await deliver(t, accountUpdated(foreign));
@@ -328,7 +371,10 @@ describe("POST /stripe/webhook re-check", () => {
     vi.useFakeTimers();
     try {
       const t = convexTest(schema, modules);
-      const foreign = { id: "acct_elsewhere", metadata: { creatorId: "k57notours" } };
+      const foreign = {
+        id: "acct_elsewhere",
+        metadata: { creatorId: "k57notours" },
+      };
       retrieveAccount.mockResolvedValue(currentAccount(foreign) as never);
 
       await deliver(t, accountUpdated(foreign));

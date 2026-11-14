@@ -43,10 +43,13 @@ latest Stripe details each time, never stored.
 | `actionRequired` | Form not finished, or Stripe asked for more information     | "Finish setting up Stripe" button (same link) |
 | `inReview`       | Form submitted; Stripe is verifying (minutes to a few days) | "Stripe is reviewing your details", no button |
 | `ready`          | Payouts are enabled                                         | Nothing                                       |
+| `rejected`       | Stripe declined the account for good (e.g. fraud)           | "Contact Stripe support", no button           |
 | `disconnected`   | The creator removed Tomoji from their Stripe account        | "Reconnect Stripe" button (same route)        |
 
 Reconnecting creates a **new** Stripe account; Stripe offers no way to reattach the old one.
-The creator keeps the old account and any money already in it.
+The creator keeps the old account and any money already in it. An account becomes
+`disconnected` when the `account.application.deauthorized` event arrives, or as soon as Stripe
+refuses Tomoji access to it, so a missing event can't leave the creator stuck.
 
 Creators can't apply to opportunities until they are `ready` (agreed with Karim). That check
 isn't built yet.
@@ -83,20 +86,22 @@ Payouts are in USD. Non-US accounts receive them converted to their own currency
 
 Errors (`ConvexError` data):
 
-| `code` / `reason`                              | Cause                                                      |
-| ---------------------------------------------- | ---------------------------------------------------------- |
-| `invalid_state` / `country_required`           | The creator has no profile country                         |
-| `invalid_state` / `stripe_country_unsupported` | Stripe doesn't operate in that country; they may change it |
-| `misconfigured` / `stripe_secret_key_missing`  | Deployment has no `STRIPE_SECRET_KEY`                      |
-| `misconfigured` / `site_url_missing`           | Deployment has no `SITE_URL`                               |
-| `upstream_failure` / `stripe_account_failed`   | Stripe refused to create the account                       |
-| `upstream_failure` / `stripe_link_failed`      | Stripe refused the link; the account is kept               |
+| `code` / `reason`                               | Cause                                                          |
+| ----------------------------------------------- | -------------------------------------------------------------- |
+| `invalid_state` / `country_required`            | The creator has no profile country                             |
+| `invalid_state` / `stripe_country_unsupported`  | Stripe doesn't operate in that country; they may change it     |
+| `invalid_state` / `stripe_account_disconnected` | The creator removed Tomoji in Stripe; calling again reconnects |
+| `misconfigured` / `stripe_secret_key_missing`   | Deployment has no `STRIPE_SECRET_KEY`                          |
+| `misconfigured` / `site_url_missing`            | Deployment has no `SITE_URL`                                   |
+| `upstream_failure` / `stripe_account_failed`    | Stripe refused to create the account                           |
+| `upstream_failure` / `stripe_link_failed`       | Stripe refused the link; the account is kept                   |
 
 Stripe's reason for any failure is in the deployment logs (`just dashboard` → Logs).
 
 ## How status stays correct
 
-Only the `POST /stripe/webhook` endpoint changes a creator's Stripe details. It:
+`onboardingLink` saves a new account; after that, only what Stripe reports changes it, mostly
+through the `POST /stripe/webhook` endpoint. It:
 
 - rejects any request whose signature doesn't match `STRIPE_WEBHOOK_SECRET` (400), and
   answers 500 while the secret is unset so Stripe keeps retrying;
@@ -106,8 +111,8 @@ Only the `POST /stripe/webhook` endpoint changes a creator's Stripe details. It:
   deliveries saving in reverse order can't restore an earlier state. About five seconds after
   each save it reads the account once more, so even reads whose stamps tie, or come from servers
   with slightly different clocks, settle on Stripe's real state. If Stripe can't be reached
-  it answers 500 so Stripe redelivers; if Tomoji has lost access (the creator disconnected) it
-  answers 200;
+  it answers 500 so Stripe redelivers; if Tomoji has lost access, the creator disconnected, so
+  it marks the account `disconnected` and answers 200;
 - on `account.application.deauthorized`, marks the account `disconnected`. Later updates never
   undo that, and events for an account the creator has since replaced are ignored;
 - answers 200 to every other verified event, including types it ignores.
@@ -125,12 +130,19 @@ A creator never ends up with two accounts:
 - When Stripe rejects the request as invalid (an unsupported country or anything else), it made
   no account, so the attempt is dropped and a retry starts fresh instead of Stripe replaying the
   refusal under the old key for 24 hours. A network error keeps the attempt, since Stripe may
-  have made the account. Dropping deletes only that attempt, never a newer one.
-- Stripe forgets idempotency keys after 24 hours, so a retry first lists accounts created
-  around the attempt's start and reuses the one tagged with `metadata.creatorId`.
+  have made the account. Dropping deletes only that attempt, never a newer one, and so does
+  saving the account: a delayed save of an old account can't close a newer reconnect attempt.
+- Stripe can forget idempotency keys after 24 hours, so a retry first lists accounts created
+  since the attempt started and reuses the one tagged with `metadata.creatorId`. If Stripe
+  can't be asked, the retry stops with `stripe_account_failed` and keeps the attempt, rather
+  than treating "couldn't look" as "no account".
 - The account is saved before the onboarding link is requested, so a failed link reuses it.
-- If saving fails after Stripe created the account, the next `account.updated` event carries
-  `metadata.creatorId` and the webhook adopts the account for that creator.
+- If saving a creator's **first** account fails after Stripe created it, the next
+  `account.updated` event carries `metadata.creatorId` and the webhook adopts it. A reconnecting
+  creator already has a (disconnected) row, so their new account is recovered by the lookup on
+  their next click instead.
+- The lookup never returns the disconnected account being replaced, even if the creator
+  reconnects soon after connecting.
 
 ## Trying it end to end
 

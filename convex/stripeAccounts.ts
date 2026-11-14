@@ -7,6 +7,7 @@ import { creatorAction, creatorQuery } from "./lib/functions";
 import {
   createConnectAccount,
   findCreatedConnectAccount,
+  isAccountAccessLost,
   siteUrl,
   stripeClient,
   stripeErrorDetails,
@@ -30,7 +31,8 @@ import schema from "./schema";
  * Creator payout setup through Stripe Connect. Stripe hosts onboarding; these
  * routes create the account and hand out a short-lived link to it. Creators get
  * Standard accounts and sign in to dashboard.stripe.com themselves, so there is
- * no dashboard link. Only the webhook changes onboarding status.
+ * no dashboard link. After `onboardingLink` saves an account, only what Stripe
+ * reports changes its status.
  *
  * The internal functions are the database steps for `onboardingLink` and the
  * webhook, which cannot read or write the database themselves. Callers pass the
@@ -45,7 +47,7 @@ const REFRESH_PATH = "/profile?stripe=refresh";
 
 /**
  * What the creator has to do about payouts: `notStarted`, `actionRequired`,
- * `inReview`, `ready`, or `disconnected`.
+ * `inReview`, `ready`, `rejected`, or `disconnected`.
  */
 export const me = creatorQuery({
   args: {},
@@ -66,7 +68,9 @@ export const me = creatorQuery({
  * again for each visit.
  *
  * @throws `invalid_state` with reason `country_required` if the creator has not
- * set a country, or `stripe_country_unsupported` if Stripe does not operate there.
+ * set a country, `stripe_country_unsupported` if Stripe does not operate there,
+ * or `stripe_account_disconnected` if the creator removed Tomoji in Stripe; the
+ * next call then creates a new account.
  * @throws `misconfigured` if the deployment lacks a Stripe key or `SITE_URL`.
  * @throws `upstream_failure` with reason `stripe_account_failed` or
  * `stripe_link_failed` if Stripe rejects either request.
@@ -96,8 +100,9 @@ export const onboardingLink = creatorAction({
       } else {
         const { attempt, retry } = begun;
         const created =
-          (retry ? await findCreatedConnectAccount(stripe, attempt) : null) ??
-          (await createConnectAccount(stripe, attempt));
+          (retry
+            ? await findCreatedConnectAccount(stripe, attempt, account?.stripeAccountId)
+            : null) ?? (await createConnectAccount(stripe, attempt));
         if (created === "country_unsupported" || created === "rejected") {
           // Stripe refused the request, so no account exists. A retry starts a
           // fresh attempt, letting the creator change country or a fix take effect,
@@ -116,6 +121,7 @@ export const onboardingLink = creatorAction({
         account = await ctx.runMutation(internal.stripeAccounts.create, {
           creatorId: ctx.creatorId,
           state: toStripeAccountState(created, Date.now()),
+          attemptId: attempt._id,
         });
       }
     }
@@ -130,6 +136,17 @@ export const onboardingLink = creatorAction({
       return { url: accountLink.url };
     } catch (error) {
       console.error("Stripe refused the onboarding link", stripeErrorDetails(error));
+      if (isAccountAccessLost(error)) {
+        // Tomoji lost access, so the creator removed it in Stripe, even if the
+        // disconnect event is late or missing. The next click reconnects.
+        await ctx.runMutation(internal.stripeAccounts.disconnect, {
+          stripeAccountId: account.stripeAccountId,
+          disconnectedAt: Date.now(),
+        });
+        throw apiError("invalid_state", {
+          reason: "stripe_account_disconnected",
+        });
+      }
       throw apiError("upstream_failure", { reason: "stripe_link_failed" });
     }
   },
@@ -141,10 +158,7 @@ export const getForCreator = internalQuery({
   handler: async (ctx, args) => await getStripeAccountByCreatorId(ctx, args.creatorId),
 });
 
-/**
- * Records the attempt, or returns the pending one, using the creator's profile
- * country. See `beginAccountCreation`.
- */
+/** Records the attempt, or returns the pending one. See `beginAccountCreation`. */
 export const beginCreation = internalMutation({
   args: { creatorId: v.id("creators") },
   returns: v.union(
@@ -154,10 +168,7 @@ export const beginCreation = internalMutation({
       retry: v.boolean(),
     }),
   ),
-  handler: async (ctx, args) => {
-    const creator = await ctx.db.get("creators", args.creatorId);
-    return await beginAccountCreation(ctx, args.creatorId, creator?.countryOfResidence);
-  },
+  handler: async (ctx, args) => await beginAccountCreation(ctx, args.creatorId),
 });
 
 /** Forgets an attempt Stripe refused outright. See `abandonAccountCreation`. */
@@ -172,9 +183,14 @@ export const abandonCreation = internalMutation({
 
 /** Saves the account Stripe just created, as soon as it exists. */
 export const create = internalMutation({
-  args: { creatorId: v.id("creators"), state: stripeAccountState },
+  args: {
+    creatorId: v.id("creators"),
+    state: stripeAccountState,
+    attemptId: v.id("stripeAccountCreations"),
+  },
   returns: schema.doc("stripeAccounts"),
-  handler: async (ctx, args) => await createStripeAccount(ctx, args.creatorId, args.state),
+  handler: async (ctx, args) =>
+    await createStripeAccount(ctx, args.creatorId, args.state, args.attemptId),
 });
 
 /** Applies a verified `account.updated` event from the Stripe webhook. */
@@ -212,8 +228,13 @@ export const recheck = internalAction({
     try {
       account = await stripeClient().accounts.retrieve(args.stripeAccountId);
     } catch (error) {
-      // A disconnect since the save is recorded by `account.application.deauthorized`.
-      if (!(error instanceof Stripe.errors.StripePermissionError)) {
+      if (isAccountAccessLost(error)) {
+        // Lost access proves the creator removed Tomoji since the save.
+        await ctx.runMutation(internal.stripeAccounts.disconnect, {
+          stripeAccountId: args.stripeAccountId,
+          disconnectedAt: Date.now(),
+        });
+      } else {
         console.error("Stripe refused the account re-check", stripeErrorDetails(error));
       }
       return null;

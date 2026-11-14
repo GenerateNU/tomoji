@@ -1,7 +1,16 @@
 import Stripe from "stripe";
 import { internal } from "./_generated/api";
 import { env, httpAction } from "./_generated/server";
-import { stripeClient, stripeErrorDetails, toStripeAccountState } from "./lib/stripe";
+import {
+  isAccountAccessLost,
+  stripeClient,
+  stripeErrorDetails,
+  toStripeAccountState,
+} from "./lib/stripe";
+
+// How long after saving an account to read it from Stripe again. Long enough for
+// overlapping deliveries of the same change to have saved.
+const ACCOUNT_RECHECK_DELAY_MS = 5_000;
 
 /**
  * Receives Stripe's Connect events. Only events whose signature matches
@@ -12,10 +21,6 @@ import { stripeClient, stripeErrorDetails, toStripeAccountState } from "./lib/st
  * days. A 500 is reserved for failures worth retrying, such as a missing
  * secret or Stripe being unreachable, so Stripe keeps the events until fixed.
  */
-// How long after saving an account to read it from Stripe again. Long enough for
-// overlapping deliveries of the same change to have saved.
-const ACCOUNT_RECHECK_DELAY_MS = 5_000;
-
 export const stripeWebhook = httpAction(async (ctx, request) => {
   const secret = env.STRIPE_WEBHOOK_SECRET;
   if (!secret) {
@@ -46,9 +51,13 @@ export const stripeWebhook = httpAction(async (ctx, request) => {
     try {
       account = await stripeClient().accounts.retrieve(event.data.object.id);
     } catch (error) {
-      if (error instanceof Stripe.errors.StripePermissionError) {
-        // The creator disconnected Tomoji; `account.application.deauthorized`
-        // records that. Retrying would fail the same way for days.
+      if (isAccountAccessLost(error)) {
+        // Lost access proves the creator removed Tomoji, even if the
+        // deauthorization event is late or missing. Retrying would fail for days.
+        await ctx.runMutation(internal.stripeAccounts.disconnect, {
+          stripeAccountId: event.data.object.id,
+          disconnectedAt: Date.now(),
+        });
         console.log("Stripe account no longer accessible", {
           eventId: event.id,
           stripeAccountId: event.data.object.id,

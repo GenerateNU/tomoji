@@ -4,6 +4,7 @@ import {
   authedQuery,
   requireCallerViewer,
   companyMutation,
+  companyQuery,
   creatorMutation,
 } from "./lib/functions";
 import { requireCallerCreatorId } from "./models/users";
@@ -17,6 +18,7 @@ import {
   submissionView,
 } from "./models/submissions";
 import schema from "./schema";
+import { listSubmissionQueue, submissionQueue } from "./models/submissionQueue";
 
 /**
  * Submits a draft for one deliverable of the caller's own active assignment.
@@ -103,4 +105,11 @@ export const list = authedQuery({
       args.paginationOpts,
     );
   },
+});
+
+/** Lists the latest drafts that belong to the caller's company's assignments. */
+export const listCompanyQueue = companyQuery({
+  args: {},
+  returns: submissionQueue,
+  handler: async (ctx) => await listSubmissionQueue(ctx, ctx.membership.companyId),
 });

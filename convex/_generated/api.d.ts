@@ -97,6 +97,7 @@ import type * as models_posts from "../models/posts.js";
 import type * as models_skills from "../models/skills.js";
 import type * as models_stripeAccounts from "../models/stripeAccounts.js";
 import type * as models_stripeCustomers from "../models/stripeCustomers.js";
+import type * as models_submissionQueue from "../models/submissionQueue.js";
 import type * as models_submissions from "../models/submissions.js";
 import type * as models_supportingMedia from "../models/supportingMedia.js";
 import type * as models_users from "../models/users.js";
@@ -216,6 +217,7 @@ declare const fullApi: ApiFromModules<{
   "models/skills": typeof models_skills;
   "models/stripeAccounts": typeof models_stripeAccounts;
   "models/stripeCustomers": typeof models_stripeCustomers;
+  "models/submissionQueue": typeof models_submissionQueue;
   "models/submissions": typeof models_submissions;
   "models/supportingMedia": typeof models_supportingMedia;
   "models/users": typeof models_users;

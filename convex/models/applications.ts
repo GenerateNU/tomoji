@@ -7,6 +7,7 @@ import { apiError } from "../lib/errors";
 import { canViewResource, type ResourceViewer } from "../lib/authz";
 import { APPLICATION_SWEEP_BATCH } from "../lib/pagination";
 import { HALF_HOUR_MS, isHalfHourTimestamp } from "../lib/validation";
+import schema from "../schema";
 import { followerRange } from "../schemas/creators.schema";
 import { applicationStatus } from "../schemas/applications.schema";
 
@@ -15,6 +16,7 @@ import { creatorName, notifyCompanyUser, notifyCreator } from "./notifications";
 import {
   getOpportunityView,
   getVisibleOpportunityCompany,
+  hasReviewPolicy,
   toCreatorOpportunity,
   creatorOpportunity,
 } from "./opportunities";
@@ -495,15 +497,24 @@ export const applicationDetail = v.object({
   minFollowerRange: v.optional(followerRange),
   canAccept: v.boolean(),
   canDecline: v.boolean(),
+  // Whether accepting needs the creator to accept `opportunity.reviewPolicy` first.
+  termsRequired: v.boolean(),
   acceptBlockedReason: v.optional(
     v.union(v.literal("opportunity_closed"), v.literal("opportunity_full")),
   ),
 });
 export type ApplicationDetail = Infer<typeof applicationDetail>;
 
+export const acceptedOffer = v.object({
+  application: schema.doc("applications"),
+  assignmentId: v.id("assignments"),
+});
+export type AcceptedOffer = Infer<typeof acceptedOffer>;
+
 /**
  * Why accepting an offer on this opportunity would be refused, or null. Keep in
- * sync with the checks in `createAssignmentFromOffer`, which stays the authority.
+ * sync with `acceptApplication`, which enforces it, and with the checks in
+ * `createAssignmentFromOffer`, which stays the authority.
  */
 function offerAcceptBlockedReason(
   opportunity: Pick<Doc<"opportunities">, "status" | "numFilledSlots" | "maxSlots">,
@@ -560,6 +571,7 @@ export async function requireApplicationDetail(
       : { minFollowerRange: opportunity.minFollowerRange }),
     canAccept: isOffered && blockedReason === null,
     canDecline: isOffered,
+    termsRequired: hasReviewPolicy(opportunity),
     ...(isOffered && blockedReason !== null ? { acceptBlockedReason: blockedReason } : {}),
   };
 }
@@ -696,13 +708,18 @@ async function requirePendingForReview(
 }
 
 /**
- * Accepts the creator's own unexpired offer. In one transaction this creates
- * the assignment through `createAssignmentFromOffer` (which takes a slot), and,
+ * Accepts the creator's own unexpired offer, and its terms when the
+ * opportunity has a review policy. In one transaction this creates an active
+ * assignment through `createAssignmentFromOffer` (which takes a slot), and,
  * if that was the last slot, enqueues the sweep that marks every remaining
  * pending or offered application as `opportunityFull`. That sweep runs in its
  * own transactions, so the statuses and notices land shortly after; the slot
  * guard in `createAssignmentFromOffer` is what prevents an extra assignment.
  * Offers can be accepted while the opportunity is paused.
+ *
+ * Checks run in this order: offered, unexpired, opportunity closed or full,
+ * then terms. `options.acceptedTerms` is ignored when the review policy is
+ * blank.
  *
  * Two creators accepting the last slot at once both read the opportunity, so
  * Convex retries one, which then sees the slot is taken.
@@ -710,14 +727,16 @@ async function requirePendingForReview(
  * @throws `not_found` if the application does not exist or is not the
  * creator's.
  * @throws `invalid_state` if the application has no offer, the offer has
- * expired, the opportunity is closed, or every slot is filled.
+ * expired, the opportunity is closed, every slot is filled, or the terms
+ * were required but not accepted (`terms_not_accepted`).
  * @throws `conflict` if the creator already has an assignment on it.
  */
 export async function acceptApplication(
   ctx: MutationCtx,
   creatorId: Id<"creators">,
   applicationId: Id<"applications">,
-): Promise<Doc<"applications">> {
+  options: { acceptedTerms?: boolean } = {},
+): Promise<AcceptedOffer> {
   const application = await requireOfferedApplication(ctx, creatorId, applicationId);
   const now = Date.now();
   if (application.offerExpiresAt === undefined || application.offerExpiresAt <= now) {
@@ -727,12 +746,20 @@ export async function acceptApplication(
   if (opportunity === null) {
     throw apiError("not_found", { resource: "application" });
   }
+  const blockedReason = offerAcceptBlockedReason(opportunity);
+  if (blockedReason !== null) {
+    throw apiError("invalid_state", { reason: blockedReason });
+  }
+  if (hasReviewPolicy(opportunity) && options.acceptedTerms !== true) {
+    throw apiError("invalid_state", { reason: "terms_not_accepted" });
+  }
 
-  // Refuses a closed opportunity or a full one, then takes the slot and creates
-  // the termsPending assignment with the opportunity's current terms.
+  // Takes the slot and creates the active assignment with the opportunity's
+  // current terms, recording the acceptance time.
   const assignmentId = await createAssignmentFromOffer(ctx, {
     opportunityId: opportunity._id,
     creatorId,
+    termsAcceptedAt: now,
   });
   const patch = {
     status: "accepted" as const,
@@ -750,7 +777,7 @@ export async function acceptApplication(
       opportunityId: opportunity._id,
     });
   }
-  return { ...application, ...patch };
+  return { application: { ...application, ...patch }, assignmentId };
 }
 
 /**

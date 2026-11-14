@@ -92,6 +92,15 @@ export const creatorOpportunity = schema
 
 export type CreatorOpportunity = Infer<typeof creatorOpportunity>;
 
+/**
+ * Whether creators must accept the opportunity's terms and conditions (its
+ * review policy) before an offer can be accepted. A blank policy means no
+ * terms step.
+ */
+export function hasReviewPolicy(opportunity: Pick<Doc<"opportunities">, "reviewPolicy">): boolean {
+  return opportunity.reviewPolicy.trim() !== "";
+}
+
 /** Builds the allowlisted creator-facing brief from an opportunity and its company. */
 export function toCreatorOpportunity(
   opportunity: Doc<"opportunities">,

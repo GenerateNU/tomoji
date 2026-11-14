@@ -256,7 +256,8 @@ type SeedCampaign = Pick<Doc<"campaigns">, "companyId" | "createdBy"> & { _id: I
 type Brief = Pick<
   Doc<"opportunities">,
   "title" | "description" | "deadline" | "isGated" | "usesAiReviewDefault"
->;
+> &
+  Partial<Pick<Doc<"opportunities">, "reviewPolicy">>;
 
 /** Creates a discoverable brief and one deliverable with validated taxonomy selections. */
 async function seedOpportunity(
@@ -270,8 +271,8 @@ async function seedOpportunity(
   },
 ) {
   const opportunityId = await ctx.db.insert("opportunities", {
-    ...fields,
     ...brief,
+    ...fields,
     ...compensation,
     companyId: campaign.companyId,
     campaignId: campaign._id,
@@ -340,7 +341,7 @@ async function seedScenario(
     note: "I make short tutorials for designers who code.",
     status: scenario.stage === "applying" ? "offered" : "accepted",
     statusLastUpdatedAt: now,
-    offerExpiresAt: now + 2 * dayMs,
+    offerExpiresAt: Math.ceil((now + 2 * dayMs) / HALF_HOUR_MS) * HALF_HOUR_MS,
     offerAcceptedAt: scenario.stage === "applying" ? undefined : now,
   });
 
@@ -656,6 +657,75 @@ async function seedNotifications(
     await ctx.db.insert("notifications", { ...notification, userId: admin.userId });
 }
 
+const offerScenarios = [
+  {
+    // Inside the final day, so the offer shows its live countdown.
+    title: "Behind the scenes of a product launch",
+    task: "Show how your team prepares a launch",
+    status: "offered",
+    offerExpiresAt: (now: number) =>
+      Math.ceil((now + 18 * 60 * 60 * 1000) / HALF_HOUR_MS) * HALF_HOUR_MS,
+    reviewPolicy: [
+      "Disclose the sponsorship with #ad.",
+      "Name Northstar Studio in the caption.",
+      "Don't show customer data or unreleased features.",
+      "Keep the video under one minute.",
+    ].join("\n"),
+  },
+  {
+    // A blank review policy skips the terms step.
+    title: "A day in the life of a design engineer",
+    task: "Film a day working with Northstar Studio",
+    status: "offered",
+    offerExpiresAt: (now: number) => Math.ceil((now + 3 * dayMs) / HALF_HOUR_MS) * HALF_HOUR_MS,
+    reviewPolicy: "",
+  },
+  {
+    title: "Teardown of a popular landing page",
+    task: "Break down a landing page you admire",
+    status: "offerExpired",
+    offerExpiresAt: (now: number) => Math.floor((now - dayMs) / HALF_HOUR_MS) * HALF_HOUR_MS,
+    reviewPolicy: undefined,
+  },
+] as const;
+
+/** Seeds open offers in each display state: urgent, live without terms, and expired. */
+async function seedOffers(
+  ctx: MutationCtx,
+  campaign: SeedCampaign,
+  creator: Doc<"creators">,
+  signals: CreatorSignals,
+  demoProfile: { creatorId: Id<"creators">; signals: CreatorSignals },
+  now: number,
+) {
+  for (const [index, offer] of offerScenarios.entries()) {
+    const { opportunityId } = await seedOpportunity(
+      ctx,
+      campaign,
+      {
+        title: offer.title,
+        description: `${offer.task}. Keep the walkthrough under one minute.`,
+        deadline: Math.ceil((now + (14 + index) * dayMs) / HALF_HOUR_MS) * HALF_HOUR_MS,
+        isGated: true,
+        usesAiReviewDefault: false,
+        ...(offer.reviewPolicy === undefined ? {} : { reviewPolicy: offer.reviewPolicy }),
+      },
+      { task: offer.task, ...matchTags },
+    );
+    await ctx.db.insert("applications", {
+      opportunityId,
+      creatorId: creator._id,
+      companyId: campaign.companyId,
+      note: "I make short tutorials for designers who code.",
+      status: offer.status,
+      statusLastUpdatedAt: now,
+      offerExpiresAt: offer.offerExpiresAt(now),
+    });
+    await seedScore(ctx, demoProfile.creatorId, demoProfile.signals, opportunityId);
+    await seedScore(ctx, creator._id, signals, opportunityId);
+  }
+}
+
 /** Uses the same matching rules as discovery, without scheduling scoring jobs. */
 async function seedScore(
   ctx: MutationCtx,
@@ -719,6 +789,14 @@ export const run = internalMutation({
       await seedScore(ctx, demoProfile.creatorId, demoProfile.signals, record.opportunityId);
       await seedScore(ctx, creator._id, signals, record.opportunityId);
     }
+    await seedOffers(
+      ctx,
+      { ...campaignFields, _id: campaignId },
+      creator,
+      signals,
+      demoProfile,
+      now,
+    );
     await seedNotifications(
       ctx,
       creator,

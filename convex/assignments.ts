@@ -186,7 +186,9 @@ export const get = authedQuery({
  * Returns the creator view, including delivery time but no delivery actor ID.
  *
  * @throws `not_found` if the assignment does not exist or is not the caller's.
- * @throws `invalid_state` if the assignment is not termsPending.
+ * @throws `invalid_state` if the assignment is not termsPending. Only claimed
+ * (ungated) assignments are ever termsPending; an accepted offer is created
+ * active.
  */
 export const acceptTerms = creatorMutation({
   args: { assignmentId: v.id("assignments") },
@@ -204,7 +206,8 @@ export const acceptTerms = creatorMutation({
  * Returns the creator view, including delivery time but no delivery actor ID.
  *
  * @throws `not_found` if the assignment does not exist or is not the caller's.
- * @throws `invalid_state` if the assignment is not termsPending.
+ * @throws `invalid_state` if the assignment is not termsPending. Only claimed
+ * (ungated) assignments are ever termsPending.
  */
 export const declineTerms = creatorMutation({
   args: { assignmentId: v.id("assignments") },
@@ -222,7 +225,8 @@ export const declineTerms = creatorMutation({
  *
  * @throws `not_found` if the assignment does not exist or belongs to another
  * company.
- * @throws `invalid_state` if the assignment is not termsPending.
+ * @throws `invalid_state` if the assignment is not termsPending. Only claimed
+ * (ungated) assignments are ever termsPending.
  */
 export const cancel = companyAdminMutation({
   args: { assignmentId: v.id("assignments") },

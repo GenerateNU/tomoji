@@ -48,7 +48,9 @@ export async function claimAssignment(
   if (opportunity.isGated) {
     throw apiError("invalid_state", { reason: "opportunity_gated" });
   }
-  const assignmentId = await createAssignment(ctx, opportunity, campaign, creatorId);
+  const assignmentId = await createAssignment(ctx, opportunity, campaign, creatorId, {
+    status: "termsPending",
+  });
   // Only claims notify here; an accepted offer is reported by `acceptApplication`.
   await notifyCompanyUser(ctx, opportunity.createdBy, {
     type: "assignmentClaimed",
@@ -64,10 +66,10 @@ export function assignmentTarget(assignmentId: Id<"assignments">) {
 }
 
 /**
- * Creates the assignment for a creator who accepted an offer on a gated
- * opportunity. Call it in the same mutation that marks the application
- * accepted; it does not read or check the application. Offers can be accepted
- * while the opportunity or campaign is paused.
+ * Creates the active assignment for a creator who accepted an offer (and its
+ * terms) on a gated opportunity. Call it in the same mutation that marks the
+ * application accepted; it does not read or check the application. Offers can
+ * be accepted while the opportunity or campaign is paused.
  *
  * @throws `not_found` if the opportunity does not exist.
  * @throws `invalid_state` if the opportunity is a draft or closed, is ungated,
@@ -76,7 +78,11 @@ export function assignmentTarget(assignmentId: Id<"assignments">) {
  */
 export async function createAssignmentFromOffer(
   ctx: MutationCtx,
-  args: { opportunityId: Id<"opportunities">; creatorId: Id<"creators"> },
+  args: {
+    opportunityId: Id<"opportunities">;
+    creatorId: Id<"creators">;
+    termsAcceptedAt: number;
+  },
 ): Promise<Id<"assignments">> {
   const { opportunity, campaign } = await requireOpportunityWithCampaign(ctx, args.opportunityId);
   if (opportunity.status !== "open" && opportunity.status !== "paused") {
@@ -85,7 +91,10 @@ export async function createAssignmentFromOffer(
   if (!opportunity.isGated) {
     throw apiError("invalid_state", { reason: "opportunity_not_gated" });
   }
-  return await createAssignment(ctx, opportunity, campaign, args.creatorId);
+  return await createAssignment(ctx, opportunity, campaign, args.creatorId, {
+    status: "active",
+    termsAcceptedAt: args.termsAcceptedAt,
+  });
 }
 
 async function requireOpportunityWithCampaign(
@@ -101,8 +110,9 @@ async function requireOpportunityWithCampaign(
 }
 
 /**
- * Takes a slot and inserts a termsPending assignment with the opportunity's
- * current terms, so later opportunity edits do not change the deal.
+ * Takes a slot and inserts an assignment with the opportunity's current terms,
+ * so later opportunity edits do not change the deal. Claims start
+ * `termsPending`; accepted offers start `active` with the acceptance time.
  *
  * The slot check and increment read and write the opportunity in this
  * transaction, so when two creators race for the last slot Convex retries the
@@ -113,6 +123,7 @@ async function createAssignment(
   opportunity: Doc<"opportunities">,
   campaign: Doc<"campaigns">,
   creatorId: Id<"creators">,
+  initial: { status: "termsPending" } | { status: "active"; termsAcceptedAt: number },
 ): Promise<Id<"assignments">> {
   // One assignment per creator per opportunity, whatever its status. The index
   // is not unique, so this check is what blocks double claims and retries.
@@ -138,7 +149,7 @@ async function createAssignment(
     cpmRateCents: opportunity.cpmRateCents,
     paymentCapCents: opportunity.paymentCapCents,
     usesAiReview: opportunity.usesAiReviewDefault,
-    status: "termsPending",
+    ...initial,
   });
   await ctx.db.patch("opportunities", opportunity._id, {
     numFilledSlots: opportunity.numFilledSlots + 1,
@@ -528,7 +539,9 @@ export async function searchCreatorAssignments(
 }
 
 /**
- * Accepts the terms on the creator's own assignment, making it active.
+ * Accepts the terms on the creator's own assignment, making it active. Only
+ * claimed (ungated) assignments are ever termsPending; an accepted offer is
+ * created active.
  *
  * @throws `not_found` if the assignment does not exist or is not the
  * creator's.
@@ -544,7 +557,8 @@ export async function acceptAssignmentTerms(
     { role: "creator", creatorId },
     assignmentId,
   );
-  await ctx.db.patch("assignments", assignment._id, { status: "active" });
+  const patch = { status: "active" as const, termsAcceptedAt: Date.now() };
+  await ctx.db.patch("assignments", assignment._id, patch);
   const opportunity = await ctx.db.get("opportunities", assignment.opportunityId);
   if (opportunity !== null) {
     await notifyCompanyUser(ctx, opportunity.createdBy, {
@@ -553,7 +567,7 @@ export async function acceptAssignmentTerms(
       target: assignmentTarget(assignment._id),
     });
   }
-  return { ...assignment, status: "active" };
+  return { ...assignment, ...patch };
 }
 
 /**

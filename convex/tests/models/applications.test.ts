@@ -19,6 +19,7 @@ import {
   requireApplication,
   requireApplicationDetail,
 } from "../../models/applications";
+import { cancelPendingAssignment, declineAssignmentTerms } from "../../models/assignments";
 import { updateOpportunityLanguages } from "../../models/opportunityLanguages";
 import { updateOpportunityNiches } from "../../models/opportunityNiches";
 import { updateOpportunitySkills } from "../../models/opportunitySkills";
@@ -251,7 +252,10 @@ describe("createApplication", () => {
       }
     });
 
-    await t.run(async (ctx) => await acceptApplication(ctx, creatorId, applicationId));
+    await t.run(
+      async (ctx) =>
+        await acceptApplication(ctx, creatorId, applicationId, { acceptedTerms: true }),
+    );
     await t.finishAllScheduledFunctions(() => {});
 
     const remaining = await t.run((ctx) =>
@@ -649,13 +653,34 @@ async function seedOffered(t: TestConvex, opts: Parameters<typeof seedGatedOppor
 }
 
 describe("acceptApplication", () => {
-  test("accepts the offer, takes a slot, and creates the assignment with the opportunity's terms", async () => {
+  /** The assignments a creator holds on an opportunity, as stored. */
+  async function assignmentsOf(
+    t: TestConvex,
+    opportunityId: Id<"opportunities">,
+    creatorId: Id<"creators">,
+  ) {
+    return await t.run(async (ctx) =>
+      ctx.db
+        .query("assignments")
+        .withIndex("by_opportunityId_and_creatorId", (q) =>
+          q.eq("opportunityId", opportunityId).eq("creatorId", creatorId),
+        )
+        .take(2),
+    );
+  }
+
+  async function filledSlotsOf(t: TestConvex, opportunityId: Id<"opportunities">) {
+    return (await t.run((ctx) => ctx.db.get("opportunities", opportunityId)))?.numFilledSlots;
+  }
+
+  test("accepts the offer, takes a slot, and creates an active assignment with the opportunity's terms", async () => {
     const t = convexTest(schema, modules);
     const { opportunityId, creatorId, applicationId } = await seedOffered(t);
     const before = Date.now();
 
     const accepted = await t.run(
-      async (ctx) => await acceptApplication(ctx, creatorId, applicationId),
+      async (ctx) =>
+        await acceptApplication(ctx, creatorId, applicationId, { acceptedTerms: true }),
     );
     const { opportunity, assignments } = await t.run(async (ctx) => ({
       opportunity: await ctx.db.get("opportunities", opportunityId),
@@ -667,18 +692,115 @@ describe("acceptApplication", () => {
         .take(2),
     }));
 
-    expect(accepted.status).toBe("accepted");
-    expect(accepted.offerAcceptedAt).toBeGreaterThanOrEqual(before);
-    expect(accepted.statusLastUpdatedAt).toBeGreaterThanOrEqual(before);
+    expect(accepted.application.status).toBe("accepted");
+    expect(accepted.application.offerAcceptedAt).toBeGreaterThanOrEqual(before);
+    expect(accepted.application.statusLastUpdatedAt).toBeGreaterThanOrEqual(before);
     expect(opportunity?.numFilledSlots).toBe(1);
     expect(assignments).toHaveLength(1);
+    expect(accepted.assignmentId).toBe(assignments[0]._id);
     expect(assignments[0]).toMatchObject({
-      status: "termsPending",
+      status: "active",
+      termsAcceptedAt: accepted.application.offerAcceptedAt,
       fixedFeeCents: opportunity?.fixedFeeCents,
       cpmRateCents: opportunity?.cpmRateCents,
       paymentCapCents: opportunity?.paymentCapCents,
       usesAiReview: opportunity?.usesAiReviewDefault,
     });
+    expect(assignments[0].termsAcceptedAt).toBeGreaterThanOrEqual(before);
+  });
+
+  test.each([
+    { name: "omitted", options: {} },
+    { name: "false", options: { acceptedTerms: false } },
+  ])(
+    "refuses when acceptedTerms is $name and the opportunity has a review policy, and changes nothing",
+    async ({ options }) => {
+      const t = convexTest(schema, modules);
+      const { membership, opportunityId, creatorId, applicationId } = await seedOffered(t);
+      const noticesBefore = await memberNotifications(t, membership);
+
+      await expectApiError(
+        () => t.run(async (ctx) => await acceptApplication(ctx, creatorId, applicationId, options)),
+        "invalid_state",
+        "terms_not_accepted",
+      );
+
+      const stored = await t.run((ctx) => ctx.db.get("applications", applicationId));
+      expect(stored?.status).toBe("offered");
+      expect(stored?.offerAcceptedAt).toBeUndefined();
+      expect(await filledSlotsOf(t, opportunityId)).toBe(0);
+      expect(await assignmentsOf(t, opportunityId, creatorId)).toEqual([]);
+      expect(await memberNotifications(t, membership)).toEqual(noticesBefore);
+    },
+  );
+
+  test.each(["", "  \n\t "])(
+    "accepts without acceptedTerms when the review policy is blank (%j)",
+    async (reviewPolicy) => {
+      const t = convexTest(schema, modules);
+      const { opportunityId, creatorId, applicationId } = await seedOffered(t, {
+        opportunity: { reviewPolicy },
+      });
+
+      const accepted = await t.run(
+        async (ctx) => await acceptApplication(ctx, creatorId, applicationId),
+      );
+
+      const assignments = await assignmentsOf(t, opportunityId, creatorId);
+      expect(accepted.application.status).toBe("accepted");
+      expect(assignments).toMatchObject([
+        { _id: accepted.assignmentId, status: "active", termsAcceptedAt: expect.any(Number) },
+      ]);
+    },
+  );
+
+  test("acceptedTerms: true is accepted on an opportunity without a review policy", async () => {
+    const t = convexTest(schema, modules);
+    const { opportunityId, creatorId, applicationId } = await seedOffered(t, {
+      opportunity: { reviewPolicy: "" },
+    });
+
+    const accepted = await t.run(
+      async (ctx) =>
+        await acceptApplication(ctx, creatorId, applicationId, { acceptedTerms: true }),
+    );
+
+    expect(accepted.application.status).toBe("accepted");
+    expect(await assignmentsOf(t, opportunityId, creatorId)).toMatchObject([{ status: "active" }]);
+  });
+
+  test("an expired offer is refused as offer_expired even without acceptedTerms", async () => {
+    const t = convexTest(schema, modules);
+    const { creatorId, applicationId } = await seedOffered(t);
+    await t.run((ctx) =>
+      ctx.db.patch("applications", applicationId, { offerExpiresAt: Date.now() - 1 }),
+    );
+
+    await expectApiError(
+      () => t.run(async (ctx) => await acceptApplication(ctx, creatorId, applicationId)),
+      "invalid_state",
+      "offer_expired",
+    );
+  });
+
+  test("an accepted offer's assignment can't be cancelled as pending or have its terms declined", async () => {
+    const t = convexTest(schema, modules);
+    const { companyId, creatorId, applicationId } = await seedOffered(t);
+    const { assignmentId } = await t.run(
+      async (ctx) =>
+        await acceptApplication(ctx, creatorId, applicationId, { acceptedTerms: true }),
+    );
+
+    await expectApiError(
+      () => t.run((ctx) => cancelPendingAssignment(ctx, companyId, assignmentId)),
+      "invalid_state",
+      "assignment_not_pending",
+    );
+    await expectApiError(
+      () => t.run((ctx) => declineAssignmentTerms(ctx, creatorId, assignmentId)),
+      "invalid_state",
+      "assignment_not_pending",
+    );
   });
 
   test.each(["open", "paused"] as const)(
@@ -694,10 +816,11 @@ describe("acceptApplication", () => {
       });
 
       const accepted = await t.run(
-        async (ctx) => await acceptApplication(ctx, creatorId, applicationId),
+        async (ctx) =>
+          await acceptApplication(ctx, creatorId, applicationId, { acceptedTerms: true }),
       );
 
-      expect(accepted.status).toBe("accepted");
+      expect(accepted.application.status).toBe("accepted");
     },
   );
 
@@ -790,7 +913,10 @@ describe("acceptApplication", () => {
     await t.run(async (ctx) => await rejectApplication(ctx, companyId, rejectedId));
 
     const beforeAccept = Date.now();
-    await t.run(async (ctx) => await acceptApplication(ctx, creatorId, applicationId));
+    await t.run(
+      async (ctx) =>
+        await acceptApplication(ctx, creatorId, applicationId, { acceptedTerms: true }),
+    );
     await t.finishAllScheduledFunctions(() => {});
     const statuses = await t.run(async (ctx) =>
       Promise.all(
@@ -813,7 +939,10 @@ describe("acceptApplication", () => {
     const offeredId = await applyAs(t, await seedCreatorId(t, "creator_b"), opportunityId);
     await t.run(async (ctx) => await offerApplication(ctx, companyId, offeredId));
 
-    await t.run(async (ctx) => await acceptApplication(ctx, creatorId, applicationId));
+    await t.run(
+      async (ctx) =>
+        await acceptApplication(ctx, creatorId, applicationId, { acceptedTerms: true }),
+    );
     const other = await t.run(async (ctx) => await ctx.db.get("applications", offeredId));
 
     expect(other?.status).toBe("offered");
@@ -911,7 +1040,10 @@ describe("expireApplicationOffers", () => {
   test("does not expire an offer that was already accepted", async () => {
     const t = convexTest(schema, modules);
     const { creatorId, applicationId } = await seedOffered(t);
-    await t.run(async (ctx) => await acceptApplication(ctx, creatorId, applicationId));
+    await t.run(
+      async (ctx) =>
+        await acceptApplication(ctx, creatorId, applicationId, { acceptedTerms: true }),
+    );
     await t.run(
       async (ctx) =>
         await ctx.db.patch("applications", applicationId, {
@@ -994,7 +1126,10 @@ describe("notifications", () => {
     const t = convexTest(schema, modules);
     const { membership, creatorId, applicationId, opportunityId } = await seedOffered(t);
 
-    await t.run(async (ctx) => await acceptApplication(ctx, creatorId, applicationId));
+    await t.run(
+      async (ctx) =>
+        await acceptApplication(ctx, creatorId, applicationId, { acceptedTerms: true }),
+    );
 
     const assignment = await t.run(async (ctx) =>
       ctx.db
@@ -1011,6 +1146,20 @@ describe("notifications", () => {
     });
   });
 
+  test("accepting an offer sends one applicationAccepted notice and no assignmentTermsAccepted", async () => {
+    const t = convexTest(schema, modules);
+    const { membership, creatorId, applicationId } = await seedOffered(t);
+    const before = (await memberNotifications(t, membership)).length;
+
+    await t.run(
+      async (ctx) =>
+        await acceptApplication(ctx, creatorId, applicationId, { acceptedTerms: true }),
+    );
+
+    const added = (await memberNotifications(t, membership)).slice(before);
+    expect(added.map((n) => n.type)).toEqual(["applicationAccepted"]);
+  });
+
   test("taking the last slot notifies each creator whose application became full", async () => {
     const t = convexTest(schema, modules);
     const { companyId, opportunityId, creatorId, applicationId } = await seedOffered(t, {
@@ -1020,7 +1169,10 @@ describe("notifications", () => {
     const otherId = await applyAs(t, otherCreatorId, opportunityId);
     await t.run(async (ctx) => await offerApplication(ctx, companyId, otherId));
 
-    await t.run(async (ctx) => await acceptApplication(ctx, creatorId, applicationId));
+    await t.run(
+      async (ctx) =>
+        await acceptApplication(ctx, creatorId, applicationId, { acceptedTerms: true }),
+    );
     await t.finishAllScheduledFunctions(() => {});
 
     expect((await creatorNotifications(t, otherCreatorId)).at(-1)).toEqual({
@@ -2765,6 +2917,39 @@ describe("requireApplicationDetail", () => {
       canAccept: false,
       canDecline: false,
     });
+  });
+
+  test("termsRequired is true when the opportunity has a review policy", async () => {
+    const t = convexTest(schema, modules);
+    const { creatorId, applicationId } = await seedDetail(t);
+
+    const detail = await detailOf(t, creatorId, applicationId);
+
+    expect(detail.termsRequired).toBe(true);
+  });
+
+  test.each(["", "   \n "])(
+    "termsRequired is false for a blank review policy (%j)",
+    async (reviewPolicy) => {
+      const t = convexTest(schema, modules);
+      const { creatorId, applicationId } = await seedDetail(t, { opportunity: { reviewPolicy } });
+
+      const detail = await detailOf(t, creatorId, applicationId);
+
+      expect(detail.termsRequired).toBe(false);
+    },
+  );
+
+  test("termsRequired is reported for non-offered statuses too", async () => {
+    const t = convexTest(schema, modules);
+    const { creatorId, applicationId } = await seedDetail(t, {
+      status: "accepted",
+      offerAcceptedAt: Date.now() - 1000,
+    });
+
+    const detail = await detailOf(t, creatorId, applicationId);
+
+    expect(detail.termsRequired).toBe(true);
   });
 
   test("an accepted offer carries when it was accepted", async () => {

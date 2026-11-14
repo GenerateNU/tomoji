@@ -4,7 +4,7 @@ import { api } from "@convex/_generated/api";
 import type { Id } from "@convex/_generated/dataModel";
 import type { ApplicationDetail } from "@convex/models/applications";
 import { useQuery } from "convex/react";
-import { useState, type ComponentProps } from "react";
+import { useEffect, useRef, useState, type ComponentProps } from "react";
 import { ErrorBoundary } from "@/components/error-boundary";
 import { Modal } from "@/components/modal";
 import { Button } from "@/components/ui/button";
@@ -12,11 +12,13 @@ import { CompanyAvatar, getInitials } from "@/components/ui/avatar";
 import { Tag } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useCompanyLogo } from "@/hooks/use-company-logo";
-import { useNow } from "@/hooks/use-now";
 import { errorCode } from "@/lib/errors";
-import { offerStatusTag } from "../lib/offer";
+import { useOfferClock } from "../hooks/use-offer-clock";
+import { formatOfferDeadline } from "../lib/format";
+import { offerStatusTag, offerTiming } from "../lib/offer";
 import { OfferDetails } from "./offer-details";
 import { OfferFooter } from "./offer-footer";
+import { OfferTerms } from "./offer-terms";
 
 type OfferModalProps = {
   /** The offer to show; kept after closing so the dialog doesn't change as it leaves. */
@@ -46,8 +48,23 @@ function OfferContent({
   finalFocus,
 }: OfferModalProps & { applicationId: Id<"applications"> }) {
   const detail = useQuery(api.applications.getMineDetail, open ? { applicationId } : "skip");
-  // Offers are timed to the minute, so the modal keeps its own clock.
-  const now = useNow();
+  // Offers are timed to the minute, and to the second once urgent.
+  const now = useOfferClock(detail?.status, detail?.offerExpiresAt);
+  const [step, setStep] = useState<"offer" | "terms">("offer");
+  const [wasOpen, setWasOpen] = useState(open);
+  if (open !== wasOpen) {
+    setWasOpen(open);
+    if (open) setStep("offer");
+  }
+  const termsHeading = useRef<HTMLHeadingElement>(null);
+  const timing = detail ? offerTiming(detail.status, detail.offerExpiresAt, now) : "none";
+  const view =
+    step === "terms" && detail?.termsRequired && (timing === "live" || timing === "urgent")
+      ? "terms"
+      : "offer";
+  useEffect(() => {
+    if (view === "terms") termsHeading.current?.focus();
+  }, [view]);
   const common = {
     open,
     onOpenChange,
@@ -90,22 +107,41 @@ function OfferContent({
           </Tag>
           {tag && (
             <Tag size="md" tone={tag.tone}>
-              {tag.label}
+              {tag.countdown ? (
+                <span
+                  role="timer"
+                  className="tabular-nums"
+                  aria-label={`Offer expires ${formatOfferDeadline(detail.offerExpiresAt ?? now, { withTime: true })}`}
+                  title={`Expires ${formatOfferDeadline(detail.offerExpiresAt ?? now, { withTime: true })}`}
+                >
+                  {tag.label}
+                </span>
+              ) : (
+                tag.label
+              )}
             </Tag>
           )}
         </>
       }
-      footer={<OfferFooter detail={detail} now={now} />}
+      footer={
+        <OfferFooter detail={detail} now={now} view={view} onReviewTerms={() => setStep("terms")} />
+      }
     >
-      <OfferDetails detail={detail} now={now} />
+      {view === "terms" ? (
+        <OfferTerms detail={detail} now={now} headingRef={termsHeading} />
+      ) : (
+        <OfferDetails detail={detail} now={now} />
+      )}
     </Modal>
   );
 }
 
 /**
- * The dialog for one offer: the brief, its deadline, and Accept or Decline. It
- * reads the offer itself, so it updates live when the offer is accepted,
- * expires, or the opportunity changes. Opening it is up to the caller.
+ * The dialog for one offer: the brief and its deadline, then, when the
+ * opportunity has a review policy, a terms step; accepting those terms accepts
+ * the offer. Deny declines it. An urgent offer shows a live countdown. It reads
+ * the offer itself, so it updates live when the offer is accepted, expires, or
+ * the opportunity changes. Opening it is up to the caller.
  */
 export function OfferModal({ applicationId, open, onOpenChange, finalFocus }: OfferModalProps) {
   // Remounting the boundary is what clears a failed read.

@@ -22,10 +22,22 @@ function ButtonSpinner() {
 /**
  * The offer modal's actions. The server's `canAccept` knows nothing about the
  * clock, so a live offer is one that is also still before its deadline here; the
- * server refuses a late accept either way. Declining asks first, inline, since
+ * server refuses a late accept either way. Denying asks first, inline, since
  * it can't be undone; accepting doesn't, since the creator has just read the terms.
+ * On an offer with terms, Accept in the "offer" view moves on to the "terms"
+ * view, where accepting the terms accepts the offer.
  */
-export function OfferFooter({ detail, now }: { detail: ApplicationDetail; now: number }) {
+export function OfferFooter({
+  detail,
+  now,
+  view,
+  onReviewTerms,
+}: {
+  detail: ApplicationDetail;
+  now: number;
+  view: "offer" | "terms";
+  onReviewTerms: () => void;
+}) {
   const { pending, accept, decline } = useOfferResponse(detail.applicationId);
   const [confirming, setConfirming] = useState(false);
   const declineRef = useRef<HTMLButtonElement>(null);
@@ -110,15 +122,19 @@ export function OfferFooter({ detail, now }: { detail: ApplicationDetail; now: n
         className={buttonClass}
         onClick={() => setConfirming(true)}
       >
-        Decline
+        Deny
       </Button>
       <Button
         disabled={!detail.canAccept || pending !== null}
         className={buttonClass}
-        onClick={() => void accept()}
+        onClick={() => {
+          if (view === "terms") void accept({ acceptedTerms: true });
+          else if (detail.termsRequired) onReviewTerms();
+          else void accept();
+        }}
       >
         {pending === "accept" && <ButtonSpinner />}
-        Accept offer
+        {view === "terms" ? "Accept terms & conditions" : "Accept"}
       </Button>
     </>
   );

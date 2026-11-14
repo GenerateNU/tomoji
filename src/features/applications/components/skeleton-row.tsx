@@ -2,7 +2,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { TableCell, TableRow } from "@/components/ui/table";
 
 /** A table row's worth of placeholder, matching the real row's columns. */
-export function SkeletonRow() {
+export function SkeletonRow({ showSubmitted = true }: { showSubmitted?: boolean }) {
   return (
     <TableRow aria-hidden>
       <TableCell type="custom">
@@ -13,11 +13,13 @@ export function SkeletonRow() {
         <Skeleton className="h-5 w-2/3" />
       </TableCell>
       <TableCell type="custom">
-        <Skeleton className="h-7 w-20" />
+        <Skeleton className="h-6 w-16" />
       </TableCell>
-      <TableCell type="custom">
-        <Skeleton className="h-5 w-16" />
-      </TableCell>
+      {showSubmitted && (
+        <TableCell type="custom">
+          <Skeleton className="h-5 w-16" />
+        </TableCell>
+      )}
       <TableCell type="custom">
         <Skeleton className="h-5 w-28" />
       </TableCell>

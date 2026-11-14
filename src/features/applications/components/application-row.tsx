@@ -3,7 +3,7 @@
 import type { FunctionReturnType } from "convex/server";
 import { api } from "@convex/_generated/api";
 import type { Id } from "@convex/_generated/dataModel";
-import { CompanyAvatar, getInitials } from "@/components/ui/avatar";
+import { CompanyAvatar } from "@/components/ui/avatar";
 import { TableCell, TableRow } from "@/components/ui/table";
 import { useCompanyLogo } from "@/hooks/use-company-logo";
 import { formatCompensation } from "@/lib/money";
@@ -24,16 +24,10 @@ export function displayCompanyName(row: Pick<ApplicationRowData, "companyName">)
   return row.companyName || "Unknown company";
 }
 
-/** The company's logo, or its initials while the logo loads or if it can't be read. */
+/** The company's logo, or the grey building placeholder while the logo loads or if it can't be read. */
 export function ApplicationCompanyAvatar({ row }: { row: ApplicationRowData }) {
   const logo = useCompanyLogo(row.companyLogoMediaId);
-  return (
-    <CompanyAvatar
-      size={24}
-      src={logo.url}
-      initials={row.companyName ? getInitials(row.companyName) : undefined}
-    />
-  );
+  return <CompanyAvatar size={24} src={logo.url} />;
 }
 
 export function ApplicationStar({ row }: { row: ApplicationRowData }) {
@@ -93,7 +87,7 @@ export function OfferTitleButton({
 
 /**
  * One application as a table row. Everything it shows comes with the row; it runs no queries.
- * On the Offers tab the title opens the offer, and so does a click anywhere else on the row.
+ * On the Offers and Accepted tabs the title opens the offer, and so does a click anywhere else on the row.
  */
 export function ApplicationRow({
   row,
@@ -123,11 +117,11 @@ export function ApplicationRow({
         {onOpen ? (
           <OfferTitleButton row={row} onOpen={onOpen} className="truncate" />
         ) : (
-          <span className="min-w-0 flex-1 truncate font-medium" title={row.title}>
+          <span className="min-w-0 truncate font-medium" title={row.title}>
             {row.title}
           </span>
         )}
-        {onOpen && <span className="flex-1" />}
+        {/* Sits right after the title, as in the design, not pushed to the cell's edge. */}
         <ApplicationStar row={row} />
       </TableCell>
       <TableCell type="custom">
@@ -136,16 +130,30 @@ export function ApplicationRow({
           {displayCompanyName(row)}
         </span>
       </TableCell>
-      {tab === "offers" ? (
+      {tab === "accepted" ? (
         <TableCell>
-          <OfferExpiry status={row.status} offerExpiresAt={row.offerExpiresAt} now={now} />
+          {row.offerAcceptedAt === undefined ? (
+            "—"
+          ) : (
+            <span className="first-letter:uppercase">
+              {formatRelativeTime(row.offerAcceptedAt, now)}
+            </span>
+          )}
         </TableCell>
       ) : (
-        <TableCell type="custom">
-          <ApplicationStatusBadge status={row.status} />
-        </TableCell>
+        <>
+          {tab === "offers" ? (
+            <TableCell>
+              <OfferExpiry status={row.status} offerExpiresAt={row.offerExpiresAt} now={now} />
+            </TableCell>
+          ) : (
+            <TableCell type="custom">
+              <ApplicationStatusBadge status={row.status} />
+            </TableCell>
+          )}
+          <TableCell>{formatRelativeTime(row.submittedAt, now)}</TableCell>
+        </>
       )}
-      <TableCell>{formatRelativeTime(row.submittedAt, now)}</TableCell>
       <TableCell>
         <ApplicationCompensation row={row} />
       </TableCell>

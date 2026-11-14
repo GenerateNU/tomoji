@@ -2,12 +2,10 @@
 
 import { api } from "@convex/_generated/api";
 import type { FunctionReturnType } from "convex/server";
-import Link from "next/link";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import type { Id } from "@convex/_generated/dataModel";
-import { EmptyState } from "@/components/empty-state";
 import { ErrorBoundary } from "@/components/error-boundary";
-import { Button, buttonVariants } from "@/components/ui/button";
+import { Button } from "@/components/ui/button";
 import { TableBody, TableCard, TableHead, TableHeader } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsCount, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useMediaQuery } from "@/hooks/use-media-query";
@@ -20,16 +18,15 @@ import {
   type ApplicationTab,
   type ApplicationsTable,
 } from "../hooks/use-applications-table";
-import {
-  ApplicationCardList,
-  ApplicationSortSelect,
-  SkeletonCardList,
-} from "./application-card-list";
+import { ApplicationCardList, ApplicationSortSelect } from "./application-card-list";
+import { usePrefetchedTabs } from "../hooks/use-prefetched-tabs";
 import { ApplicationFilters } from "./application-filters";
+import { ApplicationsEmptyState } from "./applications-empty-state";
 import { OfferModal } from "./offer-modal";
 import { ApplicationRow } from "./application-row";
 import { ApplicationsPagination } from "./applications-pagination";
-import { SkeletonRow } from "./skeleton-row";
+import { ApplicationsResultsSkeleton } from "./applications-page-skeleton";
+import { TAB_CONFIG } from "./tab-config";
 
 type TabCount = { count: number; isCapped: boolean };
 
@@ -53,7 +50,7 @@ function ApplicationTabs({
     <Tabs
       value={tab}
       onValueChange={(next) => {
-        if (next === "applications" || next === "offers") onTabChange(next);
+        if (next === "applications" || next === "offers" || next === "accepted") onTabChange(next);
       }}
       className="gap-6 md:gap-8"
     >
@@ -68,11 +65,9 @@ function ApplicationTabs({
             Offers
             {counts && <TabsCount>{formatTabCount(counts.offers)}</TabsCount>}
           </TabsTrigger>
-          {/* Accepted offers arrive later; the count is real already. */}
-          <TabsTrigger value="accepted" disabled>
+          <TabsTrigger value="accepted">
             Accepted
             {counts && <TabsCount>{formatTabCount(counts.accepted)}</TabsCount>}
-            <span className="sr-only">(coming soon)</span>
           </TabsTrigger>
         </TabsList>
       </div>
@@ -97,11 +92,30 @@ function ApplicationsError({ onRetry, onClear }: { onRetry: () => void; onClear:
   );
 }
 
-const NOUNS = {
-  applications: "applications",
-  offers: "offers",
-  accepted: "offers",
-} as const;
+function NeverHadState({ tab }: { tab: ApplicationTab }) {
+  if (tab === "offers") {
+    return (
+      <ApplicationsEmptyState
+        title="No offers yet."
+        description="When a company sends you an offer, it appears here. Offers usually last 48 hours."
+      />
+    );
+  }
+  if (tab === "accepted") {
+    return (
+      <ApplicationsEmptyState
+        title="No accepted offers yet."
+        description="Offers you accept appear here."
+      />
+    );
+  }
+  return (
+    <ApplicationsEmptyState
+      title="You haven't applied to anything yet."
+      description="When you apply to an opportunity, you can follow its status here."
+    />
+  );
+}
 
 function ApplicationsContent({ table }: { table: ApplicationsTable }) {
   const isWide = useMediaQuery("(min-width: 768px)");
@@ -110,12 +124,12 @@ function ApplicationsContent({ table }: { table: ApplicationsTable }) {
   const [openApplicationId, setOpenApplicationId] = useState<Id<"applications"> | null>(null);
   // Kept apart from the id so the modal's content doesn't change as it closes.
   const [modalOpen, setModalOpen] = useState(false);
+  usePrefetchedTabs();
   // Keeps the current rows on screen while a new filter or page loads.
   const { data: latest, isStale } = useStableQuery(api.applications.searchMine, table.args);
   // Rows of the other tab have different columns, so they are never shown under this tab's headers.
   const data = latest?.tab === table.tab ? latest : undefined;
-  const isOffers = table.tab === "offers";
-  const noun = NOUNS[table.tab];
+  const { noun, tableTitle, hideTitle, opensModal, columns } = TAB_CONFIG[table.tab];
 
   // The server clamps a page past the end, e.g. after rows were removed.
   const { page, setPage } = table;
@@ -129,7 +143,7 @@ function ApplicationsContent({ table }: { table: ApplicationsTable }) {
     resultsRef.current?.focus();
   }
 
-  const openOffer = isOffers
+  const openOffer = opensModal
     ? (applicationId: Id<"applications">) => {
         setOpenApplicationId(applicationId);
         setModalOpen(true);
@@ -153,24 +167,6 @@ function ApplicationsContent({ table }: { table: ApplicationsTable }) {
 
   const neverHad = data !== undefined && data.counts[table.tab].count === 0 && !table.hasFilters;
 
-  // The Offers tab's third column is when the offer ends, not where it stands.
-  const columns = isOffers
-    ? {
-        name: "w-[30%]",
-        company: "w-[20%]",
-        third: "w-36",
-        thirdLabel: "Expiration date",
-        thirdKey: "expires" as const,
-      }
-    : {
-        name: "w-[32%]",
-        company: "w-[20%]",
-        third: "w-32",
-        thirdLabel: "Status",
-        thirdKey: "status" as const,
-      };
-  const tableTitle = isOffers ? "Offers" : "Applications";
-
   let results;
   if (data === undefined) {
     results = (
@@ -178,82 +174,32 @@ function ApplicationsContent({ table }: { table: ApplicationsTable }) {
         <span className="sr-only" role="status">
           Loading {noun}…
         </span>
-        {isWide ? (
-          <TableCard
-            title={tableTitle}
-            hideTitle={isOffers}
-            className="[&_table]:min-w-176"
-            aria-hidden
-          >
-            <TableHeader>
-              <TableHead className={columns.name}>Name</TableHead>
-              <TableHead className={columns.company}>Company</TableHead>
-              <TableHead className={columns.third}>{columns.thirdLabel}</TableHead>
-              <TableHead className="w-28">Submitted</TableHead>
-              <TableHead>Compensation</TableHead>
-            </TableHeader>
-            <TableBody>
-              {Array.from({ length: 5 }, (_, index) => (
-                <SkeletonRow key={index} />
-              ))}
-            </TableBody>
-          </TableCard>
-        ) : (
-          <div className="rounded-lg bg-gray-0 p-4 shadow-card">
-            <SkeletonCardList />
-          </div>
-        )}
+        <ApplicationsResultsSkeleton tab={table.tab} />
       </>
     );
   } else if (neverHad) {
-    results = isOffers ? (
-      <EmptyState className="flex flex-col items-center gap-3">
-        <p className="font-medium text-gray-950">No offers yet.</p>
-        <p>When a company sends you an offer, it appears here. Offers usually last 48 hours.</p>
-        <Button variant="secondary-subtle" onClick={() => table.setTab("applications")}>
-          View applications
-        </Button>
-      </EmptyState>
-    ) : (
-      <EmptyState className="flex flex-col items-center gap-3">
-        <p className="font-medium text-gray-950">You haven&apos;t applied to anything yet.</p>
-        <p>When you apply to an opportunity, you can follow its status here.</p>
-        <Link href="/opportunities" className={buttonVariants({ variant: "secondary-subtle" })}>
-          Browse opportunities
-        </Link>
-      </EmptyState>
-    );
+    results = <NeverHadState tab={table.tab} />;
   } else if (data.totalCount === 0) {
-    results = (
-      <EmptyState className="flex flex-col items-center gap-3">
-        <p className="font-medium text-gray-950">No {noun} match your filters.</p>
-        <Button variant="secondary-subtle" onClick={table.clearFilters}>
-          Clear filters
-        </Button>
-      </EmptyState>
-    );
+    results = <ApplicationsEmptyState title={`No ${noun} match your filters.`} />;
   } else if (isWide) {
     results = (
       <TableCard
         title={tableTitle}
-        hideTitle={isOffers}
+        hideTitle={hideTitle}
         count={data.totalCount}
+        bare
         className="[&_table]:min-w-176"
       >
         <TableHeader>
-          <TableHead className={columns.name} {...headProps("name")}>
-            Name
-          </TableHead>
-          <TableHead className={columns.company} {...headProps("company")}>
-            Company
-          </TableHead>
-          <TableHead className={columns.third} {...headProps(columns.thirdKey)}>
-            {columns.thirdLabel}
-          </TableHead>
-          <TableHead className="w-28" {...headProps("submitted")}>
-            Submitted
-          </TableHead>
-          <TableHead {...headProps("compensation")}>Compensation</TableHead>
+          {columns.map((column) => (
+            <TableHead
+              key={column.sortKey}
+              className={column.className}
+              {...headProps(column.sortKey)}
+            >
+              {column.label}
+            </TableHead>
+          ))}
         </TableHeader>
         <TableBody>
           {data.rows.map((row) => (
@@ -270,12 +216,7 @@ function ApplicationsContent({ table }: { table: ApplicationsTable }) {
     );
   } else {
     results = (
-      <div className="flex flex-col gap-4 rounded-lg bg-gray-0 p-4 shadow-card">
-        {!isOffers && (
-          <h2 className="flex items-center gap-1.5 text-body-lg font-medium text-gray-950">
-            Applications <span className="text-gray-500">({data.totalCount})</span>
-          </h2>
-        )}
+      <div className="flex flex-col gap-4">
         <ApplicationSortSelect tab={table.tab} sort={table.sort} onSortChange={table.setSort} />
         <ApplicationCardList rows={data.rows} now={now} tab={table.tab} onOpen={openOffer} />
       </div>

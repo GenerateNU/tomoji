@@ -1404,7 +1404,7 @@ describe("listApplicationRows", () => {
       expect(onlyStarred.totalCount).toBe(1);
     });
 
-    test("hide rejected removes rejected applications but keeps opportunityFull", async () => {
+    test("hide rejected removes both rejected and opportunityFull applications", async () => {
       const t = convexTest(schema, modules);
       const creatorId = await seedCreatorId(t, "creator_a");
       await seedRow(t, creatorId, { title: "Waiting" });
@@ -1419,9 +1419,34 @@ describe("listApplicationRows", () => {
         sort: { key: "name", direction: "ascending" },
       });
 
-      expect(titles(result)).toEqual(["Filled up", "Waiting"]);
-      expect(result.totalCount).toBe(2);
+      expect(titles(result)).toEqual(["Waiting"]);
+      expect(result.totalCount).toBe(1);
       expect(result.counts.applications.count).toBe(3);
+    });
+
+    test("hide rejected leaves a tab of only full and rejected rows empty", async () => {
+      const t = convexTest(schema, modules);
+      const creatorId = await seedCreatorId(t, "creator_a");
+      await seedRow(t, creatorId, { title: "Turned down", status: "rejected" });
+      await seedRow(t, creatorId, { title: "Filled up", status: "opportunityFull" });
+
+      const result = await listRows(t, creatorId, { hideRejected: true });
+
+      expect(result.rows).toEqual([]);
+      expect(result.totalCount).toBe(0);
+      expect(result.counts.applications).toEqual({ count: 2, isCapped: false });
+    });
+
+    test("without hide rejected, rejected and opportunityFull rows are both listed", async () => {
+      const t = convexTest(schema, modules);
+      const creatorId = await seedCreatorId(t, "creator_a");
+      await seedRow(t, creatorId, { title: "Turned down", status: "rejected" });
+      await seedRow(t, creatorId, { title: "Filled up", status: "opportunityFull" });
+
+      const result = await listRows(t, creatorId, { hideRejected: false });
+
+      expect(titles(result).sort()).toEqual(["Filled up", "Turned down"]);
+      expect(result.totalCount).toBe(2);
     });
 
     test("search, starred and hide rejected combine", async () => {
@@ -1481,8 +1506,6 @@ describe("listApplicationRows", () => {
     test.each([
       { key: "name", ascending: ["Alpha", "Bravo", "Charlie"] },
       { key: "company", ascending: ["Charlie", "Bravo", "Alpha"] },
-      // Waiting first, then closed by fill, then rejected.
-      { key: "status", ascending: ["Alpha", "Bravo", "Charlie"] },
       { key: "submitted", ascending: ["Charlie", "Alpha", "Bravo"] },
       // Fixed fee first, then CPM rate.
       { key: "compensation", ascending: ["Alpha", "Bravo", "Charlie"] },
@@ -1500,6 +1523,40 @@ describe("listApplicationRows", () => {
 
       expect(titles(up)).toEqual(ascending);
       expect(titles(down)).toEqual([...ascending].reverse());
+    });
+
+    describe("by status", () => {
+      // Seeded oldest to newest: Old rejected, Mid pending, Full full, New rejected.
+      async function seedStatusRows(t: TestConvex, creatorId: Id<"creators">) {
+        await seedRow(t, creatorId, { title: "Old rejected", status: "rejected" });
+        await seedRow(t, creatorId, { title: "Mid pending", status: "pending" });
+        await seedRow(t, creatorId, { title: "Full", status: "opportunityFull" });
+        await seedRow(t, creatorId, { title: "New rejected", status: "rejected" });
+      }
+
+      test("ascending lists pending first, then rejected and full as one group, newest first", async () => {
+        const t = convexTest(schema, modules);
+        const creatorId = await seedCreatorId(t, "creator_a");
+        await seedStatusRows(t, creatorId);
+
+        const result = await listRows(t, creatorId, {
+          sort: { key: "status", direction: "ascending" },
+        });
+
+        expect(titles(result)).toEqual(["Mid pending", "New rejected", "Full", "Old rejected"]);
+      });
+
+      test("descending lists rejected and full as one group, newest first, then pending", async () => {
+        const t = convexTest(schema, modules);
+        const creatorId = await seedCreatorId(t, "creator_a");
+        await seedStatusRows(t, creatorId);
+
+        const result = await listRows(t, creatorId, {
+          sort: { key: "status", direction: "descending" },
+        });
+
+        expect(titles(result)).toEqual(["New rejected", "Full", "Old rejected", "Mid pending"]);
+      });
     });
 
     test("defaults to newest submitted first", async () => {

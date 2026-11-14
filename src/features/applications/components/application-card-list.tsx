@@ -39,8 +39,16 @@ const APPLICATION_SORT_OPTIONS: SortOption[] = [
     label: "Oldest submitted",
     sort: { key: "submitted", direction: "ascending" },
   },
-  { value: "name:ascending", label: "Name A–Z", sort: { key: "name", direction: "ascending" } },
-  { value: "name:descending", label: "Name Z–A", sort: { key: "name", direction: "descending" } },
+  {
+    value: "name:ascending",
+    label: "Name A–Z",
+    sort: { key: "name", direction: "ascending" },
+  },
+  {
+    value: "name:descending",
+    label: "Name Z–A",
+    sort: { key: "name", direction: "descending" },
+  },
   {
     value: "company:ascending",
     label: "Company A–Z",
@@ -51,7 +59,11 @@ const APPLICATION_SORT_OPTIONS: SortOption[] = [
     label: "Company Z–A",
     sort: { key: "company", direction: "descending" },
   },
-  { value: "status:ascending", label: "Status", sort: { key: "status", direction: "ascending" } },
+  {
+    value: "status:ascending",
+    label: "Status",
+    sort: { key: "status", direction: "ascending" },
+  },
   {
     value: "compensation:descending",
     label: "Highest pay",
@@ -78,10 +90,26 @@ const OFFER_SORT_OPTIONS: SortOption[] = [
   ...APPLICATION_SORT_OPTIONS.filter((option) => option.sort.key !== "status"),
 ];
 
+const ACCEPTED_SORT_OPTIONS: SortOption[] = [
+  {
+    value: "accepted:descending",
+    label: "Recently accepted",
+    sort: { key: "accepted", direction: "descending" },
+  },
+  {
+    value: "accepted:ascending",
+    label: "Oldest accepted",
+    sort: { key: "accepted", direction: "ascending" },
+  },
+  ...APPLICATION_SORT_OPTIONS.filter(
+    (option) => option.sort.key !== "status" && option.sort.key !== "submitted",
+  ),
+];
+
 const SORT_OPTIONS_BY_TAB: Record<ApplicationTab, SortOption[]> = {
   applications: APPLICATION_SORT_OPTIONS,
   offers: OFFER_SORT_OPTIONS,
-  accepted: OFFER_SORT_OPTIONS,
+  accepted: ACCEPTED_SORT_OPTIONS,
 };
 
 /** The sort choice for screens too narrow for clickable column headers. */
@@ -126,7 +154,7 @@ export function ApplicationSortSelect({
 
 /**
  * Applications as stacked cards, for screens narrower than the table needs. On
- * the Offers tab a card opens the offer, from its title or from a click on the card.
+ * the Offers and Accepted tabs a card opens the offer, from its title or from a click on the card.
  */
 export function ApplicationCardList({
   rows,
@@ -160,7 +188,7 @@ export function ApplicationCardList({
               : undefined
           }
         >
-          <div className="flex items-start justify-between gap-2">
+          <div className="flex items-start gap-2">
             {onOpen ? (
               <OfferTitleButton
                 row={row}
@@ -179,19 +207,29 @@ export function ApplicationCardList({
             <span className="min-w-0 truncate">{displayCompanyName(row)}</span>
           </div>
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-            {tab === "offers" ? (
-              <OfferExpiry
-                status={row.status}
-                offerExpiresAt={row.offerExpiresAt}
-                now={now}
-                className="text-body-sm"
-              />
+            {tab === "accepted" ? (
+              row.offerAcceptedAt !== undefined && (
+                <span className="text-body-sm text-gray-500">
+                  Accepted {formatRelativeTime(row.offerAcceptedAt, now)}
+                </span>
+              )
             ) : (
-              <ApplicationStatusBadge status={row.status} />
+              <>
+                {tab === "offers" ? (
+                  <OfferExpiry
+                    status={row.status}
+                    offerExpiresAt={row.offerExpiresAt}
+                    now={now}
+                    className="text-body-sm"
+                  />
+                ) : (
+                  <ApplicationStatusBadge status={row.status} />
+                )}
+                <span className="text-body-sm text-gray-500">
+                  Submitted {formatRelativeTime(row.submittedAt, now)}
+                </span>
+              </>
             )}
-            <span className="text-body-sm text-gray-500">
-              Submitted {formatRelativeTime(row.submittedAt, now)}
-            </span>
           </div>
           <div className="text-body-sm text-gray-950">
             <ApplicationCompensation row={row} />

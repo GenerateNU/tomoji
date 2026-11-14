@@ -18,8 +18,46 @@ export type ApplicationTab = NonNullable<SearchArgs["tab"]>;
 const DEFAULT_SORT_BY_TAB: Record<ApplicationTab, ApplicationSort> = {
   applications: { key: "submitted", direction: "descending" },
   offers: { key: "expires", direction: "ascending" },
-  accepted: { key: "expires", direction: "ascending" },
+  accepted: { key: "accepted", direction: "descending" },
 };
+
+type TableState = {
+  tab: ApplicationTab;
+  search: string;
+  starred: boolean;
+  hideRejected: boolean;
+  sort: ApplicationSort;
+  page: number;
+};
+
+/**
+ * The one place query args are built, so a tab's prefetched subscription and the
+ * table's own query serialize identically and Convex shares them.
+ */
+function buildArgs({ tab, search, starred, hideRejected, sort, page }: TableState): SearchArgs {
+  return {
+    tab,
+    search: search || undefined,
+    starred: starred || undefined,
+    // Declined offers are part of the Offers tab, so there is nothing to hide there.
+    hideRejected: (tab === "applications" && hideRejected) || undefined,
+    sort,
+    page,
+    pageSize: PAGE_SIZE,
+  };
+}
+
+/** The args a tab starts with right after `setTab`. */
+export function defaultArgsForTab(tab: ApplicationTab): SearchArgs {
+  return buildArgs({
+    tab,
+    search: "",
+    starred: false,
+    hideRejected: false,
+    sort: DEFAULT_SORT_BY_TAB[tab],
+    page: 1,
+  });
+}
 
 /**
  * The applications table's tab, search, filters, sort and page, and the query
@@ -35,19 +73,12 @@ export function useApplicationsTable() {
   const [hideRejected, setHideRejectedValue] = useState(false);
   const [sort, setSortValue] = useState<ApplicationSort>(DEFAULT_SORT_BY_TAB.applications);
   const [page, setPage] = useState(1);
-  const appliedSearch = useDebouncedValue(search, SEARCH_DEBOUNCE_MS).trim();
+  const debouncedSearch = useDebouncedValue(search, SEARCH_DEBOUNCE_MS).trim();
+  // A cleared box applies at once (e.g. on a tab switch) instead of waiting out the debounce.
+  const appliedSearch = search.trim() === "" ? "" : debouncedSearch;
 
   const args = useMemo<SearchArgs>(
-    () => ({
-      tab,
-      search: appliedSearch || undefined,
-      starred: starred || undefined,
-      // Declined offers are part of the Offers tab, so there is nothing to hide there.
-      hideRejected: (tab === "applications" && hideRejected) || undefined,
-      sort,
-      page,
-      pageSize: PAGE_SIZE,
-    }),
+    () => buildArgs({ tab, search: appliedSearch, starred, hideRejected, sort, page }),
     [tab, appliedSearch, starred, hideRejected, sort, page],
   );
 

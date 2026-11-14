@@ -28,4 +28,5 @@ export const creatorsTable = defineTable({
   countryOfResidence: v.optional(v.string()),
   bannerMediaId: v.optional(v.id("mediaUploads")),
   followerRange: v.optional(followerRange),
+  onboardingCompletedAt: v.optional(v.number()),
 }).index("by_userId", ["userId"]);

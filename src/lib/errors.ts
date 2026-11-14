@@ -36,3 +36,13 @@ export function errorMessage(
   if (code === null) return "Something went wrong. Try again.";
   return overrides[code] ?? MESSAGES[code];
 }
+
+/**
+ * The backend's machine-readable reason, e.g. `offer_expired`, for the codes
+ * that cover several situations (`invalid_state`). Null if there isn't one.
+ */
+export function errorReason(error: unknown): string | null {
+  if (!(error instanceof ConvexError)) return null;
+  const reason = (error.data as { reason?: unknown } | null)?.reason;
+  return typeof reason === "string" ? reason : null;
+}

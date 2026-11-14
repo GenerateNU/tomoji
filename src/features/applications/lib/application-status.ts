@@ -4,7 +4,7 @@ export type ApplicationStatus = Doc<"applications">["status"];
 
 /** What a creator sees for each status. */
 export const APPLICATION_STATUS_LABELS: Record<ApplicationStatus, string> = {
-  pending: "In review",
+  pending: "Submitted",
   offered: "Offer received",
   accepted: "Accepted",
   declined: "Declined",
@@ -12,14 +12,3 @@ export const APPLICATION_STATUS_LABELS: Record<ApplicationStatus, string> = {
   offerExpired: "Offer expired",
   opportunityFull: "Opportunity full",
 };
-
-/** Filter options, ordered from still-active to finished. */
-export const APPLICATION_STATUS_OPTIONS: readonly ApplicationStatus[] = [
-  "pending",
-  "offered",
-  "accepted",
-  "declined",
-  "rejected",
-  "offerExpired",
-  "opportunityFull",
-];

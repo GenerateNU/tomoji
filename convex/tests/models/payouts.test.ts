@@ -9,6 +9,7 @@ import {
   listPayouts,
   requirePayout,
   type PayoutCreate,
+  type PayoutViewer,
 } from "../../models/payouts";
 import { createPost } from "../../models/posts";
 import { resolveDispute } from "../../models/disputes";
@@ -624,6 +625,21 @@ async function seedReadScenario(t: TestConvex) {
   };
 }
 
+test("payout history exposes stored deliverable identity without changing the obligation", async () => {
+  const t = convexTest(schema, modules);
+  const fixture = await seedAssignmentFixture(t);
+  const payoutId = await seedPayout(t, fixture.assignmentId, {
+    deliverableId: fixture.deliverableId,
+  });
+  const before = await t.run((ctx) => ctx.db.get("payouts", payoutId));
+  const viewer: ResourceViewer = { role: "creator", creatorId: fixture.creatorId };
+  const payout = await t.run((ctx) => requirePayout(ctx, viewer, payoutId));
+  const page = await t.run((ctx) => listPayouts(ctx, viewer, { paginationOpts: firstPage }));
+  expect(payout).toHaveProperty("deliverableId", fixture.deliverableId);
+  expect(page.page).toEqual([payout]);
+  expect(await t.run((ctx) => ctx.db.get("payouts", payoutId))).toEqual(before);
+});
+
 test("the creator can read payout history after its assignment and post are removed", async () => {
   const t = convexTest(schema, modules);
   const fixture = await seedAssignmentFixture(t);
@@ -652,6 +668,93 @@ test("the creator can read payout history after its assignment and post are remo
   });
   expect(payout).not.toHaveProperty("sourceKey");
   expect(payout).not.toHaveProperty("approvedBy");
+});
+
+test.each([true, false])(
+  "deleted parents preserve history and dispute holds with stored deliverable identity: %s",
+  async (hasDeliverableId) => {
+    const t = convexTest(schema, modules);
+    const fixture = await seedAssignmentFixture(t, {}, "admin");
+    const payoutId = await seedPayout(t, fixture.assignmentId, {
+      ...(hasDeliverableId ? { deliverableId: fixture.deliverableId } : {}),
+    });
+    await seedDispute(t, fixture);
+    const before = (await t.run((ctx) => ctx.db.get("payouts", payoutId)))!;
+    await t.run(async (ctx) => {
+      const post = (await ctx.db.get("posts", before.postId))!;
+      await ctx.db.delete("submissions", post.submissionId);
+      await ctx.db.delete("posts", before.postId);
+      await ctx.db.delete("deliverables", fixture.deliverableId);
+      await ctx.db.delete("assignments", fixture.assignmentId);
+      await ctx.db.delete("campaigns", before.campaignId);
+    });
+    const viewer: PayoutViewer = {
+      role: "company",
+      companyId: before.companyId,
+      companyRole: "admin",
+    };
+    const payout = await t.run((ctx) => requirePayout(ctx, viewer, payoutId));
+    const result = await t.run((ctx) =>
+      listPayouts(ctx, viewer, {
+        assignmentId: fixture.assignmentId,
+        campaignId: before.campaignId,
+        paginationOpts: firstPage,
+      }),
+    );
+    expect(result.page).toEqual([payout]);
+    expect(payout.review).toEqual({ hasOpenDispute: true, canApprove: false });
+    if (hasDeliverableId) expect(payout.deliverableId).toBe(fixture.deliverableId);
+    else expect(payout).not.toHaveProperty("deliverableId");
+    expect(await t.run((ctx) => ctx.db.get("payouts", payoutId))).toEqual(before);
+  },
+);
+
+test("legacy history does not infer a missing deliverable ID from a live post", async () => {
+  const t = convexTest(schema, modules);
+  const fixture = await seedAssignmentFixture(t);
+  const payoutId = await seedPayout(t, fixture.assignmentId);
+  const before = await t.run((ctx) => ctx.db.get("payouts", payoutId));
+  const payout = await t.run((ctx) => requirePayout(ctx, { role: "operator" }, payoutId));
+  expect(payout).not.toHaveProperty("deliverableId");
+  expect(await t.run((ctx) => ctx.db.get("payouts", payoutId))).toEqual(before);
+});
+
+test("review eligibility preserves stored state across the deadline and cancelled assignments", async () => {
+  const t = convexTest(schema, modules);
+  const fixture = await seedAssignmentFixture(t, { status: "cancelled" }, "admin");
+  const payoutId = await seedPayout(t, fixture.assignmentId);
+  const before = (await t.run((ctx) => ctx.db.get("payouts", payoutId)))!;
+  const viewer: PayoutViewer = {
+    role: "company",
+    companyId: before.companyId,
+    companyRole: "admin",
+  };
+  vi.useFakeTimers({ toFake: ["Date"] });
+  for (const now of [before.approvalDueAt - 1, before.approvalDueAt + 1]) {
+    vi.setSystemTime(now);
+    const payout = await t.run((ctx) => requirePayout(ctx, viewer, payoutId));
+    expect(payout).toMatchObject({
+      approvalStatus: "pending",
+      approvalDueAt: before.approvalDueAt,
+      review: { hasOpenDispute: false, canApprove: true },
+    });
+    expect(await t.run((ctx) => ctx.db.get("payouts", payoutId))).toEqual(before);
+  }
+  // A generic company ownership scope without a verified admin role grants no action.
+  expect(
+    (
+      await t.run((ctx) =>
+        requirePayout(
+          ctx,
+          {
+            role: "company",
+            companyId: before.companyId,
+          },
+          payoutId,
+        ),
+      )
+    ).review.canApprove,
+  ).toBe(false);
 });
 
 test("lists mixed approval states by review time rather than insertion time or status", async () => {
@@ -698,6 +801,7 @@ test("preserves the post and optional payout context while omitting private fiel
   const expected: Record<string, unknown> = { ...stored };
   delete expected.sourceKey;
   delete expected.approvedBy;
+  expected.review = { hasOpenDispute: false, canApprove: false };
 
   expect(
     await t.run(async (ctx) => await requirePayout(ctx, { role: "operator" }, payoutId)),

@@ -9,7 +9,8 @@ import {
 } from "@remixicon/react";
 import { api } from "@convex/_generated/api";
 import type { Id } from "@convex/_generated/dataModel";
-import { useAction, useMutation, useQueries, useQuery, type RequestForQueries } from "convex/react";
+import { useQueries, useQuery } from "convex-helpers/react/cache/hooks";
+import { useAction, useMutation, type RequestForQueries } from "convex/react";
 import type { FunctionReturnType } from "convex/server";
 import { useEffect, useId, useMemo, useRef, useState, type FormEvent } from "react";
 import { ProgressRing } from "@/components/progress-ring";
@@ -18,7 +19,6 @@ import { DialogClose, DialogDescription, DialogTitle } from "@/components/ui/dia
 import { Textarea } from "@/components/ui/textarea";
 import { errorMessage } from "@/lib/errors";
 import { createMediaUpload, type MediaUploadPhase } from "@/lib/media-upload";
-import { cn } from "@/lib/utils";
 import { aiReviewStatusLabel } from "./assignment-status";
 import { SubmissionPreview } from "./submission-preview";
 import {

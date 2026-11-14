@@ -1,7 +1,7 @@
 "use client";
 
 import { api } from "@convex/_generated/api";
-import { useQuery } from "convex/react";
+import { useQuery } from "convex-helpers/react/cache/hooks";
 import type { ReactNode } from "react";
 import { Avatar, getInitials } from "@/components/ui/avatar";
 import { useMe } from "@/features/users/hooks/use-me";

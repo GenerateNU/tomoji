@@ -10,5 +10,5 @@ export default async function AssignmentsPage({
   searchParams: Promise<{ status?: string }>;
 }) {
   const { status } = await searchParams;
-  return <AssignmentsView status={status} />;
+  return <AssignmentsView stage="draft" status={status} />;
 }

@@ -5,6 +5,7 @@ import type { FunctionReturnType } from "convex/server";
 import { useQuery } from "convex/react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { useState } from "react";
 import {
   Dialog,
   DialogClose,
@@ -21,36 +22,48 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { RequireAccount } from "@/features/users/components/require-account";
 import { assignmentStatusLabel } from "./assignment-status";
 import { AssignmentSubmission } from "./assignment-submission";
+import { DeliverableSubmissions } from "./deliverable-submissions";
 
 type AssignmentDetails = NonNullable<FunctionReturnType<typeof api.assignments.getMineDetails>>;
 
 /** Opens the assignment workspace after the creator's account is resolved. */
-export function AssignmentDetailView({
-  assignmentId,
-  status,
-}: {
+type AssignmentSelection = {
   assignmentId: string;
   status?: string;
-}) {
+  task?: string;
+  deliverable?: string;
+};
+
+export function AssignmentDetailView(selection: AssignmentSelection) {
+  const { assignmentId, status } = selection;
   return (
     <>
-      <AssignmentsView status={status} />
+      <AssignmentsView stage="draft" status={status} />
       <RequireAccount
         role="creator"
         next={`/assignments/${assignmentId}`}
         wrongRole="Assignments are available to creators."
       >
-        <AssignmentDetail assignmentId={assignmentId} status={status} />
+        <AssignmentDetail {...selection} />
       </RequireAccount>
     </>
   );
 }
 
 /** Displays the assignment in a focused panel above the assignments table. */
-function AssignmentDetail({ assignmentId, status }: { assignmentId: string; status?: string }) {
+function AssignmentDetail({ assignmentId, status, task, deliverable }: AssignmentSelection) {
   const back = `/assignments?status=${assignmentQueue(status)}`;
   const router = useRouter();
   const details = useQuery(api.assignments.getMineDetails, { assignmentId });
+  const [draftTarget, setDraftTarget] = useState(task === "draft" ? deliverable : undefined);
+  const deliverables = details?.deliverables;
+  const onlyDeliverable = deliverables?.length === 1 ? deliverables[0] : undefined;
+  const footerDraft =
+    details?.assignment.status === "active" &&
+    onlyDeliverable &&
+    (!onlyDeliverable.latest || onlyDeliverable.latest.status === "changesRequested")
+      ? onlyDeliverable
+      : undefined;
   return (
     <Dialog
       open
@@ -87,10 +100,22 @@ function AssignmentDetail({ assignmentId, status }: { assignmentId: string; stat
               All assignments
             </Link>
           )}
-          {details && <AssignmentWorkspace details={details} />}
+          {details && (
+            <AssignmentWorkspace
+              details={details}
+              draftTarget={draftTarget}
+              setDraftTarget={setDraftTarget}
+              footerDraft={footerDraft?._id}
+            />
+          )}
         </div>
         <div className="flex justify-end gap-2 bg-gray-0 px-5 py-6 sm:px-8">
           <DialogClose render={<Button variant="secondary-subtle" />}>Close</DialogClose>
+          {footerDraft && (
+            <Button type="button" onClick={() => setDraftTarget(footerDraft._id)}>
+              {footerDraft.latest ? "Resubmit" : "Submit assignment"}
+            </Button>
+          )}
         </div>
       </DialogContent>
     </Dialog>
@@ -98,7 +123,17 @@ function AssignmentDetail({ assignmentId, status }: { assignmentId: string; stat
 }
 
 /** Shows the creator's current terms and the latest state of each deliverable. */
-function AssignmentWorkspace({ details }: { details: AssignmentDetails }) {
+function AssignmentWorkspace({
+  details,
+  draftTarget,
+  setDraftTarget,
+  footerDraft,
+}: {
+  details: AssignmentDetails;
+  draftTarget?: string;
+  setDraftTarget: (target: string | undefined) => void;
+  footerDraft?: string;
+}) {
   const { assignment, brief, deliverables } = details;
   const assignedOn = new Intl.DateTimeFormat("en-US", {
     month: "long",
@@ -124,6 +159,9 @@ function AssignmentWorkspace({ details }: { details: AssignmentDetails }) {
                         key={latest._id}
                         title={title}
                         submissionId={latest._id}
+                        onResubmit={
+                          assignment.status === "active" ? () => setDraftTarget(_id) : undefined
+                        }
                       />
                     </li>
                   ),
@@ -139,19 +177,30 @@ function AssignmentWorkspace({ details }: { details: AssignmentDetails }) {
             <p className="text-sm text-muted-foreground">Brief unavailable.</p>
           )}
         </section>
-        {deliverables.some(({ exampleMediaIds }) => exampleMediaIds?.length) && (
+        {deliverables.length > 0 && (
           <section className="space-y-4" aria-label="Deliverables">
-            {deliverables.map(
-              ({ _id, title, exampleMediaIds }) =>
-                !!exampleMediaIds?.length && (
-                  <div key={_id} className="space-y-2">
-                    {deliverables.length > 1 && (
-                      <h3 className="font-medium break-words">{title}</h3>
-                    )}
-                    <AssignmentExamples deliverableId={_id} mediaIds={exampleMediaIds} />
-                  </div>
-                ),
-            )}
+            {deliverables.map(({ _id, title, latest, exampleMediaIds }) => (
+              <div key={_id}>
+                {deliverables.length > 1 && (
+                  <h3 className="mb-2 font-medium break-words">{title}</h3>
+                )}
+                {!!exampleMediaIds?.length && (
+                  <AssignmentExamples deliverableId={_id} mediaIds={exampleMediaIds} />
+                )}
+                <DeliverableSubmissions
+                  assignmentId={assignment._id}
+                  opportunityId={assignment.opportunityId}
+                  deliverableId={_id}
+                  assignmentTitle={title}
+                  usesAiReview={assignment.usesAiReview}
+                  composing={draftTarget === _id}
+                  onComposingChange={(open) => setDraftTarget(open ? _id : undefined)}
+                  showDraftTrigger={footerDraft !== _id}
+                  submissionId={latest?._id}
+                  active={assignment.status === "active"}
+                />
+              </div>
+            ))}
           </section>
         )}
       </div>

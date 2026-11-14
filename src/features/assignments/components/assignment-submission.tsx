@@ -2,7 +2,7 @@
 
 import { api } from "@convex/_generated/api";
 import type { Id } from "@convex/_generated/dataModel";
-import { RiCloseLine, RiFileTextLine, RiVideoLine } from "@remixicon/react";
+import { RiFileTextLine, RiVideoLine } from "@remixicon/react";
 import { useQuery } from "convex/react";
 import { useState } from "react";
 import { Badge } from "@/components/ui/badge";
@@ -19,15 +19,18 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { formatRelativeTime } from "@/lib/relative-time";
 import { submissionStatusLabel } from "./assignment-status";
 import { SubmissionPreview } from "./submission-preview";
+import { SubmissionRejection } from "./submission-rejection";
 import { SubmittedVideo } from "./submitted-video";
 
 /** Summarizes the latest draft and opens the creator’s recorded feedback. */
 export function AssignmentSubmission({
   submissionId,
   title,
+  onResubmit,
 }: {
   submissionId: Id<"submissions">;
   title: string;
+  onResubmit?: () => void;
 }) {
   const submission = useQuery(api.submissions.get, { submissionId });
   const [now] = useState(() => Date.now());
@@ -40,6 +43,11 @@ export function AssignmentSubmission({
       ? "Changes needed"
       : submissionStatusLabel[submission.status];
   const MediaIcon = submission.mediaId ? RiVideoLine : RiFileTextLine;
+  const preview = (
+    <SubmissionPreview caption={submission.caption}>
+      {submission.mediaId && <SubmittedVideo mediaId={submission.mediaId} eager />}
+    </SubmissionPreview>
+  );
 
   return (
     <Dialog>
@@ -70,44 +78,49 @@ export function AssignmentSubmission({
         </DialogTrigger>
       </div>
       <DialogContent
-        className="min-h-[min(79.4dvh,780px)] max-w-[1186px] [align-content:safe_center] overflow-y-auto bg-gray-50 px-5 py-14 shadow-2xl"
+        className="min-h-[min(79.4dvh,780px)] max-w-[1186px] [align-content:safe_center] overflow-y-auto px-5 py-14 shadow-page"
         overlayClassName="bg-gray-950/20 backdrop-blur-[2px]"
       >
-        <div className="mx-auto w-full max-w-[446px] space-y-5">
-          <SubmissionPreview caption={submission.caption}>
-            {submission.mediaId && <SubmittedVideo mediaId={submission.mediaId} eager />}
-          </SubmissionPreview>
-          <div className="space-y-3 rounded-lg bg-gray-0 p-5">
-            <DialogTitle className="sr-only">
-              {changesNeeded ? "Submission comments" : "Submission details"}
-            </DialogTitle>
-            <DialogDescription className="flex items-start gap-3 text-gray-950">
-              {changesNeeded && (
-                <span className="grid size-10 shrink-0 place-items-center rounded-sm bg-gray-50">
-                  <RiCloseLine aria-hidden size={18} />
-                </span>
+        <DialogTitle className="sr-only">
+          {changesNeeded ? "Submission comments" : "Submission details"}
+        </DialogTitle>
+        {changesNeeded ? (
+          <>
+            <DialogDescription className="sr-only">Review feedback on your draft</DialogDescription>
+            <SubmissionRejection submission={submission} preview={preview}>
+              {onResubmit && (
+                <DialogClose render={<Button type="button" />} onClick={onResubmit}>
+                  Resubmit
+                </DialogClose>
               )}
-              {changesNeeded
-                ? "Your submission has been rejected. Review the reasons below and resubmit after adjusting."
-                : status}
-            </DialogDescription>
-            {submission.status !== "pending" && submission.reviewNote && (
-              <p className="text-body-sm break-words whitespace-pre-wrap text-gray-700">
-                {submission.reviewNote}
-              </p>
-            )}
-            {!changesNeeded && (
+              <DialogClose render={<Button type="button" variant="secondary-ghost" />}>
+                Not now
+              </DialogClose>
+            </SubmissionRejection>
+          </>
+        ) : (
+          <div className="mx-auto w-full max-w-[446px] space-y-5">
+            {preview}
+            <div className="space-y-3 rounded-lg bg-gray-0 p-5 shadow-raised">
+              <DialogDescription className="text-gray-950">{status}</DialogDescription>
+              {submission.status !== "pending" && submission.reviewNote && (
+                <p className="text-body-sm break-words whitespace-pre-wrap text-gray-700">
+                  {submission.reviewNote}
+                </p>
+              )}
               <p className="text-body-sm break-words whitespace-pre-wrap text-gray-700">
                 {submission.draftDescription}
               </p>
-            )}
+            </div>
+            <DialogClose
+              render={
+                <Button type="button" size="sm" variant="secondary-ghost" className="w-full" />
+              }
+            >
+              Close
+            </DialogClose>
           </div>
-          <DialogClose
-            render={<Button type="button" size="sm" variant="secondary-ghost" className="w-full" />}
-          >
-            {changesNeeded ? "Not now" : "Close"}
-          </DialogClose>
-        </div>
+        )}
       </DialogContent>
     </Dialog>
   );

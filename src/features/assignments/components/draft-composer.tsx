@@ -19,8 +19,10 @@ import { DialogClose, DialogDescription, DialogTitle } from "@/components/ui/dia
 import { Textarea } from "@/components/ui/textarea";
 import { errorMessage } from "@/lib/errors";
 import { createMediaUpload, type MediaUploadPhase } from "@/lib/media-upload";
+import { cn } from "@/lib/utils";
 import { aiReviewStatusLabel } from "./assignment-status";
 import { SubmissionPreview } from "./submission-preview";
+import { SubmissionRejection } from "./submission-rejection";
 import { SubmittedVideo } from "./submitted-video";
 import { VideoPreview } from "./video-preview";
 
@@ -188,8 +190,14 @@ export function DraftComposer({
   );
 
   if (reviewId) {
+    const rejected = review?.status === "changesRequested" ? review : undefined;
     return (
-      <div className="grid min-w-0 min-h-[min(79.4dvh,780px)] place-items-center bg-gray-50 px-5 py-16">
+      <div
+        className={cn(
+          "grid min-w-0 min-h-[min(79.4dvh,780px)] place-items-center px-5 py-16",
+          rejected ? "bg-gray-0" : "bg-gray-50",
+        )}
+      >
         <DialogTitle className="sr-only">Submission review</DialogTitle>
         <DialogDescription className="sr-only">Your draft and its review status</DialogDescription>
         <DialogClose
@@ -198,31 +206,37 @@ export function DraftComposer({
         >
           <RiCloseLine size={16} aria-hidden />
         </DialogClose>
-        <div className="w-full max-w-[446px] space-y-5">
-          {preview}
-          <DraftReviewProgress
-            key={reviewId}
-            review={review}
-            reviewing={reviewing}
-            criteria={criteria}
-          />
-          {!reviewing && review?.status === "changesRequested" && (
-            <Button type="button" size="sm" className="w-full" onClick={() => onRevise(reviewId)}>
+        {rejected ? (
+          <SubmissionRejection submission={rejected} preview={preview}>
+            <Button type="button" onClick={() => onRevise(reviewId)}>
               Resubmit
             </Button>
-          )}
-          {!reviewing && (
-            <Button
-              type="button"
-              size="sm"
-              variant="secondary-ghost"
-              className="w-full"
-              onClick={onCancel}
-            >
-              {review?.status === "changesRequested" ? "Not now" : "Back to assignment"}
+            <Button type="button" variant="secondary-ghost" onClick={onCancel}>
+              Not now
             </Button>
-          )}
-        </div>
+          </SubmissionRejection>
+        ) : (
+          <div className="w-full max-w-[446px] space-y-5">
+            {preview}
+            <DraftReviewProgress
+              key={reviewId}
+              review={review}
+              reviewing={reviewing}
+              criteria={criteria}
+            />
+            {!reviewing && (
+              <Button
+                type="button"
+                size="sm"
+                variant="secondary-ghost"
+                className="w-full"
+                onClick={onCancel}
+              >
+                Back to assignment
+              </Button>
+            )}
+          </div>
+        )}
       </div>
     );
   }
@@ -468,17 +482,10 @@ function DraftReviewProgress({
     ? aiReviewStatusLabel[status ?? "ready"]
     : review?.status === "approved"
       ? "Draft approved"
-      : review?.status === "changesRequested"
-        ? "Your submission has been rejected. Review the reasons below and resubmit after adjusting."
-        : review?.closedWithoutReview
-          ? "Closed without review"
-          : aiReviewStatusLabel.manualReview;
-  const Icon =
-    review?.status === "approved"
-      ? RiCheckLine
-      : review?.status === "changesRequested"
-        ? RiAlertLine
-        : RiTimeLine;
+      : review?.closedWithoutReview
+        ? "Closed without review"
+        : aiReviewStatusLabel.manualReview;
+  const Icon = review?.status === "approved" ? RiCheckLine : RiTimeLine;
 
   return (
     <div ref={card} tabIndex={-1} className="rounded-lg bg-gray-0 p-4">

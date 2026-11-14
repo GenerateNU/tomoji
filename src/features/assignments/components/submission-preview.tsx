@@ -3,6 +3,7 @@
 import { api } from "@convex/_generated/api";
 import { useQuery } from "convex/react";
 import type { ReactNode } from "react";
+import { Avatar, getInitials } from "@/components/ui/avatar";
 import { useMe } from "@/features/users/hooks/use-me";
 import { VideoSkeleton } from "./video-preview";
 
@@ -23,11 +24,13 @@ export function SubmissionPreview({
   return (
     <div className="space-y-4 rounded-lg bg-gray-0 p-4">
       <div className="flex items-center gap-2.5">
-        <span className="size-8 shrink-0 rounded-full bg-gray-100" aria-hidden />
+        <span aria-hidden>
+          <Avatar size={48} initials={getInitials(name)} />
+        </span>
         <div className="min-w-0">
-          <p className="text-body-xs font-medium break-words">{name}</p>
+          <p className="text-body-lg font-medium wrap-anywhere">{name}</p>
           {account?.username && (
-            <p className="text-body-xs break-words text-gray-500">@{account.username}</p>
+            <p className="text-body-sm wrap-anywhere text-gray-500">@{account.username}</p>
           )}
         </div>
       </div>

@@ -23,6 +23,7 @@ import { formatMoney } from "@/lib/money";
 import { focusRing } from "@/lib/styles";
 import { cn } from "@/lib/utils";
 import { CAMPAIGN_TABS, campaignTiming, type CampaignTab } from "../lib/campaign-status";
+import { CampaignActions } from "./campaign-actions";
 import { PerformanceCard } from "./performance-card";
 
 const PAGE_SIZE = 12;
@@ -99,6 +100,7 @@ export function CompanyCampaigns() {
               title={campaign.title}
               subtitle={campaignTiming(campaign, now)}
               onOpen={() => router.push(`/campaigns/${campaign._id}`)}
+              menu={<CampaignActions campaign={campaign} isAdmin={isAdmin} />}
             />
           ))}
         </div>

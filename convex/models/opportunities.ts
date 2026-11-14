@@ -20,6 +20,7 @@ import {
 import { notifyCompanyUser, notifyCreator } from "./notifications";
 import { requireNiche } from "./niches";
 import { requireSkill } from "./skills";
+import { describeMatch, getCreatorSignals, type CreatorSignals } from "./opportunityMatch";
 import {
   hasOpportunityNiche,
   listOpportunityNiches,
@@ -496,7 +497,8 @@ export const opportunityList = schema
  * Discovery filters. Within niches or skills a brief needs any one of them;
  * across filters it needs all. `isGated` picks briefs that need an
  * application (true) or let creators claim a spot (false). `applied` keeps
- * only briefs the caller has applied to. `search` matches title words, best
+ * only briefs the caller has applied to, and `eligible` only briefs whose
+ * follower minimum and skills the caller meets. `search` matches title words, best
  * match first, instead of deadline order.
  */
 export const opportunityDiscover = opportunityList.pick("paginationOpts").extend({
@@ -505,6 +507,7 @@ export const opportunityDiscover = opportunityList.pick("paginationOpts").extend
   skills: v.optional(v.array(v.string())),
   isGated: v.optional(v.boolean()),
   applied: v.optional(v.boolean()),
+  eligible: v.optional(v.boolean()),
 });
 
 /**
@@ -565,6 +568,7 @@ function discoverFilter(
   ctx: QueryCtx,
   options: Infer<typeof opportunityDiscover>,
   creatorId?: Id<"creators">,
+  signals?: CreatorSignals,
 ): (opportunity: Doc<"opportunities">) => Promise<CreatorOpportunity | null> {
   const niches = options.niches?.map(requireNiche) ?? [];
   const skills = options.skills?.map(requireSkill) ?? [];
@@ -587,7 +591,11 @@ function discoverFilter(
         return null;
       }
     }
-    return await getVisibleCreatorOpportunity(ctx, opportunity);
+    const brief = await getVisibleCreatorOpportunity(ctx, opportunity);
+    if (brief !== null && options.eligible === true) {
+      if (signals === undefined || !describeMatch(signals, brief).isEligible) return null;
+    }
+    return brief;
   };
 }
 
@@ -637,7 +645,13 @@ export async function discoverOpportunities(
   options: Infer<typeof opportunityDiscover>,
   creatorId?: Id<"creators">,
 ): Promise<PaginationResult<CreatorOpportunity>> {
-  const filter = discoverFilter(ctx, options, creatorId);
+  // Eligibility compares each brief with the caller's profile, read once here.
+  const creator =
+    options.eligible === true && creatorId !== undefined
+      ? await ctx.db.get("creators", creatorId)
+      : null;
+  const signals = creator === null ? undefined : await getCreatorSignals(ctx, creator);
+  const filter = discoverFilter(ctx, options, creatorId, signals);
   const search = options.search?.trim() ?? "";
   if (search !== "") return await searchOpportunities(ctx, search, options, filter);
   // Filter inside the stream so hidden or filtered-out opportunities don't

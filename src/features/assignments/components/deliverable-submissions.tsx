@@ -1,7 +1,7 @@
 "use client";
 
 import { api } from "@convex/_generated/api";
-import type { Id } from "@convex/_generated/dataModel";
+import type { Doc, Id } from "@convex/_generated/dataModel";
 import { usePaginatedQuery, useQuery } from "convex/react";
 import type { FunctionReturnType } from "convex/server";
 import { useState } from "react";
@@ -11,6 +11,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { aiReviewStatusLabel, submissionStatusLabel } from "./assignment-status";
 import { DraftComposer } from "./draft-composer";
 import { SubmittedVideo } from "./submitted-video";
+import { PublishedPost } from "./published-post";
 
 type Submission = FunctionReturnType<typeof api.submissions.get>;
 
@@ -23,8 +24,11 @@ type Props = {
   composing: boolean;
   onComposingChange: (open: boolean) => void;
   showDraftTrigger: boolean;
+  startPost: boolean;
   submissionId?: Id<"submissions">;
   active: boolean;
+  post?: Doc<"posts">;
+  postsLoading: boolean;
 };
 
 /** Shows the latest review and the draft actions available for this deliverable. */
@@ -37,8 +41,11 @@ export function DeliverableSubmissions({
   composing,
   onComposingChange,
   showDraftTrigger,
+  startPost,
   submissionId,
   active,
+  post,
+  postsLoading,
 }: Props) {
   const latest = useQuery(api.submissions.get, submissionId ? { submissionId } : "skip");
   const [revising, setRevising] = useState<Id<"submissions">>();
@@ -68,6 +75,20 @@ export function DeliverableSubmissions({
   return (
     <div className="mt-3 space-y-3">
       {busy && <Skeleton aria-label="Loading review" className="h-10 w-full" />}
+      {latest?.status === "approved" &&
+        (postsLoading ? (
+          <Skeleton aria-label="Loading post" className="h-12" />
+        ) : (
+          <PublishedPost
+            key={latest._id}
+            submissionId={latest._id}
+            caption={latest.caption}
+            startOpen={startPost}
+            post={post}
+            active={active}
+            approvedVideo={latest.mediaId && <SubmittedVideo mediaId={latest.mediaId} />}
+          />
+        ))}
       {(canSubmit || draftInFlight || reviewId || revising) && (
         <Dialog
           open={composing}

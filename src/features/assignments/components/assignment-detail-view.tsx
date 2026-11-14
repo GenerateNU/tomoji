@@ -35,16 +35,17 @@ type AssignmentSelection = {
 };
 
 export function AssignmentDetailView(selection: AssignmentSelection) {
-  const { assignmentId, status } = selection;
+  const { assignmentId, task } = selection;
+  const status = selection.status ?? (task === "post" ? "approved" : undefined);
   return (
     <>
-      <AssignmentsView stage="draft" status={status} />
+      <AssignmentsView stage="post" status={status} />
       <RequireAccount
         role="creator"
         next={`/assignments/${assignmentId}`}
         wrongRole="Assignments are available to creators."
       >
-        <AssignmentDetail {...selection} />
+        <AssignmentDetail {...selection} status={status} />
       </RequireAccount>
     </>
   );
@@ -106,6 +107,7 @@ function AssignmentDetail({ assignmentId, status, task, deliverable }: Assignmen
               draftTarget={draftTarget}
               setDraftTarget={setDraftTarget}
               footerDraft={footerDraft?._id}
+              postTarget={task === "post" ? deliverable : undefined}
             />
           )}
         </div>
@@ -128,11 +130,13 @@ function AssignmentWorkspace({
   draftTarget,
   setDraftTarget,
   footerDraft,
+  postTarget,
 }: {
   details: AssignmentDetails;
   draftTarget?: string;
   setDraftTarget: (target: string | undefined) => void;
   footerDraft?: string;
+  postTarget?: string;
 }) {
   const { assignment, brief, deliverables } = details;
   const assignedOn = new Intl.DateTimeFormat("en-US", {
@@ -140,6 +144,11 @@ function AssignmentWorkspace({
     day: "numeric",
     timeZone: "UTC",
   }).format(assignment._creationTime);
+  const published = useQuery(api.posts.list, {
+    assignmentId: assignment._id,
+    paginationOpts: { cursor: null, numItems: 12 },
+  });
+  const postsBySubmission = new Map(published?.page.map((post) => [post.submissionId, post]));
   return (
     <>
       <p className="mt-4 text-body-sm text-gray-500">Assigned {assignedOn}</p>
@@ -196,7 +205,10 @@ function AssignmentWorkspace({
                   composing={draftTarget === _id}
                   onComposingChange={(open) => setDraftTarget(open ? _id : undefined)}
                   showDraftTrigger={footerDraft !== _id}
+                  startPost={postTarget === _id}
                   submissionId={latest?._id}
+                  post={latest ? postsBySubmission.get(latest._id) : undefined}
+                  postsLoading={published === undefined}
                   active={assignment.status === "active"}
                 />
               </div>

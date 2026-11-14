@@ -1,10 +1,13 @@
 import { paginationResultValidator } from "convex/server";
-import { v } from "convex/values";
+import { v, type Infer } from "convex/values";
 import { internal } from "./_generated/api";
-import { env, internalMutation, internalQuery } from "./_generated/server";
+import { apiError } from "./lib/errors";
+import { requireIdentity } from "./lib/authz";
+import { action, env, internalMutation, internalQuery } from "./_generated/server";
 import {
   authedQuery,
   creatorMutation,
+  creatorContext,
   operatorMutation,
   operatorAction,
   requireCallerViewer,
@@ -12,6 +15,10 @@ import {
 import {
   createPost,
   getPostCaptionInput,
+  captionCheckReservation,
+  creatorCaptionCheck,
+  startCreatorCaptionCheck,
+  finishCreatorCaptionCheck,
   listPosts,
   postCreate,
   postListFilters,
@@ -27,8 +34,7 @@ import {
 } from "./models/posts";
 import { requireCallerCreatorId } from "./models/users";
 import schema from "./schema";
-import { apiError } from "./lib/errors";
-import { getXPostText } from "./lib/xApi";
+import { getXPostForCaptionCheck, getXPostText, normalizeCaption } from "./lib/xApi";
 
 /**
  * Records the live X post for the caller's approved submission. The link is
@@ -160,11 +166,6 @@ export const captionInput = internalQuery({
 
 const captionMatch = v.union(v.literal("match"), v.literal("mismatch"), v.literal("no_caption"));
 
-/** Normalizes Unicode, line endings, and outer whitespace before exact comparison. */
-function normalizeCaption(text: string): string {
-  return text.normalize("NFC").replace(/\r\n?/g, "\n").trim();
-}
-
 /** Compares the published caption to the approved submission for operator verification. */
 export const checkCaption = operatorAction({
   args: { postId: v.id("posts") },
@@ -178,5 +179,59 @@ export const checkCaption = operatorAction({
     // A creator can replace the post while the provider request is in flight.
     await ctx.runQuery(internal.posts.captionInput, { postId });
     return normalizeCaption(input.caption) === normalizeCaption(published) ? "match" : "mismatch";
+  },
+});
+
+/** Reserves a lookup after proving the caller owns the current active post. */
+export const beginCaptionCheck = internalMutation({
+  args: { postId: v.id("posts") },
+  returns: captionCheckReservation,
+  handler: async (ctx, { postId }) => {
+    const { user } = await creatorContext(ctx);
+    return await startCreatorCaptionCheck(ctx, await requireCallerCreatorId(ctx, user), postId);
+  },
+});
+
+/** Applies a successful provider response to the same owned post checked earlier. */
+export const saveCaptionCheck = internalMutation({
+  args: {
+    postId: v.id("posts"),
+    startedAt: v.number(),
+    published: v.object({
+      text: v.string(),
+      authorId: v.string(),
+      postedAt: v.number(),
+      hasExtraContent: v.boolean(),
+    }),
+  },
+  returns: creatorCaptionCheck,
+  handler: async (ctx, { postId, startedAt, published }) => {
+    const { user } = await creatorContext(ctx);
+    return await finishCreatorCaptionCheck(
+      ctx,
+      await requireCallerCreatorId(ctx, user),
+      postId,
+      startedAt,
+      published,
+    );
+  },
+});
+
+/** Checks the published X caption for an approved draft from the calling creator. */
+export const checkMyCaption = action({
+  args: { postId: v.id("posts") },
+  returns: creatorCaptionCheck,
+  handler: async (ctx, { postId }): Promise<Infer<typeof creatorCaptionCheck>> => {
+    await requireIdentity(ctx);
+    const input = await ctx.runMutation(internal.posts.beginCaptionCheck, { postId });
+    if (input.status !== "lookup") return input.status;
+    const token = env.X_BEARER_TOKEN?.trim();
+    if (!token) throw apiError("misconfigured", { reason: "x_bearer_token_missing" });
+    const published = await getXPostForCaptionCheck(token, input.xPostId);
+    return await ctx.runMutation(internal.posts.saveCaptionCheck, {
+      postId,
+      startedAt: input.startedAt,
+      published,
+    });
   },
 });

@@ -184,10 +184,9 @@ export function PublishedPost({
       <DialogContent
         initialFocus={false}
         className={cn(
-          "max-w-[1186px] [align-content:safe_center] overflow-y-auto rounded-lg px-5 py-14 shadow-2xl sm:px-10 md:min-h-[min(79.4dvh,780px)]",
-          checking
-            ? "bg-gray-0 sm:[&>[data-slot=dialog-close]]:top-8 sm:[&>[data-slot=dialog-close]]:right-8 [&>[data-slot=dialog-close]]:size-6 [&>[data-slot=dialog-close]]:items-center [&>[data-slot=dialog-close]]:justify-center [&>[data-slot=dialog-close]>svg]:size-4"
-            : "bg-gray-50",
+          "max-w-[1186px] [align-content:safe_center] overflow-y-auto rounded-lg px-5 py-14 shadow-page sm:px-10 md:min-h-[min(79.4dvh,780px)]",
+          checking &&
+            "sm:[&>[data-slot=dialog-close]]:top-8 sm:[&>[data-slot=dialog-close]]:right-8 [&>[data-slot=dialog-close]]:size-6 [&>[data-slot=dialog-close]]:items-center [&>[data-slot=dialog-close]]:justify-center [&>[data-slot=dialog-close]>svg]:size-4",
         )}
         overlayClassName="bg-gray-950/20 backdrop-blur-[2px]"
       >
@@ -236,7 +235,7 @@ export function PublishedPost({
             )}
             {showMismatch && (
               <div className="min-w-0 space-y-4">
-                <div className="relative space-y-4 rounded-lg bg-gray-0 p-4">
+                <div className="relative space-y-4 rounded-lg bg-gray-0 p-4 shadow-raised">
                   <ResultIcon mismatch />
                   <div className="flex items-center gap-3">
                     <span className="size-8 shrink-0 rounded-full bg-gray-100" aria-hidden />
@@ -274,7 +273,7 @@ export function PublishedPost({
             </div>
           ) : showForm ? (
             <form
-              className="mx-auto max-w-[446px] space-y-5 rounded-lg bg-gray-0 p-5"
+              className="mx-auto max-w-[446px] space-y-5 rounded-lg bg-gray-0 p-5 shadow-raised"
               onSubmit={save}
               noValidate
             >

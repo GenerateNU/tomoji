@@ -6,7 +6,6 @@ import { RiExpandUpDownLine, RiGlobalLine, RiSearchLine } from "@remixicon/react
 import { usePaginatedQuery, useQuery } from "convex-helpers/react/cache/hooks";
 import Link from "next/link";
 import { useEffect, useId, useState } from "react";
-import { Badge } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { PaginationControl } from "@/components/ui/pagination";
@@ -21,7 +20,6 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsCount, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { RequireAccount } from "@/features/users/components/require-account";
 import { cn } from "@/lib/utils";
-import { assignmentStatusLabel } from "./assignment-status";
 import { AssignmentCompany } from "./assignment-company";
 
 const PAGE_SIZE = 12;
@@ -319,11 +317,6 @@ function AssignmentRows({
                 {date.format(row._creationTime)}
               </time>
               <div className="col-start-2 row-span-3 row-start-2 flex flex-wrap items-center justify-end gap-2 lg:col-start-auto lg:row-span-1 lg:row-start-auto">
-                {row.queue === "approved" && !row.next && <Badge>Posted</Badge>}
-                {row.queue === "review" && row.status === "active" && <Badge>In review</Badge>}
-                {(row.status === "completed" || row.status === "cancelled") && (
-                  <Badge>{assignmentStatusLabel[row.status]}</Badge>
-                )}
                 <Link
                   href={task && row.next ? `${href}&task=${task}&deliverable=${row.next.id}` : href}
                   className={buttonVariants({

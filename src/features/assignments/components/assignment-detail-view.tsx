@@ -17,10 +17,8 @@ import { assignmentQueue, AssignmentsView } from "./assignments-view";
 import { AssignmentExamples } from "./assignment-examples";
 import { AssignmentCompany } from "./assignment-company";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { RequireAccount } from "@/features/users/components/require-account";
-import { assignmentStatusLabel } from "./assignment-status";
 import { AssignmentSubmission } from "./assignment-submission";
 import { DeliverableSubmissions } from "./deliverable-submissions";
 
@@ -152,9 +150,6 @@ function AssignmentWorkspace({
   return (
     <>
       <p className="mt-4 text-body-sm text-gray-500">Assigned {assignedOn}</p>
-      {(assignment.status === "completed" || assignment.status === "cancelled") && (
-        <Badge className="mt-2">{assignmentStatusLabel[assignment.status]}</Badge>
-      )}
       <div className="mt-6 space-y-6">
         {deliverables.some(({ latest }) => latest) && (
           <section>

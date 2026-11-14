@@ -17,7 +17,6 @@ export function MatchPanel({ opportunity }: { opportunity: FeedOpportunity }) {
   const skills = useQuery(api.skills.list, {});
   const niches = useQuery(api.niches.list, {});
   const tag = matchTag(opportunity);
-  if (tag === null) return null;
   const { match } = opportunity;
   const label = (catalog: { name: string; label: string }[] | undefined, name: string) =>
     catalog?.find((entry) => entry.name === name)?.label ?? name;
@@ -40,17 +39,21 @@ export function MatchPanel({ opportunity }: { opportunity: FeedOpportunity }) {
     ...(match.meetsFollowerMinimum && minimum ? [`${minimum.label} followers`] : []),
   ];
 
+  if (tag === null && gaps.length === 0) return null;
+
   return (
     <section
       aria-label="How well you match"
       className="flex flex-col gap-3 rounded-sm bg-gray-50 p-4 text-body-sm"
     >
-      <div className="flex items-center gap-2">
-        <Badge tone={tag.tone} size="md">
-          {tag.label}
-        </Badge>
-        <span className="text-gray-700">Based on your profile</span>
-      </div>
+      {tag && (
+        <div className="flex items-center gap-2">
+          <Badge tone={tag.tone} size="md">
+            {tag.label}
+          </Badge>
+          <span className="text-gray-700">Based on your profile</span>
+        </div>
+      )}
       {matched.length > 0 && (
         <div className="flex flex-wrap gap-2">
           {matched.map((item) => (

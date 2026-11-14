@@ -3,7 +3,7 @@ import { getFunctionName, type FunctionReference } from "convex/server";
 /** Feed items shaped like `opportunities.discover`; no calls reach a Convex deployment. */
 const DAY = 86_400_000;
 const NO_MATCH = {
-  level: "good" as "strong" | "good" | "weak" | null,
+  isGreatMatch: false,
   matchedSkills: ["python"],
   missingSkills: [] as string[],
   matchedNiches: [] as string[],
@@ -84,7 +84,7 @@ const FEED = [
     numFilledSlots: 7,
     fixedFeeCents: 50_000,
     cpmRateCents: 400,
-    match: { level: "strong", matchedNiches: ["generative-ai-llms"] },
+    match: { isGreatMatch: true, matchedNiches: ["generative-ai-llms"] },
   }),
   brief(3, {
     title: "v0 by Vercel",
@@ -104,7 +104,6 @@ const FEED = [
     minFollowerRange: "50k-100k",
     skills: ["python", "typescript"],
     match: {
-      level: "weak",
       missingSkills: ["typescript"],
       meetsFollowerMinimum: false,
       isEligible: false,

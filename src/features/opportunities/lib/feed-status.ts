@@ -1,17 +1,13 @@
 import { formatSpotsLeft } from "./format";
 import type { FeedOpportunity } from "./types";
 
-export type FeedTag = { label: string; tone: "primary" | "neutral" | "destructive" };
+export type FeedTag = { label: string; tone: "primary" | "neutral" };
 
-const MATCH_TAGS = {
-  strong: { label: "Strong match", tone: "primary" },
-  good: { label: "Good match", tone: "neutral" },
-  weak: { label: "Weak match", tone: "destructive" },
-} as const satisfies Record<string, FeedTag>;
+const GREAT_MATCH_TAG: FeedTag = { label: "Great match", tone: "primary" };
 
-/** How well the brief fits the creator, or null when it asks for nothing to match on. */
+/** "Great match" when the brief is one; deliberately rare, so other fits get no tag. */
 export function matchTag(opportunity: FeedOpportunity): FeedTag | null {
-  return opportunity.match.level === null ? null : MATCH_TAGS[opportunity.match.level];
+  return opportunity.match.isGreatMatch ? GREAT_MATCH_TAG : null;
 }
 
 /** What the card's button does next, from the creator's point of view. */

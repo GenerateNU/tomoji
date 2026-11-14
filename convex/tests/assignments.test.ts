@@ -523,6 +523,123 @@ describe("assignments.listMine", () => {
   });
 });
 
+describe("assignments.searchMine", () => {
+  /** Seeds an opportunity under its own company, renamed to `companyName`. */
+  async function seedNamedOpportunity(
+    t: TestConvex,
+    companyName: string,
+    title = "Moisturizer launch video",
+  ) {
+    const slug = companyName.toLowerCase();
+    const owner = await seedOpportunity(
+      t,
+      { subject: `owner_${slug}`, orgId: `org_${slug}` },
+      { title },
+    );
+    await t.run(
+      async (ctx) =>
+        await ctx.db.patch("companies", owner.membership.companyId, {
+          name: companyName,
+        }),
+    );
+    return owner;
+  }
+
+  test("finds the caller's assignments by company name, newest first", async () => {
+    const t = convexTest(schema, modules);
+    const asCreator = await seedUser(t, { subject: "creator" });
+    const creatorId = await seedCreatorId(t, "creator");
+    const clerk = await seedNamedOpportunity(t, "Clerk", "Auth walkthrough");
+    const cloudflare = await seedNamedOpportunity(t, "Cloudflare", "Edge deploy demo");
+    const vercel = await seedNamedOpportunity(t, "Vercel");
+    const clerkId = await seedAssignment(t, {
+      opportunityId: clerk.opportunityId,
+      creatorId,
+      status: "completed",
+    });
+    vi.advanceTimersByTime(1000);
+    const cloudflareId = await seedAssignment(t, {
+      opportunityId: cloudflare.opportunityId,
+      creatorId,
+      status: "active",
+    });
+    await seedAssignment(t, { opportunityId: vercel.opportunityId, creatorId });
+
+    const result = await asCreator.query(api.assignments.searchMine, {
+      companyName: " CL ",
+    });
+
+    expect(result).toStrictEqual([
+      {
+        assignmentId: cloudflareId,
+        companyId: cloudflare.membership.companyId,
+        companyName: "Cloudflare",
+        opportunityTitle: "Edge deploy demo",
+        status: "active",
+      },
+      {
+        assignmentId: clerkId,
+        companyId: clerk.membership.companyId,
+        companyName: "Clerk",
+        opportunityTitle: "Auth walkthrough",
+        status: "completed",
+      },
+    ]);
+  });
+
+  test("lists every assignment when the search is omitted or blank", async () => {
+    const t = convexTest(schema, modules);
+    const { owner, asCreator, creatorId, assignmentId } = await seedDeal(t);
+    vi.advanceTimersByTime(1000);
+    const cancelledId = await seedAssignment(t, {
+      opportunityId: owner.opportunityId,
+      creatorId,
+      status: "cancelled",
+    });
+
+    for (const args of [{}, { companyName: "   " }]) {
+      const result = await asCreator.query(api.assignments.searchMine, args);
+      expect(result.map((option) => option.assignmentId)).toEqual([cancelledId, assignmentId]);
+    }
+  });
+
+  test("leaves out other creators' assignments", async () => {
+    const t = convexTest(schema, modules);
+    const { owner } = await seedDeal(t);
+    const asOther = await seedUser(t, { subject: "other_creator" });
+    const otherCreatorId = await seedCreatorId(t, "other_creator");
+    const otherId = await seedAssignment(t, {
+      opportunityId: owner.opportunityId,
+      creatorId: otherCreatorId,
+    });
+
+    const result = await asOther.query(api.assignments.searchMine, {});
+
+    expect(result.map((option) => option.assignmentId)).toEqual([otherId]);
+  });
+
+  test("returns at most 20 matches", async () => {
+    const t = convexTest(schema, modules);
+    const { owner, asCreator, creatorId } = await seedDeal(t);
+    for (let i = 0; i < 21; i++) {
+      await seedAssignment(t, {
+        opportunityId: owner.opportunityId,
+        creatorId,
+      });
+    }
+
+    const result = await asCreator.query(api.assignments.searchMine, {});
+
+    expect(result).toHaveLength(20);
+  });
+
+  test("rejects a company user", async () => {
+    const t = convexTest(schema, modules);
+    const { owner } = await seedDeal(t);
+    await expectApiError(() => owner.asCompany.query(api.assignments.searchMine, {}), "forbidden");
+  });
+});
+
 describe("assignments.get", () => {
   test("hides the delivery actor from the creator while preserving delivery at timestamp zero", async () => {
     const t = convexTest(schema, modules);

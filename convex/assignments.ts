@@ -21,12 +21,15 @@ import {
   completeAssignment,
   creatorAssignment,
   creatorAssignmentListFilters,
+  creatorAssignmentOption,
+  creatorAssignmentSearch,
   declineAssignmentTerms,
   exportAssignmentCreatorsCsv,
   listAssignments,
   listCreatorAssignments,
   markAssignmentProductAccessDelivered,
   requireAssignment,
+  searchCreatorAssignments,
   toCreatorAssignment,
 } from "./models/assignments";
 import { requireCallerCreatorId } from "./models/users";
@@ -105,6 +108,22 @@ export const listMine = creatorQuery({
     const creatorId = await requireCallerCreatorId(ctx, ctx.user);
     const result = await listCreatorAssignments(ctx, creatorId, args);
     return { ...result, page: result.page.map(toCreatorAssignment) };
+  },
+});
+
+/**
+ * Searches the calling creator's assignments, in any status, by company name:
+ * up to 20 whose company name contains `companyName` (trimmed, ignoring case),
+ * newest first. A blank or missing search lists the newest ones. Each result
+ * names the company and opportunity so the creator can pick one, for example
+ * to open a dispute. Only the creator's newest 200 assignments are searched.
+ */
+export const searchMine = creatorQuery({
+  args: creatorAssignmentSearch.fields,
+  returns: v.array(creatorAssignmentOption),
+  handler: async (ctx, args) => {
+    const creatorId = await requireCallerCreatorId(ctx, ctx.user);
+    return await searchCreatorAssignments(ctx, creatorId, args.companyName);
   },
 });
 

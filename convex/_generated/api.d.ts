@@ -22,7 +22,6 @@ import type * as countries from "../countries.js";
 import type * as creators from "../creators.js";
 import type * as crons from "../crons.js";
 import type * as deliverables from "../deliverables.js";
-import type * as devSeed from "../devSeed.js";
 import type * as disputes from "../disputes.js";
 import type * as http from "../http.js";
 import type * as invites from "../invites.js";
@@ -120,7 +119,6 @@ declare const fullApi: ApiFromModules<{
   creators: typeof creators;
   crons: typeof crons;
   deliverables: typeof deliverables;
-  devSeed: typeof devSeed;
   disputes: typeof disputes;
   http: typeof http;
   invites: typeof invites;

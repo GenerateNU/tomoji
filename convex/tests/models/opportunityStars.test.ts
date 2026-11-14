@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import type { Id } from "../../_generated/dataModel";
 import {
   listStarredOpportunities,
+  listStarredOpportunityIds,
   starOpportunity,
   unstarOpportunity,
   withStarredFlags,
@@ -95,7 +96,9 @@ describe("starOpportunity", () => {
 
   test("conceals an opportunity whose campaign is paused", async () => {
     const t = convexTest(schema, modules);
-    const { opportunityId, campaignId } = await seedOpportunity(t, { subject: "owner" });
+    const { opportunityId, campaignId } = await seedOpportunity(t, {
+      subject: "owner",
+    });
     await t.run(async (ctx) => await ctx.db.patch("campaigns", campaignId, { status: "paused" }));
     await seedCreatorId(t, "creator");
 
@@ -142,7 +145,10 @@ describe("unstarOpportunity", () => {
     const creatorId = await seedCreatorId(t, "creator");
     await star(t, "creator", opportunityId);
     await t.run(
-      async (ctx) => await ctx.db.patch("opportunities", opportunityId, { status: "closed" }),
+      async (ctx) =>
+        await ctx.db.patch("opportunities", opportunityId, {
+          status: "closed",
+        }),
     );
 
     await t.run(async (ctx) => await unstarOpportunity(ctx, creatorId, opportunityId));
@@ -164,7 +170,10 @@ describe("listStarredOpportunities", () => {
     await star(t, "other_creator", unstarred.opportunityId);
 
     const result = await t.run(
-      async (ctx) => await listStarredOpportunities(ctx, creatorId, { paginationOpts: firstPage }),
+      async (ctx) =>
+        await listStarredOpportunities(ctx, creatorId, {
+          paginationOpts: firstPage,
+        }),
     );
 
     expect(result.page).toMatchObject([
@@ -184,11 +193,16 @@ describe("listStarredOpportunities", () => {
     await star(t, "creator", paused.opportunityId);
     await t.run(
       async (ctx) =>
-        await ctx.db.patch("opportunities", paused.opportunityId, { status: "paused" }),
+        await ctx.db.patch("opportunities", paused.opportunityId, {
+          status: "paused",
+        }),
     );
 
     const result = await t.run(
-      async (ctx) => await listStarredOpportunities(ctx, creatorId, { paginationOpts: firstPage }),
+      async (ctx) =>
+        await listStarredOpportunities(ctx, creatorId, {
+          paginationOpts: firstPage,
+        }),
     );
 
     expect(result.page.map((opportunity) => opportunity._id)).toEqual([visible.opportunityId]);
@@ -234,7 +248,9 @@ describe("withStarredFlags", () => {
     await star(t, "other_creator", plain.opportunityId);
 
     const flags = await t.run(async (ctx) => {
-      const feed = await discoverOpportunities(ctx, { paginationOpts: firstPage });
+      const feed = await discoverOpportunities(ctx, {
+        paginationOpts: firstPage,
+      });
       const flagged = await withStarredFlags(ctx, creatorId, feed.page);
       return Object.fromEntries(flagged.map((item) => [item._id, item.isStarred]));
     });
@@ -274,7 +290,9 @@ describe("feeds fill pages past hidden opportunities", () => {
 
     const result = await t.run(
       async (ctx) =>
-        await discoverOpportunities(ctx, { paginationOpts: { numItems: 2, cursor: null } }),
+        await discoverOpportunities(ctx, {
+          paginationOpts: { numItems: 2, cursor: null },
+        }),
     );
 
     expect(result.page.map((brief) => brief._id)).toEqual([visible.opportunityId]);
@@ -316,17 +334,88 @@ describe("withStarredFlags with many stars", () => {
     // 1,000 older stars fill the bulk read, so the newest star isn't in it.
     await t.run(async (ctx) => {
       for (let i = 0; i < 1000; i++) {
-        await ctx.db.insert("opportunityStars", { creatorId, opportunityId: filler.opportunityId });
+        await ctx.db.insert("opportunityStars", {
+          creatorId,
+          opportunityId: filler.opportunityId,
+        });
       }
     });
     await star(t, "creator", target.opportunityId);
 
     const flags = await t.run(async (ctx) => {
-      const feed = await discoverOpportunities(ctx, { paginationOpts: firstPage });
+      const feed = await discoverOpportunities(ctx, {
+        paginationOpts: firstPage,
+      });
       const flagged = await withStarredFlags(ctx, creatorId, feed.page);
       return Object.fromEntries(flagged.map((item) => [item._id, item.isStarred]));
     });
 
     expect(flags[target.opportunityId]).toBe(true);
+  });
+});
+
+describe("listStarredOpportunityIds", () => {
+  test("returns only the given opportunities the creator has starred", async () => {
+    const t = convexTest(schema, modules);
+    const creatorId = await seedCreatorId(t, "creator");
+    await seedCreatorId(t, "other_creator");
+    const starred = await seedOpportunity(t, { subject: "owner" });
+    const plain = await seedOpportunity(t, { subject: "owner" });
+    const starredByOther = await seedOpportunity(t, { subject: "owner" });
+    const starredButNotAsked = await seedOpportunity(t, { subject: "owner" });
+    await star(t, "creator", starred.opportunityId);
+    await star(t, "creator", starredButNotAsked.opportunityId);
+    await star(t, "other_creator", starredByOther.opportunityId);
+
+    const ids = await t.run(async (ctx) =>
+      // A Set can't leave t.run, so return its members.
+      [
+        ...(await listStarredOpportunityIds(ctx, creatorId, [
+          starred.opportunityId,
+          plain.opportunityId,
+          starredByOther.opportunityId,
+        ])),
+      ],
+    );
+
+    expect([...ids]).toEqual([starred.opportunityId]);
+  });
+
+  test("returns an empty set for no opportunities", async () => {
+    const t = convexTest(schema, modules);
+    const creatorId = await seedCreatorId(t, "creator");
+
+    const ids = await t.run(async (ctx) => [
+      ...(await listStarredOpportunityIds(ctx, creatorId, [])),
+    ]);
+
+    expect(ids).toEqual([]);
+  });
+
+  test("still finds stars when the creator has more than one read loads", async () => {
+    const t = convexTest(schema, modules);
+    const creatorId = await seedCreatorId(t, "creator");
+    const filler = await seedOpportunity(t, { subject: "owner" });
+    const target = await seedOpportunity(t, { subject: "owner" });
+    const unstarred = await seedOpportunity(t, { subject: "owner" });
+    // 1,000 older stars fill the bulk read, so the newest star isn't in it.
+    await t.run(async (ctx) => {
+      for (let i = 0; i < 1000; i++) {
+        await ctx.db.insert("opportunityStars", {
+          creatorId,
+          opportunityId: filler.opportunityId,
+        });
+      }
+    });
+    await star(t, "creator", target.opportunityId);
+
+    const ids = await t.run(async (ctx) => [
+      ...(await listStarredOpportunityIds(ctx, creatorId, [
+        target.opportunityId,
+        unstarred.opportunityId,
+      ])),
+    ]);
+
+    expect([...ids]).toEqual([target.opportunityId]);
   });
 });

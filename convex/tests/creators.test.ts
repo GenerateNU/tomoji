@@ -32,6 +32,7 @@ describe("creators.me", () => {
     });
     const expected = {
       creatorId,
+      joinedAt: expect.any(Number),
       email: "creator_names@example.com",
       additionalLinks: [],
       niches: [],
@@ -81,6 +82,7 @@ describe("creators.me", () => {
 
     expect(await asCreator.query(api.creators.me, {})).toEqual({
       creatorId,
+      joinedAt: expect.any(Number),
       firstName: "Creator",
       lastName: "Name",
       email: "creator@example.com",
@@ -238,6 +240,7 @@ describe("creators.get", () => {
 
     expect(await asCompany.query(api.creators.get, { creatorId })).toEqual({
       creatorId,
+      joinedAt: expect.any(Number),
       firstName: "Test",
       lastName: "",
       email: "target@example.com",

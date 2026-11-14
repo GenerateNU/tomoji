@@ -23,6 +23,8 @@ import { followerRange, MAX_ADDITIONAL_LINKS } from "../schemas/creators.schema"
  */
 export const creatorProfile = v.object({
   creatorId: v.id("creators"),
+  // When the creator row was made, in Unix ms; shown as "Joined November 2026".
+  joinedAt: v.number(),
   firstName: v.string(),
   lastName: v.string(),
   email: v.string(),
@@ -44,6 +46,8 @@ export const ownCreatorProfile = v.object({
   ...creatorProfile.fields,
   // Their age gates the account; nobody else needs the date behind it.
   dateOfBirth: v.optional(v.number()),
+  // Routes them into onboarding until it is set; not a company's business.
+  onboardingCompletedAt: v.optional(v.number()),
 });
 
 export const creatorProfileUpdate = v.object({
@@ -77,6 +81,7 @@ function toCreatorProfile(
 ): CreatorProfile {
   return {
     creatorId: creator._id,
+    joinedAt: creator._creationTime,
     firstName: user.firstName,
     lastName: user.lastName,
     email: user.email,
@@ -100,7 +105,11 @@ function toOwnCreatorProfile(
   creator: Doc<"creators">,
   details: Pick<CreatorProfile, "xId" | "niches" | "skills" | "languages">,
 ): OwnCreatorProfile {
-  return { ...toCreatorProfile(user, creator, details), dateOfBirth: creator.dateOfBirth };
+  return {
+    ...toCreatorProfile(user, creator, details),
+    dateOfBirth: creator.dateOfBirth,
+    onboardingCompletedAt: creator.onboardingCompletedAt,
+  };
 }
 
 /** Loads the bounded associations and verified X identity for an already-authorized profile. */
@@ -248,6 +257,49 @@ function optionalProfileUrl(
 ): string | undefined {
   if (value === null || value === undefined || value.trim() === "") return undefined;
   return requireUrl(value, rules);
+}
+
+/**
+ * Marks onboarding finished, after checking the profile actually carries what
+ * the flow collects. Checked here rather than trusted from the client, since
+ * the flag is what stops the creator being routed back into onboarding.
+ *
+ * Connecting X is optional, so it is not required. Repeating the call keeps
+ * the first completion time.
+ *
+ * @throws `invalid_state` with reason `onboarding_incomplete` and the missing
+ * field names when something the flow collects is still unset.
+ */
+export async function completeCreatorOnboarding(
+  ctx: MutationCtx,
+  user: Doc<"users">,
+): Promise<OwnCreatorProfile> {
+  const creator = await requireCreatorRow(ctx, user);
+  if (creator.onboardingCompletedAt !== undefined) {
+    return toOwnCreatorProfile(user, creator, await creatorDetails(ctx, creator));
+  }
+  const [niches, skills, languages] = await Promise.all([
+    listCreatorNiches(ctx, creator._id),
+    listCreatorSkills(ctx, creator._id),
+    listCreatorLanguages(ctx, creator._id),
+  ]);
+  const missing = [
+    ...(creator.dateOfBirth === undefined ? ["dateOfBirth"] : []),
+    ...(creator.countryOfResidence === undefined ? ["countryOfResidence"] : []),
+    ...(languages.length === 0 ? ["languages"] : []),
+    ...(niches.length === 0 ? ["niches"] : []),
+    ...(skills.length === 0 ? ["skills"] : []),
+  ];
+  if (missing.length > 0) {
+    throw apiError("invalid_state", { reason: "onboarding_incomplete", missing });
+  }
+  const onboardingCompletedAt = Date.now();
+  await ctx.db.patch("creators", creator._id, { onboardingCompletedAt });
+  return toOwnCreatorProfile(
+    user,
+    { ...creator, onboardingCompletedAt },
+    await creatorDetails(ctx, creator),
+  );
 }
 
 /** Updates the editable fields in a creator's own profile and returns the complete profile. */

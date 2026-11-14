@@ -1,7 +1,9 @@
 import { paginationOptsValidator, paginationResultValidator } from "convex/server";
 import { v } from "convex/values";
+import { internal } from "./_generated/api";
 import { companyQuery, creatorMutation, creatorQuery } from "./lib/functions";
 import {
+  completeCreatorOnboarding,
   creatorProfile,
   creatorProfileUpdate,
   ownCreatorProfile,
@@ -48,6 +50,26 @@ export const update = creatorMutation({
   args: creatorProfileUpdate.fields,
   returns: ownCreatorProfile,
   handler: async (ctx, args) => {
-    return await updateCreatorProfile(ctx, ctx.user, args);
+    const profile = await updateCreatorProfile(ctx, ctx.user, args);
+    const { niches, skills, followerRange } = args;
+    if ([niches, skills, followerRange].some((field) => field !== undefined)) {
+      await ctx.scheduler.runAfter(0, internal.opportunityScores.scoreCreator, {
+        creatorId: profile.creatorId,
+      });
+    }
+    return profile;
   },
+});
+
+/**
+ * Marks the creator's onboarding finished once their profile carries what the
+ * flow collects. Until it is set, sign-in routes them back into onboarding.
+ *
+ * @throws `invalid_state` with reason `onboarding_incomplete` and the missing
+ * field names when something is still unset.
+ */
+export const completeOnboarding = creatorMutation({
+  args: {},
+  returns: ownCreatorProfile,
+  handler: async (ctx) => await completeCreatorOnboarding(ctx, ctx.user),
 });

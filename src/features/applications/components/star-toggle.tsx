@@ -1,11 +1,9 @@
 "use client";
 
-import { api } from "@convex/_generated/api";
 import type { Id } from "@convex/_generated/dataModel";
-import { useMutation } from "convex/react";
-import { useState } from "react";
 import { RiStarFill, RiStarLine } from "@remixicon/react";
 import { toast } from "sonner";
+import { useSetStarred } from "@/features/opportunities/hooks/use-star-mutations";
 import { errorMessage } from "@/lib/errors";
 import { iconProps } from "@/lib/icons";
 import { focusRing } from "@/lib/styles";
@@ -15,8 +13,8 @@ import { cn } from "@/lib/utils";
  * Stars or unstars the opportunity behind an application. Starring is refused
  * once creators can no longer see the opportunity, though unstarring always
  * works, so an unstarred row of a closed opportunity shows a disabled star.
- * The row updates by itself when the mutation lands; `pending` only blocks
- * double taps.
+ * The star flips immediately through an optimistic update; Convex rolls it
+ * back if the mutation fails.
  */
 export function StarToggle({
   opportunityId,
@@ -29,31 +27,24 @@ export function StarToggle({
   isStarred: boolean;
   canStar: boolean;
 }) {
-  const star = useMutation(api.opportunities.star);
-  const unstar = useMutation(api.opportunities.unstar);
-  const [pending, setPending] = useState(false);
+  const setStarred = useSetStarred();
   const unavailable = !canStar && !isStarred;
 
-  async function toggle() {
-    setPending(true);
-    try {
-      await (isStarred ? unstar : star)({ opportunityId });
-    } catch (error) {
+  function toggle() {
+    setStarred(opportunityId, !isStarred).catch((error: unknown) => {
       toast.error(
         errorMessage(error, {
           not_found: "This opportunity is no longer open, so it can't be starred.",
         }),
       );
-    } finally {
-      setPending(false);
-    }
+    });
   }
 
   return (
     <button
       type="button"
       onClick={toggle}
-      disabled={pending || unavailable}
+      disabled={unavailable}
       aria-pressed={isStarred}
       aria-label={
         unavailable

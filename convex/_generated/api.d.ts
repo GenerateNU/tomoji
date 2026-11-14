@@ -51,7 +51,6 @@ import type * as media from "../media.js";
 import type * as mediaInternal from "../mediaInternal.js";
 import type * as migrations_2026_10_07_remove_user_profile_pictures from "../migrations/2026_10_07_remove_user_profile_pictures.js";
 import type * as migrations_2026_10_25_backfill_creator_niches from "../migrations/2026_10_25_backfill_creator_niches.js";
-import type * as migrations_2026_10_25_backfill_opportunity_niches from "../migrations/2026_10_25_backfill_opportunity_niches.js";
 import type * as migrations_runner from "../migrations/runner.js";
 import type * as models_aiReviewAttempts from "../models/aiReviewAttempts.js";
 import type * as models_applications from "../models/applications.js";
@@ -151,7 +150,6 @@ declare const fullApi: ApiFromModules<{
   mediaInternal: typeof mediaInternal;
   "migrations/2026_10_07_remove_user_profile_pictures": typeof migrations_2026_10_07_remove_user_profile_pictures;
   "migrations/2026_10_25_backfill_creator_niches": typeof migrations_2026_10_25_backfill_creator_niches;
-  "migrations/2026_10_25_backfill_opportunity_niches": typeof migrations_2026_10_25_backfill_opportunity_niches;
   "migrations/runner": typeof migrations_runner;
   "models/aiReviewAttempts": typeof models_aiReviewAttempts;
   "models/applications": typeof models_applications;

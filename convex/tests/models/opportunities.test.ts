@@ -2933,7 +2933,7 @@ describe("opportunity associations", () => {
     ]);
   });
 
-  test("filtered discovery paginates mixed legacy and association rows while hiding paused campaigns", async () => {
+  test("filtered discovery paginates matching rows while hiding paused campaigns", async () => {
     const t = convexTest(schema, modules);
     await seedOpportunity(t, { subject: "off_niche" }, { niches: ["databases"] });
     const hidden = await seedOpportunity(t, { subject: "hidden_niche" }, { niches: ["llms"] });
@@ -2943,8 +2943,7 @@ describe("opportunity associations", () => {
       { subject: "new_niche" },
       { niches: ["llms"], skills: ["python"] },
     );
-    const second = await seedOpportunity(t, { subject: "legacy_niche" });
-    await t.run((ctx) => ctx.db.patch("opportunities", second.opportunityId, { niches: ["llms"] }));
+    const second = await seedOpportunity(t, { subject: "second_niche" }, { niches: ["llms"] });
     const firstPage = await t.run((ctx) =>
       discoverOpportunities(ctx, { niche: "LLMs", paginationOpts: { numItems: 1, cursor: null } }),
     );
@@ -3041,9 +3040,9 @@ describe("opportunity niches", () => {
 
     expect(replaced.niches).toEqual(["game-dev", "developer-tools"]);
     expect(cleared.niches).toEqual([]);
-    expect(
-      (await t.run(async (ctx) => await ctx.db.get("opportunities", owner.opportunityId)))?.niches,
-    ).toBeUndefined();
+    expect(await t.run(async (ctx) => await ctx.db.query("opportunityNiches").take(10))).toEqual(
+      [],
+    );
   });
 
   test("update leaves niches alone when they aren't sent", async () => {

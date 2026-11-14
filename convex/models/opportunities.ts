@@ -36,6 +36,8 @@ export const opportunityCreate = schema
     status: v.union(v.literal("draft"), v.literal("open")),
     // Required to create it open; a draft can get them later through `deliverables.create`.
     deliverables: v.optional(v.array(deliverableCreate)),
+    // Selections are association rows, not columns, so they are inputs of their own.
+    niches: v.optional(v.array(v.string())),
     skills: v.optional(v.array(v.string())),
     languages: v.optional(v.array(v.string())),
   });
@@ -55,7 +57,7 @@ export async function getOpportunityView(
   opportunity: Doc<"opportunities">,
 ): Promise<OpportunityView> {
   const [niches, skills, languages] = await Promise.all([
-    listOpportunityNiches(ctx, opportunity),
+    listOpportunityNiches(ctx, opportunity._id),
     listOpportunitySkills(ctx, opportunity._id),
     listOpportunityLanguages(ctx, opportunity._id),
   ]);
@@ -456,7 +458,7 @@ export async function updateOpportunity(
 
   const niches =
     updates.niches === undefined
-      ? await listOpportunityNiches(ctx, opportunity)
+      ? await listOpportunityNiches(ctx, opportunityId)
       : await updateOpportunityNiches(ctx, opportunityId, updates.niches);
   const skills =
     updates.skills === undefined
@@ -529,7 +531,8 @@ export async function discoverOpportunities(
     .query("opportunities")
     .withIndex("by_status_and_deadline", (q) => q.eq("status", "open"))
     .map(async (opportunity) => {
-      if (niche !== undefined && !(await hasOpportunityNiche(ctx, opportunity, niche))) return null;
+      if (niche !== undefined && !(await hasOpportunityNiche(ctx, opportunity._id, niche)))
+        return null;
       return await getVisibleCreatorOpportunity(ctx, opportunity);
     })
     .paginate(withRowsReadCap(options.paginationOpts));

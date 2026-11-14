@@ -87,7 +87,7 @@ async function getOpportunitySignals(
   opportunity: Doc<"opportunities">,
 ): Promise<OpportunitySignals> {
   const [niches, skills] = await Promise.all([
-    listOpportunityNiches(ctx, opportunity),
+    listOpportunityNiches(ctx, opportunity._id),
     listOpportunitySkills(ctx, opportunity._id),
   ]);
   return { niches, skills, minFollowerRange: opportunity.minFollowerRange };

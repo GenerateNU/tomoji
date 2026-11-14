@@ -30,8 +30,6 @@ export const opportunitiesTable = defineTable({
   // What the company checks a draft against, shown to creators and given to the AI reviewer.
   reviewPolicy: v.string(),
   productAccessLink: v.optional(v.string()),
-  // Legacy selections remain readable until backfilled into opportunityNiches.
-  niches: v.optional(v.array(v.string())),
   // Smallest reach the company wants. Ranks creators below it lower; never hides the brief.
   minFollowerRange: v.optional(followerRange),
 })

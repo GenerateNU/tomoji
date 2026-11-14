@@ -40,6 +40,7 @@ function Table({
 function TableCard({
   title,
   count,
+  hideTitle = false,
   className,
   children,
   ...props
@@ -47,13 +48,18 @@ function TableCard({
   title: React.ReactNode;
   /** Shown in gray after the title, as (4). */
   count?: number | string;
+  /** Keeps the title for screen readers only, when a tab or heading already names the table. */
+  hideTitle?: boolean;
 }) {
   const titleId = React.useId();
   return (
     <div data-slot="table-card" className={cn("flex flex-col gap-4", cardClassName, className)}>
       <div
         id={titleId}
-        className="flex items-center gap-1.5 text-body-lg font-medium text-gray-950"
+        className={cn(
+          "flex items-center gap-1.5 text-body-lg font-medium text-gray-950",
+          hideTitle && "sr-only",
+        )}
       >
         {title}
         {count !== undefined && <span className="text-gray-500">({count})</span>}

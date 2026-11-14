@@ -1,5 +1,6 @@
 "use client";
 
+import type { Id } from "@convex/_generated/dataModel";
 import { useId } from "react";
 import { Label } from "@/components/ui/label";
 import {
@@ -12,18 +13,22 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import { formatRelativeTime } from "../lib/format";
-import type { ApplicationSort } from "../hooks/use-applications-table";
+import type { ApplicationSort, ApplicationTab } from "../hooks/use-applications-table";
 import { ApplicationStatusBadge } from "./application-status-badge";
 import {
   ApplicationCompanyAvatar,
   ApplicationCompensation,
   ApplicationStar,
+  OfferTitleButton,
   displayCompanyName,
   type ApplicationRowData,
 } from "./application-row";
+import { OfferExpiry } from "./offer-expiry";
 
 // Narrow screens have no column headers to click, so sorting is one list of choices.
-const SORT_OPTIONS: { value: string; label: string; sort: ApplicationSort }[] = [
+type SortOption = { value: string; label: string; sort: ApplicationSort };
+
+const APPLICATION_SORT_OPTIONS: SortOption[] = [
   {
     value: "submitted:descending",
     label: "Newest submitted",
@@ -59,25 +64,47 @@ const SORT_OPTIONS: { value: string; label: string; sort: ApplicationSort }[] = 
   },
 ];
 
+const OFFER_SORT_OPTIONS: SortOption[] = [
+  {
+    value: "expires:ascending",
+    label: "Expiring soonest",
+    sort: { key: "expires", direction: "ascending" },
+  },
+  {
+    value: "expires:descending",
+    label: "Expiring latest",
+    sort: { key: "expires", direction: "descending" },
+  },
+  ...APPLICATION_SORT_OPTIONS.filter((option) => option.sort.key !== "status"),
+];
+
+const SORT_OPTIONS_BY_TAB: Record<ApplicationTab, SortOption[]> = {
+  applications: APPLICATION_SORT_OPTIONS,
+  offers: OFFER_SORT_OPTIONS,
+};
+
 /** The sort choice for screens too narrow for clickable column headers. */
 export function ApplicationSortSelect({
+  tab = "applications",
   sort,
   onSortChange,
 }: {
+  tab?: ApplicationTab;
   sort: ApplicationSort;
   onSortChange: (sort: ApplicationSort) => void;
 }) {
   const labelId = useId();
+  const options = SORT_OPTIONS_BY_TAB[tab];
   const value = `${sort.key}:${sort.direction}`;
   return (
     <div className="flex flex-col gap-2">
       <Label id={labelId}>Sort by</Label>
       <Select
-        items={SORT_OPTIONS}
+        items={options}
         // A header click on a wider screen can pick a sort this list lacks.
-        value={SORT_OPTIONS.some((option) => option.value === value) ? value : null}
+        value={options.some((option) => option.value === value) ? value : null}
         onValueChange={(next) => {
-          const option = SORT_OPTIONS.find((candidate) => candidate.value === next);
+          const option = options.find((candidate) => candidate.value === next);
           if (option) onSortChange(option.sort);
         }}
       >
@@ -85,7 +112,7 @@ export function ApplicationSortSelect({
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
-          {SORT_OPTIONS.map((option) => (
+          {options.map((option) => (
             <SelectItem key={option.value} value={option.value}>
               {option.label}
             </SelectItem>
@@ -96,24 +123,54 @@ export function ApplicationSortSelect({
   );
 }
 
-/** Applications as stacked cards, for screens narrower than the table needs. */
+/**
+ * Applications as stacked cards, for screens narrower than the table needs. On
+ * the Offers tab a card opens the offer, from its title or from a click on the card.
+ */
 export function ApplicationCardList({
   rows,
   now,
+  tab = "applications",
+  onOpen,
   className,
 }: {
   rows: readonly ApplicationRowData[];
   now: number;
+  tab?: ApplicationTab;
+  onOpen?: (applicationId: Id<"applications">) => void;
   className?: string;
 }) {
   return (
     <ul className={cn("flex flex-col divide-y divide-gray-100", className)}>
       {rows.map((row) => (
-        <li key={row.applicationId} className="flex flex-col gap-2 py-4 first:pt-0 last:pb-0">
+        <li
+          key={row.applicationId}
+          className={cn(
+            "flex flex-col gap-2 py-4 first:pt-0 last:pb-0",
+            onOpen && "cursor-pointer",
+          )}
+          onClick={
+            onOpen
+              ? (event) => {
+                  // Buttons and links in the card do their own thing.
+                  if ((event.target as HTMLElement).closest("button, a")) return;
+                  onOpen(row.applicationId);
+                }
+              : undefined
+          }
+        >
           <div className="flex items-start justify-between gap-2">
-            <span className="min-w-0 pt-2.5 text-body font-medium break-words text-gray-950">
-              {row.title}
-            </span>
+            {onOpen ? (
+              <OfferTitleButton
+                row={row}
+                onOpen={onOpen}
+                className="flex min-h-11 items-center text-body break-words text-gray-950"
+              />
+            ) : (
+              <span className="min-w-0 pt-2.5 text-body font-medium break-words text-gray-950">
+                {row.title}
+              </span>
+            )}
             <ApplicationStar row={row} />
           </div>
           <div className="flex min-w-0 items-center gap-2 text-body-sm text-gray-700">
@@ -121,7 +178,16 @@ export function ApplicationCardList({
             <span className="min-w-0 truncate">{displayCompanyName(row)}</span>
           </div>
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-            <ApplicationStatusBadge status={row.status} />
+            {tab === "offers" ? (
+              <OfferExpiry
+                status={row.status}
+                offerExpiresAt={row.offerExpiresAt}
+                now={now}
+                className="text-body-sm"
+              />
+            ) : (
+              <ApplicationStatusBadge status={row.status} />
+            )}
             <span className="text-body-sm text-gray-500">
               Submitted {formatRelativeTime(row.submittedAt, now)}
             </span>

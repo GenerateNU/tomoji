@@ -3,18 +3,21 @@
 import { api } from "@convex/_generated/api";
 import type { FunctionReturnType } from "convex/server";
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import type { Id } from "@convex/_generated/dataModel";
 import { EmptyState } from "@/components/empty-state";
 import { ErrorBoundary } from "@/components/error-boundary";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { TableBody, TableCard, TableHead, TableHeader } from "@/components/ui/table";
-import { Tabs, TabsCount, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tabs, TabsContent, TabsCount, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useMediaQuery } from "@/hooks/use-media-query";
+import { useNow } from "@/hooks/use-now";
 import { useStableQuery } from "@/hooks/use-stable-query";
 import { cn } from "@/lib/utils";
 import {
   useApplicationsTable,
   type ApplicationSortKey,
+  type ApplicationTab,
   type ApplicationsTable,
 } from "../hooks/use-applications-table";
 import {
@@ -23,6 +26,7 @@ import {
   SkeletonCardList,
 } from "./application-card-list";
 import { ApplicationFilters } from "./application-filters";
+import { OfferModal } from "./offer-modal";
 import { ApplicationRow } from "./application-row";
 import { ApplicationsPagination } from "./applications-pagination";
 import { SkeletonRow } from "./skeleton-row";
@@ -35,33 +39,47 @@ function formatTabCount({ count, isCapped }: TabCount): string {
 }
 
 function ApplicationTabs({
+  tab,
+  onTabChange,
   counts,
+  children,
 }: {
+  tab: ApplicationTab;
+  onTabChange: (tab: ApplicationTab) => void;
   counts: FunctionReturnType<typeof api.applications.searchMine>["counts"] | undefined;
+  children: ReactNode;
 }) {
   return (
-    // Scrolls sideways on narrow screens instead of wrapping the tabs.
-    <div className="-mx-4 overflow-x-auto px-4 [scrollbar-width:none] sm:mx-0 sm:px-0 [&::-webkit-scrollbar]:hidden">
-      <Tabs value="applications">
+    <Tabs
+      value={tab}
+      onValueChange={(next) => {
+        if (next === "applications" || next === "offers") onTabChange(next);
+      }}
+      className="gap-6 md:gap-8"
+    >
+      {/* Scrolls sideways on narrow screens instead of wrapping the tabs. */}
+      <div className="-mx-4 overflow-x-auto px-4 [scrollbar-width:none] sm:mx-0 sm:px-0 [&::-webkit-scrollbar]:hidden">
         <TabsList className="w-max min-w-full">
           <TabsTrigger value="applications">
             Applications
             {counts && <TabsCount>{formatTabCount(counts.applications)}</TabsCount>}
           </TabsTrigger>
-          {/* Offers and accepted offers arrive later; their counts are real already. */}
-          <TabsTrigger value="offers" disabled>
+          <TabsTrigger value="offers">
             Offers
             {counts && <TabsCount>{formatTabCount(counts.offers)}</TabsCount>}
-            <span className="sr-only">(coming soon)</span>
           </TabsTrigger>
+          {/* Accepted offers arrive later; the count is real already. */}
           <TabsTrigger value="accepted" disabled>
             Accepted
             {counts && <TabsCount>{formatTabCount(counts.accepted)}</TabsCount>}
             <span className="sr-only">(coming soon)</span>
           </TabsTrigger>
         </TabsList>
-      </Tabs>
-    </div>
+      </div>
+      <TabsContent value={tab} className="flex flex-col gap-6 md:gap-8">
+        {children}
+      </TabsContent>
+    </Tabs>
   );
 }
 
@@ -79,13 +97,21 @@ function ApplicationsError({ onRetry, onClear }: { onRetry: () => void; onClear:
   );
 }
 
+const NOUNS = { applications: "applications", offers: "offers" } as const;
+
 function ApplicationsContent({ table }: { table: ApplicationsTable }) {
   const isWide = useMediaQuery("(min-width: 768px)");
-  // Relative dates are computed against the time the page opened.
-  const [now] = useState(() => Date.now());
+  const now = useNow();
   const resultsRef = useRef<HTMLElement>(null);
+  const [openApplicationId, setOpenApplicationId] = useState<Id<"applications"> | null>(null);
+  // Kept apart from the id so the modal's content doesn't change as it closes.
+  const [modalOpen, setModalOpen] = useState(false);
   // Keeps the current rows on screen while a new filter or page loads.
-  const { data, isStale } = useStableQuery(api.applications.searchMine, table.args);
+  const { data: latest, isStale } = useStableQuery(api.applications.searchMine, table.args);
+  // Rows of the other tab have different columns, so they are never shown under this tab's headers.
+  const data = latest?.tab === table.tab ? latest : undefined;
+  const isOffers = table.tab === "offers";
+  const noun = NOUNS[table.tab];
 
   // The server clamps a page past the end, e.g. after rows were removed.
   const { page, setPage } = table;
@@ -99,27 +125,66 @@ function ApplicationsContent({ table }: { table: ApplicationsTable }) {
     resultsRef.current?.focus();
   }
 
+  const openOffer = isOffers
+    ? (applicationId: Id<"applications">) => {
+        setOpenApplicationId(applicationId);
+        setModalOpen(true);
+      }
+    : undefined;
+
+  // Back to the title that opened the offer, or to the results when the row has
+  // left the tab, e.g. after the offer was accepted.
+  const returnFocus = useCallback(() => {
+    const title =
+      openApplicationId === null
+        ? null
+        : document.querySelector<HTMLElement>(`[data-offer-title="${openApplicationId}"]`);
+    return title ?? resultsRef.current;
+  }, [openApplicationId]);
+
   const headProps = (key: ApplicationSortKey) => ({
     sort: table.sort.key === key ? table.sort.direction : ("unsorted" as const),
     onSort: () => table.toggleSort(key),
   });
 
-  const neverApplied =
-    data !== undefined && data.counts.applications.count === 0 && !table.hasFilters;
+  const neverHad = data !== undefined && data.counts[table.tab].count === 0 && !table.hasFilters;
+
+  // The Offers tab's third column is when the offer ends, not where it stands.
+  const columns = isOffers
+    ? {
+        name: "w-[30%]",
+        company: "w-[20%]",
+        third: "w-36",
+        thirdLabel: "Expiration date",
+        thirdKey: "expires" as const,
+      }
+    : {
+        name: "w-[32%]",
+        company: "w-[20%]",
+        third: "w-32",
+        thirdLabel: "Status",
+        thirdKey: "status" as const,
+      };
+  const tableTitle = isOffers ? "Offers" : "Applications";
 
   let results;
   if (data === undefined) {
     results = (
       <>
         <span className="sr-only" role="status">
-          Loading applications…
+          Loading {noun}…
         </span>
         {isWide ? (
-          <TableCard title="Applications" className="[&_table]:min-w-176" aria-hidden>
+          <TableCard
+            title={tableTitle}
+            hideTitle={isOffers}
+            className="[&_table]:min-w-176"
+            aria-hidden
+          >
             <TableHeader>
-              <TableHead className="w-[32%]">Name</TableHead>
-              <TableHead className="w-[20%]">Company</TableHead>
-              <TableHead className="w-32">Status</TableHead>
+              <TableHead className={columns.name}>Name</TableHead>
+              <TableHead className={columns.company}>Company</TableHead>
+              <TableHead className={columns.third}>{columns.thirdLabel}</TableHead>
               <TableHead className="w-28">Submitted</TableHead>
               <TableHead>Compensation</TableHead>
             </TableHeader>
@@ -136,8 +201,16 @@ function ApplicationsContent({ table }: { table: ApplicationsTable }) {
         )}
       </>
     );
-  } else if (neverApplied) {
-    results = (
+  } else if (neverHad) {
+    results = isOffers ? (
+      <EmptyState className="flex flex-col items-center gap-3">
+        <p className="font-medium text-gray-950">No offers yet.</p>
+        <p>When a company sends you an offer, it appears here. Offers usually last 48 hours.</p>
+        <Button variant="secondary-subtle" onClick={() => table.setTab("applications")}>
+          View applications
+        </Button>
+      </EmptyState>
+    ) : (
       <EmptyState className="flex flex-col items-center gap-3">
         <p className="font-medium text-gray-950">You haven&apos;t applied to anything yet.</p>
         <p>When you apply to an opportunity, you can follow its status here.</p>
@@ -149,7 +222,7 @@ function ApplicationsContent({ table }: { table: ApplicationsTable }) {
   } else if (data.totalCount === 0) {
     results = (
       <EmptyState className="flex flex-col items-center gap-3">
-        <p className="font-medium text-gray-950">No applications match your filters.</p>
+        <p className="font-medium text-gray-950">No {noun} match your filters.</p>
         <Button variant="secondary-subtle" onClick={table.clearFilters}>
           Clear filters
         </Button>
@@ -157,16 +230,21 @@ function ApplicationsContent({ table }: { table: ApplicationsTable }) {
     );
   } else if (isWide) {
     results = (
-      <TableCard title="Applications" count={data.totalCount} className="[&_table]:min-w-176">
+      <TableCard
+        title={tableTitle}
+        hideTitle={isOffers}
+        count={data.totalCount}
+        className="[&_table]:min-w-176"
+      >
         <TableHeader>
-          <TableHead className="w-[32%]" {...headProps("name")}>
+          <TableHead className={columns.name} {...headProps("name")}>
             Name
           </TableHead>
-          <TableHead className="w-[20%]" {...headProps("company")}>
+          <TableHead className={columns.company} {...headProps("company")}>
             Company
           </TableHead>
-          <TableHead className="w-32" {...headProps("status")}>
-            Status
+          <TableHead className={columns.third} {...headProps(columns.thirdKey)}>
+            {columns.thirdLabel}
           </TableHead>
           <TableHead className="w-28" {...headProps("submitted")}>
             Submitted
@@ -175,7 +253,13 @@ function ApplicationsContent({ table }: { table: ApplicationsTable }) {
         </TableHeader>
         <TableBody>
           {data.rows.map((row) => (
-            <ApplicationRow key={row.applicationId} row={row} now={now} />
+            <ApplicationRow
+              key={row.applicationId}
+              row={row}
+              now={now}
+              tab={table.tab}
+              onOpen={openOffer}
+            />
           ))}
         </TableBody>
       </TableCard>
@@ -183,43 +267,56 @@ function ApplicationsContent({ table }: { table: ApplicationsTable }) {
   } else {
     results = (
       <div className="flex flex-col gap-4 rounded-lg bg-gray-0 p-4 shadow-card">
-        <h2 className="flex items-center gap-1.5 text-body-lg font-medium text-gray-950">
-          Applications <span className="text-gray-500">({data.totalCount})</span>
-        </h2>
-        <ApplicationSortSelect sort={table.sort} onSortChange={table.setSort} />
-        <ApplicationCardList rows={data.rows} now={now} />
+        {!isOffers && (
+          <h2 className="flex items-center gap-1.5 text-body-lg font-medium text-gray-950">
+            Applications <span className="text-gray-500">({data.totalCount})</span>
+          </h2>
+        )}
+        <ApplicationSortSelect tab={table.tab} sort={table.sort} onSortChange={table.setSort} />
+        <ApplicationCardList rows={data.rows} now={now} tab={table.tab} onOpen={openOffer} />
       </div>
     );
   }
 
+  const tabCount = data?.counts[table.tab];
+  // Only dims rows that are the same tab's; the other tab's are replaced by a skeleton.
+  const isDimmed = isStale && data !== undefined;
+
   return (
     <>
-      <ApplicationTabs counts={data?.counts} />
-      <ApplicationFilters table={table} />
-      <section
-        ref={resultsRef}
-        aria-label="Applications"
-        aria-busy={data === undefined || isStale}
-        tabIndex={-1}
-        className={cn(
-          "flex flex-col gap-3 outline-none transition-opacity",
-          isStale && "opacity-60",
+      <ApplicationTabs tab={table.tab} onTabChange={table.setTab} counts={data?.counts}>
+        <ApplicationFilters table={table} />
+        <section
+          ref={resultsRef}
+          aria-label={tableTitle}
+          aria-busy={data === undefined || isStale}
+          tabIndex={-1}
+          className={cn(
+            "flex flex-col gap-3 outline-none transition-opacity",
+            isDimmed && "opacity-60",
+          )}
+        >
+          {results}
+          {tabCount?.isCapped && (
+            <p className="text-body-sm text-gray-500">
+              Showing your {tabCount.count} most recent {noun}.
+            </p>
+          )}
+        </section>
+        {data !== undefined && data.pageCount > 1 && (
+          <ApplicationsPagination
+            page={data.page}
+            pageCount={data.pageCount}
+            onPageChange={goToPage}
+          />
         )}
-      >
-        {results}
-        {data?.counts.applications.isCapped && (
-          <p className="text-body-sm text-gray-500">
-            Showing your {data.counts.applications.count} most recent applications.
-          </p>
-        )}
-      </section>
-      {data !== undefined && data.pageCount > 1 && (
-        <ApplicationsPagination
-          page={data.page}
-          pageCount={data.pageCount}
-          onPageChange={goToPage}
-        />
-      )}
+      </ApplicationTabs>
+      <OfferModal
+        applicationId={openApplicationId}
+        open={modalOpen}
+        onOpenChange={setModalOpen}
+        finalFocus={returnFocus}
+      />
     </>
   );
 }

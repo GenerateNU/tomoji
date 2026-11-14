@@ -19,7 +19,8 @@ export type Compensation = Pick<
  * Pay as one line. The full form is `$300 + $5.50 CPM (up to $2,000)`: CPM is
  * per 1,000 eligible views, and the cap limits the total payout, so it only
  * means anything alongside a CPM. The compact form, for table cells, is
- * `$300 • $5.50 CPM` with no cap.
+ * `$300 • $5.50 CPM` with no cap. `showCap: false` drops the cap from the full
+ * form, for screens that show it as its own field.
  *
  * Shared because a creator reads the same terms in the opportunity feed and
  * again in their applications list, and those used to disagree: one rendered
@@ -28,7 +29,7 @@ export type Compensation = Pick<
  */
 export function formatCompensation(
   { fixedFeeCents, cpmRateCents, paymentCapCents }: Compensation,
-  { variant = "full" }: { variant?: "full" | "compact" } = {},
+  { variant = "full", showCap = true }: { variant?: "full" | "compact"; showCap?: boolean } = {},
 ): string {
   const parts: string[] = [];
   if (fixedFeeCents > 0) parts.push(formatMoney(fixedFeeCents));
@@ -37,7 +38,7 @@ export function formatCompensation(
   if (parts.length === 0) return "Unpaid";
   if (variant === "compact") return parts.join(" \u2022 ");
   const pay = parts.join(" + ");
-  return cpmRateCents > 0 && paymentCapCents > 0
+  return showCap && cpmRateCents > 0 && paymentCapCents > 0
     ? `${pay} (up to ${formatMoney(paymentCapCents)})`
     : pay;
 }

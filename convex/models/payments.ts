@@ -623,3 +623,123 @@ export async function claimStalePayouts(
   }
   return claimed;
 }
+
+/** A charge reversed outside Tomoji, named by the creator account and charge Stripe reports. */
+type ChargeReversal = { stripeAccountId: string; stripePaymentIntentId: string };
+
+/** The successful attempt behind a charge, or null if this deployment did not make it. */
+async function getChargedPayment(
+  ctx: MutationCtx,
+  reversal: ChargeReversal,
+): Promise<{ payment: Doc<"payments">; payout: Doc<"payouts"> } | null> {
+  const payment = await ctx.db
+    .query("payments")
+    .withIndex("by_stripePaymentIntentId", (q) =>
+      q.eq("stripePaymentIntentId", reversal.stripePaymentIntentId),
+    )
+    .unique();
+  if (payment === null || payment.stripeAccountId !== reversal.stripeAccountId) return null;
+  const payout = await ctx.db.get("payouts", payment.payoutId);
+  return payout === null ? null : { payment, payout };
+}
+
+type DisputeEvent = ChargeReversal & { stripeDisputeId: string; reason: string; amount: number };
+
+/**
+ * Applies `charge.dispute.created`: the company disputed the charge with its
+ * bank, and Stripe holds the amount from the creator's balance meanwhile. The
+ * payout stays `transferred`, so recovery never charges the company again.
+ * Tells the creator, who alone can respond in their Stripe Dashboard, and
+ * Tomoji's operators. A dispute that already closed is never reopened.
+ */
+export async function recordDisputeOpened(
+  ctx: MutationCtx,
+  event: DisputeEvent,
+): Promise<"updated" | "unchanged" | "unknown"> {
+  const charged = await getChargedPayment(ctx, event);
+  if (charged === null) return "unknown";
+  const { payment, payout } = charged;
+  if (payment.dispute?.stripeDisputeId === event.stripeDisputeId) return "unchanged";
+  await ctx.db.patch("payments", payment._id, {
+    dispute: {
+      stripeDisputeId: event.stripeDisputeId,
+      status: "open",
+      reason: event.reason,
+      amount: event.amount,
+    },
+  });
+  const amount = formatAmount(event.amount, payout.currency);
+  const target = { kind: "assignment" as const, assignmentId: payout.assignmentId };
+  await notifyCreator(ctx, payout.creatorId, {
+    type: "payoutDisputed",
+    title: `A company disputed a ${amount} payment to you`,
+    body: "Stripe is holding the amount. Respond with evidence in your Stripe Dashboard.",
+    target,
+  });
+  await notifyOperators(ctx, {
+    type: "payoutDisputed",
+    title: `${amount} payment to ${await creatorName(ctx, payout.creatorId)} disputed`,
+    body: `The company disputed the charge with its bank (${event.reason}).`,
+    target,
+  });
+  return "updated";
+}
+
+/**
+ * Applies `charge.dispute.closed`. Only a `lost` dispute keeps the money from
+ * the creator; Stripe's other closing results return it. The result is final,
+ * and a close that arrives before its open is recorded anyway.
+ */
+export async function recordDisputeClosed(
+  ctx: MutationCtx,
+  event: DisputeEvent & { won: boolean },
+): Promise<"updated" | "unchanged" | "unknown"> {
+  const charged = await getChargedPayment(ctx, event);
+  if (charged === null) return "unknown";
+  const { payment, payout } = charged;
+  const status = event.won ? "won" : "lost";
+  if (
+    payment.dispute?.stripeDisputeId === event.stripeDisputeId &&
+    payment.dispute.status !== "open"
+  ) {
+    return "unchanged";
+  }
+  await ctx.db.patch("payments", payment._id, {
+    dispute: {
+      stripeDisputeId: event.stripeDisputeId,
+      status,
+      reason: event.reason,
+      amount: event.amount,
+    },
+  });
+  await notifyOperators(ctx, {
+    type: "payoutDisputeClosed",
+    title: `Dispute on a ${formatAmount(event.amount, payout.currency)} payment to ${await creatorName(ctx, payout.creatorId)} ${status}`,
+    target: { kind: "assignment", assignmentId: payout.assignmentId },
+  });
+  return "updated";
+}
+
+/**
+ * Applies `charge.refunded`: the creator refunded the charge from their Stripe
+ * Dashboard. `refundedAmount` is Stripe's running total, so only a larger
+ * total changes anything. The payout stays `transferred`; operators decide
+ * what the refund means for the work.
+ */
+export async function recordRefund(
+  ctx: MutationCtx,
+  event: ChargeReversal & { refundedAmount: number },
+): Promise<"updated" | "unchanged" | "unknown"> {
+  const charged = await getChargedPayment(ctx, event);
+  if (charged === null) return "unknown";
+  const { payment, payout } = charged;
+  if (event.refundedAmount <= (payment.refundedAmount ?? 0)) return "unchanged";
+  await ctx.db.patch("payments", payment._id, { refundedAmount: event.refundedAmount });
+  await notifyOperators(ctx, {
+    type: "payoutRefunded",
+    title: `${await creatorName(ctx, payout.creatorId)} refunded ${formatAmount(event.refundedAmount, payout.currency)} of a payment`,
+    body: "Refunded from the creator's Stripe Dashboard, outside Tomoji.",
+    target: { kind: "assignment", assignmentId: payout.assignmentId },
+  });
+  return "updated";
+}

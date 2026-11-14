@@ -244,3 +244,85 @@ describe("POST /stripe/webhook payment events", () => {
     expect((await payment())?.status).toBe("processing");
   });
 });
+
+describe("POST /stripe/webhook charges reversed outside Tomoji", () => {
+  /** A payout charged successfully as `pi_test` on the creator's account. */
+  async function seedCharged() {
+    const seeded = await seedProcessingPayment();
+    await deliver(seeded.t, intentSucceeded(seeded.paymentId));
+    return seeded;
+  }
+
+  const disputeEvent = (type: string, status: string) =>
+    event(type, {
+      id: "dp_test",
+      object: "dispute",
+      charge: "ch_test",
+      payment_intent: "pi_test",
+      amount: 10_000,
+      reason: "fraudulent",
+      status,
+    });
+
+  test("records a dispute opening and closing", async () => {
+    const { t, payment, payout } = await seedCharged();
+
+    expect(
+      (await deliver(t, disputeEvent("charge.dispute.created", "needs_response"))).status,
+    ).toBe(200);
+    expect((await payment())?.dispute).toMatchObject({ status: "open", reason: "fraudulent" });
+
+    await deliver(t, disputeEvent("charge.dispute.closed", "lost"));
+    expect((await payment())?.dispute?.status).toBe("lost");
+    expect((await payout())?.paymentStatus).toBe("transferred");
+  });
+
+  // Inquiries Stripe closes without a chargeback leave the money with the creator.
+  test("treats a dispute closed without a chargeback as won", async () => {
+    const { t, payment } = await seedCharged();
+
+    await deliver(t, disputeEvent("charge.dispute.closed", "warning_closed"));
+
+    expect((await payment())?.dispute?.status).toBe("won");
+  });
+
+  test("records a refund the creator made in their Stripe Dashboard", async () => {
+    const { t, payment } = await seedCharged();
+
+    const response = await deliver(
+      t,
+      event("charge.refunded", {
+        id: "ch_test",
+        object: "charge",
+        payment_intent: "pi_test",
+        amount: 10_000,
+        amount_refunded: 4_000,
+        metadata: {},
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect((await payment())?.refundedAmount).toBe(4_000);
+  });
+
+  // Charges made outside Tomoji, or on another deployment, are not ours.
+  test("acknowledges a dispute on a charge Tomoji did not make", async () => {
+    const { t, payment } = await seedCharged();
+
+    const response = await deliver(
+      t,
+      event("charge.dispute.created", {
+        id: "dp_other",
+        object: "dispute",
+        charge: "ch_other",
+        payment_intent: "pi_other",
+        amount: 500,
+        reason: "general",
+        status: "needs_response",
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect((await payment())?.dispute).toBeUndefined();
+  });
+});

@@ -163,6 +163,53 @@ export const stripeWebhook = httpAction(async (ctx, request) => {
       console.log("Payout charge fee recorded", { eventId: event.id, result });
     }
   }
+  // Charges reversed outside Tomoji, days after they succeeded: the company
+  // disputing with its bank, or the creator refunding from their Dashboard.
+  // Both name the charge, which the attempt saved when it was made.
+  if (
+    (event.type === "charge.dispute.created" || event.type === "charge.dispute.closed") &&
+    event.account !== undefined
+  ) {
+    const dispute = event.data.object;
+    const intentId =
+      typeof dispute.payment_intent === "string"
+        ? dispute.payment_intent
+        : dispute.payment_intent?.id;
+    if (intentId === undefined) return webhookOk();
+    const details = {
+      stripeAccountId: event.account,
+      stripePaymentIntentId: intentId,
+      stripeDisputeId: dispute.id,
+      reason: dispute.reason,
+      amount: dispute.amount,
+    };
+    const result =
+      event.type === "charge.dispute.created"
+        ? await ctx.runMutation(internal.payments.disputeOpened, details)
+        : // Only `lost` keeps the money; Stripe's other closing results return it.
+          await ctx.runMutation(internal.payments.disputeClosed, {
+            ...details,
+            won: dispute.status !== "lost",
+          });
+    if (result !== "unknown") {
+      console.log("Payout charge disputed", { eventId: event.id, type: event.type, result });
+    }
+  }
+
+  if (event.type === "charge.refunded" && event.account !== undefined) {
+    const charge = event.data.object;
+    const intentId =
+      typeof charge.payment_intent === "string" ? charge.payment_intent : charge.payment_intent?.id;
+    if (intentId === undefined) return webhookOk();
+    const result = await ctx.runMutation(internal.payments.refunded, {
+      stripeAccountId: event.account,
+      stripePaymentIntentId: intentId,
+      refundedAmount: charge.amount_refunded,
+    });
+    if (result !== "unknown") {
+      console.log("Payout charge refunded", { eventId: event.id, result });
+    }
+  }
   return webhookOk();
 });
 

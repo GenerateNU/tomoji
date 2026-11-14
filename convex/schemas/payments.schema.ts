@@ -47,8 +47,26 @@ export const paymentsTable = defineTable({
   // When recovery last asked about this attempt, or when it started. Absent on
   // attempts recorded before recovery tracked it, which are checked first.
   lastCheckedAt: v.optional(v.number()),
+  // A chargeback the company opened with its bank after the charge succeeded.
+  // Stripe holds the amount from the creator's balance until it closes; only a
+  // `lost` dispute keeps it. Closed results are final, since Stripe's events
+  // can arrive out of order.
+  dispute: v.optional(
+    v.object({
+      stripeDisputeId: v.string(),
+      status: v.union(v.literal("open"), v.literal("won"), v.literal("lost")),
+      // Stripe's reason, such as `fraudulent` or `product_not_received`.
+      reason: v.string(),
+      amount: v.number(),
+    }),
+  ),
+  // How much of the charge the creator refunded from their Stripe Dashboard, in
+  // minor units of the charge currency. Tomoji never starts refunds itself.
+  refundedAmount: v.optional(v.number()),
 })
   .index("by_payoutId_and_attempt", ["payoutId", "attempt"])
   // Recovery checks attempts left `processing`, least recently checked first,
   // so ones that never settle can't keep newer stalls from being checked.
-  .index("by_status_and_lastCheckedAt", ["status", "lastCheckedAt"]);
+  .index("by_status_and_lastCheckedAt", ["status", "lastCheckedAt"])
+  // Disputes and refunds name the charge, days after the attempt saved its id.
+  .index("by_stripePaymentIntentId", ["stripePaymentIntentId"]);

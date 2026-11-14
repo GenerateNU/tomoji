@@ -1,17 +1,18 @@
 import { ConvexError, v } from "convex/values";
 import { internal } from "./_generated/api";
-import { env, internalAction, internalMutation } from "./_generated/server";
+import { env, internalAction, internalMutation, type ActionCtx } from "./_generated/server";
 import { getXPostMetrics, readXMetricsConfig, type XMissingPost } from "./lib/xApi";
-import { saveSyncedCounts, syncedCounts } from "./models/posts";
+import { saveSyncedCounts, syncedCounts, type EarningPost } from "./models/posts";
 
 // X's limit for one post lookup.
 const PAGE_SIZE = 100;
 
 /**
  * Daily analytics sync: refreshes views and engagement for one page of posts in
- * the sync window, then schedules the next page with the same cutoff. Payouts
- * don't use these counts. Does nothing unless `X_METRICS_SYNC_ENABLED` is "true".
- * An X failure stops the run; tomorrow's run reads the same posts again.
+ * the sync window, then schedules the next page with the same cutoff. Does
+ * nothing unless `X_METRICS_SYNC_ENABLED` is "true". A page that fails is skipped
+ * so it can't block later pages; only a rate limit stops the run, and tomorrow's
+ * run reads the same posts again.
  */
 export const sync = internalAction({
   args: {
@@ -30,31 +31,8 @@ export const sync = internalAction({
       paginationOpts: { numItems: pageSize, cursor: args.cursor ?? null },
     });
     if (page.page.length > 0) {
-      let result;
-      try {
-        result = await getXPostMetrics(
-          config.bearerToken,
-          page.page.map((post) => post.xPostId),
-        );
-      } catch (error) {
-        // Expected X failures carry redacted data; anything else is a bug.
-        if (!(error instanceof ConvexError)) throw error;
-        console.warn("X metrics sync stopped", error.data);
-        return null;
-      }
-      const postIds = new Map(page.page.map((post) => [post.xPostId, post.postId]));
-      if (result.found.length > 0) {
-        await ctx.runMutation(internal.xMetrics.saveCounts, {
-          counts: result.found.map(({ xPostId, views, engagement }) => ({
-            postId: postIds.get(xPostId)!,
-            views,
-            engagement,
-          })),
-        });
-      }
-      if (result.missing.length > 0) {
-        console.warn("X metrics sync: posts without counts", countReasons(result.missing));
-      }
+      // X's rate limit covers every page, so wait for tomorrow's run.
+      if ((await syncPage(ctx, config.bearerToken, page.page)) === "rateLimited") return null;
     }
     if (!page.isDone) {
       await ctx.scheduler.runAfter(0, internal.xMetrics.sync, {
@@ -66,6 +44,51 @@ export const sync = internalAction({
     return null;
   },
 });
+
+/**
+ * Looks up and stores one page. Expected failures, from X or from saving, are
+ * logged and the page is skipped; anything else is a bug and is rethrown.
+ */
+async function syncPage(
+  ctx: ActionCtx,
+  bearerToken: string,
+  posts: EarningPost[],
+): Promise<"synced" | "skipped" | "rateLimited"> {
+  let result;
+  try {
+    result = await getXPostMetrics(
+      bearerToken,
+      posts.map((post) => post.xPostId),
+    );
+  } catch (error) {
+    if (!(error instanceof ConvexError)) throw error;
+    if ((error.data as { reason?: unknown }).reason === "x_rate_limited") {
+      console.warn("X metrics sync stopped: rate limited", error.data);
+      return "rateLimited";
+    }
+    console.warn("X metrics sync: page skipped", error.data);
+    return "skipped";
+  }
+  if (result.missing.length > 0) {
+    console.warn("X metrics sync: posts without counts", countReasons(result.missing));
+  }
+  if (result.found.length === 0) return "synced";
+  const postIds = new Map(posts.map((post) => [post.xPostId, post.postId]));
+  try {
+    await ctx.runMutation(internal.xMetrics.saveCounts, {
+      counts: result.found.map(({ xPostId, views, engagement }) => ({
+        postId: postIds.get(xPostId)!,
+        views,
+        engagement,
+      })),
+    });
+  } catch (error) {
+    if (!(error instanceof ConvexError)) throw error;
+    console.warn("X metrics sync: page skipped, counts not saved", error.data);
+    return "skipped";
+  }
+  return "synced";
+}
 
 /** Stores one page of synced counts, skipping posts replaced since they were listed. */
 export const saveCounts = internalMutation({

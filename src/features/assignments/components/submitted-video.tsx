@@ -5,6 +5,7 @@ import type { Id } from "@convex/_generated/dataModel";
 import { useAction } from "convex/react";
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { VideoPreview, VideoSkeleton } from "./video-preview";
 
 /** Requests a fresh private video URL on intent and lets the creator retry playback. */
 export function SubmittedVideo({
@@ -36,33 +37,21 @@ export function SubmittedVideo({
   }, [getVideoUrl, mediaId, state]);
   if (url)
     return (
-      <video
-        aria-label="Submitted video"
-        src={url}
-        controls
-        preload="auto"
-        playsInline
-        className="aspect-video w-full rounded bg-gray-950"
+      <VideoPreview
+        key={url}
+        label="Submitted video"
+        url={url}
         onError={() => {
           setUrl(undefined);
           setState("error");
         }}
       />
     );
+  if (state === "loading") return <VideoSkeleton loading />;
   return (
     <>
-      <Button
-        type="button"
-        size="sm"
-        variant="secondary"
-        disabled={state === "loading"}
-        onClick={() => setState("loading")}
-      >
-        {state === "loading"
-          ? "Loading video…"
-          : state === "error"
-            ? "Retry video"
-            : "View submitted video"}
+      <Button type="button" size="sm" variant="secondary" onClick={() => setState("loading")}>
+        {state === "error" ? "Retry video" : "View submitted video"}
       </Button>
       {state === "error" && <p role="alert">Couldn’t load this video. Try again.</p>}
     </>

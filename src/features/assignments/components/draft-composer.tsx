@@ -22,6 +22,7 @@ import { createMediaUpload, type MediaUploadPhase } from "@/lib/media-upload";
 import { aiReviewStatusLabel } from "./assignment-status";
 import { SubmissionPreview } from "./submission-preview";
 import { SubmittedVideo } from "./submitted-video";
+import { VideoPreview } from "./video-preview";
 
 const VIDEO_TYPES = ["video/mp4", "video/quicktime", "video/webm"];
 const MAX_VIDEO_BYTES = 250 * 1024 * 1024;
@@ -175,14 +176,14 @@ export function DraftComposer({
     submitting: "Submitting…",
   };
 
+  const previousMediaId = keepPreviousVideo ? previous?.mediaId : undefined;
   const preview = (
     <SubmissionPreview caption={caption} placeholder={!reviewId}>
       {previewUrl ? (
-        <VideoPreview url={previewUrl} label="Draft video preview" />
-      ) : (
-        keepPreviousVideo &&
-        previous?.mediaId && <SubmittedVideo mediaId={previous.mediaId} eager />
-      )}
+        <VideoPreview key={previewUrl} url={previewUrl} label="Draft video preview" />
+      ) : previousMediaId ? (
+        <SubmittedVideo mediaId={previousMediaId} eager />
+      ) : null}
     </SubmissionPreview>
   );
 
@@ -294,7 +295,7 @@ export function DraftComposer({
           {file && previewUrl ? (
             <div className="relative">
               <div className={readOnly ? "opacity-50" : undefined}>
-                <VideoPreview url={previewUrl} label="Selected video" />
+                <VideoPreview key={previewUrl} url={previewUrl} label="Selected video" />
               </div>
               {!readOnly && (
                 <Button
@@ -514,19 +515,5 @@ function DraftReviewProgress({
         </div>
       )}
     </div>
-  );
-}
-
-/** Uses the selected file locally before its upload completes. */
-function VideoPreview({ url, label }: { url: string; label: string }) {
-  return (
-    <video
-      aria-label={label}
-      src={url}
-      controls
-      preload="auto"
-      playsInline
-      className="aspect-video max-h-[320px] w-full rounded-md bg-gray-950"
-    />
   );
 }

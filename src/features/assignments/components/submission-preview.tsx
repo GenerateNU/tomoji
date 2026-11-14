@@ -4,6 +4,7 @@ import { api } from "@convex/_generated/api";
 import { useQuery } from "convex/react";
 import type { ReactNode } from "react";
 import { useMe } from "@/features/users/hooks/use-me";
+import { VideoSkeleton } from "./video-preview";
 
 /** Shows the creator’s submitted or in-progress X content. */
 export function SubmissionPreview({
@@ -40,8 +41,7 @@ export function SubmissionPreview({
           </div>
         )
       )}
-      {children ??
-        (placeholder && <div className="aspect-video rounded-md bg-gray-50" aria-hidden />)}
+      {children ?? (placeholder && <VideoSkeleton />)}
     </div>
   );
 }

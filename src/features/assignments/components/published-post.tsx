@@ -13,6 +13,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
+import { Progress, ProgressLabel } from "@/components/ui/progress";
 import { Input } from "@/components/ui/input";
 import { useMe } from "@/features/users/hooks/use-me";
 import { errorMessage } from "@/lib/errors";
@@ -99,7 +100,7 @@ export function PublishedPost({
   if (!active && !post) return null;
   const checking = phase === "checking" && (!post || checkingPost === post._id);
   const mismatch = post?.captionCheck === "mismatch" && !post.isVerified;
-  const showForm = active && !post?.isVerified && (!post || editing);
+  const showForm = active && !post?.isVerified && (!post || editing) && !checking;
   const needsReview = post?.captionCheck === "match" || post?.captionCheck === "manualReview";
   const showMismatch = mismatch && !showForm && !phase;
 
@@ -155,77 +156,117 @@ export function PublishedPost({
         {post ? "View published post" : "Add post link"}
       </DialogTrigger>
       <DialogContent
-        className="max-w-[1186px] content-center overflow-y-auto rounded-2xl bg-gray-50 px-5 py-12 shadow-2xl sm:px-10 md:min-h-[min(76dvh,768px)]"
+        className="max-w-[1186px] content-center overflow-y-auto rounded-lg bg-gray-50 px-5 py-14 shadow-2xl sm:px-10 md:min-h-[min(79.4dvh,780px)]"
         overlayClassName="bg-gray-950/20 backdrop-blur-[2px]"
       >
-        <div className="mx-auto w-full max-w-[800px] space-y-8">
-          {showMismatch ? (
+        <div className="mx-auto w-full max-w-[912px] space-y-5">
+          {showMismatch || checking ? (
             <div className="grid gap-5 sm:grid-cols-2">
-              <div className="grid grid-rows-[auto_1fr] gap-3">
-                <p className="text-center text-body-sm text-gray-500">Approved submission</p>
+              <div className="space-y-4">
                 <ApprovedCaption caption={caption}>{approvedVideo}</ApprovedCaption>
+                <p className="text-center text-body-sm text-gray-500">The content you submitted</p>
               </div>
-              <div className="grid grid-rows-[auto_1fr] gap-3">
-                <p className="text-center text-body-sm text-gray-500">Your post on X</p>
-                <div className="relative space-y-3 rounded-xl border border-red-600 bg-gray-0 p-5">
-                  <ResultIcon mismatch />
-                  <p className="text-body-sm font-medium">Post could not be matched</p>
-                  <XLink url={post.url} />
+              <div className="space-y-4">
+                <div className="relative space-y-4 rounded-lg bg-gray-0 p-4">
+                  {showMismatch && <ResultIcon mismatch />}
+                  <div className="flex items-center gap-3">
+                    <span className="size-8 shrink-0 rounded-full bg-gray-100" aria-hidden />
+                    <p className="text-body-sm font-medium">Published post</p>
+                  </div>
+                  {post && <XLink url={post.url} />}
+                  {(approvedVideo || checking) && (
+                    <div className="aspect-video rounded-md bg-gray-50" aria-hidden />
+                  )}
                 </div>
+                <p className="text-center text-body-sm text-gray-500">Post from the URL</p>
               </div>
             </div>
-          ) : post?.isVerified ? (
-            <div className="relative mx-auto max-w-[380px]">
+          ) : (
+            <div className="relative mx-auto max-w-[446px]">
               <ApprovedCaption caption={caption}>{approvedVideo}</ApprovedCaption>
-              <ResultIcon />
+              {post?.isVerified && <ResultIcon />}
             </div>
-          ) : null}
-          <div className="mx-auto max-w-lg space-y-3 text-center">
-            {post && !post.isVerified && !mismatch && !showForm && (
-              <RiTimeLine size={28} className="mx-auto text-blue-primary" aria-hidden />
-            )}
-            <div role="status" className="space-y-3">
-              <DialogTitle className="text-[24px] leading-tight">{title}</DialogTitle>
-              <DialogDescription>
-                {description}
-                {approvedVideo && !post && " A reviewer will verify the posted video."}
-              </DialogDescription>
-            </div>
-            {post && !showMismatch && !showForm && <XLink url={post.url} />}
-          </div>
-
-          {showForm && (
-            <form className="mx-auto max-w-lg space-y-4" onSubmit={save}>
-              <label htmlFor={inputId} className="block text-body-sm font-medium">
-                X post URL
-              </label>
-              <Input
-                id={inputId}
-                type="url"
-                required
-                maxLength={2048}
-                value={url}
-                placeholder="https://x.com/username/status/…"
-                disabled={!!phase}
-                onChange={(event) => setUrl(event.target.value)}
-              />
-              <div className="grid grid-cols-2 gap-3">
-                <Button
-                  type="button"
-                  variant="secondary-subtle"
-                  disabled={!!phase}
-                  onClick={() => (post ? setEditing(false) : setOpen(false))}
-                >
-                  Cancel
-                </Button>
-                <Button type="submit" disabled={!!phase}>
-                  {post ? "Save new link" : "Check post link"}
-                </Button>
-              </div>
-            </form>
           )}
 
-          {post && !showForm && (
+          {checking ? (
+            <div className="mx-auto mt-10 max-w-[446px] rounded-lg bg-gray-0 p-5">
+              <DialogTitle className="sr-only">Checking published caption</DialogTitle>
+              <DialogDescription className="sr-only">
+                Comparing the published post with your approved submission
+              </DialogDescription>
+              <Progress
+                value={null}
+                className="[&_[data-slot=progress-indicator]]:w-2/5 [&_[data-slot=progress-indicator]]:bg-gray-950 motion-safe:[&_[data-slot=progress-indicator]]:animate-pulse [&_[data-slot=progress-track]]:h-3"
+              >
+                <ProgressLabel className="font-normal text-gray-500">
+                  Checking to see if it’s a match
+                </ProgressLabel>
+              </Progress>
+            </div>
+          ) : showForm ? (
+            <form
+              className="mx-auto max-w-[446px] space-y-5 rounded-lg bg-gray-0 p-5"
+              onSubmit={save}
+            >
+              <div className="flex items-start gap-3">
+                <span
+                  className="grid size-10 shrink-0 place-items-center rounded-md bg-gray-50"
+                  aria-hidden
+                >
+                  <RiCheckLine size={20} />
+                </span>
+                <div className="space-y-2">
+                  <DialogTitle className="sr-only">{title}</DialogTitle>
+                  <DialogDescription className="text-gray-950">
+                    Your submission has been approved. Publish it on X and submit the link here.
+                    {approvedVideo && " A reviewer will verify the posted video."}
+                  </DialogDescription>
+                </div>
+              </div>
+              <div className="space-y-2">
+                <label htmlFor={inputId} className="block text-body-sm text-gray-500">
+                  Post URL
+                </label>
+                <Input
+                  id={inputId}
+                  type="url"
+                  required
+                  maxLength={2048}
+                  value={url}
+                  placeholder="https://x.com/username/status/…"
+                  disabled={!!phase}
+                  onChange={(event) => setUrl(event.target.value)}
+                />
+              </div>
+              {error && (
+                <p role="alert" className="text-body-sm text-red-700">
+                  {error}
+                </p>
+              )}
+              <Button type="submit" className="w-full" disabled={!!phase || !url.trim()}>
+                {phase ? "Saving…" : post ? "Save new link" : "Check post link"}
+              </Button>
+            </form>
+          ) : (
+            <div className="mx-auto max-w-lg space-y-3 pt-4 text-center">
+              {post && !post.isVerified && !mismatch && (
+                <RiTimeLine size={24} className="mx-auto text-gray-700" aria-hidden />
+              )}
+              <div role="status" className="space-y-3">
+                <DialogTitle
+                  className={
+                    post?.isVerified ? "text-body font-medium" : "text-[24px] leading-tight"
+                  }
+                >
+                  {title}
+                </DialogTitle>
+                <DialogDescription>{description}</DialogDescription>
+              </div>
+              {post && !showMismatch && <XLink url={post.url} />}
+            </div>
+          )}
+
+          {post && !showForm && !checking && (
             <div className="flex flex-wrap justify-center gap-3">
               {active && !post.isVerified && (
                 <>
@@ -257,7 +298,7 @@ export function PublishedPost({
             </div>
           )}
 
-          {error && (
+          {!showForm && error && (
             <p role="alert" className="mx-auto max-w-lg text-center text-body-sm text-red-700">
               {error}
             </p>
@@ -279,10 +320,10 @@ function ApprovedCaption({
   const me = useMe();
   const creator = me?.synced ? [me.firstName, me.lastName].filter(Boolean).join(" ") : "You";
   return (
-    <div className="space-y-4 rounded-xl bg-gray-0 p-5">
+    <div className="space-y-4 rounded-lg bg-gray-0 p-4">
       <div className="flex items-center gap-3">
         <span
-          className="grid size-10 shrink-0 place-items-center rounded-full bg-indigo-100 text-indigo-700"
+          className="grid size-8 shrink-0 place-items-center rounded-full bg-gray-100 text-gray-700"
           aria-hidden
         >
           {creator[0]}
@@ -304,7 +345,7 @@ function ResultIcon({ mismatch = false }: { mismatch?: boolean }) {
     <span
       className={
         "absolute -top-3 -right-3 grid size-9 place-items-center rounded-full text-white " +
-        (mismatch ? "bg-red-600" : "bg-blue-primary")
+        (mismatch ? "bg-red-600" : "bg-gray-950")
       }
       aria-hidden
     >

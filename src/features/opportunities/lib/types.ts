@@ -15,6 +15,7 @@ export type FeedFilters = {
   niches: string[];
   skills: string[];
   applied: boolean;
+  eligible: boolean;
   starred: boolean;
 };
 
@@ -24,5 +25,6 @@ export const NO_FEED_FILTERS: FeedFilters = {
   niches: [],
   skills: [],
   applied: false,
+  eligible: false,
   starred: false,
 };

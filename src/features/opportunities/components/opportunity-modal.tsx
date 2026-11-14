@@ -23,7 +23,7 @@ const NOTE_FORM_ID = "application-note-form";
 
 function Heading({ opportunity }: { opportunity: FeedOpportunity }) {
   // The creator's own progress if there is any, otherwise how to get in.
-  const tag = feedTags(opportunity).at(-1);
+  const tag = feedTags(opportunity, { withMatch: false }).at(-1);
   return (
     <span className="flex flex-col gap-4">
       <span className="flex items-center gap-2 text-body font-normal">

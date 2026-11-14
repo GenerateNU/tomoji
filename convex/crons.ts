@@ -19,4 +19,10 @@ crons.interval("approve due payouts", { minutes: 1 }, internal.payouts.autoAppro
 // Each deliverable keeps its own verification-based earning boundaries.
 crons.interval("create due earnings", { minutes: 1 }, internal.earningsSchedules.sweep, {});
 
+// Charges approved payouts, minutes after approval, since the company is not present.
+crons.interval("charge approved payouts", { minutes: 1 }, internal.charging.chargeDue, {});
+
+// Recovers stalled charges and payouts whose dispute has closed.
+crons.interval("recover payout charges", { minutes: 15 }, internal.charging.sweep, {});
+
 export default crons;

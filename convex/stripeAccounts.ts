@@ -19,11 +19,13 @@ import {
   createStripeAccount,
   disconnectStripeAccount,
   getStripeAccountByCreatorId,
+  getStripeAccountByStripeId,
   stripeAccountState,
   stripeAccountStatus,
   toStripeAccountStatus,
   updateStripeAccount,
 } from "./models/stripeAccounts";
+import { requeueCreatorPayouts } from "./models/payments";
 import { requireCallerCreatorId } from "./models/users";
 import schema from "./schema";
 
@@ -202,7 +204,17 @@ export const update = internalMutation({
     v.literal("adopted"),
     v.literal("unknown"),
   ),
-  handler: async (ctx, args) => await updateStripeAccount(ctx, args.state, args.taggedCreatorId),
+  handler: async (ctx, args) => {
+    const result = await updateStripeAccount(ctx, args.state, args.taggedCreatorId);
+    if (result === "updated" || result === "adopted") {
+      // Payouts blocked on the creator's account can be charged once it is ready.
+      const account = await getStripeAccountByStripeId(ctx, args.state.stripeAccountId);
+      if (account !== null && toStripeAccountStatus(account) === "ready") {
+        await requeueCreatorPayouts(ctx, account.creatorId);
+      }
+    }
+    return result;
+  },
 });
 
 /** Applies a verified `account.application.deauthorized` event. */

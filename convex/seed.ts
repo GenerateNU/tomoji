@@ -11,7 +11,7 @@ import { listCreatorSkills, updateCreatorSkills } from "./models/creatorSkills";
 import { creatorName, type NotificationContent } from "./models/notifications";
 import { updateOpportunityLanguages } from "./models/opportunityLanguages";
 import { updateOpportunityNiches } from "./models/opportunityNiches";
-import { scoreOpportunityMatch, type CreatorSignals } from "./models/opportunityScores";
+import { scoreOpportunityMatch, type CreatorSignals } from "./models/opportunityMatch";
 import { updateOpportunitySkills } from "./models/opportunitySkills";
 import { createPayout } from "./models/payouts";
 import { getStripeCustomerByCompanyId } from "./models/stripeCustomers";
@@ -472,6 +472,33 @@ async function seedScenario(
       amount: compensation.fixedFeeCents,
       currency: "usd",
     });
+    // An earlier week's views, approved and paid before the dispute opened.
+    // The charge is synthetic; no Stripe object has these ids.
+    const paid = await createPayout(ctx, {
+      assignmentId,
+      postId,
+      sourceKey: "demo-views-week-1",
+      amount: 5_000,
+      currency: "usd",
+      earningPeriod: { startsAt: now - 10 * dayMs, endsAt: now - 3 * dayMs },
+    });
+    await ctx.db.patch("payouts", paid._id, {
+      approvalStatus: "approved",
+      approvalSource: "automatic",
+      approvedAt: now,
+      paymentStatus: "transferred",
+      transferredAt: now,
+    });
+    await ctx.db.insert("payments", {
+      payoutId: paid._id,
+      attempt: 1,
+      stripeAccountId: "acct_tomoji_seed",
+      stripePaymentIntentId: `pi_tomoji_seed_${paid._id}`,
+      status: "succeeded",
+      stripeFee: 175,
+      creatorNet: 4_825,
+      settlementCurrency: "usd",
+    });
     await ctx.db.insert("disputes", {
       ...scope,
       assignmentId,
@@ -563,6 +590,19 @@ async function seedNotifications(
       isRead: true,
     },
     {
+      type: "payoutStripeSetupNeeded",
+      title: "A $250 payment is waiting for your Stripe setup",
+      body: "Finish setting up Stripe to get paid.",
+      target: assignment,
+      isRead: true,
+    },
+    {
+      type: "payoutDisputed",
+      title: "A company disputed a $250 payment to you",
+      target: assignment,
+      isRead: true,
+    },
+    {
       type: "applicationOpportunityFull",
       title: `${offer.title} has filled all its slots`,
       target: application,
@@ -630,6 +670,32 @@ async function seedNotifications(
       type: "submissionResubmitted",
       title: `${name} resubmitted a draft for ${revision.title}`,
       target: revision.target,
+      isRead: true,
+    },
+    {
+      type: "payoutPaymentFailed",
+      title: `Payment of $250 to ${name} failed`,
+      body: "The company card was declined (insufficient_funds). Update it in settings.",
+      target: assignment,
+      isRead: true,
+    },
+    // Operators get these; the demo admin shows them so every type renders.
+    {
+      type: "payoutChargedTwice",
+      title: `A $250 payout to ${name} was charged twice`,
+      target: assignment,
+      isRead: true,
+    },
+    {
+      type: "payoutDisputeClosed",
+      title: `Dispute on a $250 payment to ${name} won`,
+      target: assignment,
+      isRead: true,
+    },
+    {
+      type: "payoutRefunded",
+      title: `${name} refunded $50 of a payment`,
+      target: assignment,
       isRead: true,
     },
     {
@@ -1063,13 +1129,20 @@ export const clearDemo = internalMutation({
           .collect();
         for (const row of disputes) removed.disputes.add(row._id);
         await drop("disputes", disputes);
-        await drop(
-          "payouts",
-          await ctx.db
-            .query("payouts")
-            .withIndex("by_assignmentId_and_sourceKey", (q) => q.eq("assignmentId", assignmentId))
-            .collect(),
-        );
+        const payouts = await ctx.db
+          .query("payouts")
+          .withIndex("by_assignmentId_and_sourceKey", (q) => q.eq("assignmentId", assignmentId))
+          .collect();
+        for (const { _id: payoutId } of payouts) {
+          await drop(
+            "payments",
+            await ctx.db
+              .query("payments")
+              .withIndex("by_payoutId_and_attempt", (q) => q.eq("payoutId", payoutId))
+              .collect(),
+          );
+        }
+        await drop("payouts", payouts);
       }
       await drop("assignments", assignments);
       await drop("opportunities", opportunities);

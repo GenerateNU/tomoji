@@ -6,9 +6,11 @@ import { apiError } from "./lib/errors";
 import { companyAdminAction, companyQuery } from "./lib/functions";
 import { checkoutReturnUrl, fingerprint, stripeClient, stripeErrorDetails } from "./lib/stripe";
 import { requireCompany } from "./models/companies";
+import { requeueCompanyPayouts } from "./models/payments";
 import {
   createStripeCustomer,
   getStripeCustomerByCompanyId,
+  getStripeCustomerByStripeId,
   paymentMethodStatus,
   refreshCard,
   savedPaymentMethod,
@@ -144,7 +146,15 @@ export const create = internalMutation({
 export const saveCard = internalMutation({
   args: { saved: savedPaymentMethod },
   returns: v.union(v.literal("updated"), v.literal("stale"), v.literal("unknown")),
-  handler: async (ctx, args) => await savePaymentMethod(ctx, args.saved),
+  handler: async (ctx, args) => {
+    const result = await savePaymentMethod(ctx, args.saved);
+    if (result === "updated") {
+      // A new card is what payouts declined or blocked on the old one were waiting for.
+      const customer = await getStripeCustomerByStripeId(ctx, args.saved.stripeCustomerId);
+      if (customer !== null) await requeueCompanyPayouts(ctx, customer.companyId);
+    }
+    return result;
+  },
 });
 
 /** Applies the card network's new details to the saved card. See `refreshCard`. */

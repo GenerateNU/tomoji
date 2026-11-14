@@ -8,8 +8,8 @@ now.
 Companies pay with a card they save once through Stripe Checkout. It is stored on a Stripe
 customer on Tomoji's own account and copied to a creator's account for each charge.
 
-This covers creator onboarding and saving company cards. Charging and payment webhooks come in
-later PRs.
+This covers creator onboarding, saving company cards, charging approved payouts, recovering
+failed charges, and recording disputes and refunds made outside Tomoji.
 
 ## Setup on your dev deployment
 
@@ -22,8 +22,10 @@ fail with `misconfigured`. To work on payments:
    - Scope: **Connected accounts** (creators are Connect v1 accounts).
    - Payload style: **Snapshot**, API version `2026-09-30.endive` (the version our `stripe`
      package pins).
-   - Events: `account.updated` and `account.application.deauthorized`. If you made the
-     destination before the second existed, edit it and add that event.
+   - Events: `account.updated`, `account.application.deauthorized`,
+     `payment_intent.succeeded`, `payment_intent.payment_failed`, `charge.updated`,
+     `charge.dispute.created`, `charge.dispute.closed`, and `charge.refunded`. If you made the
+     destination earlier, edit it and add the ones it's missing.
    - Type: **Webhook endpoint**, URL `https://<your-deployment>.convex.site/stripe/webhook`.
      Running `just convex-env` with an empty secret prints your exact URL.
    - Name it after yourself (`<name>-dev-creator-onboarding`). The sandbox is shared, so
@@ -250,3 +252,180 @@ bunx convex run stripeCustomers:setupPaymentMethod '{"returnPath":"/campaigns"}'
 
 Open the URL, enter card `4242 4242 4242 4242` with any future expiry, CVC, and ZIP, and save.
 Then `stripeCustomers:me '{"asOf": <now in ms>}'` with the same identity returns `ready` with the Visa ending in 4242.
+
+# Payout charges
+
+Approving a payout doesn't move money (see `docs/EARNINGS.md`). Collecting it charges the
+company's saved card on the creator's Stripe account, for exactly the payout's `amount` in USD.
+Each try is a row in `payments`; the payout keeps only the summary `paymentStatus`.
+
+## Attempts
+
+`internal.payments.start({ payoutId, stripeAccountId })` begins the next attempt (1, 2, …) and
+sets the payout to `processing`. It refuses a payout that isn't approved
+(`payout_not_approved`), is already paid (`payout_already_paid`), has an attempt in flight
+(`payment_in_progress`), or whose assignment has an open dispute (`payout_disputed`).
+
+The charge's idempotency key and `metadata.paymentId` come from the attempt, so an attempt can
+never charge twice. **Every retry is a new attempt with a new charge**, never a reuse of a
+failed one; that keeps each attempt's outcome final.
+
+| Payout `paymentStatus` | When                                         |
+| ---------------------- | -------------------------------------------- |
+| `notStarted`           | Approved, not charged yet                    |
+| `processing`           | An attempt's charge is in flight             |
+| `transferred`          | The charge succeeded; `transferredAt` is set |
+| `needsAttention`       | The latest attempt failed; still owed        |
+
+`transferred` means the money reached the creator's Stripe balance, not their bank.
+
+## How outcomes are recorded
+
+Charges happen on creators' accounts, so their events arrive on the Connect webhook,
+`POST /stripe/webhook`. Each event names its attempt by `metadata.paymentId` (Stripe copies it
+onto the charge), because it can arrive before the charge id is saved.
+
+- `payment_intent.succeeded`: the attempt becomes `succeeded` and the payout `transferred`.
+- `payment_intent.payment_failed`: the attempt becomes `failed` with the issuer's reason
+  (`failureCode`, e.g. `insufficient_funds`), and the payout `needsAttention`.
+- `charge.updated` with a newly attached balance transaction: Stripe adds the fee a few seconds
+  after success, for US and non-US accounts alike. The webhook reads it and records
+  `stripeFee`, `creatorNet`, and `settlementCurrency`. These are in the creator account's
+  currency. In the sandbox, a US$1.00 charge settled as US$0.33 fee and US$0.67 net on a US
+  account, and as CA$1.43 with a CA$0.38 fee (including CA$0.03 for currency conversion) and
+  CA$1.05 net on a Canadian one. The payout's earned `amount` is never rewritten.
+
+Only a `processing` attempt changes, so repeated or late events can't undo an outcome. Events
+without our tag, from another deployment, or from a different account than the attempt charged
+are acknowledged and ignored. If the fee can't be fetched the webhook answers 500 so Stripe
+redelivers.
+
+## Charging approved payouts
+
+A cron (`charge approved payouts`, every minute) runs `internal.charging.chargeDue`. It claims
+up to 25 approved payouts with `paymentStatus: "notStarted"`, oldest approval first, marks them
+`queued`, and schedules `internal.charging.collect` for each. Claiming and scheduling share one
+transaction, so a payout is never charged by two runs. Without `STRIPE_SECRET_KEY` it claims
+nothing.
+
+`collect` charges one payout:
+
+1. Reads the creator's account from Stripe for `charges_enabled`, since the stored status tracks
+   payouts, not charges. If Stripe refuses access, the account is marked `disconnected`.
+2. Starts the attempt (see above), or records why it can't be charged and stops.
+3. Copies the company's saved card onto the creator's account and charges it off-session for
+   exactly the payout's `amount`. Both requests are keyed by the attempt
+   (`payment:<id>:card`, `payment:<id>`). The attempt records the card it charges
+   (`paymentMethodId`), and a resumed attempt resends with that card, never one the company
+   swapped in since, so each key always carries the same request.
+4. Records the outcome from Stripe's response; the webhook later reports the same outcome,
+   which is then a no-op.
+
+| Outcome                                                                 | Attempt                               | Payout `paymentStatus` |
+| ----------------------------------------------------------------------- | ------------------------------------- | ---------------------- |
+| Charge succeeded                                                        | `succeeded`, fee recorded via webhook | `transferred`          |
+| Card declined                                                           | `failed`, issuer's reason             | `needsAttention`       |
+| Stripe refused the request as invalid                                   | `failed`, Stripe's code               | `needsAttention`       |
+| Company has no saved card                                               | `failed`, `company_card_missing`      | `needsAttention`       |
+| Company's saved card has expired                                        | `failed`, `company_card_expired`      | `needsAttention`       |
+| Creator's account can't accept charges                                  | `failed`, `creator_not_ready`         | `needsAttention`       |
+| Open dispute on the assignment                                          | `failed`, `payout_disputed`           | `needsAttention`       |
+| Creator has no Stripe account (shouldn't happen: applying requires one) | none, error logged                    | `needsAttention`       |
+| Outcome unknown (network or idempotency error)                          | stays `processing`                    | `processing`           |
+
+An unknown outcome is retried up to 3 times, a minute apart, with **the same attempt**. Before
+resending, the retry **asks Stripe whether that attempt already charged** (searching the creator
+account's charges for its `metadata.paymentId`) and records that charge's outcome if so: the
+first request may have succeeded with its reply lost, and Stripe forgets idempotency keys after
+about a day, so resending blindly could charge twice. Only when Stripe confirms there is no
+charge does the retry charge again, with the attempt's card, or fail the attempt if the company
+has removed its card by then. An idempotency error counts as unknown, not as a refusal: Stripe
+saw a request with that key, so the first may have charged. Stripe's search can lag by up to a
+minute; retries come later than that. Payouts that need attention, and attempts still unresolved
+after the retries, are handled by recovery (below); the charging run never retries them itself,
+so they can't hold up other payouts.
+
+Creators absorb Stripe's processing fees on these charges, since the charges are made on their
+Standard accounts.
+
+### Trying it end to end
+
+There's no committed way to create a payout yet. To test on your dev deployment, add a
+temporary internal mutation that builds a campaign, opportunity, assignment, approved
+submission, verified post, and payout through the models (`createCampaign`,
+`createOpportunity`, `createPayout`), then approve the payout. **Don't commit it.** Within a
+minute the cron charges the company's saved card on the creator's account. Verified in the
+sandbox:
+
+- a US$5.00 payout to a Canadian test account → `transferred`, fee CA$0.70, net CA$6.44;
+- Stripe's always-declining test card → `needsAttention`, `generic_decline`;
+- a company with no saved card → `needsAttention`, `company_card_missing`, no charge made.
+
+## Recovering payouts that need attention
+
+A payout in `needsAttention` keeps its failed attempts; each retry is a **new attempt** with a
+new charge. What retries it depends on who can fix the problem, read from the latest attempt's
+`failureCode`:
+
+| Blocked on                   | Failure codes                                                                                                                                            | Retried when                                                 | Notification                                                 |
+| ---------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ | ------------------------------------------------------------ |
+| The company's card           | `company_card_missing`, `company_card_expired`, and every decline Stripe reports (`generic_decline`, `insufficient_funds`, `authentication_required`, …) | The company saves a card (the platform webhook's `saveCard`) | `payoutPaymentFailed` to the member who created the campaign |
+| The creator's Stripe account | `creator_not_ready`                                                                                                                                      | Their account becomes `ready` (any account update)           | `payoutStripeSetupNeeded` to the creator                     |
+| A dispute                    | `payout_disputed`                                                                                                                                        | The sweep finds the dispute closed                           | None (disputes notify on their own)                          |
+
+Retrying sets the payout back to `notStarted`, and the next charging run (within a minute)
+claims it. A company admin can also retry one of their payouts with
+`payments.retry({ payoutId })` (`not_found` for another company's payout,
+`invalid_state` / `payout_not_retryable` unless it needs attention and no attempt has charged
+it). Requeues likewise skip any payout an attempt has charged. Notifications open the
+payout's assignment, since payouts have no page of their own, and are sent once per failed
+attempt, not again when Stripe repeats the same event.
+
+A cron (`recover payout charges`, every 15 minutes) runs `internal.charging.sweep`. It:
+
+- requeues payouts held by a dispute that has since closed, a page at a time;
+- charges payouts still `queued` 15 minutes after approval (their scheduled charge was lost);
+- for attempts still `processing` after 15 minutes, oldest first, asks Stripe for the outcome
+  of the charge if its id was saved (for example after a lost webhook), or resumes the attempt,
+  which first searches Stripe for a charge it made (see "Charging approved payouts"). Stale
+  attempts are found directly by age (`payments.by_status`), so payouts waiting legitimately on
+  Stripe can't crowd newer stalled ones out of the batch.
+
+**A success always counts.** If Stripe reports success for an attempt already marked failed,
+the payout is marked paid anyway, since the money moved. If another attempt had already paid it,
+the company was charged twice: operators get `payoutChargedTwice` to refund one charge. Checking
+Stripe before failing or resending an attempt makes this very unlikely; this is the backstop.
+
+Verified in the sandbox: a payout declined twice (`needsAttention`, company notified, then a
+manual retry that declined again) was requeued the moment the company saved a working card and
+charged on its third attempt, with the fee recorded.
+
+## Disputes and refunds
+
+After a charge succeeds, two things outside Tomoji can reverse it. Because the charge was made
+on the creator's Standard account, the creator owns both:
+
+- **Dispute (chargeback):** the company disputes the charge with its bank. Stripe holds the
+  amount from the creator's balance until the bank decides; only the creator can respond with
+  evidence, in their Stripe Dashboard.
+- **Refund:** the creator refunds the charge from their Stripe Dashboard. Tomoji never starts
+  refunds (no refunds on cancellation).
+
+The Connect webhook records both on the payment attempt and **never changes the payout**, which
+stays `transferred`, so recovery can't charge the company again:
+
+| Event                    | Recorded on the attempt                                                                                                     | Notified                                                                                |
+| ------------------------ | --------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| `charge.dispute.created` | `dispute: { status: "open", reason, amount }`                                                                               | The creator (`payoutDisputed`, "respond in your Stripe Dashboard") and Tomoji operators |
+| `charge.dispute.closed`  | `dispute.status`: `lost`, or `won` for every other result (Stripe's inquiries closed without a chargeback return the money) | Operators (`payoutDisputeClosed`)                                                       |
+| `charge.refunded`        | `refundedAmount`, Stripe's running total for partial refunds                                                                | Operators (`payoutRefunded`)                                                            |
+
+Events find the attempt by the charge id (`payments.by_stripePaymentIntentId`) and must come from
+the account it was made on. A closed dispute is final, so a late `created` never reopens it, and
+a refund total only grows. Repeats change nothing and notify no one again. Operators decide what a
+lost dispute or a refund means for the work.
+
+Verified in the sandbox: a payout charged with Stripe's auto-dispute test card stayed
+`transferred` while its attempt recorded an open `fraudulent` dispute and the creator was
+notified; submitting Stripe's `winning_evidence` test value closed it as `won`. A US$2.00 partial
+refund from the creator's account recorded `refundedAmount: 200`.

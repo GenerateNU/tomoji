@@ -207,6 +207,117 @@ export async function findCreatedConnectAccount(
 }
 
 /**
+ * What Stripe said about a payout charge. `pending` outcomes arrive by webhook.
+ * `rejected` means Stripe refused the request itself, so it made no charge.
+ */
+export type ChargeOutcome =
+  | { kind: "succeeded"; paymentIntentId: string }
+  | { kind: "failed"; paymentIntentId: string; failureCode: string }
+  | { kind: "pending"; paymentIntentId: string }
+  | { kind: "rejected"; failureCode: string };
+
+/** The outcome a charge Stripe already made has reached. */
+export function toChargeOutcome(intent: Stripe.PaymentIntent): ChargeOutcome {
+  if (intent.status === "succeeded") return { kind: "succeeded", paymentIntentId: intent.id };
+  if (intent.status === "requires_payment_method" || intent.status === "canceled") {
+    return {
+      kind: "failed",
+      paymentIntentId: intent.id,
+      failureCode:
+        intent.last_payment_error?.decline_code ?? intent.last_payment_error?.code ?? intent.status,
+    };
+  }
+  return { kind: "pending", paymentIntentId: intent.id };
+}
+
+/**
+ * The charge Stripe made for a payout attempt, if any, found by the
+ * `metadata.paymentId` the charge carries. A resumed attempt checks this before
+ * sending anything: its first request may have charged with the reply lost, and
+ * Stripe forgets idempotency keys after about a day, so resending could charge
+ * twice. Stripe's search can lag by up to a minute; attempts resume later than that.
+ *
+ * @throws whatever Stripe throws if it cannot be asked, which proves nothing.
+ */
+export async function findAttemptCharge(
+  stripe: Stripe,
+  payment: Doc<"payments">,
+): Promise<Stripe.PaymentIntent | null> {
+  const found = await stripe.paymentIntents.search(
+    { query: `metadata['paymentId']:'${payment._id}'` },
+    { stripeAccount: payment.stripeAccountId },
+  );
+  return found.data[0] ?? null;
+}
+
+/**
+ * Charges a company's saved card on the creator's Standard account for one
+ * payout attempt. The card lives on Tomoji's account, so it is first copied
+ * onto the creator's; the charge then runs there off-session, since the
+ * company is not present. Both requests are keyed by the attempt, so repeating
+ * an attempt whose outcome was lost returns the original card and charge
+ * instead of charging twice. The charge carries `metadata.paymentId` so
+ * webhooks find the attempt.
+ *
+ * @throws whatever Stripe throws when the outcome is unknown, such as a network
+ * or idempotency error. A card decline is returned as `failed`; an invalid
+ * request Stripe refused, as `rejected`.
+ */
+export async function chargeConnectAccount(
+  stripe: Stripe,
+  charge: {
+    payment: Doc<"payments">;
+    stripeCustomerId: string;
+    paymentMethodId: string;
+    amount: number;
+    currency: string;
+  },
+): Promise<ChargeOutcome> {
+  const { payment } = charge;
+  const onCreatorAccount = { stripeAccount: payment.stripeAccountId };
+  try {
+    // Always the attempt's own card (see `paymentMethodId` on `payments`), so
+    // a resumed attempt repeats exactly the same request under each key.
+    const card = await stripe.paymentMethods.create(
+      { customer: charge.stripeCustomerId, payment_method: charge.paymentMethodId },
+      { ...onCreatorAccount, idempotencyKey: `payment:${payment._id}:card` },
+    );
+    const intent = await stripe.paymentIntents.create(
+      {
+        amount: charge.amount,
+        currency: charge.currency,
+        payment_method: card.id,
+        confirm: true,
+        off_session: true,
+        // Off-session charges cannot redirect the company to their bank.
+        automatic_payment_methods: { enabled: true, allow_redirects: "never" },
+        metadata: { paymentId: payment._id, payoutId: payment.payoutId },
+      },
+      { ...onCreatorAccount, idempotencyKey: `payment:${payment._id}` },
+    );
+    return intent.status === "succeeded"
+      ? { kind: "succeeded", paymentIntentId: intent.id }
+      : { kind: "pending", paymentIntentId: intent.id };
+  } catch (error) {
+    // Stripe made the charge and the card refused it; the outcome is known.
+    if (error instanceof Stripe.errors.StripeCardError && error.payment_intent !== undefined) {
+      return {
+        kind: "failed",
+        paymentIntentId: error.payment_intent.id,
+        failureCode: error.decline_code ?? error.code ?? "card_declined",
+      };
+    }
+    // Refused outright, so no charge exists; retrying would fail the same way.
+    // An idempotency error is thrown instead: Stripe saw a request with this
+    // key, so the first may have charged, and Stripe must be asked.
+    if (error instanceof Stripe.errors.StripeInvalidRequestError) {
+      return { kind: "rejected", failureCode: error.code ?? "invalid_request" };
+    }
+    throw error;
+  }
+}
+
+/**
  * The card details Tomoji keeps from a payment method, or null if it is not a
  * card. The brand is the one Stripe displays, which for a co-branded card is
  * the network the cardholder chose.

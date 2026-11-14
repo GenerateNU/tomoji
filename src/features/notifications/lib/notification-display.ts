@@ -1,8 +1,11 @@
 import {
+  RiBankCardLine,
   RiCalendarCloseLine,
   RiCheckLine,
   RiCloseCircleLine,
   RiEditLine,
+  RiErrorWarningLine,
+  RiRefundLine,
   RiScales3Line,
   RiUserAddLine,
   RiVideoOnLine,
@@ -33,6 +36,12 @@ export const NOTIFICATION_ICONS = {
   disputeOpened: RiScales3Line,
   disputeResolved: RiScales3Line,
   disputeOverridden: RiScales3Line,
+  payoutPaymentFailed: RiBankCardLine,
+  payoutStripeSetupNeeded: RiBankCardLine,
+  payoutChargedTwice: RiErrorWarningLine,
+  payoutDisputed: RiScales3Line,
+  payoutDisputeClosed: RiScales3Line,
+  payoutRefunded: RiRefundLine,
 } satisfies Record<Doc<"notifications">["type"], IconComponent>;
 
 /**

@@ -121,6 +121,22 @@ and production are separate WorkOS environments with different organizations. Wh
 is unset, no org is the staff org and `isOperatorOrg` is always false, so a staff
 invite quietly creates an ordinary company instead.
 
+### Counting for the operator dashboard
+
+Convex has no count API, so a total costs one read per row. `models/operators.ts`
+stops every count at `COUNT_CAP` and returns `{ value, capped }`; the dashboard renders
+a capped count as `1,000+`. Add counts there rather than scanning a table in a route,
+and keep each one behind an index.
+
+### Searching a directory
+
+`users.list` and `companies.list` take an optional `search`. Without it they paginate
+the index directly, so the cursor and `isDone` mean what they do anywhere else. With
+it they filter while paginating under `withRowsReadCap`, which bounds the scan but
+makes pages short — so a page is never proof that the next one is empty. There is no
+search index on either table yet; one would need a denormalized field to cover a name
+and an email together.
+
 ## Errors
 
 Throw `apiError(code, detail)` from `lib/errors.ts` instead of using `new Error()`.
@@ -162,6 +178,25 @@ same boundaries through the internal cron, in bounded batches; drafts do not aut
 Campaign end dates and offer expiries share `isHalfHourTimestamp` and `HALF_HOUR_MS`
 from `lib/validation.ts`. Callers retain their own optionality, future-time checks,
 and error reasons.
+
+## Opportunity discovery
+
+`opportunities.discover` lists open briefs creators can see, in deadline order. Filters
+combine with AND; within `niches` or `skills` a brief needs any one. `isGated` picks
+briefs that need an application (true) or have spots to claim (false), and `applied`
+keeps only briefs the caller applied to. Each item carries the caller's `isStarred`,
+`application`, `assignment`, and `match`.
+
+`match` (`models/opportunityMatch.ts`) describes the fit in terms a creator can act on:
+`isGreatMatch` (eligible and a weighted score of at least 90%, kept rare on purpose), the
+skills and niches that match, missing skills, and whether they meet the follower minimum. A creator
+is `isEligible` when they meet the minimum and have every skill; `eligible: true` keeps
+only those briefs. Applying never checks eligibility; `assignments.claim` rejects an
+ineligible creator (`invalid_state` `not_eligible`), since a claim skips company review.
+
+`search` matches title words through the `search_title` index, best match first. Search
+results can't be streamed, so it reads the top 200 matches, filters them, and pages by
+position; its cursor is a count, not a stream cursor.
 
 ## Opportunity recommendations
 

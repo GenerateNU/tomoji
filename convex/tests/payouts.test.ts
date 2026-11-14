@@ -839,3 +839,52 @@ describe("payouts.list", () => {
     ).rejects.toThrow("Validator error:");
   });
 });
+
+// Companies see payouts per assignment; earnings are the creator's own view.
+describe("payouts.summary", () => {
+  test("totals the calling creator's own earnings", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await seedAssignmentFixture(t);
+    await seedPayout(t, fixture.assignmentId, { amount: 1_234 });
+    const otherCreatorId = await seedCreatorId(t, "other_creator");
+    await seedPayout(t, fixture.assignmentId, { creatorId: otherCreatorId, amount: 9_999 });
+
+    const summary = await fixture.asCreator.query(api.payouts.summary, {
+      from: null,
+      previousFrom: null,
+    });
+
+    expect(summary.total).toBe(1_234);
+  });
+
+  test("refuses company users", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await seedAssignmentFixture(t);
+
+    await expectApiError(
+      () => fixture.asCompany.query(api.payouts.summary, { from: null, previousFrom: null }),
+      "forbidden",
+    );
+  });
+});
+
+describe("payouts.periods", () => {
+  test("lists the calling creator's own payouts", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await seedAssignmentFixture(t);
+    await seedPayout(t, fixture.assignmentId, { amount: 1_234 });
+    const otherCreatorId = await seedCreatorId(t, "other_creator");
+    await seedPayout(t, fixture.assignmentId, { creatorId: otherCreatorId, amount: 9_999 });
+
+    const { periods } = await fixture.asCreator.query(api.payouts.periods, {});
+
+    expect(periods.map((period) => period.amount)).toEqual([1_234]);
+  });
+
+  test("refuses company users", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await seedAssignmentFixture(t);
+
+    await expectApiError(() => fixture.asCompany.query(api.payouts.periods, {}), "forbidden");
+  });
+});

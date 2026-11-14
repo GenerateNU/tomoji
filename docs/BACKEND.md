@@ -388,6 +388,29 @@ creator's payment-provider balance, not their bank. Times are Unix milliseconds;
 `amount` is stored in integer currency minor units (cents for USD, yen for JPY),
 alongside `currency`. Renaming the field does not rescale existing monetary values.
 
+### Creator earnings summaries
+
+The Earnings page reads two creator-only routes (`creatorQuery`; companies and
+operators get `forbidden`). Both read the caller's own payouts through
+`by_creatorId_and_reviewRequestedAt`; the logic is in `models/payoutSummaries.ts`.
+
+- `payouts.summary({ from, previousFrom })` totals what the creator earned since
+  `from`, by when each payout was finalized (`reviewRequestedAt`). It returns each
+  payout's `{ at, amount }` oldest first for the chart, and the six posts that earned
+  the most (`url` is null once a post is deleted). `from: null` is all time. With
+  `previousFrom`, it also totals `[previousFrom, from)` for the percentage change;
+  `previousFrom` without `from`, or not before it, is `invalid_state` /
+  `summary_range_invalid`. Clients pass start times in the creator's timezone, since
+  "this month" depends on it. Reads at most 2,000 payouts; `isPartial` says more exist.
+- `payouts.periods({})` groups the creator's payouts by earning period, newest
+  first. A payout without a period, such as a fixed fee, is its own row. Each row
+  has the gross `amount`, `cleared` (transferred to the creator's Stripe balance),
+  `approvedAt` (the last approval, once every payout in the row is approved), and
+  Stripe's fee and the creator's net per settlement currency, from succeeded charges
+  whose fee Stripe has reported. Reads at most 500 payouts; `isPartial` says more exist.
+
+Amounts add up without conversion because every payout is in USD for now.
+
 ### Recording finalized earnings
 
 `internal.payouts.create({ assignmentId, sourceKey, amount, currency, postId,

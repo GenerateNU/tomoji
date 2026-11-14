@@ -5,7 +5,10 @@ import {
   isAccountAccessLost,
   stripeClient,
   stripeErrorDetails,
+  toSavedCard,
   toStripeAccountState,
+  verifyWebhookEvent,
+  webhookOk,
 } from "./lib/stripe";
 
 // How long after saving an account to read it from Stripe again. Long enough for
@@ -13,36 +16,26 @@ import {
 const ACCOUNT_RECHECK_DELAY_MS = 5_000;
 
 /**
- * Receives Stripe's Connect events. Only events whose signature matches
- * `STRIPE_WEBHOOK_SECRET` are applied; the payload is otherwise untrusted.
+ * Stripe sends two kinds of events to two destinations, each with its own
+ * signing secret: Connect events about creators' accounts to `/stripe/webhook`,
+ * and events on Tomoji's own account, such as a company saving a card, to
+ * `/stripe/webhook/platform`. Only events whose signature matches are applied;
+ * the payload is otherwise untrusted.
  *
- * Every verified event gets a 200, including types it ignores and accounts
+ * Every verified event gets a 200, including types a route ignores and objects
  * this deployment does not own, because anything else makes Stripe retry for
  * days. A 500 is reserved for failures worth retrying, such as a missing
  * secret or Stripe being unreachable, so Stripe keeps the events until fixed.
  */
-export const stripeWebhook = httpAction(async (ctx, request) => {
-  const secret = env.STRIPE_WEBHOOK_SECRET;
-  if (!secret) {
-    console.error("Stripe webhook received but STRIPE_WEBHOOK_SECRET is not set");
-    return new Response("Webhook not configured", { status: 500 });
-  }
-  const signature = request.headers.get("Stripe-Signature");
-  if (signature === null) return new Response("Missing signature", { status: 400 });
 
-  let event: Stripe.Event;
-  try {
-    // The raw body: re-serialized JSON would not match the signature.
-    event = await Stripe.webhooks.constructEventAsync(
-      await request.text(),
-      signature,
-      secret,
-      undefined,
-      Stripe.createSubtleCryptoProvider(),
-    );
-  } catch {
-    return new Response("Invalid signature", { status: 400 });
-  }
+/** Connect events: creators' onboarding status. */
+export const stripeWebhook = httpAction(async (ctx, request) => {
+  const event = await verifyWebhookEvent(
+    request,
+    env.STRIPE_WEBHOOK_SECRET,
+    "STRIPE_WEBHOOK_SECRET",
+  );
+  if (event instanceof Response) return event;
 
   if (event.type === "account.updated") {
     // Two updates in one second share a timestamp and can arrive in either order,
@@ -62,7 +55,7 @@ export const stripeWebhook = httpAction(async (ctx, request) => {
           eventId: event.id,
           stripeAccountId: event.data.object.id,
         });
-        return new Response(null, { status: 200 });
+        return webhookOk();
       }
       console.error("Stripe refused the account", stripeErrorDetails(error));
       return new Response("Could not fetch the account", { status: 500 });
@@ -98,5 +91,93 @@ export const stripeWebhook = httpAction(async (ctx, request) => {
       });
     }
   }
-  return new Response(null, { status: 200 });
+  return webhookOk();
+});
+
+/** Events on Tomoji's own account: the cards companies save for payouts. */
+export const stripePlatformWebhook = httpAction(async (ctx, request) => {
+  const event = await verifyWebhookEvent(
+    request,
+    env.STRIPE_PLATFORM_WEBHOOK_SECRET,
+    "STRIPE_PLATFORM_WEBHOOK_SECRET",
+  );
+  if (event instanceof Response) return event;
+
+  if (event.type === "checkout.session.completed") {
+    const session = event.data.object;
+    // Payment-mode sessions belong to other features; only setup saves a card.
+    if (
+      session.mode !== "setup" ||
+      typeof session.customer !== "string" ||
+      typeof session.setup_intent !== "string"
+    ) {
+      return webhookOk();
+    }
+    // The event names the SetupIntent but not the card it saved.
+    let setupIntent: Stripe.SetupIntent;
+    try {
+      setupIntent = await stripeClient().setupIntents.retrieve(session.setup_intent, {
+        expand: ["payment_method"],
+      });
+    } catch (error) {
+      console.error("Stripe refused the SetupIntent", stripeErrorDetails(error));
+      return new Response("Could not fetch the saved card", { status: 500 });
+    }
+    const paymentMethod = setupIntent.payment_method;
+    const card =
+      paymentMethod !== null && typeof paymentMethod !== "string"
+        ? toSavedCard(paymentMethod)
+        : null;
+    if (card === null) {
+      // Checkout only offers cards, so a retry would not find one either.
+      console.error("Stripe setup session saved no card", {
+        eventId: event.id,
+      });
+      return webhookOk();
+    }
+    const result = await ctx.runMutation(internal.stripeCustomers.saveCard, {
+      saved: {
+        stripeCustomerId: session.customer,
+        card,
+        stripeUpdatedAt: event.created * 1000,
+      },
+    });
+    if (result !== "unknown") {
+      console.log("Company card saved", {
+        eventId: event.id,
+        stripeCustomerId: session.customer,
+        result,
+      });
+    }
+  }
+
+  if (event.type === "payment_method.automatically_updated") {
+    // The card network renewed or reissued a saved card, usually with a new expiry.
+    // Two updates in one second share a timestamp and can arrive in either order,
+    // so the card is read from Stripe as it is now rather than from the event.
+    let paymentMethod: Stripe.PaymentMethod;
+    try {
+      paymentMethod = await stripeClient().paymentMethods.retrieve(event.data.object.id);
+    } catch (error) {
+      console.error("Stripe refused the payment method", stripeErrorDetails(error));
+      return new Response("Could not fetch the updated card", { status: 500 });
+    }
+    const card = toSavedCard(paymentMethod);
+    if (typeof paymentMethod.customer !== "string" || card === null) return webhookOk();
+    const result = await ctx.runMutation(internal.stripeCustomers.refreshSavedCard, {
+      saved: {
+        stripeCustomerId: paymentMethod.customer,
+        card,
+        stripeUpdatedAt: event.created * 1000,
+      },
+    });
+    if (result !== "unknown") {
+      console.log("Company card refreshed", {
+        eventId: event.id,
+        stripeCustomerId: paymentMethod.customer,
+        result,
+      });
+    }
+  }
+  return webhookOk();
 });

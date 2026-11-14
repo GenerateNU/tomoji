@@ -2,6 +2,7 @@ import Stripe from "stripe";
 import type { Doc } from "../_generated/dataModel";
 import { env } from "../_generated/server";
 import type { StripeAccountState } from "../models/stripeAccounts";
+import type { SavedPaymentMethod } from "../models/stripeCustomers";
 import { apiError } from "./errors";
 
 // How far before an attempt's start to look for the account it made: our clock
@@ -32,6 +33,57 @@ export function siteUrl(path: string): string {
   const base = env.SITE_URL;
   if (!base) throw apiError("misconfigured", { reason: "site_url_missing" });
   return new URL(path, base).toString();
+}
+
+/**
+ * The page on the Tomoji site Checkout sends the admin back to, marked with
+ * `stripe=return` or `stripe=cancel`. Returning does not mean the card is
+ * saved; `me` updates when the webhook arrives.
+ *
+ * @throws `invalid_state` with reason `return_path_invalid` unless `returnPath`
+ * is a path on the Tomoji site, so the flow cannot redirect to another site.
+ */
+export function checkoutReturnUrl(returnPath: string, outcome: "return" | "cancel"): string {
+  const url = new URL(siteUrl(returnPath));
+  // `//host` and `/\host` resolve to another origin, so compare origins too.
+  if (!returnPath.startsWith("/") || url.origin !== new URL(siteUrl("/")).origin) {
+    throw apiError("invalid_state", { reason: "return_path_invalid" });
+  }
+  url.searchParams.set("stripe", outcome);
+  return url.toString();
+}
+
+/** Acknowledges a webhook event: anything but 2xx makes Stripe retry for days. */
+export const webhookOk = () => new Response(null, { status: 200 });
+
+/**
+ * The verified Stripe event in a webhook request, or the response to send
+ * when it cannot be verified: 500 while the signing secret is unset, so Stripe
+ * keeps the events, and 400 for a missing or wrong signature.
+ */
+export async function verifyWebhookEvent(
+  request: Request,
+  secret: string | undefined,
+  secretName: string,
+): Promise<Stripe.Event | Response> {
+  if (!secret) {
+    console.error(`Stripe webhook received but ${secretName} is not set`);
+    return new Response("Webhook not configured", { status: 500 });
+  }
+  const signature = request.headers.get("Stripe-Signature");
+  if (signature === null) return new Response("Missing signature", { status: 400 });
+  try {
+    // The raw body: re-serialized JSON would not match the signature.
+    return await Stripe.webhooks.constructEventAsync(
+      await request.text(),
+      signature,
+      secret,
+      undefined,
+      Stripe.createSubtleCryptoProvider(),
+    );
+  } catch {
+    return new Response("Invalid signature", { status: 400 });
+  }
 }
 
 /**
@@ -152,6 +204,25 @@ export async function findCreatedConnectAccount(
     throw apiError("upstream_failure", { reason: "stripe_account_failed" });
   }
   return null;
+}
+
+/**
+ * The card details Tomoji keeps from a payment method, or null if it is not a
+ * card. The brand is the one Stripe displays, which for a co-branded card is
+ * the network the cardholder chose.
+ */
+export function toSavedCard(
+  paymentMethod: Stripe.PaymentMethod,
+): SavedPaymentMethod["card"] | null {
+  const card = paymentMethod.card;
+  if (!card) return null;
+  return {
+    paymentMethodId: paymentMethod.id,
+    brand: card.display_brand ?? card.brand,
+    last4: card.last4,
+    expMonth: card.exp_month,
+    expYear: card.exp_year,
+  };
 }
 
 /**

@@ -21,6 +21,7 @@ import { opportunitySkillsTable } from "./schemas/opportunitySkills.schema";
 import { postsTable } from "./schemas/posts.schema";
 import { payoutsTable } from "./schemas/payouts.schema";
 import { stripeAccountCreationsTable, stripeAccountsTable } from "./schemas/stripeAccounts.schema";
+import { stripeCustomersTable } from "./schemas/stripeCustomers.schema";
 import { submissionsTable } from "./schemas/submissions.schema";
 import { usersTable } from "./schemas/users.schema";
 import { xAccountsTable } from "./schemas/xAccounts.schema";
@@ -67,5 +68,6 @@ export default defineSchema({
   xLinkAttempts: xLinkAttemptsTable,
   stripeAccounts: stripeAccountsTable,
   stripeAccountCreations: stripeAccountCreationsTable,
+  stripeCustomers: stripeCustomersTable,
   notifications: notificationsTable,
 });

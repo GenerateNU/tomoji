@@ -4,6 +4,7 @@ import { afterEach, expect, test, vi } from "vitest";
 import { api, internal } from "../_generated/api";
 import type { TableNames } from "../_generated/dataModel";
 import schema from "../schema";
+import { notificationTargetKind } from "../schemas/notifications.schema";
 import { expectApiError, seedUser } from "./helpers";
 
 const modules = import.meta.glob("../**/*.ts");
@@ -196,4 +197,45 @@ test("reset preserves a campaign with the same name when it has no seed marker",
   expect(await t.mutation(internal.seed.clearDemo, {})).toMatchObject({ campaigns: 1 });
   expect(await t.run((ctx) => ctx.db.get("campaigns", campaignId))).toBeNull();
   expect(await t.run((ctx) => ctx.db.get("campaigns", unrelated))).not.toBeNull();
+});
+
+test("seeds every notification type whose page exists, with a target that exists", async () => {
+  vi.stubEnv("TOMOJI_DEV_SEED", "true");
+  const t = convexTest(schema, modules);
+  await t.mutation(internal.seed.run, {});
+
+  const notifications = await t.run((ctx) => ctx.db.query("notifications").collect());
+  // Dispute notifications have no page to open yet (`notificationHref` returns null).
+  const expected = Object.entries(notificationTargetKind)
+    .filter(([, kind]) => kind !== "dispute")
+    .map(([type]) => type);
+  expect(new Set(notifications.map((n) => n.type))).toEqual(new Set(expected));
+  for (const { type, target } of notifications) {
+    expect(target.kind).toBe(notificationTargetKind[type]);
+    const id =
+      target.kind === "application"
+        ? target.applicationId
+        : target.kind === "assignment"
+          ? target.assignmentId
+          : target.kind === "submission"
+            ? target.submissionId
+            : target.kind === "opportunity"
+              ? target.opportunityId
+              : target.kind === "campaign"
+                ? target.campaignId
+                : target.disputeId;
+    expect(await t.run((ctx) => ctx.db.get(id))).not.toBeNull();
+  }
+
+  // Both the creator and the company admin get a mix, with unread on top.
+  const recipients = new Set(notifications.map((n) => n.userId));
+  expect(recipients.size).toBe(2);
+  for (const userId of recipients) {
+    const mine = notifications
+      .filter((n) => n.userId === userId)
+      .sort((a, b) => b._creationTime - a._creationTime);
+    expect(mine.some((n) => n.isRead) && mine.some((n) => !n.isRead)).toBe(true);
+    const firstRead = mine.findIndex((n) => n.isRead);
+    expect(mine.slice(firstRead).every((n) => n.isRead)).toBe(true);
+  }
 });

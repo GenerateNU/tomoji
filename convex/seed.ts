@@ -8,7 +8,7 @@ import { updateCreatorLanguages } from "./models/creatorLanguages";
 import { listCreatorNiches, updateCreatorNiches } from "./models/creatorNiches";
 import { getCreatorByUserId } from "./models/creators";
 import { listCreatorSkills, updateCreatorSkills } from "./models/creatorSkills";
-import { createNotification, notifyCompanyUser } from "./models/notifications";
+import { creatorName, type NotificationContent } from "./models/notifications";
 import { updateOpportunityLanguages } from "./models/opportunityLanguages";
 import { updateOpportunityNiches } from "./models/opportunityNiches";
 import { scoreOpportunityMatch, type CreatorSignals } from "./models/opportunityScores";
@@ -296,6 +296,15 @@ async function seedOpportunity(
   return { opportunityId, deliverableId, reviewCriteria };
 }
 
+/** The records one scenario created, for notifications that point at them. */
+type ScenarioRecords = {
+  title: string;
+  opportunityId: Id<"opportunities">;
+  applicationId: Id<"applications">;
+  assignmentId?: Id<"assignments">;
+  submissionId?: Id<"submissions">;
+};
+
 /** Seeds one complete workflow at the selected point in its lifecycle. */
 async function seedScenario(
   ctx: MutationCtx,
@@ -304,7 +313,7 @@ async function seedScenario(
   scenario: (typeof scenarios)[number],
   now: number,
   deadline: number,
-) {
+): Promise<ScenarioRecords> {
   const usesAiReview =
     scenario.stage === "notStarted" ||
     scenario.stage === "pending" ||
@@ -335,13 +344,7 @@ async function seedScenario(
 
   if (scenario.stage === "applying") {
     await ctx.db.insert("opportunityStars", { creatorId: creator._id, opportunityId });
-    await createNotification(ctx, creator.userId, {
-      type: "applicationOffered",
-      title: "Northstar Studio sent you an offer",
-      body: scenario.title,
-      target: { kind: "application", applicationId, opportunityId },
-    });
-    return opportunityId;
+    return { title: scenario.title, opportunityId, applicationId };
   }
 
   const scope = { creatorId: creator._id, companyId: campaign.companyId, campaignId: campaign._id };
@@ -365,7 +368,7 @@ async function seedScenario(
       grantExpiresAt: now - dayMs,
       status: "pending",
     });
-    return opportunityId;
+    return { title: scenario.title, opportunityId, applicationId, assignmentId };
   }
 
   const draft = {
@@ -408,11 +411,6 @@ async function seedScenario(
       failureReason: "disabled",
       finishedAt: now,
     });
-    await notifyCompanyUser(ctx, campaign.createdBy, {
-      type: "submissionCreated",
-      title: "A Northstar Studio draft needs review",
-      target: { kind: "submission", submissionId, assignmentId },
-    });
   }
 
   if (status === "changesRequested") {
@@ -443,11 +441,6 @@ async function seedScenario(
           },
         ],
       },
-    });
-    await createNotification(ctx, creator.userId, {
-      type: "submissionChangesRequested",
-      title: "Changes requested for your Northstar Studio draft",
-      target: { kind: "submission", submissionId, assignmentId },
     });
   }
 
@@ -489,7 +482,176 @@ async function seedScenario(
     });
   }
 
-  return opportunityId;
+  return { title: scenario.title, opportunityId, applicationId, assignmentId, submissionId };
+}
+
+type Stage = (typeof scenarios)[number]["stage"];
+type SeedNotification = NotificationContent & { isRead: boolean };
+
+/**
+ * One notification per type whose target page exists, for the creator and the
+ * company admin, read and unread, each pointing at the scenario it describes.
+ * Titles follow the templates in `models/`. Dispute notifications are left out
+ * until `notificationHref` links disputes, since clicking one would open nothing.
+ */
+async function seedNotifications(
+  ctx: MutationCtx,
+  creator: Doc<"creators">,
+  admin: Doc<"companyUsers">,
+  campaign: Pick<Doc<"campaigns">, "_id" | "title">,
+  records: Map<Stage, ScenarioRecords>,
+) {
+  const missing = () => apiError("invalid_state", { reason: "seed_scenario_missing" });
+  const scenario = (stage: Stage) => {
+    const record = records.get(stage);
+    if (record === undefined) throw missing();
+    return record;
+  };
+  const submission = (stage: "pending" | "changesRequested" | "approved") => {
+    const { assignmentId, submissionId, title } = scenario(stage);
+    if (assignmentId === undefined || submissionId === undefined) throw missing();
+    return { title, target: { kind: "submission" as const, submissionId, assignmentId } };
+  };
+
+  const name = (await creatorName(ctx, creator._id)) || "A creator";
+  const offer = scenario("applying");
+  const application = {
+    kind: "application" as const,
+    applicationId: offer.applicationId,
+    opportunityId: offer.opportunityId,
+  };
+  const started = scenario("notStarted");
+  if (started.assignmentId === undefined) throw missing();
+  const assignment = { kind: "assignment" as const, assignmentId: started.assignmentId };
+  const pending = submission("pending");
+  const revision = submission("changesRequested");
+  const approved = submission("approved");
+
+  // Oldest first: the list is newest first, so the unread rows land on top.
+  const toCreator: SeedNotification[] = [
+    {
+      type: "applicationRejected",
+      title: `Your application for ${offer.title} wasn't accepted`,
+      target: application,
+      isRead: true,
+    },
+    {
+      type: "applicationOpportunityClosed",
+      title: `${offer.title} has closed`,
+      target: application,
+      isRead: true,
+    },
+    {
+      type: "applicationOfferExpired",
+      title: `Your offer for ${offer.title} expired`,
+      target: application,
+      isRead: true,
+    },
+    {
+      type: "assignmentCancelled",
+      title: `Your assignment for ${started.title} was cancelled`,
+      target: assignment,
+      isRead: true,
+    },
+    {
+      type: "submissionApproved",
+      title: `Your draft for ${approved.title} was approved`,
+      target: approved.target,
+      isRead: true,
+    },
+    {
+      type: "applicationOpportunityFull",
+      title: `${offer.title} has filled all its slots`,
+      target: application,
+      isRead: false,
+    },
+    {
+      type: "submissionChangesRequested",
+      title: `Changes requested on your draft for ${revision.title}`,
+      body: "Disclose the sponsorship with #ad.",
+      target: revision.target,
+      isRead: false,
+    },
+    {
+      type: "applicationOffered",
+      title: `You received an offer for ${offer.title}`,
+      body: "Accept before the offer expires.",
+      target: application,
+      isRead: false,
+    },
+  ];
+  const toAdmin: SeedNotification[] = [
+    {
+      type: "campaignClosed",
+      title: `${campaign.title} ended`,
+      target: { kind: "campaign", campaignId: campaign._id },
+      isRead: true,
+    },
+    {
+      type: "applicationDeclined",
+      title: `${name} declined your offer for ${offer.title}`,
+      target: application,
+      isRead: true,
+    },
+    {
+      type: "applicationOfferExpired",
+      title: `${name}'s offer for ${offer.title} expired unanswered`,
+      target: application,
+      isRead: true,
+    },
+    {
+      type: "assignmentTermsDeclined",
+      title: `${name} declined terms for ${started.title}`,
+      target: assignment,
+      isRead: true,
+    },
+    {
+      type: "applicationAccepted",
+      title: `${name} accepted your offer for ${started.title}`,
+      target: assignment,
+      isRead: true,
+    },
+    {
+      type: "assignmentClaimed",
+      title: `${name} joined ${started.title}`,
+      target: assignment,
+      isRead: true,
+    },
+    {
+      type: "assignmentTermsAccepted",
+      title: `${name} accepted terms for ${started.title}`,
+      target: assignment,
+      isRead: true,
+    },
+    {
+      type: "submissionResubmitted",
+      title: `${name} resubmitted a draft for ${revision.title}`,
+      target: revision.target,
+      isRead: true,
+    },
+    {
+      type: "opportunityClosed",
+      title: `${offer.title} closed at its deadline`,
+      target: { kind: "opportunity", opportunityId: offer.opportunityId },
+      isRead: false,
+    },
+    {
+      type: "applicationReceived",
+      title: `${name} applied to ${offer.title}`,
+      target: application,
+      isRead: false,
+    },
+    {
+      type: "submissionCreated",
+      title: `A draft for ${pending.title} needs your review`,
+      target: pending.target,
+      isRead: false,
+    },
+  ];
+  for (const notification of toCreator)
+    await ctx.db.insert("notifications", { ...notification, userId: creator.userId });
+  for (const notification of toAdmin)
+    await ctx.db.insert("notifications", { ...notification, userId: admin.userId });
 }
 
 /** Uses the same matching rules as discovery, without scheduling scoring jobs. */
@@ -542,9 +704,10 @@ export const run = internalMutation({
           skills: await listCreatorSkills(ctx, creator._id),
           followerRange: creator.followerRange,
         };
+    const records = new Map<Stage, ScenarioRecords>();
     for (const [index, scenario] of scenarios.entries()) {
       const deadline = Math.ceil((now + (7 + index) * dayMs) / HALF_HOUR_MS) * HALF_HOUR_MS;
-      const opportunityId = await seedScenario(
+      const record = await seedScenario(
         ctx,
         { ...campaignFields, _id: campaignId },
         creator,
@@ -552,9 +715,17 @@ export const run = internalMutation({
         now,
         deadline,
       );
-      await seedScore(ctx, demoProfile.creatorId, demoProfile.signals, opportunityId);
-      await seedScore(ctx, creator._id, signals, opportunityId);
+      records.set(scenario.stage, record);
+      await seedScore(ctx, demoProfile.creatorId, demoProfile.signals, record.opportunityId);
+      await seedScore(ctx, creator._id, signals, record.opportunityId);
     }
+    await seedNotifications(
+      ctx,
+      creator,
+      admin,
+      { _id: campaignId, title: demoCampaignTitle },
+      records,
+    );
 
     // A historical invitation record, not a pending WorkOS invite someone can accept.
     await ctx.db.insert("invites", {

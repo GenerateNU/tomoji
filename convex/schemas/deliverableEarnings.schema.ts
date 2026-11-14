@@ -26,6 +26,4 @@ export const deliverableEarningsTable = defineTable({
   cutoffAt: v.optional(v.number()),
   cutoffReason: v.optional(earningsCutoffReason),
   variableHoldReason: v.optional(earningsVariableHoldReason),
-})
-  .index("by_assignmentId_and_deliverableId", ["assignmentId", "deliverableId"])
-  .index("by_assignmentId", ["assignmentId"]);
+}).index("by_assignmentId_and_deliverableId", ["assignmentId", "deliverableId"]);

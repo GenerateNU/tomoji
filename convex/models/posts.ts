@@ -229,6 +229,8 @@ export async function replacePost(
   const { url, xPostId } = requirePostUrl(fields.url);
   if (xPostId === post.xPostId) return post;
   await requirePostUnused(ctx, xPostId, post.submissionId);
+  // This post may have been verified before it became replaceable again.
+  // Hold any existing agreement; the helper is a no-op when none exists.
   await holdPostEarnings(ctx, postId, "post_replaced");
   await ctx.db.patch("posts", postId, { isActive: false });
   const newPostId = await ctx.db.insert("posts", {

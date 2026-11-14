@@ -644,6 +644,7 @@ export async function cancelAssignment(
   if (current.status !== "termsPending" && current.status !== "active") {
     throw apiError("invalid_state", { reason: "assignment_not_cancellable" });
   }
+  // Settlement uses this cutoff to exclude later views while preserving accrued earnings.
   const cancelledAt = Date.now();
   await ctx.db.patch("assignments", assignment._id, { status: "cancelled", cancelledAt });
   const opportunity = await ctx.db.get("opportunities", current.opportunityId);

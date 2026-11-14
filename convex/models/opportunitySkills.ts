@@ -29,3 +29,19 @@ export async function updateOpportunitySkills(
   for (const name of skills) await ctx.db.insert("opportunitySkills", { opportunityId, name });
   return skills;
 }
+
+/** Whether the opportunity asks for this skill. */
+export async function hasOpportunitySkill(
+  ctx: QueryCtx,
+  opportunityId: Id<"opportunities">,
+  name: string,
+): Promise<boolean> {
+  return (
+    (await ctx.db
+      .query("opportunitySkills")
+      .withIndex("by_name_and_opportunityId", (q) =>
+        q.eq("name", name).eq("opportunityId", opportunityId),
+      )
+      .first()) !== null
+  );
+}

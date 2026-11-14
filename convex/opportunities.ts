@@ -35,11 +35,11 @@ import {
   isOpportunityStarred,
   listStarredOpportunities,
   starOpportunity,
-  starredCreatorOpportunity,
   starredOpportunityList,
   unstarOpportunity,
   withStarredFlags,
 } from "./models/opportunityStars";
+import { creatorFeedOpportunity, withCreatorProgress } from "./models/opportunityFeed";
 import { hasOpportunityScores } from "./models/opportunityScores";
 import { requireCallerCreatorId } from "./models/users";
 
@@ -157,14 +157,18 @@ export const update = companyMutation({
   },
 });
 
-/** Returns a creator's paginated discovery feed of visible open opportunity briefs. */
+/**
+ * Returns a creator's paginated discovery feed of visible open opportunity
+ * briefs, each with the caller's star, application, and assignment.
+ */
 export const discover = creatorQuery({
   args: opportunityDiscover.fields,
-  returns: paginationResultValidator(starredCreatorOpportunity),
+  returns: paginationResultValidator(creatorFeedOpportunity),
   handler: async (ctx, args) => {
     const creatorId = await requireCallerCreatorId(ctx, ctx.user);
     const result = await discoverOpportunities(ctx, args, creatorId);
-    return { ...result, page: await withStarredFlags(ctx, creatorId, result.page) };
+    const starred = await withStarredFlags(ctx, creatorId, result.page);
+    return { ...result, page: await withCreatorProgress(ctx, creatorId, starred) };
   },
 });
 
@@ -199,10 +203,11 @@ export const unstar = creatorMutation({
  */
 export const listStarred = creatorQuery({
   args: starredOpportunityList.fields,
-  returns: paginationResultValidator(starredCreatorOpportunity),
+  returns: paginationResultValidator(creatorFeedOpportunity),
   handler: async (ctx, args) => {
     const creatorId = await requireCallerCreatorId(ctx, ctx.user);
-    return await listStarredOpportunities(ctx, creatorId, args);
+    const result = await listStarredOpportunities(ctx, creatorId, args);
+    return { ...result, page: await withCreatorProgress(ctx, creatorId, result.page) };
   },
 });
 
@@ -234,7 +239,7 @@ export const create = companyMutation({
 /** Returns a creator-facing brief or a complete opportunity with selections for its company/operators. */
 export const get = authedQuery({
   args: { opportunityId: v.id("opportunities") },
-  returns: v.union(opportunityView, starredCreatorOpportunity),
+  returns: v.union(opportunityView, creatorFeedOpportunity),
   handler: async (ctx, args) => {
     const opportunity = await getOpportunity(ctx, args.opportunityId, {
       user: ctx.user,
@@ -242,9 +247,10 @@ export const get = authedQuery({
     });
     // Company users and operators retain private fields; only creator briefs carry `companyName`.
     if (!("companyName" in opportunity)) return opportunity;
-    // Creators also get whether they've starred it.
+    // Creators also get their star, application, and assignment for it.
     const creatorId = await requireCallerCreatorId(ctx, ctx.user);
     const isStarred = await isOpportunityStarred(ctx, creatorId, args.opportunityId);
-    return { ...opportunity, isStarred };
+    const [brief] = await withCreatorProgress(ctx, creatorId, [{ ...opportunity, isStarred }]);
+    return brief;
   },
 });

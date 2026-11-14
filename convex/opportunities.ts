@@ -163,7 +163,7 @@ export const discover = creatorQuery({
   returns: paginationResultValidator(starredCreatorOpportunity),
   handler: async (ctx, args) => {
     const creatorId = await requireCallerCreatorId(ctx, ctx.user);
-    const result = await discoverOpportunities(ctx, args);
+    const result = await discoverOpportunities(ctx, args, creatorId);
     return { ...result, page: await withStarredFlags(ctx, creatorId, result.page) };
   },
 });

@@ -523,23 +523,116 @@ export async function getVisibleOpportunityCompany(
   return company !== null && company.isActive ? company : null;
 }
 
-/** Discovers open briefs across active companies without ranking or application eligibility rules. */
+/**
+ * A discovery cursor names the section it continues: the creator's scored
+ * matches, best first, then every other open brief by deadline.
+ */
+type DiscoverCursor = { section: "matches" | "rest"; cursor: string | null };
+
+function parseDiscoverCursor(cursor: string | null): DiscoverCursor {
+  if (cursor === null) return { section: "matches", cursor: null };
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(cursor);
+  } catch {
+    throw apiError("invalid_state", { reason: "invalid_cursor" });
+  }
+  if (
+    Array.isArray(parsed) &&
+    (parsed[0] === "matches" || parsed[0] === "rest") &&
+    (parsed[1] === null || typeof parsed[1] === "string")
+  ) {
+    return { section: parsed[0], cursor: parsed[1] };
+  }
+  throw apiError("invalid_state", { reason: "invalid_cursor" });
+}
+
+function formatDiscoverCursor({ section, cursor }: DiscoverCursor): string {
+  return JSON.stringify([section, cursor]);
+}
+
+async function hasOpportunityScore(
+  ctx: QueryCtx,
+  creatorId: Id<"creators">,
+  opportunityId: Id<"opportunities">,
+): Promise<boolean> {
+  const score = await ctx.db
+    .query("opportunityScores")
+    .withIndex("by_creatorId_and_opportunityId", (q) =>
+      q.eq("creatorId", creatorId).eq("opportunityId", opportunityId),
+    )
+    .unique();
+  return score !== null;
+}
+
+/**
+ * Discovers open briefs across active companies. With a creator, briefs that
+ * match their profile come first, best match first; the rest follow by
+ * deadline. Without one, every brief is in deadline order.
+ */
 export async function discoverOpportunities(
   ctx: QueryCtx,
   options: Infer<typeof opportunityDiscover>,
+  creatorId?: Id<"creators">,
 ): Promise<PaginationResult<CreatorOpportunity>> {
   const niche = options.niche === undefined ? undefined : requireNiche(options.niche);
-  // Filter inside the stream so hidden or off-niche opportunities don't leave
-  // pages short or empty. Keep deadline ordering while checking indexed associations.
-  return await stream(ctx.db, schema)
+  const { numItems } = options.paginationOpts;
+  const visible = async (opportunity: Doc<"opportunities"> | null) => {
+    if (opportunity === null) return null;
+    if (niche !== undefined && !(await hasOpportunityNiche(ctx, opportunity._id, niche))) {
+      return null;
+    }
+    return await getVisibleCreatorOpportunity(ctx, opportunity);
+  };
+  const start: DiscoverCursor =
+    creatorId === undefined
+      ? { section: "rest", cursor: options.paginationOpts.cursor }
+      : parseDiscoverCursor(options.paginationOpts.cursor);
+
+  let matches: CreatorOpportunity[] = [];
+  if (start.section === "matches" && creatorId !== undefined) {
+    // Filter inside the stream so hidden or off-niche matches don't leave pages short.
+    const page = await stream(ctx.db, schema)
+      .query("opportunityScores")
+      .withIndex("by_creatorId_and_score", (q) => q.eq("creatorId", creatorId))
+      .order("desc")
+      .map(async (score) => await visible(await ctx.db.get("opportunities", score.opportunityId)))
+      .paginate(withRowsReadCap({ numItems, cursor: start.cursor }));
+    if (!page.isDone || page.page.length >= numItems) {
+      return {
+        page: page.page,
+        isDone: false,
+        continueCursor: formatDiscoverCursor(
+          page.isDone
+            ? { section: "rest", cursor: null }
+            : { section: "matches", cursor: page.continueCursor },
+        ),
+      };
+    }
+    // The matches ran out mid-page; fill the rest of it from the deadline list.
+    matches = page.page;
+  }
+
+  const restCursor = start.section === "rest" ? start.cursor : null;
+  const rest = await stream(ctx.db, schema)
     .query("opportunities")
     .withIndex("by_status_and_deadline", (q) => q.eq("status", "open"))
     .map(async (opportunity) => {
-      if (niche !== undefined && !(await hasOpportunityNiche(ctx, opportunity._id, niche)))
+      // Matches were listed already.
+      if (creatorId !== undefined && (await hasOpportunityScore(ctx, creatorId, opportunity._id))) {
         return null;
-      return await getVisibleCreatorOpportunity(ctx, opportunity);
+      }
+      return await visible(opportunity);
     })
-    .paginate(withRowsReadCap(options.paginationOpts));
+    .paginate(withRowsReadCap({ numItems: numItems - matches.length, cursor: restCursor }));
+  return {
+    page: [...matches, ...rest.page],
+    isDone: rest.isDone,
+    continueCursor:
+      creatorId === undefined
+        ? rest.continueCursor
+        : formatDiscoverCursor({ section: "rest", cursor: rest.continueCursor }),
+  };
 }
 
 /** Lists the company's opportunities, optionally scoped to an owned campaign and status. */

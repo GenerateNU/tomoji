@@ -2,7 +2,7 @@
 import { convexTest } from "convex-test";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import type { Id } from "../_generated/dataModel";
-import { internal } from "../_generated/api";
+import { api, internal } from "../_generated/api";
 import { updateCreatorNiches } from "../models/creatorNiches";
 import { updateCreatorSkills } from "../models/creatorSkills";
 import { createOpportunity } from "../models/opportunities";
@@ -12,6 +12,7 @@ import {
   seedCampaign,
   seedCreatorId,
   seedOpportunity,
+  seedUser,
   type TestConvex,
 } from "./helpers";
 
@@ -143,5 +144,34 @@ describe("opportunityScores.scoreCreator", () => {
     expect(await scoresFor(t, creatorId)).toEqual([
       { opportunityId: owner.opportunityId, score: 1 },
     ]);
+  });
+});
+
+describe("opportunities.discover", () => {
+  test("lists a creator's matches first once they pick niches, then the rest by deadline", async () => {
+    const t = convexTest(schema, modules);
+    const sooner = await seedOpportunity(
+      t,
+      { subject: "scores_sooner" },
+      { niches: ["databases"] },
+    );
+    const later = await seedOpportunity(
+      t,
+      { subject: "scores_later" },
+      { niches: ["ai-agents"], deadline: Date.now() + 172_800_000 },
+    );
+    const asCreator = await seedUser(t, { subject: "scores_creator" });
+
+    await asCreator.mutation(api.creators.update, { niches: ["ai-agents"] });
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    const first = await asCreator.query(api.opportunities.discover, {
+      paginationOpts: { numItems: 1, cursor: null },
+    });
+    const second = await asCreator.query(api.opportunities.discover, {
+      paginationOpts: { numItems: 1, cursor: first.continueCursor },
+    });
+
+    expect(first.page.map(({ _id }) => _id)).toEqual([later.opportunityId]);
+    expect(second.page.map(({ _id }) => _id)).toEqual([sooner.opportunityId]);
   });
 });

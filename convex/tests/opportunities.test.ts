@@ -1,5 +1,6 @@
 /// <reference types="vite/client" />
 import { convexTest } from "convex-test";
+import type { FunctionArgs } from "convex/server";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { api, internal } from "../_generated/api";
 import { deactivateUser } from "../models/users";
@@ -8,6 +9,8 @@ import {
   expectApiError,
   opportunityArgs,
   seedCampaign,
+  seedAssignment,
+  seedCreatorId,
   seedOperator,
   seedOpportunity,
   seedUser,
@@ -802,6 +805,151 @@ describe("opportunities.update", () => {
 });
 
 describe("opportunities.discover", () => {
+  test("searches titles and pages through the matches", async () => {
+    const t = convexTest(schema, modules);
+    const first = await seedOpportunity(
+      t,
+      { subject: "search_one" },
+      { title: "Agent launch video" },
+    );
+    const second = await seedOpportunity(t, { subject: "search_two" }, { title: "Agent demo" });
+    await seedOpportunity(t, { subject: "search_other" }, { title: "Database tutorial" });
+    const asCreator = await seedUser(t, { subject: "search_creator" });
+
+    const page = await asCreator.query(api.opportunities.discover, {
+      search: " agent ",
+      paginationOpts: { numItems: 1, cursor: null },
+    });
+    const next = await asCreator.query(api.opportunities.discover, {
+      search: " agent ",
+      paginationOpts: { numItems: 1, cursor: page.continueCursor },
+    });
+
+    expect([...page.page, ...next.page].map((brief) => brief._id).sort()).toEqual(
+      [first.opportunityId, second.opportunityId].sort(),
+    );
+    expect(page.isDone).toBe(false);
+    expect(next.isDone).toBe(true);
+  });
+
+  test("narrows the feed by niches, skills, type, and the caller's applications", async () => {
+    const t = convexTest(schema, modules);
+    const llms = await seedOpportunity(t, { subject: "filter_llms" }, { niches: ["llms"] });
+    const python = await seedOpportunity(
+      t,
+      { subject: "filter_python" },
+      { skills: ["python"], isGated: true },
+    );
+    const asCreator = await seedUser(t, { subject: "filter_creator" });
+    const creatorId = await seedCreatorId(t, "filter_creator");
+    await t.run(
+      async (ctx) =>
+        await ctx.db.insert("applications", {
+          opportunityId: python.opportunityId,
+          creatorId,
+          companyId: python.membership.companyId,
+          status: "pending",
+        }),
+    );
+    const ids = async (
+      filters: Omit<FunctionArgs<typeof api.opportunities.discover>, "paginationOpts">,
+    ) =>
+      (
+        await asCreator.query(api.opportunities.discover, {
+          ...filters,
+          paginationOpts: { numItems: 10, cursor: null },
+        })
+      ).page.map((brief) => brief._id);
+
+    expect(await ids({ niches: ["LLMs", "databases"] })).toEqual([llms.opportunityId]);
+    expect(await ids({ skills: ["python"] })).toEqual([python.opportunityId]);
+    expect(await ids({ isGated: false })).toEqual([llms.opportunityId]);
+    expect(await ids({ applied: true })).toEqual([python.opportunityId]);
+    expect(await ids({ niches: ["llms"], skills: ["python"] })).toEqual([]);
+  });
+
+  test("includes only the caller's own application and assignment", async () => {
+    const t = convexTest(schema, modules);
+    const applied = await seedOpportunity(t, { subject: "progress_applied" });
+    const claimed = await seedOpportunity(t, { subject: "progress_claimed" });
+    const asCreator = await seedUser(t, { subject: "progress_creator" });
+    const creatorId = await seedCreatorId(t, "progress_creator");
+    const otherId = await seedCreatorId(t, "progress_other");
+    const applicationId = await t.run(
+      async (ctx) =>
+        await ctx.db.insert("applications", {
+          opportunityId: applied.opportunityId,
+          creatorId,
+          companyId: applied.membership.companyId,
+          status: "pending",
+        }),
+    );
+    const assignmentId = await seedAssignment(t, {
+      opportunityId: claimed.opportunityId,
+      creatorId,
+    });
+    await seedAssignment(t, { opportunityId: applied.opportunityId, creatorId: otherId });
+
+    const result = await asCreator.query(api.opportunities.discover, {
+      paginationOpts: { numItems: 10, cursor: null },
+    });
+
+    const byId = new Map(result.page.map((brief) => [brief._id, brief]));
+    expect(byId.get(applied.opportunityId)).toMatchObject({
+      application: { _id: applicationId, status: "pending" },
+      assignment: null,
+    });
+    expect(byId.get(claimed.opportunityId)).toMatchObject({
+      application: null,
+      assignment: { _id: assignmentId, status: "termsPending" },
+    });
+  });
+
+  test("says how well each brief matches the caller's profile", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(
+      t,
+      { subject: "match_owner" },
+      { skills: ["python", "go"], minFollowerRange: "50k-100k" },
+    );
+    const asCreator = await seedUser(t, { subject: "match_creator" });
+    await asCreator.mutation(api.creators.update, { skills: ["python"], followerRange: "10k-50k" });
+
+    const [brief] = (
+      await asCreator.query(api.opportunities.discover, {
+        paginationOpts: { numItems: 10, cursor: null },
+      })
+    ).page;
+
+    expect(brief._id).toBe(owner.opportunityId);
+    expect(brief.match).toMatchObject({
+      matchedSkills: ["python"],
+      missingSkills: ["go"],
+      meetsFollowerMinimum: false,
+      isEligible: false,
+    });
+  });
+
+  test("keeps only briefs the caller is eligible for", async () => {
+    const t = convexTest(schema, modules);
+    const open = await seedOpportunity(t, { subject: "eligible_open" }, { skills: ["python"] });
+    await seedOpportunity(t, { subject: "eligible_missing" }, { skills: ["go"] });
+    await seedOpportunity(
+      t,
+      { subject: "eligible_reach" },
+      { skills: ["python"], minFollowerRange: "100k-500k" },
+    );
+    const asCreator = await seedUser(t, { subject: "eligible_creator" });
+    await asCreator.mutation(api.creators.update, { skills: ["python"] });
+
+    const result = await asCreator.query(api.opportunities.discover, {
+      eligible: true,
+      paginationOpts: { numItems: 10, cursor: null },
+    });
+
+    expect(result.page.map((brief) => brief._id)).toEqual([open.opportunityId]);
+  });
+
   test("returns public briefs with company names to a creator", async () => {
     const t = convexTest(schema, modules);
     const owner = await seedOpportunity(
@@ -831,6 +979,9 @@ describe("opportunities.discover", () => {
         "_creationTime",
         "companyName",
         "isStarred",
+        "application",
+        "assignment",
+        "match",
         "niches",
         "skills",
         "languages",
@@ -1329,6 +1480,9 @@ describe("opportunities.get", () => {
         "_creationTime",
         "companyName",
         "isStarred",
+        "application",
+        "assignment",
+        "match",
         "niches",
         "skills",
         "languages",

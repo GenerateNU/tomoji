@@ -12,9 +12,9 @@ import type { Id } from "@convex/_generated/dataModel";
 import { useAction, useMutation, useQuery } from "convex/react";
 import type { FunctionReturnType } from "convex/server";
 import { useEffect, useId, useRef, useState, type FormEvent } from "react";
-import { ProgressRing } from "@/components/progress-ring";
 import { Button } from "@/components/ui/button";
-import { DialogDescription, DialogTitle } from "@/components/ui/dialog";
+import { DialogClose, DialogDescription, DialogTitle } from "@/components/ui/dialog";
+import { Progress, ProgressLabel } from "@/components/ui/progress";
 import { Textarea } from "@/components/ui/textarea";
 import { useMe } from "@/features/users/hooks/use-me";
 import { errorMessage } from "@/lib/errors";
@@ -79,7 +79,7 @@ export function DraftComposer({
   const [phase, setPhase] = useState<MediaUploadPhase | "submitting">();
   const upload = useRef<ReturnType<typeof createMediaUpload> | null>(null);
   const attempt = useRef<AbortController | null>(null);
-  const readOnly = phase !== undefined || reviewId !== undefined;
+  const readOnly = phase !== undefined;
 
   useEffect(() => {
     return () => {
@@ -157,17 +157,55 @@ export function DraftComposer({
     submitting: "Submitting…",
   };
 
+  if (reviewId) {
+    return (
+      <div className="grid min-h-[min(79.4dvh,780px)] place-items-center bg-gray-50 px-5 py-16">
+        <DialogTitle className="sr-only">Submission review</DialogTitle>
+        <DialogDescription className="sr-only">Your draft and its review status</DialogDescription>
+        <DialogClose
+          aria-label="Close"
+          className="absolute top-6 right-6 grid size-8 place-items-center rounded-sm text-gray-500 hover:bg-gray-100"
+        >
+          <RiCloseLine size={16} aria-hidden />
+        </DialogClose>
+        <div className="w-full max-w-[446px] space-y-5">
+          <DraftPreview creator={creator} caption={caption} videoUrl={previewUrl} />
+          <DraftReviewProgress
+            review={review}
+            reviewing={reviewing}
+            hasVideo={Boolean(file || (keepPreviousVideo && previous?.mediaId))}
+          />
+          {!reviewing && (
+            <Button type="button" className="w-full" onClick={onCancel}>
+              {review?.status === "changesRequested" ? "Back to revise" : "Back to assignment"}
+            </Button>
+          )}
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <form onSubmit={submitDraft} className="grid md:grid-cols-2">
-      <div className="space-y-5 p-5 md:p-8">
-        <header className="space-y-2">
-          <DialogTitle className="text-[24px] leading-tight">Submit assignment</DialogTitle>
+    <form
+      onSubmit={submitDraft}
+      className="grid min-h-[min(79.4dvh,780px)] md:grid-cols-[46.25%_1fr]"
+    >
+      <div className="relative flex flex-col gap-6 p-5 md:p-8">
+        <DialogClose
+          aria-label="Close"
+          disabled={readOnly}
+          className="absolute top-6 right-6 grid size-8 place-items-center rounded-sm text-gray-500 hover:bg-gray-50 disabled:opacity-40"
+        >
+          <RiCloseLine size={16} aria-hidden />
+        </DialogClose>
+        <header className="space-y-4 pr-7">
+          <DialogTitle className="text-[28px] leading-tight">Submit assignment</DialogTitle>
           <DialogDescription>
             {usesAiReview
               ? "Our system will automatically review it."
               : "A reviewer will check your submission."}
           </DialogDescription>
-          <p className="inline-block rounded-sm bg-gray-50 px-3 py-1 text-body-sm font-medium">
+          <p className="inline-block rounded-full border border-gray-200 px-3 py-1 text-body-xs font-medium">
             {assignmentTitle}
           </p>
         </header>
@@ -184,7 +222,7 @@ export function DraftComposer({
             placeholder="Write the text you plan to post on X"
             className="min-h-[100px]"
           />
-          <p className="mt-2 text-body-xs text-gray-500">
+          <p className="mt-2 text-right text-body-xs text-gray-500">
             {caption.length}/{MAX_CAPTION_LENGTH}
           </p>
         </div>
@@ -236,10 +274,10 @@ export function DraftComposer({
               type="button"
               disabled={readOnly}
               onClick={() => fileInput.current?.click()}
-              className="flex min-h-28 w-full flex-col items-center justify-center gap-1 rounded-md border border-dashed border-gray-300 p-4 hover:bg-gray-25"
+              className="flex min-h-42 w-full flex-col items-center justify-center gap-1 rounded-md border border-dashed border-gray-300 p-4 hover:bg-gray-25"
             >
               <RiUploadCloud2Line size={22} aria-hidden />
-              <span className="text-body-sm font-medium">Choose or drop a video</span>
+              <span className="text-body-sm font-medium">Upload a video or drag it here</span>
               <span className="text-body-xs text-gray-500">MP4, MOV, or WebM up to 250 MiB</span>
             </button>
           )}
@@ -275,50 +313,26 @@ export function DraftComposer({
             {error}
           </p>
         )}
-        <div className="grid grid-cols-2 gap-4">
-          <Button type="button" variant="secondary-subtle" onClick={onCancel} disabled={!!phase}>
-            {reviewId ? "Back to assignment" : "Cancel"}
+        <div className="mt-auto flex flex-wrap justify-end gap-2.5">
+          <Button type="button" variant="secondary-subtle" onClick={onCancel} disabled={readOnly}>
+            Cancel
           </Button>
-          {reviewId ? (
-            <Button type="button" disabled>
-              {reviewing ? "Reviewing…" : "Submitted"}
-            </Button>
-          ) : (
-            <Button type="submit" disabled={!!phase}>
-              {phase ? submitLabel[phase] : "Submit for review"}
-            </Button>
-          )}
+          <Button
+            type="submit"
+            disabled={
+              readOnly ||
+              !notes.trim() ||
+              !(caption.trim() || file || (keepPreviousVideo && previous?.mediaId))
+            }
+          >
+            {phase ? submitLabel[phase] : "Submit for review"}
+          </Button>
         </div>
       </div>
-      <aside className="space-y-6 bg-gray-50 p-5 md:p-8" aria-label="Post preview">
-        <div className="space-y-4 rounded-xl bg-gray-0 p-5">
-          <div className="flex items-center gap-3">
-            <span
-              className="grid size-10 shrink-0 place-items-center rounded-full bg-indigo-100 text-indigo-700"
-              aria-hidden
-            >
-              {creator[0]}
-            </span>
-            <p className="text-body-sm font-medium">{creator}</p>
-          </div>
-          {caption.trim() && (
-            <p className="text-body-sm break-words whitespace-pre-wrap">{caption}</p>
-          )}
-          {previewUrl && <VideoPreview url={previewUrl} label="Draft video preview" />}
-          {!caption.trim() && !file && (
-            <p className="text-body-sm text-gray-500">Your caption and video will appear here.</p>
-          )}
-        </div>
-        {reviewId ? (
-          <DraftReviewProgress
-            review={review}
-            reviewing={reviewing}
-            hasVideo={Boolean(file || (keepPreviousVideo && previous?.mediaId))}
-          />
-        ) : (
-          <p className="text-center text-body-xs text-gray-500">Preview</p>
-        )}
-        {!reviewId && previous?.reviewNote && (
+      <aside className="space-y-6 bg-gray-50 p-5 md:px-10 md:py-8" aria-label="Post preview">
+        <p className="text-center text-body-sm text-gray-500">Preview</p>
+        <DraftPreview creator={creator} caption={caption} videoUrl={previewUrl} showPlaceholder />
+        {previous?.reviewNote && (
           <div className="space-y-3 rounded-xl bg-gray-0 p-5 text-body-sm">
             <div className="flex items-center gap-2 font-medium">
               <RiAlertLine size={20} className="text-red-700" aria-hidden />
@@ -331,6 +345,48 @@ export function DraftComposer({
         )}
       </aside>
     </form>
+  );
+}
+
+/** Shows the draft as it will appear in the creator's preview. */
+function DraftPreview({
+  creator,
+  caption,
+  videoUrl,
+  showPlaceholder = false,
+}: {
+  creator: string;
+  caption: string;
+  videoUrl?: string;
+  showPlaceholder?: boolean;
+}) {
+  return (
+    <div className="space-y-4 rounded-lg bg-gray-0 p-4 md:p-5">
+      <div className="flex items-center gap-3">
+        <span
+          className="grid size-10 shrink-0 place-items-center rounded-full bg-gray-100 text-gray-700"
+          aria-hidden
+        >
+          {creator[0]}
+        </span>
+        <p className="text-body-sm font-medium">{creator}</p>
+      </div>
+      {caption.trim() ? (
+        <p className="text-body-sm break-words whitespace-pre-wrap">{caption}</p>
+      ) : (
+        showPlaceholder && (
+          <div className="space-y-2" aria-hidden>
+            <div className="h-3.5 rounded-full bg-gray-50" />
+            <div className="h-3.5 w-1/2 rounded-full bg-gray-50" />
+          </div>
+        )
+      )}
+      {videoUrl ? (
+        <VideoPreview url={videoUrl} label="Draft video preview" />
+      ) : (
+        showPlaceholder && <div className="aspect-video rounded-md bg-gray-50" aria-hidden />
+      )}
+    </div>
   );
 }
 
@@ -369,29 +425,28 @@ function DraftReviewProgress({
         : RiTimeLine;
 
   return (
-    <div ref={card} tabIndex={-1} className="flex items-center gap-4 rounded-xl bg-gray-0 p-5">
+    <div ref={card} tabIndex={-1} className="rounded-lg bg-gray-0 p-5">
       {reviewing ? (
-        <ProgressRing
+        <Progress
           value={((step - 1) / steps) * 100}
-          label="AI review progress"
           aria-valuetext={`Step ${step} of ${steps}`}
-        />
+          className="[&_[data-slot=progress-indicator]]:bg-gray-950 [&_[data-slot=progress-track]]:h-3"
+        >
+          <ProgressLabel className="font-normal text-gray-500">{text}</ProgressLabel>
+        </Progress>
       ) : (
-        <Icon size={24} className="shrink-0 text-gray-700" aria-hidden />
+        <div className="flex items-start gap-3" role="status">
+          <Icon size={20} className="shrink-0 text-gray-700" aria-hidden />
+          <div className="min-w-0 space-y-2">
+            <p className="font-medium">{text}</p>
+            {review && review.status !== "pending" && review.reviewNote && (
+              <p className="text-body-sm break-words whitespace-pre-wrap text-gray-700">
+                {review.reviewNote}
+              </p>
+            )}
+          </div>
+        </div>
       )}
-      <div role="status" className="min-w-0 space-y-0.5">
-        <p className="font-medium">{text}</p>
-        {reviewing && (
-          <p className="text-body-sm text-gray-500">
-            Step {step} of {steps}
-          </p>
-        )}
-        {review && review.status !== "pending" && review.reviewNote && (
-          <p className="text-body-sm break-words whitespace-pre-wrap text-gray-700">
-            {review.reviewNote}
-          </p>
-        )}
-      </div>
     </div>
   );
 }

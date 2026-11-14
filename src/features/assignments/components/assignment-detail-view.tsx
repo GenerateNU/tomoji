@@ -90,7 +90,9 @@ function AssignmentDetail({ assignmentId, status, task, deliverable }: Assignmen
               All assignments
             </Link>
           )}
-          {details && <AssignmentWorkspace details={details} task={task} deliverable={deliverable} />}
+          {details && (
+            <AssignmentWorkspace details={details} task={task} deliverable={deliverable} />
+          )}
         </div>
         <div className="flex justify-end gap-2 bg-gray-0 px-5 py-6 sm:px-8">
           <DialogClose render={<Button variant="secondary-subtle" />}>Close</DialogClose>
@@ -159,7 +161,7 @@ function AssignmentWorkspace({
                 <DeliverableSubmissions
                   assignmentId={assignment._id}
                   deliverableId={_id}
-                  assignmentTitle={details.title ?? "Assignment"}
+                  assignmentTitle={title}
                   usesAiReview={assignment.usesAiReview}
                   startDraft={task === "draft" && deliverable === _id}
                   submissionId={latest?._id}

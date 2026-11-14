@@ -22,6 +22,137 @@ import {
 const modules = import.meta.glob("../**/*.ts");
 const firstPage = { numItems: 10, cursor: null };
 
+describe("payout history review information", () => {
+  test.each(["creator", "member", "admin", "operator"] as const)(
+    "returns matching get/list review information for a %s",
+    async (role) => {
+      const t = convexTest(schema, modules);
+      const fixture = await seedAssignmentFixture(t, {}, role === "admin" ? "admin" : "member");
+      const payoutId = await seedPayout(t, fixture.assignmentId, {
+        deliverableId: fixture.deliverableId,
+      });
+      const caller =
+        role === "operator"
+          ? await seedOperator(t, "operator")
+          : role === "creator"
+            ? fixture.asCreator
+            : fixture.asCompany;
+      const before = await t.run((ctx) => ctx.db.get("payouts", payoutId));
+
+      const payout = await caller.query(api.payouts.get, { payoutId });
+      const history = await caller.query(api.payouts.list, {
+        assignmentId: fixture.assignmentId,
+        paginationOpts: firstPage,
+      });
+
+      expect(payout).toMatchObject({
+        deliverableId: fixture.deliverableId,
+        review: { hasOpenDispute: false, canApprove: role === "admin" },
+      });
+      expect(history.page).toEqual([payout]);
+      expect(await t.run((ctx) => ctx.db.get("payouts", payoutId))).toEqual(before);
+    },
+  );
+
+  test("uses current membership for review eligibility and rejects revoked membership", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await seedAssignmentFixture(t, {}, "admin");
+    const payoutId = await seedPayout(t, fixture.assignmentId);
+    for (const role of ["admin", "member", "admin"] as const) {
+      await t.run((ctx) => ctx.db.patch("companyUsers", fixture.membership._id, { role }));
+      const payout = await fixture.asCompany.query(api.payouts.get, { payoutId });
+      const history = await fixture.asCompany.query(api.payouts.list, {
+        paginationOpts: firstPage,
+      });
+      expect(payout.review).toEqual({ hasOpenDispute: false, canApprove: role === "admin" });
+      expect(history.page).toEqual([payout]);
+      if (role === "member") {
+        await expectApiError(
+          () => fixture.asCompany.mutation(api.payouts.approve, { payoutId }),
+          "forbidden",
+          "company_admin_required",
+        );
+      }
+    }
+    await t.run((ctx) => ctx.db.patch("companyUsers", fixture.membership._id, { isActive: false }));
+    await expectApiError(() => fixture.asCompany.query(api.payouts.get, { payoutId }), "forbidden");
+    await expectApiError(
+      () => fixture.asCompany.query(api.payouts.list, { paginationOpts: firstPage }),
+      "forbidden",
+    );
+    await expectApiError(
+      () => fixture.asCompany.mutation(api.payouts.approve, { payoutId }),
+      "forbidden",
+    );
+    expect(await t.run((ctx) => ctx.db.get("payouts", payoutId))).toHaveProperty(
+      "approvalStatus",
+      "pending",
+    );
+  });
+
+  test("refreshes dispute holds and rechecks approval after an earlier allowed read", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await seedAssignmentFixture(t, {}, "admin");
+    const payoutId = await seedPayout(t, fixture.assignmentId);
+    const before = await fixture.asCompany.query(api.payouts.get, { payoutId });
+    expect(before.review).toEqual({ hasOpenDispute: false, canApprove: true });
+
+    const first = await seedDispute(t, fixture);
+    const second = await seedDispute(t, fixture, { reason: "payoutAmount" });
+    await expectApiError(
+      () => fixture.asCompany.mutation(api.payouts.approve, { payoutId }),
+      "invalid_state",
+      "payout_disputed",
+    );
+    for (const disputeId of [first, second]) {
+      const held = await fixture.asCompany.query(api.payouts.get, { payoutId });
+      expect(held.review).toEqual({ hasOpenDispute: true, canApprove: false });
+      expect(
+        (await fixture.asCompany.query(api.payouts.list, { paginationOpts: firstPage })).page,
+      ).toEqual([held]);
+      await fixture.asCreator.mutation(api.disputes.resolve, { disputeId, outcome: "withdrawn" });
+    }
+    expect(await fixture.asCompany.query(api.payouts.get, { payoutId })).toEqual(before);
+    const approved = await fixture.asCompany.mutation(api.payouts.approve, { payoutId });
+    expect(approved.review).toEqual({ hasOpenDispute: false, canApprove: false });
+    expect(approved.approvalDueAt).toBe(before.approvalDueAt);
+
+    await seedDispute(t, fixture);
+    const disputedAfterApproval = await fixture.asCompany.query(api.payouts.get, { payoutId });
+    expect(disputedAfterApproval).toEqual({
+      ...approved,
+      review: { hasOpenDispute: true, canApprove: false },
+    });
+    expect(await fixture.asCompany.mutation(api.payouts.approve, { payoutId })).toEqual(
+      disputedAfterApproval,
+    );
+  });
+
+  test.each(["get", "list", "approve"] as const)(
+    "%s rejects caller-supplied review flags",
+    async (route) => {
+      const t = convexTest(schema, modules);
+      const fixture = await seedAssignmentFixture(t, {}, "admin");
+      const payoutId = await seedPayout(t, fixture.assignmentId);
+      await seedDispute(t, fixture);
+      const review = { hasOpenDispute: false, canApprove: true };
+      const payoutArgs = { payoutId, review };
+      const listArgs = { paginationOpts: firstPage, review };
+      const operation =
+        route === "get"
+          ? fixture.asCompany.query(api.payouts.get, payoutArgs)
+          : route === "list"
+            ? fixture.asCompany.query(api.payouts.list, listArgs)
+            : fixture.asCompany.mutation(api.payouts.approve, payoutArgs);
+      await expect(operation).rejects.toThrow("Unexpected field `review`");
+      expect(await t.run((ctx) => ctx.db.get("payouts", payoutId))).toHaveProperty(
+        "approvalStatus",
+        "pending",
+      );
+    },
+  );
+});
+
 describe("payouts.approve", () => {
   test("lets a company admin approve its payout and returns the public view", async () => {
     const t = convexTest(schema, modules);

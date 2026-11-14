@@ -14,3 +14,6 @@ export function withRowsReadCap(paginationOpts: PaginationOptions): PaginationOp
     maximumRowsRead: paginationOpts.maximumRowsRead ?? DEFAULT_MAXIMUM_ROWS_READ,
   };
 }
+
+/** Applications one status sweep patches per transaction before rescheduling itself. */
+export const APPLICATION_SWEEP_BATCH = 50;

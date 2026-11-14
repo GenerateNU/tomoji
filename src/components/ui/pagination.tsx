@@ -36,7 +36,7 @@ function PaginationItem(props: React.ComponentProps<"li">) {
 }
 
 const itemClassName = cn(
-  "inline-flex size-8 shrink-0 cursor-pointer items-center justify-center rounded-full text-body-sm font-medium text-gray-700 transition-colors disabled:cursor-not-allowed disabled:opacity-40 aria-disabled:pointer-events-none aria-disabled:opacity-40",
+  "inline-flex size-8 shrink-0 max-md:size-11 cursor-pointer items-center justify-center rounded-full text-body-sm font-medium text-gray-700 transition-colors disabled:cursor-not-allowed disabled:opacity-40 aria-disabled:pointer-events-none aria-disabled:opacity-40",
   focusRing,
 );
 
@@ -137,7 +137,7 @@ function PaginationEllipsis({ className, ...props }: React.ComponentProps<"span"
       aria-hidden
       data-slot="pagination-ellipsis"
       className={cn(
-        "flex size-8 shrink-0 items-center justify-center text-body-sm font-medium text-gray-500",
+        "flex size-8 shrink-0 items-center justify-center text-body-sm font-medium text-gray-500 max-md:size-11",
         className,
       )}
       {...props}
@@ -228,6 +228,7 @@ function PaginationControl({
 
 export {
   Pagination,
+  PaginationArrow,
   PaginationControl,
   PaginationContent,
   PaginationItem,

@@ -205,3 +205,119 @@ test("rejects incomplete AI configuration before changing the deployment", async
   await expect(import("../set-convex-env")).rejects.toThrow("exit 1");
   expect(spawnSync).not.toHaveBeenCalled();
 });
+
+const stripe = {
+  STRIPE_SECRET_KEY: "sk_test_tomoji",
+  STRIPE_WEBHOOK_SECRET: "whsec_test_tomoji",
+  STRIPE_PLATFORM_WEBHOOK_SECRET: "whsec_platform_tomoji",
+  SITE_URL: "http://localhost:3000",
+};
+
+test("copies a complete Stripe configuration", async () => {
+  vi.mocked(readFileSync).mockReturnValue(
+    Object.entries({ ...values, ...stripe })
+      .map(([key, value]) => `${key}=${value}`)
+      .join("\n"),
+  );
+  await import("../set-convex-env");
+  for (const [key, value] of Object.entries(stripe)) {
+    expect(spawnSync).toHaveBeenCalledWith(
+      "bunx",
+      ["convex", "env", "set", "--", key, value],
+      expect.any(Object),
+    );
+  }
+  expect(spawnSync).toHaveBeenCalledTimes(10);
+});
+
+// The template ships a SITE_URL default, so its presence alone must not opt a
+// developer into Stripe.
+test("skips Stripe when no secret key is supplied", async () => {
+  vi.mocked(readFileSync).mockReturnValue(
+    Object.entries({ ...values, SITE_URL: stripe.SITE_URL })
+      .map(([key, value]) => `${key}=${value}`)
+      .join("\n"),
+  );
+  await import("../set-convex-env");
+  expect(spawnSync).not.toHaveBeenCalledWith(
+    "bunx",
+    expect.arrayContaining(["SITE_URL"]),
+    expect.any(Object),
+  );
+  expect(spawnSync).toHaveBeenCalledTimes(6);
+});
+
+test("rejects a Stripe key without a site url before making deployment changes", async () => {
+  vi.mocked(readFileSync).mockReturnValue(
+    Object.entries({ ...values, ...stripe, SITE_URL: "" })
+      .map(([key, value]) => `${key}=${value}`)
+      .join("\n"),
+  );
+  await expect(import("../set-convex-env")).rejects.toThrow("exit 1");
+  expect(console.error).toHaveBeenCalledWith(expect.stringContaining("SITE_URL"));
+  expect(spawnSync).not.toHaveBeenCalled();
+});
+
+// This script only configures personal dev deployments, which must never move
+// real money.
+test.each(["sk_live_tomoji", "rk_live_tomoji"])(
+  "rejects a live Stripe key (%s) without printing it",
+  async (liveKey) => {
+    vi.mocked(readFileSync).mockReturnValue(
+      Object.entries({ ...values, ...stripe, STRIPE_SECRET_KEY: liveKey })
+        .map(([key, value]) => `${key}=${value}`)
+        .join("\n"),
+    );
+    await expect(import("../set-convex-env")).rejects.toThrow("exit 1");
+    expect(console.error).toHaveBeenCalledWith(expect.stringContaining("test-mode"));
+    expect(console.error).not.toHaveBeenCalledWith(expect.stringContaining(liveKey));
+    expect(spawnSync).not.toHaveBeenCalled();
+  },
+);
+
+test("prints the Stripe webhook url when the signing secret is missing", async () => {
+  vi.mocked(readFileSync).mockReturnValue(
+    Object.entries({ ...values, ...stripe, STRIPE_WEBHOOK_SECRET: "" })
+      .map(([key, value]) => `${key}=${value}`)
+      .join("\n"),
+  );
+  vi.mocked(spawnSync).mockImplementation(
+    (_command, args) =>
+      ({
+        status: 0,
+        stdout: args?.[2] === "get" ? "https://tomoji-dev.convex.site\n" : "",
+        stderr: "",
+        pid: 0,
+        output: [],
+        signal: null,
+      }) as never,
+  );
+  await expect(import("../set-convex-env")).rejects.toThrow("exit 1");
+  expect(console.error).toHaveBeenCalledWith(
+    expect.stringContaining("https://tomoji-dev.convex.site/stripe/webhook"),
+  );
+});
+
+test("prints the platform webhook url when its signing secret is missing", async () => {
+  vi.mocked(readFileSync).mockReturnValue(
+    Object.entries({ ...values, ...stripe, STRIPE_PLATFORM_WEBHOOK_SECRET: "" })
+      .map(([key, value]) => `${key}=${value}`)
+      .join("\n"),
+  );
+  vi.mocked(spawnSync).mockImplementation(
+    (_command, args) =>
+      ({
+        status: 0,
+        stdout: args?.[2] === "get" ? "https://tomoji-dev.convex.site\n" : "",
+        stderr: "",
+        pid: 0,
+        output: [],
+        signal: null,
+      }) as never,
+  );
+  await expect(import("../set-convex-env")).rejects.toThrow("exit 1");
+  expect(console.error).toHaveBeenCalledWith(
+    expect.stringContaining("https://tomoji-dev.convex.site/stripe/webhook/platform"),
+  );
+  expect(console.error).not.toHaveBeenCalledWith(expect.stringContaining("whsec_test_tomoji"));
+});

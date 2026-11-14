@@ -1,512 +1,820 @@
 import { v } from "convex/values";
-import type { Doc, Id } from "./_generated/dataModel";
-import { internalMutation, type MutationCtx } from "./_generated/server";
+import type { Doc, Id, TableNames } from "./_generated/dataModel";
+import { env, internalMutation, type MutationCtx } from "./_generated/server";
 import { apiError } from "./lib/errors";
 import { HALF_HOUR_MS } from "./lib/validation";
-import { updateCreatorNiches } from "./models/creatorNiches";
-import { updateOpportunityNiches } from "./models/opportunityNiches";
+import { getCompanyUserByUserId } from "./models/companyUsers";
+import { updateCreatorLanguages } from "./models/creatorLanguages";
+import { listCreatorNiches, updateCreatorNiches } from "./models/creatorNiches";
+import { getCreatorByUserId } from "./models/creators";
+import { listCreatorSkills, updateCreatorSkills } from "./models/creatorSkills";
+import { creatorName, type NotificationContent } from "./models/notifications";
 import { updateOpportunityLanguages } from "./models/opportunityLanguages";
+import { updateOpportunityNiches } from "./models/opportunityNiches";
+import { scoreOpportunityMatch, type CreatorSignals } from "./models/opportunityScores";
 import { updateOpportunitySkills } from "./models/opportunitySkills";
+import { createPayout } from "./models/payouts";
+import { getStripeCustomerByCompanyId } from "./models/stripeCustomers";
+import { applyMembership, getEmailOwner, normalizeEmail, upsertUser } from "./models/users";
 
-/**
- * Demo data for every frontend flow, for a personal dev deployment.
- *
- * It attaches content to accounts that already exist rather than inventing
- * them, because a seeded `users` row has no WorkOS identity behind it and
- * nobody can sign in as it. Go through the invite flows first, then run this.
- *
- * Re-runnable: every run clears the tables it owns and rebuilds them. Accounts,
- * companies, and memberships are left alone, since WorkOS owns those.
- */
+const dayMs = 24 * 60 * 60 * 1000;
+const demoCampaignTitle = "[Demo] Northstar Studio launch";
+const demoOrg = "org_tomoji_seed_northstar";
+const demoCreator = {
+  workosId: "user_tomoji_seed_maya",
+  email: "maya.chen@tomoji-seed.example",
+  firstName: "Maya",
+  lastName: "Chen",
+};
+const demoAdmin = {
+  workosId: "user_tomoji_seed_jordan",
+  email: "jordan.lee@tomoji-seed.example",
+  firstName: "Jordan",
+  lastName: "Lee",
+};
+const matchTags = { niches: ["developer-tools"], skills: ["typescript"] };
+const campaignReadLimit = 200;
+const catalogReadLimit = 200;
+const demoCaption = "From a blank canvas to a shippable prototype with Northstar Studio. #ad";
 
-/** Tables this seed owns outright. Anything here is wiped on every run. */
-const OWNED_TABLES = [
-  "notifications",
-  "disputes",
-  "aiReviewAttempts",
-  "submissions",
-  "posts",
-  "assignments",
-  "applications",
-  "opportunityStars",
-  "opportunityNiches",
-  "opportunitySkills",
-  "opportunities",
-  "campaigns",
-  "invites",
+const seedAccounts = {
+  creatorEmail: v.optional(v.string()),
+  companyAdminEmail: v.optional(v.string()),
+};
+
+/** Requires a deliberate opt-in on the target development deployment. */
+function requireDevSeed(): void {
+  if (env.TOMOJI_DEV_SEED !== "true")
+    throw apiError("invalid_state", { reason: "dev_seed_disabled" });
+}
+
+/** Finds the explicitly selected account or creates its reserved synthetic counterpart. */
+async function seedUser(
+  ctx: MutationCtx,
+  email: string | undefined,
+  demo: {
+    workosId: string;
+    email: string;
+    firstName: string;
+    lastName: string;
+  },
+  role: "creator" | "company",
+) {
+  if (email === undefined) {
+    const existing = await getEmailOwner(ctx, demo.email);
+    if (existing !== null && existing.workosId !== demo.workosId)
+      throw apiError("conflict", { reason: "demo_email_in_use" });
+    if (existing === null) {
+      const userId = await upsertUser(ctx, demo);
+      if (role === "company") {
+        await applyMembership(ctx, {
+          workosUserId: demo.workosId,
+          organizationId: demoOrg,
+          organizationName: "Northstar Labs (Demo)",
+          role: "admin",
+        });
+      }
+      return (await ctx.db.get("users", userId))!;
+    }
+    email = demo.email;
+  }
+  const user = await getEmailOwner(ctx, normalizeEmail(email));
+  if (user?.role !== role || !user.isActive)
+    throw apiError("invalid_state", { reason: "seed_account_not_found", role });
+  return user;
+}
+
+/** Resolves the campaign, author and creator without choosing arbitrary real accounts. */
+async function seedWorkspace(
+  ctx: MutationCtx,
+  args: {
+    creatorEmail?: string;
+    companyAdminEmail?: string;
+  },
+) {
+  const creatorUser = await seedUser(ctx, args.creatorEmail, demoCreator, "creator");
+  const adminUser = await seedUser(ctx, args.companyAdminEmail, demoAdmin, "company");
+  const creator = await getCreatorByUserId(ctx, creatorUser._id);
+  if (creator === null) throw apiError("not_found", { resource: "creator" });
+  const admin = await getCompanyUserByUserId(ctx, adminUser._id);
+  const company = admin && (await ctx.db.get("companies", admin.companyId));
+  if (admin?.role !== "admin" || !company?.isActive)
+    throw apiError("invalid_state", { reason: "seed_company_admin_required" });
+
+  const campaigns = await ctx.db
+    .query("campaigns")
+    .withIndex("by_companyId", (q) => q.eq("companyId", company._id))
+    .take(campaignReadLimit);
+  if (campaigns.length === campaignReadLimit)
+    throw apiError("invalid_state", { reason: "too_many_campaigns_to_seed" });
+  const campaign = campaigns.find((row) => row.title === demoCampaignTitle) ?? null;
+
+  if (campaign !== null) {
+    const existing = await ctx.db
+      .query("assignments")
+      .withIndex("by_campaignId", (q) => q.eq("campaignId", campaign._id))
+      .first();
+    if (existing?.creatorId !== creator._id)
+      throw apiError("conflict", { reason: "demo_campaign_already_in_use" });
+  }
+
+  return {
+    creator,
+    admin,
+    company,
+    campaign,
+    isSyntheticCreator: creatorUser.workosId === demoCreator.workosId,
+    isSyntheticCompany: adminUser.workosId === demoAdmin.workosId,
+  };
+}
+
+/** Completes a synthetic creator profile so the sample account has meaningful match signals. */
+async function fillDemoProfile(ctx: MutationCtx, creatorId: Id<"creators">, now: number) {
+  const niches = ["developer-tools", "web-development"];
+  const skills = ["typescript", "react"];
+  await updateCreatorNiches(ctx, creatorId, niches);
+  await updateCreatorSkills(ctx, creatorId, skills);
+  await updateCreatorLanguages(ctx, creatorId, ["english"]);
+  await ctx.db.patch("creators", creatorId, {
+    countryOfResidence: "US",
+    followerRange: "10k-50k",
+    dateOfBirth: Date.UTC(1998, 4, 16),
+    onboardingCompletedAt: now,
+  });
+  return { niches, skills, followerRange: "10k-50k" as const };
+}
+
+/** Populates an isolated profile, including inert X records; never touches a real profile. */
+async function seedDemoProfile(ctx: MutationCtx, now: number) {
+  const user = await seedUser(
+    ctx,
+    undefined,
+    {
+      workosId: "user_tomoji_seed_riley",
+      email: "riley.park@tomoji-seed.example",
+      firstName: "Riley",
+      lastName: "Park",
+    },
+    "creator",
+  );
+  const creator = (await getCreatorByUserId(ctx, user._id))!;
+  const signals = await fillDemoProfile(ctx, creator._id, now);
+  const account = await ctx.db
+    .query("xAccounts")
+    .withIndex("by_creatorId", (q) => q.eq("creatorId", creator._id))
+    .unique();
+  if (account === null) {
+    const xAccountId = await ctx.db.insert("xAccounts", {
+      creatorId: creator._id,
+      xUserId: "0",
+      username: "riley_demo",
+      displayName: "Riley Park (Demo)",
+      linkedAt: now - dayMs,
+      updatedAt: now,
+      status: "reconnect_required",
+    });
+    // This cannot decrypt or refresh. It represents an expired session, with no actual OAuth material.
+    await ctx.db.insert("xAccountCredentials", {
+      xAccountId,
+      encryptedTokens: {
+        ciphertext: new ArrayBuffer(0),
+        iv: new ArrayBuffer(0),
+        keyVersion: "fixture",
+      },
+      accessTokenExpiresAt: now - dayMs,
+      scopes: [],
+      credentialVersion: 1,
+    });
+    await ctx.db.insert("xLinkAttempts", {
+      creatorId: creator._id,
+      stateHash: "expired-demo-link",
+      redirectUri: "https://tomoji-seed.example/x/callback",
+      expiresAt: now - dayMs,
+      status: "failed",
+    });
+  }
+
+  const stripeAccount = await ctx.db
+    .query("stripeAccounts")
+    .withIndex("by_creatorId", (q) => q.eq("creatorId", creator._id))
+    .unique();
+  if (stripeAccount === null) {
+    // A disconnected demo account with a reconnect in progress. Neither row
+    // references a live Stripe account or belongs to a sign-in selected by email.
+    await ctx.db.insert("stripeAccounts", {
+      creatorId: creator._id,
+      stripeAccountId: "acct_tomoji_seed_disconnected",
+      detailsSubmitted: false,
+      payoutsEnabled: false,
+      requirementsDue: false,
+      stripeUpdatedAt: now - dayMs,
+      disconnectedAt: now - dayMs,
+    });
+    await ctx.db.insert("stripeAccountCreations", {
+      creatorId: creator._id,
+      country: "US",
+      startedAt: now,
+    });
+  }
+
+  return { creatorId: creator._id, signals };
+}
+
+const compensation = { fixedFeeCents: 25_000, cpmRateCents: 400, paymentCapCents: 100_000 };
+const brief = {
+  contentRequirements:
+    "Show one Northstar Studio workflow from start to finish with the finished result.",
+  reviewPolicy: "Disclose the sponsorship with #ad and name Northstar Studio in the caption.",
+};
+
+const scenarios = [
+  {
+    stage: "notStarted",
+    title: "First look: build a dashboard",
+    task: "Build a dashboard from a starter",
+  },
+  { stage: "pending", title: "Components in practice", task: "Create and reuse a component" },
+  {
+    stage: "changesRequested",
+    title: "A brief to prototype walkthrough",
+    task: "Walk through a brief and show the result",
+  },
+  {
+    stage: "approved",
+    title: "A faster way to hand off designs",
+    task: "Demonstrate the handoff workflow",
+  },
+  { stage: "posted", title: "Launch recap", task: "Share the finished prototype" },
+  {
+    stage: "applying",
+    title: "Inside a design systems team",
+    task: "Show how your team maintains a component library",
+  },
 ] as const;
 
-const DAY = 24 * 60 * 60 * 1000;
+type SeedCampaign = Pick<Doc<"campaigns">, "companyId" | "createdBy"> & { _id: Id<"campaigns"> };
+type Brief = Pick<
+  Doc<"opportunities">,
+  "title" | "description" | "deadline" | "isGated" | "usesAiReviewDefault"
+>;
 
-/** The next exact :00/:30 UTC boundary, which deadlines and end dates require. */
-function halfHourFromNow(days: number): number {
-  return Math.ceil((Date.now() + days * DAY) / HALF_HOUR_MS) * HALF_HOUR_MS;
-}
-
-/** Clears seed-owned records, including review attempts attached to submissions. */
-async function clearOwnedTables(ctx: MutationCtx): Promise<number> {
-  let removed = 0;
-  for (const table of OWNED_TABLES) {
-    for await (const row of ctx.db.query(table)) {
-      await ctx.db.delete(table, row._id);
-      removed += 1;
-    }
-  }
-  return removed;
-}
-
-/**
- * The company whose admin will own the seeded campaigns and opportunities.
- *
- * Every developer's deployment receives the same WorkOS webhooks, so several
- * companies can exist side by side. Scanning companies oldest-first keeps the
- * default stable across machines; `companyName` overrides it.
- */
-async function requireSeedCompany(
+/** Creates a discoverable brief and one deliverable with validated taxonomy selections. */
+async function seedOpportunity(
   ctx: MutationCtx,
-  companyName?: string,
-): Promise<{ company: Doc<"companies">; admin: Doc<"companyUsers"> }> {
-  const wanted = companyName?.trim().toLowerCase();
-  let sawWanted = false;
-
-  for await (const company of ctx.db
-    .query("companies")
-    .withIndex("by_isActive", (q) => q.eq("isActive", true))) {
-    if (wanted !== undefined && company.name.trim().toLowerCase() !== wanted) continue;
-    sawWanted = true;
-    for await (const membership of ctx.db
-      .query("companyUsers")
-      .withIndex("by_companyId", (q) => q.eq("companyId", company._id))) {
-      if (membership.isActive && membership.role === "admin") {
-        return { company, admin: membership };
-      }
-    }
-  }
-  if (wanted !== undefined && !sawWanted) {
-    throw apiError("invalid_state", { reason: "company_not_found", name: wanted });
-  }
-  throw apiError("invalid_state", { reason: "no_company_admin" });
-}
-
-/**
- * Creators to hang applications, stars, and notifications on. The first one
- * gets the populated profile, so `creatorEmail` picks the account you can
- * actually sign in as rather than whichever row happens to come first.
- */
-async function requireSeedCreators(
-  ctx: MutationCtx,
-  creatorEmail?: string,
-): Promise<Doc<"creators">[]> {
-  const creators: Doc<"creators">[] = [];
-  let preferred: Doc<"creators"> | undefined;
-  const wanted = creatorEmail?.trim().toLowerCase();
-
-  for await (const user of ctx.db
-    .query("users")
-    .withIndex("by_role_and_isActive", (q) => q.eq("role", "creator").eq("isActive", true))) {
-    const creator = await ctx.db
-      .query("creators")
-      .withIndex("by_userId", (q) => q.eq("userId", user._id))
-      .unique();
-    if (creator === null) continue;
-    if (wanted !== undefined && user.email === wanted) preferred = creator;
-    else if (creators.length < 4) creators.push(creator);
-  }
-
-  if (wanted !== undefined && preferred === undefined) {
-    throw apiError("invalid_state", { reason: "creator_not_found", email: wanted });
-  }
-  const ordered = preferred ? [preferred, ...creators] : creators;
-  if (ordered.length === 0) throw apiError("invalid_state", { reason: "no_creators" });
-  return ordered.slice(0, 4);
-}
-
-type OpportunitySpec = {
-  title: string;
-  description: string;
-  isGated: boolean;
-  maxSlots: number;
-  numFilledSlots: number;
-  deadlineInDays: number;
-  status: Doc<"opportunities">["status"];
-  fixedFeeCents: number;
-  cpmRateCents: number;
-  paymentCapCents: number;
-  niches: string[];
-  languages: string[];
-  skills: string[];
-};
-
-/**
- * Chosen to cover what the feed renders rather than to look like a real
- * catalogue: both access types, full and open slots, every compensation
- * shape, and statuses that must stay out of discovery.
- */
-const OPPORTUNITIES: OpportunitySpec[] = [
-  {
-    title: "Build an agent with our SDK",
-    description: "A walkthrough video showing a working agent in under ten minutes.",
-    isGated: true,
+  campaign: SeedCampaign,
+  fields: Brief,
+  options: {
+    niches: string[];
+    skills: string[];
+    task: string;
+  },
+) {
+  const opportunityId = await ctx.db.insert("opportunities", {
+    ...fields,
+    ...brief,
+    ...compensation,
+    companyId: campaign.companyId,
+    campaignId: campaign._id,
+    createdBy: campaign.createdBy,
+    status: "open",
     maxSlots: 8,
-    numFilledSlots: 2,
-    deadlineInDays: 21,
-    status: "open",
-    fixedFeeCents: 65_000,
-    cpmRateCents: 500,
-    paymentCapCents: 200_000,
-    niches: ["ai-agents", "developer-tools"],
-    skills: ["python", "typescript"],
-    languages: ["english"],
-  },
-  {
-    title: "Ship a side project on our free tier",
-    description: "Record yourself going from empty repo to deployed app.",
-    isGated: false,
-    maxSlots: 20,
-    numFilledSlots: 3,
-    deadlineInDays: 14,
-    status: "open",
-    fixedFeeCents: 30_000,
-    cpmRateCents: 0,
-    paymentCapCents: 0,
-    niches: ["web-development", "startups"],
-    skills: ["react", "nextjs"],
-    languages: ["english", "spanish"],
-  },
-  {
-    title: "Explain our vector search in one minute",
-    description: "A short vertical video for the launch.",
-    isGated: false,
-    maxSlots: 5,
-    numFilledSlots: 5,
-    deadlineInDays: 10,
-    status: "open",
-    fixedFeeCents: 0,
-    cpmRateCents: 400,
-    paymentCapCents: 90_000,
-    niches: ["databases", "machine-learning"],
-    skills: ["postgresql", "python"],
-    languages: ["english"],
-  },
-  {
-    title: "Security review of our auth flow",
-    description: "A deep dive for an experienced audience.",
-    isGated: true,
-    maxSlots: 3,
     numFilledSlots: 0,
-    deadlineInDays: 2,
-    status: "open",
-    fixedFeeCents: 0,
-    cpmRateCents: 0,
-    paymentCapCents: 0,
-    niches: ["cybersecurity"],
-    skills: ["application-security"],
-    languages: ["english"],
-  },
-  {
-    title: "Our CLI in your daily workflow",
-    description: "Show the commands you actually reach for.",
-    isGated: true,
-    maxSlots: 6,
-    numFilledSlots: 1,
-    deadlineInDays: 30,
-    status: "draft",
-    fixedFeeCents: 45_000,
-    cpmRateCents: 0,
-    paymentCapCents: 0,
-    niches: ["developer-tools", "productivity"],
-    skills: ["bash-shell"],
-    languages: ["english", "portuguese"],
-  },
-  {
-    title: "Migrating off a legacy ORM",
-    description: "Paused while we rewrite the brief.",
-    isGated: true,
-    maxSlots: 4,
-    numFilledSlots: 0,
-    deadlineInDays: 25,
-    status: "paused",
-    fixedFeeCents: 50_000,
-    cpmRateCents: 0,
-    paymentCapCents: 0,
-    niches: ["databases"],
-    skills: ["prisma", "sql"],
-    languages: ["english"],
-  },
-];
+  });
+  await updateOpportunityNiches(ctx, opportunityId, options.niches);
+  await updateOpportunitySkills(ctx, opportunityId, options.skills);
+  await updateOpportunityLanguages(ctx, opportunityId, ["english"]);
 
-const BOILERPLATE = {
-  contentRequirements: "One video, 60 seconds or longer, with the product visible in use.",
-  reviewPolicy:
-    "Disclose the partnership in the post itself. No performance or security claims we have not published ourselves. We may reshare the post for twelve months.",
+  const reviewCriteria = [
+    { id: "sponsorship", description: "Disclose the sponsorship with #ad." },
+    { id: "product", description: "Name Northstar Studio in the caption." },
+  ];
+  const deliverableId = await ctx.db.insert("deliverables", {
+    opportunityId,
+    createdBy: campaign.createdBy,
+    title: options.task,
+    description: fields.description,
+    reviewCriteria,
+  });
+  return { opportunityId, deliverableId, reviewCriteria };
+}
+
+/** The records one scenario created, for notifications that point at them. */
+type ScenarioRecords = {
+  title: string;
+  opportunityId: Id<"opportunities">;
+  applicationId: Id<"applications">;
+  assignmentId?: Id<"assignments">;
+  submissionId?: Id<"submissions">;
 };
 
-/** Builds the campaigns and opportunities a company sees, and the feed creators see. */
-async function seedCompanyContent(
+/** Seeds one complete workflow at the selected point in its lifecycle. */
+async function seedScenario(
   ctx: MutationCtx,
-  company: Doc<"companies">,
-  admin: Doc<"companyUsers">,
-) {
-  const campaign = {
-    companyId: company._id,
-    createdBy: admin._id,
-  };
-
-  // One per status, so the campaigns list has something in every filter.
-  const openCampaignId = await ctx.db.insert("campaigns", {
-    ...campaign,
-    title: "Developer launch",
-    description: "Our main push for the new SDK.",
-    status: "open",
-    budgetCents: 1_500_000,
-    startsAt: halfHourFromNow(-30),
-    endsAt: halfHourFromNow(60),
-  });
-  await ctx.db.insert("campaigns", {
-    ...campaign,
-    title: "Conference season",
-    description: "Still being written.",
-    status: "draft",
-    budgetCents: 400_000,
-    startsAt: halfHourFromNow(14),
-  });
-  await ctx.db.insert("campaigns", {
-    ...campaign,
-    title: "Community spotlight",
-    description: "On hold while we rework the budget.",
-    status: "paused",
-    budgetCents: 250_000,
-    startsAt: halfHourFromNow(-10),
-    endsAt: halfHourFromNow(40),
-  });
-  await ctx.db.insert("campaigns", {
-    ...campaign,
-    title: "Beta programme",
-    description: "Finished last month.",
-    status: "closed",
-    budgetCents: 800_000,
-    startsAt: halfHourFromNow(-90),
-    endsAt: halfHourFromNow(-5),
+  campaign: SeedCampaign,
+  creator: Doc<"creators">,
+  scenario: (typeof scenarios)[number],
+  now: number,
+  deadline: number,
+): Promise<ScenarioRecords> {
+  const usesAiReview =
+    scenario.stage === "notStarted" ||
+    scenario.stage === "pending" ||
+    scenario.stage === "changesRequested";
+  const description = `${scenario.task}. Keep the walkthrough under one minute.`;
+  const { opportunityId, deliverableId, reviewCriteria } = await seedOpportunity(
+    ctx,
+    campaign,
+    {
+      title: scenario.title,
+      description,
+      deadline,
+      isGated: true,
+      usesAiReviewDefault: usesAiReview,
+    },
+    { task: scenario.task, ...matchTags },
+  );
+  const applicationId = await ctx.db.insert("applications", {
+    opportunityId,
+    creatorId: creator._id,
+    companyId: campaign.companyId,
+    note: "I make short tutorials for designers who code.",
+    status: scenario.stage === "applying" ? "offered" : "accepted",
+    statusLastUpdatedAt: now,
+    offerExpiresAt: now + 2 * dayMs,
+    offerAcceptedAt: scenario.stage === "applying" ? undefined : now,
   });
 
-  const opportunityIds: Id<"opportunities">[] = [];
-  for (const spec of OPPORTUNITIES) {
-    const { deadlineInDays, niches, skills, languages, ...fields } = spec;
-    const opportunityId = await ctx.db.insert("opportunities", {
-      ...fields,
-      ...BOILERPLATE,
-      campaignId: openCampaignId,
-      companyId: company._id,
-      createdBy: admin._id,
-      usesAiReviewDefault: false,
-      deadline: halfHourFromNow(deadlineInDays),
+  if (scenario.stage === "applying") {
+    await ctx.db.insert("opportunityStars", { creatorId: creator._id, opportunityId });
+    return { title: scenario.title, opportunityId, applicationId };
+  }
+
+  const scope = { creatorId: creator._id, companyId: campaign.companyId, campaignId: campaign._id };
+  const assignmentId = await ctx.db.insert("assignments", {
+    ...scope,
+    ...compensation,
+    opportunityId,
+    usesAiReview,
+    status: scenario.stage === "posted" ? "completed" : "active",
+  });
+  await ctx.db.patch("opportunities", opportunityId, { numFilledSlots: 1 });
+
+  if (scenario.stage === "notStarted") {
+    // An abandoned grant exercises the media table without implying any S3 bytes exist.
+    await ctx.db.insert("mediaUploads", {
+      ownerUserId: creator.userId,
+      kind: "video-submission",
+      assignmentId,
+      stagingKey: `staging/video-submission/seed-${assignmentId}`,
+      contentType: "video/mp4",
+      grantExpiresAt: now - dayMs,
+      status: "pending",
     });
-    await updateOpportunityNiches(ctx, opportunityId, niches);
-    await updateOpportunitySkills(ctx, opportunityId, skills);
-    await updateOpportunityLanguages(ctx, opportunityId, languages);
-    opportunityIds.push(opportunityId);
+    return { title: scenario.title, opportunityId, applicationId, assignmentId };
   }
-  return { openCampaignId, opportunityIds };
+
+  const draft = {
+    assignmentId,
+    deliverableId,
+    usesAiReview,
+    draftDescription: "A one-minute walkthrough with a finished example.",
+    caption:
+      scenario.stage === "changesRequested" ? "A quick Northstar Studio walkthrough." : demoCaption,
+  };
+  const review = {
+    reviewerType: "companyUser" as const,
+    reviewedBy: campaign.createdBy,
+    reviewedAt: now,
+  };
+  const status = scenario.stage === "posted" ? "approved" : scenario.stage;
+  const submissionId = await ctx.db.insert(
+    "submissions",
+    status === "pending"
+      ? { ...draft, status }
+      : status === "approved"
+        ? { ...draft, ...review, status }
+        : {
+            ...draft,
+            reviewerType: "ai",
+            reviewedAt: now,
+            status,
+            reviewNote: "Disclose the sponsorship with #ad.",
+          },
+  );
+
+  if (status === "pending") {
+    // An existing fallback for the company to review; no provider job is enqueued.
+    await ctx.db.insert("aiReviewAttempts", {
+      submissionId,
+      caption: draft.caption,
+      criteria: reviewCriteria,
+      context: { title: scenario.title, description, ...brief },
+      status: "manualReview",
+      failureReason: "disabled",
+      finishedAt: now,
+    });
+  }
+
+  if (status === "changesRequested") {
+    await ctx.db.insert("aiReviewAttempts", {
+      submissionId,
+      caption: draft.caption,
+      criteria: reviewCriteria,
+      context: { title: scenario.title, description, ...brief },
+      status: "completed",
+      startedAt: now,
+      finishedAt: now,
+      result: {
+        model: "fixture",
+        inputTokens: 0,
+        outputTokens: 0,
+        results: [
+          {
+            criterionId: "sponsorship",
+            outcome: "not_met",
+            confidence: 0.98,
+            probabilities: { met: 0.01, not_met: 0.98, uncertain: 0.01 },
+          },
+          {
+            criterionId: "product",
+            outcome: "met",
+            confidence: 0.98,
+            probabilities: { met: 0.98, not_met: 0.01, uncertain: 0.01 },
+          },
+        ],
+      },
+    });
+  }
+
+  if (scenario.stage === "posted") {
+    // Explicitly synthetic: the status and metrics are examples, not fetched from X.
+    const postId = await ctx.db.insert("posts", {
+      submissionId,
+      campaignId: campaign._id,
+      url: "https://tomoji-seed.example/posts/launch-recap",
+      xPostId: `fixture-${submissionId}`,
+      isActive: true,
+      isVerified: true,
+      captionCheck: "match",
+      postedAt: now,
+      views: 12_500,
+      viewsUpdatedAt: now,
+      likes: 430,
+      comments: 24,
+      reposts: 61,
+      quotes: 9,
+    });
+    await createPayout(ctx, {
+      assignmentId,
+      postId,
+      sourceKey: "demo-fixed-fee",
+      amount: compensation.fixedFeeCents,
+      currency: "usd",
+    });
+    // An earlier week's views, approved and paid before the dispute opened.
+    // The charge is synthetic; no Stripe object has these ids.
+    const paid = await createPayout(ctx, {
+      assignmentId,
+      postId,
+      sourceKey: "demo-views-week-1",
+      amount: 5_000,
+      currency: "usd",
+      earningPeriod: { startsAt: now - 10 * dayMs, endsAt: now - 3 * dayMs },
+    });
+    await ctx.db.patch("payouts", paid._id, {
+      approvalStatus: "approved",
+      approvalSource: "automatic",
+      approvedAt: now,
+      paymentStatus: "transferred",
+      transferredAt: now,
+    });
+    await ctx.db.insert("payments", {
+      payoutId: paid._id,
+      attempt: 1,
+      stripeAccountId: "acct_tomoji_seed",
+      stripePaymentIntentId: `pi_tomoji_seed_${paid._id}`,
+      status: "succeeded",
+      stripeFee: 175,
+      creatorNet: 4_825,
+      settlementCurrency: "usd",
+    });
+    await ctx.db.insert("disputes", {
+      ...scope,
+      assignmentId,
+      postId,
+      openedBy: creator.userId,
+      openedByRole: "creator",
+      reason: "payoutAmount",
+      description:
+        "The payout shows the base fee. Can you confirm when the view bonus is included?",
+      status: "open",
+    });
+  }
+
+  return { title: scenario.title, opportunityId, applicationId, assignmentId, submissionId };
 }
 
-/** Gives the first creator a populated profile, feed state, and application history. */
-async function seedCreatorContent(
-  ctx: MutationCtx,
-  creators: Doc<"creators">[],
-  company: Doc<"companies">,
-  opportunityIds: Id<"opportunities">[],
-) {
-  const [primary] = creators;
-  // The first two are open and gated/ungated, which the feed filters split on.
-  const [gatedWithRoom, ungatedWithRoom, ungatedFull, closingSoon] = opportunityIds;
+type Stage = (typeof scenarios)[number]["stage"];
+type SeedNotification = NotificationContent & { isRead: boolean };
 
-  await updateCreatorNiches(ctx, primary._id, ["developer-tools", "ai-agents", "web-development"]);
-  await ctx.db.patch("creators", primary._id, {
-    githubLink: primary.githubLink ?? "https://github.com/example",
-  });
-
-  await ctx.db.insert("opportunityStars", {
-    creatorId: primary._id,
-    opportunityId: gatedWithRoom,
-  });
-  await ctx.db.insert("opportunityStars", {
-    creatorId: primary._id,
-    opportunityId: ungatedWithRoom,
-  });
-  // Starred but no longer visible, so the starred feed proves it skips those.
-  await ctx.db.insert("opportunityStars", {
-    creatorId: primary._id,
-    opportunityId: opportunityIds[opportunityIds.length - 1],
-  });
-
-  // One per status the applications list can show.
-  const applications: { opportunityId: Id<"opportunities">; app: Partial<Doc<"applications">> }[] =
-    [
-      {
-        opportunityId: gatedWithRoom,
-        app: { status: "pending", note: "I've shipped three agent demos this year." },
-      },
-      {
-        opportunityId: closingSoon,
-        app: {
-          status: "offered",
-          note: "I write about auth internals weekly.",
-          offerExpiresAt: halfHourFromNow(3),
-        },
-      },
-      {
-        opportunityId: ungatedFull,
-        app: { status: "opportunityFull", note: "Happy to turn this around quickly." },
-      },
-    ];
-  const applicationIds: Id<"applications">[] = [];
-  for (const { opportunityId, app } of applications) {
-    applicationIds.push(
-      await ctx.db.insert("applications", {
-        opportunityId,
-        creatorId: primary._id,
-        companyId: company._id,
-        status: "pending",
-        statusLastUpdatedAt: Date.now(),
-        ...app,
-      } as Doc<"applications">),
-    );
-  }
-
-  // A second creator applying gives the company side something to review.
-  if (creators[1]) {
-    applicationIds.push(
-      await ctx.db.insert("applications", {
-        opportunityId: gatedWithRoom,
-        creatorId: creators[1]._id,
-        companyId: company._id,
-        status: "pending",
-        note: "I'd focus on the deployment story.",
-        statusLastUpdatedAt: Date.now(),
-      }),
-    );
-  }
-  return { primary, applicationIds, gatedWithRoom, closingSoon };
-}
-
-/** Notifications for both sides of the marketplace, read and unread. */
+/**
+ * One notification per type whose target page exists, for the creator and the
+ * company admin, read and unread, each pointing at the scenario it describes.
+ * Titles follow the templates in `models/`. Dispute notifications are left out
+ * until `notificationHref` links disputes, since clicking one would open nothing.
+ */
 async function seedNotifications(
   ctx: MutationCtx,
-  creatorUserId: Id<"users">,
-  adminUserId: Id<"users">,
-  applicationId: Id<"applications">,
-  opportunityId: Id<"opportunities">,
+  creator: Doc<"creators">,
+  admin: Doc<"companyUsers">,
+  campaign: Pick<Doc<"campaigns">, "_id" | "title">,
+  records: Map<Stage, ScenarioRecords>,
 ) {
-  const target = { kind: "application" as const, applicationId, opportunityId };
+  const missing = () => apiError("invalid_state", { reason: "seed_scenario_missing" });
+  const scenario = (stage: Stage) => {
+    const record = records.get(stage);
+    if (record === undefined) throw missing();
+    return record;
+  };
+  const submission = (stage: "pending" | "changesRequested" | "approved") => {
+    const { assignmentId, submissionId, title } = scenario(stage);
+    if (assignmentId === undefined || submissionId === undefined) throw missing();
+    return { title, target: { kind: "submission" as const, submissionId, assignmentId } };
+  };
 
-  await ctx.db.insert("notifications", {
-    userId: creatorUserId,
-    type: "applicationOffered",
-    title: "You have an offer on Security review of our auth flow",
-    body: "Accept before the offer expires.",
-    target,
-    isRead: false,
-  });
-  await ctx.db.insert("notifications", {
-    userId: creatorUserId,
-    type: "applicationOpportunityFull",
-    title: "Explain our vector search in one minute filled up",
-    target,
-    isRead: false,
-  });
-  await ctx.db.insert("notifications", {
-    userId: creatorUserId,
-    type: "applicationRejected",
-    title: "Your application wasn't selected",
-    target,
-    isRead: true,
-  });
+  const name = (await creatorName(ctx, creator._id)) || "A creator";
+  const offer = scenario("applying");
+  const application = {
+    kind: "application" as const,
+    applicationId: offer.applicationId,
+    opportunityId: offer.opportunityId,
+  };
+  const started = scenario("notStarted");
+  if (started.assignmentId === undefined) throw missing();
+  const assignment = { kind: "assignment" as const, assignmentId: started.assignmentId };
+  const pending = submission("pending");
+  const revision = submission("changesRequested");
+  const approved = submission("approved");
 
-  await ctx.db.insert("notifications", {
-    userId: adminUserId,
-    type: "applicationReceived",
-    title: "New application on Build an agent with our SDK",
-    body: "Two creators are waiting for a decision.",
-    target,
-    isRead: false,
-  });
-  await ctx.db.insert("notifications", {
-    userId: adminUserId,
-    type: "applicationAccepted",
-    title: "A creator accepted your offer",
-    target,
-    isRead: true,
-  });
+  // Oldest first: the list is newest first, so the unread rows land on top.
+  const toCreator: SeedNotification[] = [
+    {
+      type: "applicationRejected",
+      title: `Your application for ${offer.title} wasn't accepted`,
+      target: application,
+      isRead: true,
+    },
+    {
+      type: "applicationOpportunityClosed",
+      title: `${offer.title} has closed`,
+      target: application,
+      isRead: true,
+    },
+    {
+      type: "applicationOfferExpired",
+      title: `Your offer for ${offer.title} expired`,
+      target: application,
+      isRead: true,
+    },
+    {
+      type: "assignmentCancelled",
+      title: `Your assignment for ${started.title} was cancelled`,
+      target: assignment,
+      isRead: true,
+    },
+    {
+      type: "submissionApproved",
+      title: `Your draft for ${approved.title} was approved`,
+      target: approved.target,
+      isRead: true,
+    },
+    {
+      type: "payoutStripeSetupNeeded",
+      title: "A $250 payment is waiting for your Stripe setup",
+      body: "Finish setting up Stripe to get paid.",
+      target: assignment,
+      isRead: true,
+    },
+    {
+      type: "payoutDisputed",
+      title: "A company disputed a $250 payment to you",
+      target: assignment,
+      isRead: true,
+    },
+    {
+      type: "applicationOpportunityFull",
+      title: `${offer.title} has filled all its slots`,
+      target: application,
+      isRead: false,
+    },
+    {
+      type: "submissionChangesRequested",
+      title: `Changes requested on your draft for ${revision.title}`,
+      body: "Disclose the sponsorship with #ad.",
+      target: revision.target,
+      isRead: false,
+    },
+    {
+      type: "applicationOffered",
+      title: `You received an offer for ${offer.title}`,
+      body: "Accept before the offer expires.",
+      target: application,
+      isRead: false,
+    },
+  ];
+  const toAdmin: SeedNotification[] = [
+    {
+      type: "campaignClosed",
+      title: `${campaign.title} ended`,
+      target: { kind: "campaign", campaignId: campaign._id },
+      isRead: true,
+    },
+    {
+      type: "applicationDeclined",
+      title: `${name} declined your offer for ${offer.title}`,
+      target: application,
+      isRead: true,
+    },
+    {
+      type: "applicationOfferExpired",
+      title: `${name}'s offer for ${offer.title} expired unanswered`,
+      target: application,
+      isRead: true,
+    },
+    {
+      type: "assignmentTermsDeclined",
+      title: `${name} declined terms for ${started.title}`,
+      target: assignment,
+      isRead: true,
+    },
+    {
+      type: "applicationAccepted",
+      title: `${name} accepted your offer for ${started.title}`,
+      target: assignment,
+      isRead: true,
+    },
+    {
+      type: "assignmentClaimed",
+      title: `${name} joined ${started.title}`,
+      target: assignment,
+      isRead: true,
+    },
+    {
+      type: "assignmentTermsAccepted",
+      title: `${name} accepted terms for ${started.title}`,
+      target: assignment,
+      isRead: true,
+    },
+    {
+      type: "submissionResubmitted",
+      title: `${name} resubmitted a draft for ${revision.title}`,
+      target: revision.target,
+      isRead: true,
+    },
+    {
+      type: "payoutPaymentFailed",
+      title: `Payment of $250 to ${name} failed`,
+      body: "The company card was declined (insufficient_funds). Update it in settings.",
+      target: assignment,
+      isRead: true,
+    },
+    // Operators get these; the demo admin shows them so every type renders.
+    {
+      type: "payoutChargedTwice",
+      title: `A $250 payout to ${name} was charged twice`,
+      target: assignment,
+      isRead: true,
+    },
+    {
+      type: "payoutDisputeClosed",
+      title: `Dispute on a $250 payment to ${name} won`,
+      target: assignment,
+      isRead: true,
+    },
+    {
+      type: "payoutRefunded",
+      title: `${name} refunded $50 of a payment`,
+      target: assignment,
+      isRead: true,
+    },
+    {
+      type: "opportunityClosed",
+      title: `${offer.title} closed at its deadline`,
+      target: { kind: "opportunity", opportunityId: offer.opportunityId },
+      isRead: false,
+    },
+    {
+      type: "applicationReceived",
+      title: `${name} applied to ${offer.title}`,
+      target: application,
+      isRead: false,
+    },
+    {
+      type: "submissionCreated",
+      title: `A draft for ${pending.title} needs your review`,
+      target: pending.target,
+      isRead: false,
+    },
+  ];
+  for (const notification of toCreator)
+    await ctx.db.insert("notifications", { ...notification, userId: creator.userId });
+  for (const notification of toAdmin)
+    await ctx.db.insert("notifications", { ...notification, userId: admin.userId });
 }
 
-/** Pending invitations for the team invites page. */
-async function seedInvites(ctx: MutationCtx, companyId: Id<"companies">) {
-  const expiresAt = Date.now() + 7 * DAY;
-  await ctx.db.insert("invites", {
-    workosId: `invitation_seed_admin_${Date.now()}`,
-    email: "new.admin@example.com",
-    kind: "companyUser",
-    companyId,
-    role: "admin",
-    expiresAt,
-  });
-  await ctx.db.insert("invites", {
-    workosId: `invitation_seed_member_${Date.now()}`,
-    email: "new.member@example.com",
-    kind: "companyUser",
-    companyId,
-    role: "member",
-    expiresAt,
-  });
+/** Uses the same matching rules as discovery, without scheduling scoring jobs. */
+async function seedScore(
+  ctx: MutationCtx,
+  creatorId: Id<"creators">,
+  signals: CreatorSignals,
+  opportunityId: Id<"opportunities">,
+) {
+  const score = scoreOpportunityMatch(signals, matchTags);
+  if (score > 0) await ctx.db.insert("opportunityScores", { creatorId, opportunityId, score });
 }
 
 /**
- * Rebuilds every seeded table. Safe to re-run.
- *
- * @throws `invalid_state` with `no_company_admin` or `no_creators` when the
- * deployment has no accounts to attach the data to. Run the invite flows first.
+ * Creates an all-table dataset in one transaction. Retrying returns the existing
+ * campaign and preserves any changes made while testing against it.
  */
 export const run = internalMutation({
-  args: { creatorEmail: v.optional(v.string()), companyName: v.optional(v.string()) },
+  args: seedAccounts,
   returns: v.object({
-    cleared: v.number(),
-    company: v.string(),
-    campaigns: v.number(),
-    opportunities: v.number(),
-    creators: v.number(),
-    primaryCreator: v.string(),
+    created: v.boolean(),
+    campaignId: v.id("campaigns"),
+    companyId: v.id("companies"),
+    creatorId: v.id("creators"),
   }),
   handler: async (ctx, args) => {
-    const cleared = await clearOwnedTables(ctx);
-    const { company, admin } = await requireSeedCompany(ctx, args.companyName);
-    const creators = await requireSeedCreators(ctx, args.creatorEmail);
+    requireDevSeed();
+    const { creator, admin, company, campaign, isSyntheticCreator, isSyntheticCompany } =
+      await seedWorkspace(ctx, args);
+    const ids = { companyId: company._id, creatorId: creator._id };
+    if (campaign !== null) return { ...ids, campaignId: campaign._id, created: false };
 
-    const { opportunityIds } = await seedCompanyContent(ctx, company, admin);
-    const { primary, applicationIds, gatedWithRoom } = await seedCreatorContent(
+    const now = Date.now();
+    const campaignFields = { companyId: company._id, createdBy: admin._id };
+    const campaignId = await ctx.db.insert("campaigns", {
+      ...campaignFields,
+      title: demoCampaignTitle,
+      description: "A collection of creator tutorials for the Northstar Studio launch.",
+      status: "open",
+      budgetCents: 900_000,
+      startsAt: now - dayMs,
+    });
+    const demoProfile = await seedDemoProfile(ctx, now);
+    const signals = isSyntheticCreator
+      ? await fillDemoProfile(ctx, creator._id, now)
+      : {
+          niches: await listCreatorNiches(ctx, creator._id),
+          skills: await listCreatorSkills(ctx, creator._id),
+          followerRange: creator.followerRange,
+        };
+    const records = new Map<Stage, ScenarioRecords>();
+    for (const [index, scenario] of scenarios.entries()) {
+      const deadline = Math.ceil((now + (7 + index) * dayMs) / HALF_HOUR_MS) * HALF_HOUR_MS;
+      const record = await seedScenario(
+        ctx,
+        { ...campaignFields, _id: campaignId },
+        creator,
+        scenario,
+        now,
+        deadline,
+      );
+      records.set(scenario.stage, record);
+      await seedScore(ctx, demoProfile.creatorId, demoProfile.signals, record.opportunityId);
+      await seedScore(ctx, creator._id, signals, record.opportunityId);
+    }
+    await seedNotifications(
       ctx,
-      creators,
-      company,
-      opportunityIds,
+      creator,
+      admin,
+      { _id: campaignId, title: demoCampaignTitle },
+      records,
     );
-    await seedNotifications(ctx, primary.userId, admin.userId, applicationIds[0], gatedWithRoom);
-    await seedInvites(ctx, company._id);
 
-    return {
-      cleared,
-      company: company.name,
-      campaigns: 4,
-      opportunities: opportunityIds.length,
-      creators: creators.length,
-      primaryCreator: (await ctx.db.get("users", primary.userId))?.email ?? "unknown",
-    };
+    // A historical invitation record, not a pending WorkOS invite someone can accept.
+    await ctx.db.insert("invites", {
+      workosId: `invite_tomoji_seed_${campaignId}`,
+      email: "sam.rivera@tomoji-seed.example",
+      kind: "companyUser",
+      companyId: company._id,
+      role: "member",
+      expiresAt: now - dayMs,
+    });
+
+    // Only the synthetic company: a real one's card setup would reuse this
+    // customer, which doesn't exist in Stripe. No card, so it shows `missing`.
+    if (isSyntheticCompany && (await getStripeCustomerByCompanyId(ctx, company._id)) === null) {
+      await ctx.db.insert("stripeCustomers", {
+        companyId: company._id,
+        stripeCustomerId: "cus_tomoji_seed",
+        stripeUpdatedAt: now,
+      });
+    }
+
+    return { ...ids, campaignId, created: true };
   },
-});
-
-/** Removes everything `run` creates, leaving accounts and companies in place. */
-export const clear = internalMutation({
-  args: {},
-  returns: v.object({ cleared: v.number() }),
-  handler: async (ctx) => ({ cleared: await clearOwnedTables(ctx) }),
 });
 
 const MORE_TOPICS = [
@@ -568,55 +876,248 @@ const MORE_FORMATS = [
   "deep dive",
 ] as const;
 
-const MORE_FOLLOWER_MINIMUMS = [undefined, "1k-5k", "10k-50k", "50k-100k", "100k-500k"] as const;
-
-/**
- * Adds `count` more open briefs to the seeded company's open campaign, so the
- * feed has enough to page, search, and filter through. Run `run` first; this
- * doesn't clear anything, and `run` or `clear` removes what it adds.
- */
+/** Ensures the seed campaign has at least count additional briefs for pagination tests. */
 export const more = internalMutation({
-  args: { count: v.optional(v.number()), companyName: v.optional(v.string()) },
+  args: { ...seedAccounts, count: v.optional(v.number()) },
   returns: v.object({ added: v.number() }),
   handler: async (ctx, args) => {
-    const count = Math.min(Math.max(Math.floor(args.count ?? 30), 1), 100);
-    const { company, admin } = await requireSeedCompany(ctx, args.companyName);
-    const campaign = await ctx.db
-      .query("campaigns")
-      .withIndex("by_companyId_and_status", (q) =>
-        q.eq("companyId", company._id).eq("status", "open"),
-      )
-      .first();
-    if (campaign === null) throw apiError("invalid_state", { reason: "run_seed_first" });
-
+    requireDevSeed();
+    const { campaign } = await seedWorkspace(ctx, args);
+    if (campaign?.status !== "open") throw apiError("invalid_state", { reason: "run_seed_first" });
+    const count = args.count ?? 30;
+    if (!Number.isInteger(count) || count < 1 || count > 100)
+      throw apiError("invalid_state", { reason: "invalid_seed_catalog_count" });
+    const catalog = await ctx.db
+      .query("opportunities")
+      .withIndex("by_campaignId_and_status", (q) => q.eq("campaignId", campaign._id))
+      .take(catalogReadLimit);
+    if (catalog.length === catalogReadLimit)
+      throw apiError("invalid_state", { reason: "too_many_opportunities_to_seed" });
+    const titles = new Set(catalog.map((row) => row.title));
+    const deadline = Math.ceil((Date.now() + 21 * dayMs) / HALF_HOUR_MS) * HALF_HOUR_MS;
+    let added = 0;
     for (let index = 0; index < count; index++) {
       const { topic, niches, skills } = MORE_TOPICS[index % MORE_TOPICS.length];
-      const format = MORE_FORMATS[index % MORE_FORMATS.length];
-      const isGated = index % 3 === 0;
-      const maxSlots = 4 + (index % 7) * 2;
-      const minFollowerRange = MORE_FOLLOWER_MINIMUMS[index % MORE_FOLLOWER_MINIMUMS.length];
-      const opportunityId = await ctx.db.insert("opportunities", {
-        ...BOILERPLATE,
-        title: `${topic}: a ${format}`,
-        description: `A ${format} on ${topic.toLowerCase()} for developers who build with it every day.`,
-        isGated,
-        maxSlots,
-        numFilledSlots: index % 5 === 4 ? maxSlots : index % maxSlots,
-        status: "open",
-        fixedFeeCents: (index % 4) * 15_000,
-        cpmRateCents: index % 2 === 0 ? 250 + (index % 5) * 50 : 0,
-        paymentCapCents: index % 2 === 0 ? 150_000 : 0,
-        campaignId: campaign._id,
-        companyId: company._id,
-        createdBy: admin._id,
-        usesAiReviewDefault: false,
-        deadline: halfHourFromNow(3 + ((index * 5) % 50)),
-        ...(minFollowerRange === undefined ? {} : { minFollowerRange }),
-      });
-      await updateOpportunityNiches(ctx, opportunityId, [...niches]);
-      await updateOpportunitySkills(ctx, opportunityId, [...skills]);
-      await updateOpportunityLanguages(ctx, opportunityId, ["english"]);
+      const format = MORE_FORMATS[Math.floor(index / MORE_TOPICS.length) % MORE_FORMATS.length];
+      const number = Math.floor(index / (MORE_TOPICS.length * MORE_FORMATS.length)) + 1;
+      const title = `[Catalog] ${topic}: ${format}${number === 1 ? "" : ` ${number}`}`;
+      if (titles.has(title)) continue;
+      await seedOpportunity(
+        ctx,
+        campaign,
+        {
+          title,
+          description: `A ${format} for developers working on ${topic.toLowerCase()}.`,
+          deadline,
+          isGated: index % 3 === 0,
+          usesAiReviewDefault: false,
+        },
+        {
+          task: `Record a ${format} on ${topic.toLowerCase()}`,
+          niches: [...niches],
+          skills: [...skills],
+        },
+      );
+      added++;
     }
-    return { added: count };
+    return { added };
+  },
+});
+
+/**
+ * Deletes the demo campaign and everything the seed hung off it, so a later run
+ * can rebuild it against a different account. An invite marker ties the
+ * reset to the campaign created by the seed.
+ */
+export const clearDemo = internalMutation({
+  args: {},
+  returns: v.object({ campaigns: v.number(), documents: v.number() }),
+  handler: async (ctx) => {
+    requireDevSeed();
+    const all = await ctx.db.query("campaigns").take(campaignReadLimit);
+    if (all.length === campaignReadLimit)
+      throw apiError("invalid_state", { reason: "too_many_campaigns_to_seed" });
+    const demos = [];
+    for (const campaign of all) {
+      const marker = await ctx.db
+        .query("invites")
+        .withIndex("by_workosId", (q) => q.eq("workosId", `invite_tomoji_seed_${campaign._id}`))
+        .unique();
+      if (marker?.companyId === campaign.companyId) demos.push({ campaign, marker });
+    }
+
+    let documents = 0;
+    const removed = {
+      campaigns: new Set<string>(),
+      opportunities: new Set<string>(),
+      applications: new Set<string>(),
+      assignments: new Set<string>(),
+      submissions: new Set<string>(),
+      disputes: new Set<string>(),
+    };
+    const userIds = new Set<Id<"users">>();
+
+    async function drop<T extends TableNames>(table: T, rows: { _id: Id<T> }[]) {
+      for (const row of rows) {
+        await ctx.db.delete(table, row._id);
+        documents++;
+      }
+    }
+
+    for (const { campaign, marker } of demos) {
+      const opportunities = await ctx.db
+        .query("opportunities")
+        .withIndex("by_campaignId_and_deadline", (q) => q.eq("campaignId", campaign._id))
+        .collect();
+      const assignments = await ctx.db
+        .query("assignments")
+        .withIndex("by_campaignId", (q) => q.eq("campaignId", campaign._id))
+        .collect();
+      const creatorIds = new Set(assignments.map((row) => row.creatorId));
+
+      for (const { _id: opportunityId } of opportunities) {
+        removed.opportunities.add(opportunityId);
+        for (const table of [
+          "opportunityNiches",
+          "opportunitySkills",
+          "opportunityLanguages",
+          "opportunityScores",
+          "deliverables",
+        ] as const) {
+          await drop(
+            table,
+            await ctx.db
+              .query(table)
+              .withIndex("by_opportunityId", (q) => q.eq("opportunityId", opportunityId))
+              .collect(),
+          );
+        }
+        const applications = await ctx.db
+          .query("applications")
+          .withIndex("by_opportunityId_and_creatorId", (q) => q.eq("opportunityId", opportunityId))
+          .collect();
+        for (const row of applications) {
+          removed.applications.add(row._id);
+          creatorIds.add(row.creatorId);
+        }
+        await drop("applications", applications);
+        // Stars are indexed by creator, so each known creator is checked in turn.
+        for (const creatorId of creatorIds) {
+          await drop(
+            "opportunityStars",
+            await ctx.db
+              .query("opportunityStars")
+              .withIndex("by_creatorId_and_opportunityId", (q) =>
+                q.eq("creatorId", creatorId).eq("opportunityId", opportunityId),
+              )
+              .collect(),
+          );
+        }
+      }
+
+      for (const { _id: assignmentId } of assignments) {
+        removed.assignments.add(assignmentId);
+        const submissions = await ctx.db
+          .query("submissions")
+          .withIndex("by_assignmentId_and_deliverableId", (q) => q.eq("assignmentId", assignmentId))
+          .collect();
+        for (const { _id: submissionId } of submissions) {
+          removed.submissions.add(submissionId);
+          await drop(
+            "aiReviewAttempts",
+            await ctx.db
+              .query("aiReviewAttempts")
+              .withIndex("by_submissionId", (q) => q.eq("submissionId", submissionId))
+              .collect(),
+          );
+          const posts = await ctx.db
+            .query("posts")
+            .withIndex("by_submissionId_and_isActive", (q) => q.eq("submissionId", submissionId))
+            .collect();
+          for (const { _id: postId } of posts) {
+            const postDisputes = await ctx.db
+              .query("disputes")
+              .withIndex("by_postId", (q) => q.eq("postId", postId))
+              .collect();
+            for (const row of postDisputes) removed.disputes.add(row._id);
+            await drop("disputes", postDisputes);
+          }
+          await drop("posts", posts);
+        }
+        await drop("submissions", submissions);
+        const disputes = await ctx.db
+          .query("disputes")
+          .withIndex("by_assignmentId", (q) => q.eq("assignmentId", assignmentId))
+          .collect();
+        for (const row of disputes) removed.disputes.add(row._id);
+        await drop("disputes", disputes);
+        const payouts = await ctx.db
+          .query("payouts")
+          .withIndex("by_assignmentId_and_sourceKey", (q) => q.eq("assignmentId", assignmentId))
+          .collect();
+        for (const { _id: payoutId } of payouts) {
+          await drop(
+            "payments",
+            await ctx.db
+              .query("payments")
+              .withIndex("by_payoutId_and_attempt", (q) => q.eq("payoutId", payoutId))
+              .collect(),
+          );
+        }
+        await drop("payouts", payouts);
+      }
+      await drop("assignments", assignments);
+      await drop("opportunities", opportunities);
+
+      await drop("invites", [marker]);
+
+      for (const creatorId of creatorIds) {
+        const creator = await ctx.db.get("creators", creatorId);
+        if (creator !== null) userIds.add(creator.userId);
+      }
+      const members = await ctx.db
+        .query("companyUsers")
+        .withIndex("by_companyId", (q) => q.eq("companyId", campaign.companyId))
+        .collect();
+      for (const member of members) userIds.add(member.userId);
+
+      removed.campaigns.add(campaign._id);
+      await drop("campaigns", [campaign]);
+    }
+
+    // Grants carry no index, so the whole table is matched against the assignments.
+    const media = await ctx.db.query("mediaUploads").collect();
+    await drop(
+      "mediaUploads",
+      media.filter((row) => row.assignmentId && removed.assignments.has(row.assignmentId)),
+    );
+
+    for (const userId of userIds) {
+      const rows = await ctx.db
+        .query("notifications")
+        .withIndex("by_userId", (q) => q.eq("userId", userId))
+        .collect();
+      await drop(
+        "notifications",
+        rows.filter(({ target }) => {
+          switch (target.kind) {
+            case "application":
+              return removed.applications.has(target.applicationId);
+            case "assignment":
+              return removed.assignments.has(target.assignmentId);
+            case "submission":
+              return removed.submissions.has(target.submissionId);
+            case "opportunity":
+              return removed.opportunities.has(target.opportunityId);
+            case "campaign":
+              return removed.campaigns.has(target.campaignId);
+            case "dispute":
+              return removed.disputes.has(target.disputeId);
+          }
+        }),
+      );
+    }
+
+    return { campaigns: demos.length, documents };
   },
 });

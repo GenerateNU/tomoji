@@ -29,9 +29,11 @@ deployments can sync without losing data. There is no cleanup migration yet. See
 
 Schema validation remains enabled throughout; no record deletion is needed.
 
-These steps assume only users and creators are populated and workflow tables are
-empty. Populated legacy workflow tables need a separate conversion plan.
-Preserve a snapshot before migrating data you need to keep.
+The identity-recovery procedures below assume only users and creators are
+populated and workflow tables are empty. Populated legacy workflow tables need
+a separate conversion plan; the earnings-schedule backfill supports existing
+earnings agreements as described in its own section. Preserve a snapshot before
+migrating data you need to keep.
 
 Progress is keyed by the full exported function path, so renaming a dated file
 or its export starts fresh progress and rescans every record.
@@ -50,13 +52,20 @@ Alternatively, use `just bd` to deploy and watch the backend, and run the migrat
 command in a second terminal after deployment succeeds.
 
 `runAll` removes legacy user profile-picture URLs (see the compatibility rollout
-below). It skips completed migrations and resumes interrupted ones.
+below), scores open opportunities, then initializes earnings schedules. It skips
+completed migrations and resumes interrupted ones.
 
 Available migrations:
 
 - [2026_10_07_remove_user_profile_pictures.ts](../convex/migrations/2026_10_07_remove_user_profile_pictures.ts)
   exports `removeUserProfilePictures`. It drops the legacy `profilePicture` URL
   from each user, preserving `profilePictureMediaId` and every other field.
+- [2026_11_14_score_open_opportunities.ts](../convex/migrations/2026_11_14_score_open_opportunities.ts)
+  exports `scoreOpenOpportunities`. It schedules scoring for open opportunities.
+- [2026_11_11_backfill_earnings_schedules.ts](../convex/migrations/2026_11_11_backfill_earnings_schedules.ts)
+  exports `backfillEarningsSchedules`. It creates scheduling metadata for existing
+  earnings agreements in batches of 25, preserving existing schedules and all
+  earning obligations. See [Backfill earnings schedules](#backfill-earnings-schedules).
 
 These preserve document IDs and relationships. To select one migration, use `run`
 with its full function path:
@@ -105,6 +114,38 @@ no legacy `niches` array.
 
 Repeat deployment, migration, and verification for each teammate's personal
 development database.
+
+## Backfill earnings schedules
+
+After deploying the scheduling schema to the selected personal development
+deployment, run only this backfill:
+
+```bash
+bunx convex run --deployment dev migrations/runner:run \
+  '{"fn":"migrations/2026_11_11_backfill_earnings_schedules:backfillEarningsSchedules"}'
+bunx convex run --deployment dev --component migrations lib:getStatus \
+  '{"names":["migrations/2026_11_11_backfill_earnings_schedules:backfillEarningsSchedules"]}'
+```
+
+Wait for `isDone: true` and `state: "success"`. An interrupted run resumes through
+the same command; `reset: true` safely rescans agreements without overwriting
+existing schedule progress, retry metadata, or errors. Previewing with `dryRun:
+true` rolls back the batch, including new schedule rows.
+
+Each existing `deliverableEarnings` row gets one `earningsSchedules` row. New
+schedules use the original stored verification window and any cancellation or
+removal cutoff. Invalid timing or missing assignment context is recorded as
+`needsAttention`, allowing other agreements to proceed. No agreement or clock is
+inferred for legacy posts lacking verified timing.
+
+Verify schedule coverage and inspect `needsAttention` reasons. The backfill itself
+preserves agreements, calculation records, and payouts. Existing calculation
+records remain authoritative: an already-settled agreement can be initialized at
+its first due date for the runner to reconcile idempotently. Once the earnings
+cron is deployed, newly backfilled due schedules become eligible immediately and
+can create obligations for review. Neither the backfill nor the runner sends
+payments. See [scheduled execution](EARNINGS.md#scheduled-execution-and-recovery)
+for retry behavior and recovery.
 
 ## Troubleshooting deployment
 

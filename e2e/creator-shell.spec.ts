@@ -120,20 +120,34 @@ test("account query failure preserves fallback navigation and recovers", async (
   const errors: Error[] = [];
   page.on("pageerror", (error) => errors.push(error));
   await openShell(page, "?failedQuery=users%3Ame");
-  await expect(page.getByRole("navigation", { name: "Fallback navigation" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "ohani home", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Sign out", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Account menu", exact: true })).toHaveCount(0);
   await page.evaluate(() => window.shellFixture.setSession({ failedQuery: "" }));
   await expect(page.getByRole("button", { name: "Account menu", exact: true })).toBeVisible();
   expect(errors).toEqual([]);
 });
 
-test("company accounts retain the fallback shell", async ({ page }) => {
+test("company accounts use their sidebar without loading creator profile data", async ({
+  page,
+}) => {
   await openShell(page, "?role=company");
-  await expect(page.getByRole("navigation", { name: "Fallback navigation" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Account menu", exact: true })).toHaveCount(0);
-  expect(await page.evaluate(() => window.shellFixture.queries)).toEqual([
-    { name: "users:me", args: {} },
-  ]);
+  await expect(page.getByRole("navigation", { name: "Main", exact: true })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Campaigns", exact: true })).toHaveAttribute(
+    "href",
+    "/campaigns",
+  );
+  await page.getByRole("button", { name: "Account menu", exact: true }).click();
+  await expect(
+    page.getByRole("menuitem", { name: "Workspace members", exact: true }),
+  ).toHaveAttribute("href", "/team");
+  await expect(page.getByRole("menuitem", { name: "Profile", exact: true })).toHaveCount(0);
+  expect(
+    await page.evaluate(() =>
+      window.shellFixture.queries.filter(({ name }) => name === "creators:me"),
+    ),
+  ).toEqual([]);
+  expect(await page.evaluate(() => window.shellFixture.calls)).toEqual([]);
 });
 
 test("mobile account menu and profile dialog fit the viewport", async ({ page }, testInfo) => {
@@ -144,6 +158,8 @@ test("mobile account menu and profile dialog fit the viewport", async ({ page },
       niches: ["backend-development", "generative-ai", "design", "frontend-development"],
     }),
   );
+  const navigationButton = page.getByRole("button", { name: "Open navigation", exact: true });
+  await navigationButton.click();
   await page.getByRole("button", { name: "Account menu", exact: true }).click();
   await page.getByRole("menuitem", { name: "Profile", exact: true }).click();
   await expect(page.getByRole("dialog", { name: "Your profile", exact: true })).toBeVisible();
@@ -187,6 +203,9 @@ test("mobile account menu and profile dialog fit the viewport", async ({ page },
     fullPage: true,
     animations: "disabled",
   });
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await expect(navigationButton).toBeFocused();
 });
 
 test("a profile query error stays inside the dialog and can be retried", async ({ page }) => {

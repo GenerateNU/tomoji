@@ -92,6 +92,23 @@ export function useQuery(reference: FunctionReference<"query">, args: unknown) {
   return queryResult(reference, args);
 }
 
+// The shell's notification panel shares this stable empty page across renders.
+const emptyNotifications: never[] = [];
+
+export function usePaginatedQuery(reference: FunctionReference<"query">, args: unknown) {
+  useRevision();
+  const name = getFunctionName(reference);
+  if (name !== "notifications:list") throw new Error(`Unexpected paginated query: ${name}`);
+  if (args !== "skip" && !queries.some((query) => query.name === name)) {
+    queries.push({ name, args: args as Record<string, unknown> });
+  }
+  return {
+    results: emptyNotifications,
+    status: args === "skip" ? ("LoadingFirstPage" as const) : ("Exhausted" as const),
+    loadMore() {},
+  };
+}
+
 export function useQueries(
   requests: Record<string, { query: FunctionReference<"query">; args: unknown }>,
 ) {
@@ -114,6 +131,7 @@ function queryResult(reference: FunctionReference<"query">, args: unknown) {
     queries.push({ name, args: args as Record<string, unknown> });
   }
   if (session.failedQuery === name) throw new Error("Simulated query failure");
+  if (name === "notifications:unreadCount") return 0;
   if (name === "users:me") {
     if (!session.isAuthenticated) throw new Error("Signed-out visitors must not query users.me");
     if (session.userLoading) return undefined;

@@ -4,7 +4,6 @@ import Link from "next/link";
 import { ConvexProviderWithAuth } from "convex/react";
 import { getFunctionName, type FunctionReference } from "convex/server";
 import { ProfileNavLink } from "@/features/profile/components/profile-nav-link";
-import { TeamLink } from "@/features/team/components/team-link";
 
 const subscribers = new Set<() => void>();
 const querySubscribers = new Set<() => void>();
@@ -82,7 +81,6 @@ function Navigation() {
         <Link href="/">Home</Link>
         <ProfileNavLink />
         <Link href="/settings">Settings</Link>
-        <TeamLink />
       </nav>
       <button onClick={() => setRenders((value) => value + 1)}>Refresh shell {renders}</button>
     </>

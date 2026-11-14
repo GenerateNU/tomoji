@@ -649,6 +649,9 @@ export async function discoverOpportunities(
     numItems: Math.max(paginationOpts.numItems - matches.length, 1),
     cursor: start.section === "rest" ? start.cursor : null,
     endCursor: end?.section === "rest" ? end.cursor : undefined,
+    // Each brief here also looks up the creator's score, which the stream
+    // doesn't count, so it may scan half as many briefs.
+    maximumRowsRead: Math.ceil((paginationOpts.maximumRowsRead ?? 0) / 2),
   });
   return inSection("rest", { ...restPage, page: [...matches, ...restPage.page] });
 }

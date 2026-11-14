@@ -928,6 +928,36 @@ describe("creator assignment workspace", () => {
     });
   });
 
+  test("orders filter options by assignment creation across statuses", async () => {
+    const t = convexTest(schema, modules);
+    const asCreator = await seedUser(t, { subject: "filter-creator" });
+    const creatorId = await seedCreatorId(t, "filter-creator");
+    const older = await seedOpportunity(
+      t,
+      { subject: "older-filter-owner" },
+      { title: "An older assignment" },
+    );
+    const newer = await seedOpportunity(
+      t,
+      { subject: "newer-filter-owner" },
+      { title: "A newer assignment" },
+    );
+    await seedAssignment(t, { opportunityId: older.opportunityId, creatorId, status: "active" });
+    vi.setSystemTime(Date.now() + 60_000);
+    await seedAssignment(t, {
+      opportunityId: newer.opportunityId,
+      creatorId,
+      status: "termsPending",
+    });
+
+    const filters = await asCreator.query(api.assignments.listMineFilterOptions, {});
+
+    expect(filters.opportunities.map(({ id }) => id)).toEqual([
+      newer.opportunityId,
+      older.opportunityId,
+    ]);
+  });
+
   test("returns the same unavailable result for malformed IDs and another creator's assignment", async () => {
     const t = convexTest(schema, modules);
     const owner = await seedOpportunity(t, {

@@ -4,6 +4,9 @@ import { api } from "@convex/_generated/api";
 import type { FunctionReturnType } from "convex/server";
 import { useQuery } from "convex/react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
+import { AssignmentsView } from "./assignments-view";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { RequireAccount } from "@/features/users/components/require-account";
@@ -15,7 +18,8 @@ type AssignmentDetails = NonNullable<FunctionReturnType<typeof api.assignments.g
 /** Opens the assignment workspace after the creator's account is resolved. */
 export function AssignmentDetailView({ assignmentId }: { assignmentId: string }) {
   return (
-    <section className="mx-auto w-full max-w-5xl px-4 py-8 sm:px-6 sm:py-12">
+    <>
+      <AssignmentsView />
       <RequireAccount
         role="creator"
         next={`/assignments/${assignmentId}`}
@@ -23,49 +27,52 @@ export function AssignmentDetailView({ assignmentId }: { assignmentId: string })
       >
         <AssignmentDetail assignmentId={assignmentId} />
       </RequireAccount>
-    </section>
+    </>
   );
 }
 
-/** Displays terms, the brief, and delivery progress for an owned assignment. */
+/** Displays the assignment in a focused panel above the assignments table. */
 function AssignmentDetail({ assignmentId }: { assignmentId: string }) {
+  const router = useRouter();
   const details = useQuery(api.assignments.getMineDetails, { assignmentId });
-
   return (
-    <>
-      <Link
-        href="/assignments"
-        className="mb-6 inline-flex min-h-11 items-center text-sm hover:underline"
-      >
-        ← All assignments
-      </Link>
-      {details === undefined && (
-        <Skeleton aria-label="Loading assignment" className="h-48 w-full" />
-      )}
-      {details === null && <h1 className="text-2xl font-semibold">Assignment unavailable</h1>}
-      {details && <AssignmentWorkspace details={details} />}
-    </>
+    <Dialog
+      open
+      onOpenChange={(open) => {
+        if (!open) router.replace("/assignments");
+      }}
+    >
+      <DialogContent className="max-w-[792px] content-start gap-0 overflow-y-auto rounded-2xl px-5 py-8 shadow-2xl sm:px-[76px] sm:py-[72px]">
+        <DialogTitle className="text-[26px] leading-tight">
+          {details?.title ?? (details === null ? "Assignment unavailable" : "Assignment")}
+        </DialogTitle>
+        <DialogDescription className="sr-only">Assignment brief and submissions</DialogDescription>
+        {details === undefined && (
+          <Skeleton aria-label="Loading assignment" className="mt-6 h-48 w-full" />
+        )}
+        {details === null && (
+          <Link href="/assignments" className="mt-4 text-sm underline">
+            All assignments
+          </Link>
+        )}
+        {details && <AssignmentWorkspace details={details} />}
+      </DialogContent>
+    </Dialog>
   );
 }
 
 /** Shows the creator's current terms and the latest state of each deliverable. */
 function AssignmentWorkspace({ details }: { details: AssignmentDetails }) {
-  const { assignment, brief, companyName, deliverables, title } = details;
+  const { assignment, brief, companyName, deliverables } = details;
   return (
     <>
-      <header className="mb-8">
-        {companyName && <p className="mb-1 text-sm text-muted-foreground">{companyName}</p>}
-        <h1 className="mb-3 text-2xl font-semibold break-words sm:text-3xl">
-          {title ?? "Assignment"}
-        </h1>
-        <div className="flex flex-wrap items-center gap-3 text-sm">
-          <Badge>{assignmentStatusLabel[assignment.status]}</Badge>
-          <span>{formatCompensation(assignment)}</span>
-        </div>
-      </header>
-      <div className="grid items-start gap-6 md:grid-cols-[minmax(0,1.15fr)_minmax(0,1fr)]">
-        <section className="rounded-lg border p-4 sm:p-6">
-          <h2 className="mb-4 text-lg font-semibold">Deliverables</h2>
+      <div className="mt-3 flex flex-wrap items-center gap-3 text-body-sm text-gray-700">
+        {companyName && <span>{companyName}</span>}
+        <Badge>{assignmentStatusLabel[assignment.status]}</Badge>
+      </div>
+      <div className="mt-8 space-y-7">
+        <section className="border-t pt-7">
+          <h2 className="mb-4 text-body-lg font-medium">Your submissions</h2>
           {deliverables.length === 0 && (
             <p className="text-sm text-muted-foreground">No deliverables yet.</p>
           )}
@@ -83,17 +90,15 @@ function AssignmentWorkspace({ details }: { details: AssignmentDetails }) {
             ))}
           </ul>
         </section>
-        <section className="rounded-lg border p-4 sm:p-6">
-          <h2 className="mb-4 text-lg font-semibold">Campaign brief</h2>
+        <section className="border-t pt-7">
+          <h2 className="mb-4 text-body-sm font-medium text-gray-500">Assignment</h2>
           {brief ? (
             <>
               <p className="mb-4 text-sm break-words whitespace-pre-wrap">{brief.description}</p>
               <dl className="space-y-3 text-sm">
                 {[
                   ["Content requirements", brief.contentRequirements],
-                  ["Prohibited claims", brief.prohibitedClaims],
-                  ["Disclosure requirements", brief.disclosureRequirements],
-                  ["Usage rights", brief.usageRights],
+                  ["Review policy", brief.reviewPolicy],
                 ].map(
                   ([label, value]) =>
                     value && (
@@ -110,6 +115,10 @@ function AssignmentWorkspace({ details }: { details: AssignmentDetails }) {
           ) : (
             <p className="text-sm text-muted-foreground">Brief unavailable.</p>
           )}
+        </section>
+        <section>
+          <h2 className="mb-2 text-body-sm font-medium text-gray-500">Payment</h2>
+          <p className="text-body-sm">{formatCompensation(assignment)}</p>
         </section>
       </div>
     </>

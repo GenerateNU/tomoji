@@ -31,6 +31,9 @@ import {
 } from "./models/assignments";
 import {
   creatorAssignmentDetails,
+  creatorAssignmentFilterOptions,
+  creatorAssignmentSummaryFilters,
+  listCreatorAssignmentFilterOptions,
   creatorAssignmentSummary,
   getCreatorAssignmentDetails,
   listCreatorAssignmentSummaries,
@@ -116,11 +119,21 @@ export const listMine = creatorQuery({
 
 /** Lists the creator's assignments with display names for the assignments page. */
 export const listMineSummaries = creatorQuery({
-  args: creatorAssignmentListFilters.fields,
+  args: creatorAssignmentSummaryFilters.fields,
   returns: paginationResultValidator(creatorAssignmentSummary),
   handler: async (ctx, args) => {
     const creatorId = await requireCallerCreatorId(ctx, ctx.user);
     return await listCreatorAssignmentSummaries(ctx, creatorId, args);
+  },
+});
+
+/** Lists companies and opportunities the creator can filter their assignments by. */
+export const listMineFilterOptions = creatorQuery({
+  args: {},
+  returns: creatorAssignmentFilterOptions,
+  handler: async (ctx) => {
+    const creatorId = await requireCallerCreatorId(ctx, ctx.user);
+    return await listCreatorAssignmentFilterOptions(ctx, creatorId);
   },
 });
 

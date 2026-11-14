@@ -462,6 +462,7 @@ function toCreatorView(dispute: Doc<"disputes"> & { companyName: string }): Disp
     reason: dispute.reason,
     customReason: dispute.customReason,
     description: dispute.description,
+    evidenceMediaIds: dispute.evidenceMediaIds,
   };
   if (dispute.status === "open") return { ...opened, status: "open" };
   const replaced = dispute.overriddenResolution;

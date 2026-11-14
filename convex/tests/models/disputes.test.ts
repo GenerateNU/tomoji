@@ -662,6 +662,31 @@ describe("requireDispute", () => {
     }
   });
 
+  test("gives creators the dispute's evidence", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await seedAssignmentFixture(t);
+    const evidence = await t.run((ctx) =>
+      ctx.db.insert("mediaUploads", {
+        ownerUserId: fixture.creatorUserId,
+        assignmentId: fixture.assignmentId,
+        kind: "dispute-evidence" as const,
+        status: "complete" as const,
+        contentType: "application/pdf",
+        stagingKey: "staging/dispute-evidence/view",
+        permanentKey: "media/dispute-evidence/view",
+        sizeBytes: 1024,
+        grantExpiresAt: Date.now() + 60_000,
+      }),
+    );
+    const disputeId = await seedDispute(t, fixture, { evidenceMediaIds: [evidence] });
+
+    const view = await t.run(
+      async (ctx) => await requireDispute(ctx, creatorOf(fixture), disputeId),
+    );
+
+    expect(view.evidenceMediaIds).toEqual([evidence]);
+  });
+
   test("gives creators who closed it and how, but no user IDs", async () => {
     const t = convexTest(schema, modules);
     const fixture = await seedAssignmentFixture(t);

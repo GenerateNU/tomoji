@@ -101,13 +101,19 @@ test("older profiles with missing collections can be viewed and edited without c
 
 test("account menu links to Settings and missing routes are not exposed as working links", async ({
   page,
-}) => {
+}, testInfo) => {
   await openShell(page);
   await page.getByRole("button", { name: "Account menu", exact: true }).click();
   await expect(page.getByRole("menuitem", { name: "Settings", exact: true })).toHaveAttribute(
     "href",
     "/settings",
   );
+  await expect(page.getByRole("menuitem", { name: "Notifications", exact: true })).toHaveCount(0);
+  await page.screenshot({
+    path: testInfo.outputPath("account-menu-desktop.png"),
+    fullPage: true,
+    animations: "disabled",
+  });
   await page.keyboard.press("Escape");
   await expect(page.getByRole("link", { name: "Assignments", exact: true })).toHaveAttribute(
     "href",
@@ -142,6 +148,7 @@ test("company accounts use their sidebar without loading creator profile data", 
     page.getByRole("menuitem", { name: "Workspace members", exact: true }),
   ).toHaveAttribute("href", "/team");
   await expect(page.getByRole("menuitem", { name: "Profile", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("menuitem", { name: "Notifications", exact: true })).toHaveCount(0);
   expect(
     await page.evaluate(() =>
       window.shellFixture.queries.filter(({ name }) => name === "creators:me"),
@@ -161,6 +168,12 @@ test("mobile account menu and profile dialog fit the viewport", async ({ page },
   const navigationButton = page.getByRole("button", { name: "Open navigation", exact: true });
   await navigationButton.click();
   await page.getByRole("button", { name: "Account menu", exact: true }).click();
+  await expect(page.getByRole("menuitem", { name: "Notifications", exact: true })).toHaveCount(0);
+  await page.screenshot({
+    path: testInfo.outputPath("account-menu-mobile.png"),
+    fullPage: true,
+    animations: "disabled",
+  });
   await page.getByRole("menuitem", { name: "Profile", exact: true }).click();
   await expect(page.getByRole("dialog", { name: "Your profile", exact: true })).toBeVisible();
   await expect(

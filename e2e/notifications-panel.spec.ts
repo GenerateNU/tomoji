@@ -35,7 +35,7 @@ async function openBell(page: Page, scenario = "ready") {
         body: '<!doctype html><html lang="en"><head><meta name="viewport" content="width=device-width, initial-scale=1"><link rel="stylesheet" href="/app.css"></head><body><main id="root"></main><script type="module" src="/app.js"></script></body></html>',
       });
   });
-  await page.goto(`http://notifications.test/?view=panel&scenario=${scenario}`);
+  await page.goto(`http://notifications.test/?scenario=${scenario}`);
 }
 
 test("the bell shows the unread count and opens the panel newest first", async ({ page }) => {

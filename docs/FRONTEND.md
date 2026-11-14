@@ -35,6 +35,8 @@ Nav items come from `components/app-sidebar.tsx` by account type (creator, compa
 with an `href` is a link and an item without one is shown disabled as "coming soon", so give a nav item
 its `href` when its page ships. Below `md` the sidebar becomes a top bar with a navigation drawer; the
 sidebar sits in its own error boundary so a failed account read doesn't take the page down with it.
+Notifications open in the bell popover on the desktop home page or mobile top bar.
+The standalone `/notifications` page and its account-menu entry have been removed.
 
 ### Where should new files go?
 

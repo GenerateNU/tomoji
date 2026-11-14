@@ -11,7 +11,6 @@ import {
   RiGroupLine,
   RiLogoutBoxRLine,
   RiMenuLine,
-  RiNotification3Line,
   RiSettings3Line,
   RiUser3Line,
 } from "@remixicon/react";
@@ -57,13 +56,6 @@ function accountName({ firstName, lastName }: Pick<SyncedMe, "firstName" | "last
 
 function accountItems(me: SyncedMe): AccountMenuEntry[] {
   return [
-    {
-      kind: "link",
-      id: "notifications",
-      label: "Notifications",
-      icon: RiNotification3Line,
-      href: "/notifications",
-    },
     ...(me.role === "company"
       ? [
           {
@@ -285,7 +277,7 @@ function ShellChrome() {
 /**
  * The notifications bell at the page's top right, level with the page title, as
  * in the design. Only on the home page, and desktop only: below md it lives in
- * the top bar beside the menu. Other pages reach notifications from the account menu.
+ * the top bar beside the menu.
  */
 function PageBell() {
   const me = useShellAccount();

@@ -1,7 +1,7 @@
 import { RequireAccount } from "@/features/users/components/require-account";
-import { DraftForm } from "./draft-form";
+import { CreateCampaignFlow } from "./create-campaign-flow";
 
-/** Creating a campaign draft. Publishing is a separate step. */
+/** The admin-only campaign creation route's content. */
 export function CampaignDraftForm() {
   return (
     <RequireAccount
@@ -12,7 +12,7 @@ export function CampaignDraftForm() {
       loading="Loading campaign form…"
       unsynced="We’re finishing setting up your account."
     >
-      <DraftForm />
+      <CreateCampaignFlow />
     </RequireAccount>
   );
 }

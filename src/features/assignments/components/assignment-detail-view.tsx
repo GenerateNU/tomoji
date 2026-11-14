@@ -5,6 +5,7 @@ import type { FunctionReturnType } from "convex/server";
 import { useQuery } from "convex/react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { useState } from "react";
 import {
   Dialog,
   DialogClose,
@@ -54,6 +55,15 @@ function AssignmentDetail({ assignmentId, status, task, deliverable }: Assignmen
   const back = `/assignments?status=${assignmentQueue(status)}`;
   const router = useRouter();
   const details = useQuery(api.assignments.getMineDetails, { assignmentId });
+  const [draftTarget, setDraftTarget] = useState(task === "draft" ? deliverable : undefined);
+  const deliverables = details?.deliverables;
+  const onlyDeliverable = deliverables?.length === 1 ? deliverables[0] : undefined;
+  const footerDraft =
+    details?.assignment.status === "active" &&
+    onlyDeliverable &&
+    (!onlyDeliverable.latest || onlyDeliverable.latest.status === "changesRequested")
+      ? onlyDeliverable
+      : undefined;
   return (
     <Dialog
       open
@@ -91,11 +101,21 @@ function AssignmentDetail({ assignmentId, status, task, deliverable }: Assignmen
             </Link>
           )}
           {details && (
-            <AssignmentWorkspace details={details} task={task} deliverable={deliverable} />
+            <AssignmentWorkspace
+              details={details}
+              draftTarget={draftTarget}
+              setDraftTarget={setDraftTarget}
+              footerDraft={footerDraft?._id}
+            />
           )}
         </div>
         <div className="flex justify-end gap-2 bg-gray-0 px-5 py-6 sm:px-8">
           <DialogClose render={<Button variant="secondary-subtle" />}>Close</DialogClose>
+          {footerDraft && (
+            <Button type="button" onClick={() => setDraftTarget(footerDraft._id)}>
+              {footerDraft.latest ? "Resubmit" : "Submit assignment"}
+            </Button>
+          )}
         </div>
       </DialogContent>
     </Dialog>
@@ -105,9 +125,15 @@ function AssignmentDetail({ assignmentId, status, task, deliverable }: Assignmen
 /** Shows the creator's current terms and the latest state of each deliverable. */
 function AssignmentWorkspace({
   details,
-  task,
-  deliverable,
-}: { details: AssignmentDetails } & Pick<AssignmentSelection, "task" | "deliverable">) {
+  draftTarget,
+  setDraftTarget,
+  footerDraft,
+}: {
+  details: AssignmentDetails;
+  draftTarget?: string;
+  setDraftTarget: (target: string | undefined) => void;
+  footerDraft?: string;
+}) {
   const { assignment, brief, deliverables } = details;
   const assignedOn = new Intl.DateTimeFormat("en-US", {
     month: "long",
@@ -163,7 +189,9 @@ function AssignmentWorkspace({
                   deliverableId={_id}
                   assignmentTitle={title}
                   usesAiReview={assignment.usesAiReview}
-                  startDraft={task === "draft" && deliverable === _id}
+                  composing={draftTarget === _id}
+                  onComposingChange={(open) => setDraftTarget(open ? _id : undefined)}
+                  showDraftTrigger={footerDraft !== _id}
                   submissionId={latest?._id}
                   active={assignment.status === "active"}
                 />

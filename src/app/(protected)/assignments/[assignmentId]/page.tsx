@@ -9,9 +9,16 @@ export default async function AssignmentPage({
   searchParams,
 }: {
   params: Promise<{ assignmentId: string }>;
-  searchParams: Promise<{ status?: string | string[]; task?: string | string[]; deliverable?: string | string[] }>;
+  searchParams: Promise<{
+    status?: string | string[];
+    task?: string | string[];
+    deliverable?: string | string[];
+  }>;
 }) {
-  const [{ assignmentId }, { status, task, deliverable }] = await Promise.all([params, searchParams]);
+  const [{ assignmentId }, { status, task, deliverable }] = await Promise.all([
+    params,
+    searchParams,
+  ]);
   return (
     <AssignmentDetailView
       assignmentId={assignmentId}

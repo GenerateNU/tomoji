@@ -2,14 +2,22 @@
 
 import { api } from "@convex/_generated/api";
 import type { Id } from "@convex/_generated/dataModel";
-import { useAction, usePaginatedQuery, useQuery } from "convex/react";
+import { usePaginatedQuery, useQuery } from "convex/react";
 import type { FunctionReturnType } from "convex/server";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogTrigger } from "@/components/ui/dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
 import { aiReviewStatusLabel, submissionStatusLabel } from "./assignment-status";
 import { DraftComposer } from "./draft-composer";
+import { SubmissionPreview } from "./submission-preview";
+import { SubmittedVideo } from "./submitted-video";
 
 type Submission = FunctionReturnType<typeof api.submissions.get>;
 
@@ -18,7 +26,9 @@ type Props = {
   deliverableId: Id<"deliverables">;
   assignmentTitle: string;
   usesAiReview: boolean;
-  startDraft: boolean;
+  composing: boolean;
+  onComposingChange: (open: boolean) => void;
+  showDraftTrigger: boolean;
   submissionId?: Id<"submissions">;
   active: boolean;
 };
@@ -29,62 +39,137 @@ export function DeliverableSubmissions({
   deliverableId,
   assignmentTitle,
   usesAiReview,
-  startDraft,
+  composing,
+  onComposingChange,
+  showDraftTrigger,
   submissionId,
   active,
 }: Props) {
   const latest = useQuery(api.submissions.get, submissionId ? { submissionId } : "skip");
-  const [composing, setComposing] = useState(startDraft);
+  const [commentsOpen, setCommentsOpen] = useState(false);
+  const [revising, setRevising] = useState<Id<"submissions">>();
+  const [reviewId, setReviewId] = useState<Id<"submissions">>();
   const [draftInFlight, setDraftInFlight] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
-  const [submitted, setSubmitted] = useState<{
-    id: Id<"submissions">;
-    replaces: Id<"submissions"> | undefined;
-  }>();
-  const reviewId = usesAiReview && composing ? submitted?.id : undefined;
+  const [submittedFrom, setSubmittedFrom] = useState<Id<"submissions"> | null>();
+  const rejectedDraft = useQuery(
+    api.submissions.get,
+    revising ? { submissionId: revising } : "skip",
+  );
+  const previous = rejectedDraft ?? (latest?.status === "changesRequested" ? latest : undefined);
   const busy = submissionId !== undefined && latest === undefined;
   const canSubmit =
     active &&
     !busy &&
-    (!submitted || submitted.replaces !== submissionId) &&
+    submittedFrom !== (submissionId ?? null) &&
     (!latest || latest.status === "changesRequested");
+
+  function closeComposer() {
+    setReviewId(undefined);
+    setRevising(undefined);
+    onComposingChange(false);
+  }
 
   return (
     <div className="mt-3 space-y-3">
       {busy && <Skeleton aria-label="Loading review" className="h-10 w-full" />}
-      {latest && <SubmissionFeedback submission={latest} />}
-      {(canSubmit || draftInFlight || reviewId) && (
+      {latest?.status === "changesRequested" ? (
+        <Dialog open={commentsOpen} onOpenChange={setCommentsOpen}>
+          <DialogTrigger render={<Button type="button" variant="secondary-subtle" />}>
+            View comments
+          </DialogTrigger>
+          <DialogContent
+            className="min-h-[min(79.4dvh,780px)] max-w-[1186px] content-center overflow-y-auto bg-gray-50 px-5 py-14 shadow-2xl"
+            overlayClassName="bg-gray-950/20 backdrop-blur-[2px]"
+          >
+            <div className="mx-auto w-full max-w-[446px] space-y-5">
+              <SubmissionPreview caption={latest.caption}>
+                {latest.mediaId && <SubmittedVideo mediaId={latest.mediaId} eager />}
+              </SubmissionPreview>
+              <div className="space-y-3 rounded-lg bg-gray-0 p-5">
+                <DialogTitle className="sr-only">Submission comments</DialogTitle>
+                <DialogDescription className="text-gray-950">
+                  Your submission has been rejected. Review the reasons below and resubmit after
+                  adjusting.
+                </DialogDescription>
+                {latest.reviewNote && (
+                  <p className="text-body-sm break-words whitespace-pre-wrap text-gray-700">
+                    {latest.reviewNote}
+                  </p>
+                )}
+              </div>
+              {canSubmit && (
+                <Button
+                  type="button"
+                  size="sm"
+                  className="w-full"
+                  onClick={() => {
+                    setCommentsOpen(false);
+                    onComposingChange(true);
+                  }}
+                >
+                  Resubmit
+                </Button>
+              )}
+              <Button
+                type="button"
+                size="sm"
+                variant="secondary-ghost"
+                className="w-full"
+                onClick={() => setCommentsOpen(false)}
+              >
+                Not now
+              </Button>
+            </div>
+          </DialogContent>
+        </Dialog>
+      ) : (
+        latest && <SubmissionFeedback submission={latest} />
+      )}
+      {(canSubmit || draftInFlight || reviewId || revising) && (
         <Dialog
           open={composing}
           onOpenChange={(next) => {
             if (draftInFlight) return;
-            if (next) setSubmitted(undefined);
-            setComposing(next);
+            if (!next) closeComposer();
+            else if (canSubmit) onComposingChange(true);
           }}
           disablePointerDismissal
         >
-          <DialogTrigger render={<Button type="button" size="sm" />}>
-            {latest ? "Revise draft" : "Add draft"}
-          </DialogTrigger>
+          {showDraftTrigger && canSubmit && (
+            <DialogTrigger render={<Button type="button" size="sm" />}>
+              {latest ? "Resubmit" : "Submit assignment"}
+            </DialogTrigger>
+          )}
           <DialogContent
             className="max-w-[1186px] gap-0 overflow-y-auto rounded-lg shadow-2xl"
             overlayClassName="bg-gray-950/20 backdrop-blur-[2px]"
             showCloseButton={false}
           >
-            <DraftComposer
-              assignmentId={assignmentId}
-              deliverableId={deliverableId}
-              assignmentTitle={assignmentTitle}
-              usesAiReview={usesAiReview}
-              previous={latest?.status === "changesRequested" ? latest : undefined}
-              reviewId={reviewId}
-              onCancel={() => setComposing(false)}
-              onBusyChange={setDraftInFlight}
-              onSubmitted={(id) => {
-                setSubmitted({ id, replaces: submissionId });
-                if (!usesAiReview) setComposing(false);
-              }}
-            />
+            {revising && !rejectedDraft ? (
+              <Skeleton aria-label="Loading draft" className="m-8 h-24" />
+            ) : (
+              <DraftComposer
+                key={revising ?? "draft"}
+                assignmentId={assignmentId}
+                deliverableId={deliverableId}
+                assignmentTitle={assignmentTitle}
+                usesAiReview={usesAiReview}
+                previous={previous}
+                reviewId={reviewId}
+                onCancel={closeComposer}
+                onRevise={(id) => {
+                  setReviewId(undefined);
+                  setRevising(id);
+                }}
+                onBusyChange={setDraftInFlight}
+                onSubmitted={(id) => {
+                  setSubmittedFrom(submissionId ?? null);
+                  if (usesAiReview) setReviewId(id);
+                  else closeComposer();
+                }}
+              />
+            )}
           </DialogContent>
         </Dialog>
       )}
@@ -130,54 +215,6 @@ function SubmissionFeedback({ submission }: { submission: Submission }) {
       {caption && <p className="break-words whitespace-pre-wrap">{caption}</p>}
       {mediaId && <SubmittedVideo mediaId={mediaId} />}
     </div>
-  );
-}
-
-/** Requests a fresh private video URL on intent and lets the creator retry playback. */
-function SubmittedVideo({ mediaId }: { mediaId: Id<"mediaUploads"> }) {
-  const getVideoUrl = useAction(api.media.getVideoUrl);
-  const [url, setUrl] = useState<string>();
-  const [state, setState] = useState<"loading" | "error">();
-  async function loadVideo() {
-    setState("loading");
-    try {
-      setUrl((await getVideoUrl({ mediaId })).url);
-      setState(undefined);
-    } catch {
-      setState("error");
-    }
-  }
-  if (url)
-    return (
-      <video
-        aria-label="Submitted video"
-        src={url}
-        controls
-        playsInline
-        className="max-h-64 w-full rounded bg-gray-950"
-        onError={() => {
-          setUrl(undefined);
-          setState("error");
-        }}
-      />
-    );
-  return (
-    <>
-      <Button
-        type="button"
-        size="sm"
-        variant="secondary"
-        disabled={state === "loading"}
-        onClick={loadVideo}
-      >
-        {state === "loading"
-          ? "Loading video…"
-          : state === "error"
-            ? "Retry video"
-            : "View submitted video"}
-      </Button>
-      {state === "error" && <p role="alert">Couldn’t load this video. Try again.</p>}
-    </>
   );
 }
 

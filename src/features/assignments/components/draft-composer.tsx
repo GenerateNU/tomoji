@@ -5,7 +5,8 @@ import {
   RiCheckLine,
   RiCloseLine,
   RiTimeLine,
-  RiUploadCloud2Line,
+  RiExternalLinkLine,
+  RiPlayMiniLine,
 } from "@remixicon/react";
 import { api } from "@convex/_generated/api";
 import type { Id } from "@convex/_generated/dataModel";
@@ -16,10 +17,10 @@ import { Button } from "@/components/ui/button";
 import { DialogClose, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { Progress, ProgressLabel } from "@/components/ui/progress";
 import { Textarea } from "@/components/ui/textarea";
-import { useMe } from "@/features/users/hooks/use-me";
 import { errorMessage } from "@/lib/errors";
 import { createMediaUpload, type MediaUploadPhase } from "@/lib/media-upload";
 import { aiReviewStatusLabel } from "./assignment-status";
+import { SubmissionPreview } from "./submission-preview";
 
 const VIDEO_TYPES = ["video/mp4", "video/quicktime", "video/webm"];
 const MAX_VIDEO_BYTES = 250 * 1024 * 1024;
@@ -39,6 +40,7 @@ type DraftComposerProps = {
     reviewNote?: string;
   };
   onCancel: () => void;
+  onRevise: (id: Id<"submissions">) => void;
   onSubmitted: (submissionId: Id<"submissions">) => void;
   onBusyChange: (busy: boolean) => void;
 };
@@ -52,11 +54,10 @@ export function DraftComposer({
   previous,
   reviewId,
   onCancel,
+  onRevise,
   onSubmitted,
   onBusyChange,
 }: DraftComposerProps) {
-  const me = useMe();
-  const creator = me?.synced ? [me.firstName, me.lastName].filter(Boolean).join(" ") : "You";
   const fileInput = useRef<HTMLInputElement>(null);
   const requestUpload = useAction(api.media.requestUpload);
   const completeUpload = useAction(api.media.completeUpload);
@@ -157,6 +158,12 @@ export function DraftComposer({
     submitting: "Submitting…",
   };
 
+  const preview = (
+    <SubmissionPreview caption={caption} placeholder={!reviewId}>
+      {previewUrl && <VideoPreview url={previewUrl} label="Draft video preview" />}
+    </SubmissionPreview>
+  );
+
   if (reviewId) {
     return (
       <div className="grid min-h-[min(79.4dvh,780px)] place-items-center bg-gray-50 px-5 py-16">
@@ -169,15 +176,26 @@ export function DraftComposer({
           <RiCloseLine size={16} aria-hidden />
         </DialogClose>
         <div className="w-full max-w-[446px] space-y-5">
-          <DraftPreview creator={creator} caption={caption} videoUrl={previewUrl} />
+          {preview}
           <DraftReviewProgress
             review={review}
             reviewing={reviewing}
             hasVideo={Boolean(file || (keepPreviousVideo && previous?.mediaId))}
           />
+          {!reviewing && review?.status === "changesRequested" && (
+            <Button type="button" size="sm" className="w-full" onClick={() => onRevise(reviewId)}>
+              Resubmit
+            </Button>
+          )}
           {!reviewing && (
-            <Button type="button" className="w-full" onClick={onCancel}>
-              {review?.status === "changesRequested" ? "Back to revise" : "Back to assignment"}
+            <Button
+              type="button"
+              size="sm"
+              variant="secondary-ghost"
+              className="w-full"
+              onClick={onCancel}
+            >
+              {review?.status === "changesRequested" ? "Not now" : "Back to assignment"}
             </Button>
           )}
         </div>
@@ -205,8 +223,11 @@ export function DraftComposer({
               ? "Our system will automatically review it."
               : "A reviewer will check your submission."}
           </DialogDescription>
-          <p className="inline-block rounded-full border border-gray-200 px-3 py-1 text-body-xs font-medium">
-            {assignmentTitle}
+          <p className="flex min-w-0 items-center gap-2 rounded-sm bg-gray-50 px-3 py-1.5 text-body-sm font-medium">
+            <RiExternalLinkLine aria-hidden className="size-4 shrink-0" />
+            <span className="truncate" title={assignmentTitle}>
+              {assignmentTitle}
+            </span>
           </p>
         </header>
         <div>
@@ -219,7 +240,7 @@ export function DraftComposer({
             maxLength={MAX_CAPTION_LENGTH}
             disabled={readOnly}
             onChange={(event) => setCaption(event.target.value)}
-            placeholder="Write the text you plan to post on X"
+            placeholder="What’s happening?"
             className="min-h-[100px]"
           />
           <p className="mt-2 text-right text-body-xs text-gray-500">
@@ -276,7 +297,12 @@ export function DraftComposer({
               onClick={() => fileInput.current?.click()}
               className="flex min-h-42 w-full flex-col items-center justify-center gap-1 rounded-md border border-dashed border-gray-300 p-4 hover:bg-gray-25"
             >
-              <RiUploadCloud2Line size={22} aria-hidden />
+              <span
+                aria-hidden
+                className="mb-3 grid h-20 w-31 -rotate-5 place-items-center rounded-lg bg-gray-50 shadow"
+              >
+                <RiPlayMiniLine size={22} />
+              </span>
               <span className="text-body-sm font-medium">Upload a video or drag it here</span>
               <span className="text-body-xs text-gray-500">MP4, MOV, or WebM up to 250 MiB</span>
             </button>
@@ -331,7 +357,7 @@ export function DraftComposer({
       </div>
       <aside className="space-y-6 bg-gray-50 p-5 md:px-10 md:py-8" aria-label="Post preview">
         <p className="text-center text-body-sm text-gray-500">Preview</p>
-        <DraftPreview creator={creator} caption={caption} videoUrl={previewUrl} showPlaceholder />
+        {preview}
         {previous?.reviewNote && (
           <div className="space-y-3 rounded-xl bg-gray-0 p-5 text-body-sm">
             <div className="flex items-center gap-2 font-medium">
@@ -345,48 +371,6 @@ export function DraftComposer({
         )}
       </aside>
     </form>
-  );
-}
-
-/** Shows the draft as it will appear in the creator's preview. */
-function DraftPreview({
-  creator,
-  caption,
-  videoUrl,
-  showPlaceholder = false,
-}: {
-  creator: string;
-  caption: string;
-  videoUrl?: string;
-  showPlaceholder?: boolean;
-}) {
-  return (
-    <div className="space-y-4 rounded-lg bg-gray-0 p-4 md:p-5">
-      <div className="flex items-center gap-3">
-        <span
-          className="grid size-10 shrink-0 place-items-center rounded-full bg-gray-100 text-gray-700"
-          aria-hidden
-        >
-          {creator[0]}
-        </span>
-        <p className="text-body-sm font-medium">{creator}</p>
-      </div>
-      {caption.trim() ? (
-        <p className="text-body-sm break-words whitespace-pre-wrap">{caption}</p>
-      ) : (
-        showPlaceholder && (
-          <div className="space-y-2" aria-hidden>
-            <div className="h-3.5 rounded-full bg-gray-50" />
-            <div className="h-3.5 w-1/2 rounded-full bg-gray-50" />
-          </div>
-        )
-      )}
-      {videoUrl ? (
-        <VideoPreview url={videoUrl} label="Draft video preview" />
-      ) : (
-        showPlaceholder && <div className="aspect-video rounded-md bg-gray-50" aria-hidden />
-      )}
-    </div>
   );
 }
 
@@ -413,7 +397,7 @@ function DraftReviewProgress({
     : review?.status === "approved"
       ? "Draft approved"
       : review?.status === "changesRequested"
-        ? "Changes needed"
+        ? "Your submission has been rejected. Review the reasons below and resubmit after adjusting."
         : review?.closedWithoutReview
           ? "Closed without review"
           : aiReviewStatusLabel.manualReview;
@@ -436,7 +420,11 @@ function DraftReviewProgress({
         </Progress>
       ) : (
         <div className="flex items-start gap-3" role="status">
-          <Icon size={20} className="shrink-0 text-gray-700" aria-hidden />
+          <Icon
+            size={20}
+            className="size-10 shrink-0 rounded-sm bg-gray-50 p-2.5 text-gray-700"
+            aria-hidden
+          />
           <div className="min-w-0 space-y-2">
             <p className="font-medium">{text}</p>
             {review && review.status !== "pending" && review.reviewNote && (
@@ -458,6 +446,7 @@ function VideoPreview({ url, label }: { url: string; label: string }) {
       aria-label={label}
       src={url}
       controls
+      preload="auto"
       playsInline
       className="aspect-video max-h-[320px] w-full rounded-md bg-gray-950"
     />

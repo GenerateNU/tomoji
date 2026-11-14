@@ -4,13 +4,13 @@ import { scoreOpportunityMatch } from "../../models/opportunityScores";
 
 describe("scoreOpportunityMatch", () => {
   test("scores the share of the opportunity's niches and skills the creator has", () => {
-    // Niches 1/2 at weight 0.35, skills 0/1 at weight 0.25, normalized over 0.6.
+    // Niches 1/2 at weight 0.2, skills 0/1 at weight 0.35, normalized over 0.55.
     expect(
       scoreOpportunityMatch(
         { niches: ["ai-agents"], skills: [] },
         { niches: ["ai-agents", "llms"], skills: ["python"] },
       ),
-    ).toBeCloseTo((0.35 * 0.5) / 0.6, 5);
+    ).toBeCloseTo((0.2 * 0.5) / 0.55, 5);
   });
 
   test("ignores signals the opportunity doesn't ask for", () => {

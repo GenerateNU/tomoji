@@ -8,12 +8,12 @@ import { listOpportunityNiches } from "./opportunityNiches";
 import { listOpportunitySkills } from "./opportunitySkills";
 
 /**
- * How much each signal counts toward a match. Content types (0.15) and language
- * (0.15) join once creators and opportunities store them; signals an
+ * How much each signal counts toward a match. Followers weigh most because reach
+ * decides eligibility; niches least because briefs may not set them. Signals an
  * opportunity doesn't ask for are left out and the rest re-normalized, so the
  * weights only need to be right relative to each other.
  */
-export const SCORE_WEIGHTS = { niches: 0.35, skills: 0.25, followers: 0.1 } as const;
+export const SCORE_WEIGHTS = { followers: 0.45, skills: 0.35, niches: 0.2 } as const;
 
 export type CreatorSignals = {
   niches: readonly string[];

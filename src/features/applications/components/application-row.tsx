@@ -6,7 +6,7 @@ import { CompanyAvatar, getInitials } from "@/components/ui/avatar";
 import { TableCell, TableRow } from "@/components/ui/table";
 import { useCompanyLogo } from "@/hooks/use-company-logo";
 import { formatCompensation } from "@/lib/money";
-import { formatRelativeTime } from "../lib/format";
+import { formatRelativeTime } from "@/lib/relative-time";
 import { ApplicationStatusBadge } from "./application-status-badge";
 import { StarToggle } from "./star-toggle";
 

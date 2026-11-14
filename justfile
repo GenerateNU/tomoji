@@ -96,6 +96,10 @@ convex-env:
 seed *EMAIL:
     @bunx convex run seed:run '{{ if EMAIL == "" { "{}" } else { "{\"creatorEmail\":\"" + EMAIL + "\"}" } }}'
 
+# Add COUNT more open opportunities to the seeded company (run `just seed` first)
+seed-more COUNT="30":
+    @bunx convex run seed:more '{"count": {{ COUNT }}}'
+
 # Remove everything `just seed` created, leaving accounts and companies alone
 seed-clear:
     @bunx convex run seed:clear

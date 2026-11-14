@@ -46,8 +46,7 @@ test("prepares an owned video with an independent criteria and brief snapshot", 
       title: "Driftwood launch demo",
       description: "Demonstrate a first deployment using Driftwood CLI.",
       contentRequirements: "Explain how Driftwood simplifies deployment.",
-      prohibitedClaims: "Do not promise zero downtime.",
-      disclosureRequirements: "Disclose the paid partnership.",
+      reviewPolicy: "Disclose the paid partnership. Do not promise zero downtime.",
     },
   });
 });

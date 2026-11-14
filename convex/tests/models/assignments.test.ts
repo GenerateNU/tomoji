@@ -139,11 +139,7 @@ describe("claimAssignment", () => {
 
   test("gives out slots first come first serve and refuses once full", async () => {
     const t = convexTest(schema, modules);
-    const owner = await seedOpportunity(
-      t,
-      { subject: "owner" },
-      { maxSlots: 2, maxApplications: 2 },
-    );
+    const owner = await seedOpportunity(t, { subject: "owner" }, { maxSlots: 2 });
     for (const subject of ["first", "second"]) {
       const creatorId = await seedCreatorId(t, subject);
       await t.run(async (ctx) => await claimAssignment(ctx, creatorId, owner.opportunityId));
@@ -345,11 +341,7 @@ describe("createAssignmentFromOffer", () => {
 
   test("shares the slot limit with claims", async () => {
     const t = convexTest(schema, modules);
-    const owner = await seedOpportunity(
-      t,
-      { subject: "owner" },
-      { isGated: true, maxSlots: 1, maxApplications: 1 },
-    );
+    const owner = await seedOpportunity(t, { subject: "owner" }, { isGated: true, maxSlots: 1 });
     const first = await seedCreatorId(t, "first");
     const second = await seedCreatorId(t, "second");
     await t.run(
@@ -1082,7 +1074,7 @@ describe("requireAssignment", () => {
 async function seedClaimed(
   t: TestConvex,
   status: Doc<"assignments">["status"] = "termsPending",
-  overrides: { maxSlots?: number; maxApplications?: number } = {},
+  overrides: { maxSlots?: number } = {},
 ) {
   const owner = await seedOpportunity(t, { subject: "owner" }, overrides);
   const creatorId = await seedCreatorId(t, "creator");
@@ -1234,11 +1226,7 @@ describe("markAssignmentProductAccessDelivered", () => {
 
   test("accepts the maximum batch of 100 distinct assignments", async () => {
     const t = convexTest(schema, modules);
-    const owner = await seedOpportunity(
-      t,
-      { subject: "owner" },
-      { maxSlots: 100, maxApplications: 100 },
-    );
+    const owner = await seedOpportunity(t, { subject: "owner" }, { maxSlots: 100 });
     const assignmentIds: Id<"assignments">[] = [];
     for (let i = 0; i < 100; i++) {
       const creatorId = await seedCreatorId(t, `creator_${i}`);
@@ -1373,7 +1361,6 @@ describe("declineAssignmentTerms", () => {
     const t = convexTest(schema, modules);
     const { owner, creatorId, assignmentId, read } = await seedClaimed(t, "termsPending", {
       maxSlots: 1,
-      maxApplications: 1,
     });
 
     const result = await t.run(

@@ -16,6 +16,8 @@ import {
   updateOpportunity,
 } from "../../models/opportunities";
 import { authedContext } from "../../lib/functions";
+import { APPLICATION_SWEEP_BATCH } from "../../models/applications";
+import { LANGUAGES, MAX_LANGUAGES } from "../../models/languages";
 import schema from "../../schema";
 import {
   creatorNotifications,
@@ -218,7 +220,7 @@ describe("closeExpiredOpportunities", () => {
     expect(await t.run(async (ctx) => await closeExpiredOpportunities(ctx))).toBe(false);
     expect(
       await t.run(async (ctx) => await ctx.db.get("opportunities", owner.opportunityId)),
-    ).toEqual({ ...updated, niches: undefined, skills: undefined });
+    ).toEqual({ ...updated, niches: undefined, skills: undefined, languages: undefined });
   });
 
   test("closes expired open and paused opportunities but preserves drafts and future deadlines", async () => {
@@ -1272,15 +1274,11 @@ describe("updateOpportunity", () => {
     );
     const updates = {
       description: "  Show the evening routine.  ",
-      targetApplicant: "Lifestyle creators",
       contentRequirements: "Two videos",
-      prohibitedClaims: "No health claims",
-      disclosureRequirements: "Include #ad",
-      usageRights: "Organic reposting for 60 days",
+      reviewPolicy: "Include #ad. No health claims.",
       isGated: true,
       usesAiReviewDefault: false,
       maxSlots: 2,
-      maxApplications: 2,
       deadline: Date.now() + 172_800_000,
       fixedFeeCents: 20_000,
       cpmRateCents: 0,
@@ -1297,11 +1295,12 @@ describe("updateOpportunity", () => {
       ...updates,
       niches: [],
       skills: [],
+      languages: [],
       description: "Show the evening routine.",
     });
     expect(
       await t.run(async (ctx) => await ctx.db.get("opportunities", owner.opportunityId)),
-    ).toEqual({ ...result, niches: undefined, skills: undefined });
+    ).toEqual({ ...result, niches: undefined, skills: undefined, languages: undefined });
   });
 
   test("accepts an empty patch without changing the document", async () => {
@@ -1315,7 +1314,7 @@ describe("updateOpportunity", () => {
       async (ctx) => await updateOpportunity(ctx, owner.membership, owner.opportunityId, {}),
     );
 
-    expect(result).toEqual({ ...before, niches: [], skills: [] });
+    expect(result).toEqual({ ...before, niches: [], skills: [], languages: [] });
     expect(
       await t.run(async (ctx) => await ctx.db.get("opportunities", owner.opportunityId)),
     ).toEqual(before);
@@ -1443,43 +1442,6 @@ describe("updateOpportunity", () => {
         ),
       "invalid_state",
     );
-  });
-
-  test("rejects a nonpositive application limit", async () => {
-    const t = convexTest(schema, modules);
-    const owner = await seedOpportunity(t, { subject: "update_owner" });
-    await expectApiError(
-      () =>
-        t.run(
-          async (ctx) =>
-            await updateOpportunity(ctx, owner.membership, owner.opportunityId, {
-              maxApplications: 0,
-            }),
-        ),
-      "invalid_state",
-    );
-  });
-
-  test("rejects an application limit above available slots", async () => {
-    const t = convexTest(schema, modules);
-    const owner = await seedOpportunity(t, { subject: "update_owner" });
-    const before = await t.run(
-      async (ctx) => await ctx.db.get("opportunities", owner.opportunityId),
-    );
-
-    await expectApiError(
-      () =>
-        t.run(
-          async (ctx) =>
-            await updateOpportunity(ctx, owner.membership, owner.opportunityId, {
-              maxApplications: 6,
-            }),
-        ),
-      "invalid_state",
-    );
-    expect(
-      await t.run(async (ctx) => await ctx.db.get("opportunities", owner.opportunityId)),
-    ).toEqual(before);
   });
 
   test("rejects extending a deadline beyond the campaign end", async () => {
@@ -1636,10 +1598,11 @@ describe("updateOpportunity", () => {
       fixedFeeCents: 0,
       niches: [],
       skills: [],
+      languages: [],
     });
     expect(
       await t.run(async (ctx) => await ctx.db.get("opportunities", owner.opportunityId)),
-    ).toEqual({ ...result, niches: undefined, skills: undefined });
+    ).toEqual({ ...result, niches: undefined, skills: undefined, languages: undefined });
   });
 });
 
@@ -1914,6 +1877,7 @@ describe("listOpportunities", () => {
         ...(await t.run(async (ctx) => await ctx.db.get("opportunities", owner.opportunityId))),
         niches: [],
         skills: [],
+        languages: [],
       },
     ]);
     expect(result.isDone).toBe(true);
@@ -1971,6 +1935,7 @@ describe("listOpportunities", () => {
         ...(await t.run(async (ctx) => await ctx.db.get("opportunities", owner.opportunityId))),
         niches: [],
         skills: [],
+        languages: [],
       },
     ]);
   });
@@ -2000,6 +1965,7 @@ describe("listOpportunities", () => {
         ...(await t.run(async (ctx) => await ctx.db.get("opportunities", owner.opportunityId))),
         niches: [],
         skills: [],
+        languages: [],
       },
     ]);
     expect(firstPage.isDone).toBe(false);
@@ -2015,6 +1981,7 @@ describe("listOpportunities", () => {
         ...(await t.run(async (ctx) => await ctx.db.get("opportunities", second.opportunityId))),
         niches: ["databases"],
         skills: ["typescript"],
+        languages: [],
       },
     ]);
     expect(secondPage.isDone).toBe(true);
@@ -2053,6 +2020,7 @@ describe("listOpportunities", () => {
         ...(await t.run(async (ctx) => await ctx.db.get("opportunities", owner.opportunityId))),
         niches: [],
         skills: [],
+        languages: [],
       },
     ]);
     expect(firstPage.isDone).toBe(false);
@@ -2069,6 +2037,7 @@ describe("listOpportunities", () => {
         ...(await t.run(async (ctx) => await ctx.db.get("opportunities", secondId))),
         niches: [],
         skills: [],
+        languages: [],
       },
     ]);
     expect(secondPage.isDone).toBe(true);
@@ -2198,7 +2167,6 @@ describe("createOpportunity", () => {
       cpmRateCents: 0,
       paymentCapCents: 0,
       maxSlots: 1,
-      maxApplications: 1,
     });
 
     const id = await t.run(async (ctx) => await createOpportunity(ctx, membership, args));
@@ -2428,34 +2396,10 @@ describe("createOpportunity", () => {
     expect(await t.run(async (ctx) => await ctx.db.query("opportunities").take(1))).toEqual([]);
   });
 
-  test("rejects zero application capacity without writing", async () => {
+  test("rejects unsafe slot capacity without writing", async () => {
     const t = convexTest(schema, modules);
     const { campaignId, membership } = await seedCampaign(t, { subject: "op_owner" });
-    const args = opportunityArgs(campaignId, { maxApplications: 0 });
-
-    await expectApiError(
-      () => t.run(async (ctx) => await createOpportunity(ctx, membership, args)),
-      "invalid_state",
-    );
-    expect(await t.run(async (ctx) => await ctx.db.query("opportunities").take(1))).toEqual([]);
-  });
-
-  test("rejects more applications than available slots without writing", async () => {
-    const t = convexTest(schema, modules);
-    const { campaignId, membership } = await seedCampaign(t, { subject: "op_owner" });
-    const args = opportunityArgs(campaignId, { maxSlots: 2, maxApplications: 3 });
-
-    await expectApiError(
-      () => t.run(async (ctx) => await createOpportunity(ctx, membership, args)),
-      "invalid_state",
-    );
-    expect(await t.run(async (ctx) => await ctx.db.query("opportunities").take(1))).toEqual([]);
-  });
-
-  test("rejects unsafe application capacity without writing", async () => {
-    const t = convexTest(schema, modules);
-    const { campaignId, membership } = await seedCampaign(t, { subject: "op_owner" });
-    const args = opportunityArgs(campaignId, { maxApplications: Number.MAX_SAFE_INTEGER + 1 });
+    const args = opportunityArgs(campaignId, { maxSlots: Number.MAX_SAFE_INTEGER + 1 });
 
     await expectApiError(
       () => t.run(async (ctx) => await createOpportunity(ctx, membership, args)),
@@ -2745,11 +2689,43 @@ describe("notifications", () => {
     const { pending, offered, accepted } = await seedApplicants(t, owner.opportunityId);
 
     await t.run(async (ctx) => await closeOpportunity(ctx, owner.membership, owner.opportunityId));
+    await t.finishAllScheduledFunctions(() => {});
 
     expect(await creatorNotifications(t, pending.creatorId)).toEqual([closedNotice(pending)]);
     expect(await creatorNotifications(t, offered.creatorId)).toEqual([closedNotice(offered)]);
     expect(await creatorNotifications(t, accepted.creatorId)).toEqual([]);
     expect(await memberNotifications(t, owner.membership)).toEqual([]);
+  });
+
+  test("notifies more waiting applicants than one batch holds, across scheduled continuations", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(t, { subject: "close_batches" });
+    const creatorId = await seedCreatorId(t, "close_batch_creator");
+    const waiting = APPLICATION_SWEEP_BATCH + 10;
+    // Raw rows: the sweep reads the opportunity's applications, not distinct creators.
+    await t.run(async (ctx) => {
+      for (let i = 0; i < waiting; i++) {
+        await ctx.db.insert("applications", {
+          opportunityId: owner.opportunityId,
+          creatorId,
+          companyId: owner.membership.companyId,
+          status: i % 2 === 0 ? "pending" : "offered",
+        });
+      }
+    });
+
+    await t.run(async (ctx) => await closeOpportunity(ctx, owner.membership, owner.opportunityId));
+    await t.finishAllScheduledFunctions(() => {});
+
+    // Counted straight off the table: the shared helper stops at 20 rows.
+    const creator = await t.run((ctx) => ctx.db.get("creators", creatorId));
+    const notices = await t.run((ctx) =>
+      ctx.db
+        .query("notifications")
+        .withIndex("by_userId", (q) => q.eq("userId", creator!.userId))
+        .take(waiting + 10),
+    );
+    expect(notices.filter((n) => n.type === "applicationOpportunityClosed")).toHaveLength(waiting);
   });
 
   test("closing an already closed opportunity sends nothing new", async () => {
@@ -2761,6 +2737,7 @@ describe("notifications", () => {
 
     await close();
     await close();
+    await t.finishAllScheduledFunctions(() => {});
 
     expect(await creatorNotifications(t, pending.creatorId)).toEqual([closedNotice(pending)]);
   });
@@ -2772,6 +2749,7 @@ describe("notifications", () => {
     vi.advanceTimersByTime(86_400_000);
 
     await t.run(async (ctx) => await closeExpiredOpportunities(ctx));
+    await t.finishAllScheduledFunctions(() => {});
 
     expect(await memberNotifications(t, owner.membership)).toEqual([
       {
@@ -2875,7 +2853,87 @@ describe("opportunity associations", () => {
     ]);
   });
 
-  test("filtered discovery paginates mixed legacy and association rows while hiding paused campaigns", async () => {
+  test("language updates normalize, deduplicate, and clear independently", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(
+      t,
+      { subject: "language_owner" },
+      { skills: ["python"], languages: ["English"] },
+    );
+    const replaced = await t.run((ctx) =>
+      updateOpportunity(ctx, owner.membership, owner.opportunityId, {
+        languages: ["Spanish", "spanish", "Chinese (simplified)"],
+      }),
+    );
+    expect(replaced).toMatchObject({
+      skills: ["python"],
+      languages: ["spanish", "chinese-simplified"],
+    });
+    const cleared = await t.run((ctx) =>
+      updateOpportunity(ctx, owner.membership, owner.opportunityId, { languages: [] }),
+    );
+    expect(cleared).toMatchObject({ skills: ["python"], languages: [] });
+    expect(await t.run((ctx) => ctx.db.query("opportunityLanguages").take(10))).toEqual([]);
+  });
+
+  test("an unknown language on create leaves no opportunity or association rows behind", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedCampaign(t, { subject: "invalid_language" });
+    await expectApiError(
+      () =>
+        t.run((ctx) =>
+          createOpportunity(
+            ctx,
+            owner.membership,
+            opportunityArgs(owner.campaignId, {
+              niches: ["databases"],
+              languages: ["klingon"],
+            }),
+          ),
+        ),
+      "invalid_state",
+      "invalid_language",
+    );
+    expect(await t.run((ctx) => ctx.db.query("opportunities").take(10))).toEqual([]);
+    expect(await t.run((ctx) => ctx.db.query("opportunityNiches").take(10))).toEqual([]);
+    expect(await t.run((ctx) => ctx.db.query("opportunityLanguages").take(10))).toEqual([]);
+  });
+
+  test("rejects more languages than the shared maximum", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(t, { subject: "too_many_languages" });
+    await expectApiError(
+      () =>
+        t.run((ctx) =>
+          updateOpportunity(ctx, owner.membership, owner.opportunityId, {
+            languages: LANGUAGES.slice(0, MAX_LANGUAGES + 1).map((option) => option.name),
+          }),
+        ),
+      "invalid_state",
+      "too_many_languages",
+    );
+    expect(await t.run((ctx) => ctx.db.query("opportunityLanguages").take(10))).toEqual([]);
+  });
+
+  test("removing a draft removes its languages without affecting another opportunity", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(
+      t,
+      { subject: "language_remove" },
+      { status: "draft", languages: ["english"] },
+    );
+    const other = await seedOpportunity(
+      t,
+      { subject: "language_sibling" },
+      { languages: ["french"] },
+    );
+    await t.run((ctx) => removeOpportunity(ctx, owner.membership, owner.opportunityId));
+    expect(await t.run((ctx) => ctx.db.query("opportunityLanguages").take(10))).toMatchObject([
+      { opportunityId: other.opportunityId, name: "french" },
+    ]);
+  });
+
+  test("filtered discovery paginates matching rows while hiding paused campaigns", async () => {
     const t = convexTest(schema, modules);
     await seedOpportunity(t, { subject: "off_niche" }, { niches: ["databases"] });
     const hidden = await seedOpportunity(t, { subject: "hidden_niche" }, { niches: ["llms"] });
@@ -2885,8 +2943,7 @@ describe("opportunity associations", () => {
       { subject: "new_niche" },
       { niches: ["llms"], skills: ["python"] },
     );
-    const second = await seedOpportunity(t, { subject: "legacy_niche" });
-    await t.run((ctx) => ctx.db.patch("opportunities", second.opportunityId, { niches: ["llms"] }));
+    const second = await seedOpportunity(t, { subject: "second_niche" }, { niches: ["llms"] });
     const firstPage = await t.run((ctx) =>
       discoverOpportunities(ctx, { niche: "LLMs", paginationOpts: { numItems: 1, cursor: null } }),
     );
@@ -2983,9 +3040,9 @@ describe("opportunity niches", () => {
 
     expect(replaced.niches).toEqual(["game-dev", "developer-tools"]);
     expect(cleared.niches).toEqual([]);
-    expect(
-      (await t.run(async (ctx) => await ctx.db.get("opportunities", owner.opportunityId)))?.niches,
-    ).toBeUndefined();
+    expect(await t.run(async (ctx) => await ctx.db.query("opportunityNiches").take(10))).toEqual(
+      [],
+    );
   });
 
   test("update leaves niches alone when they aren't sent", async () => {

@@ -13,6 +13,7 @@ import { findOrgId } from "./lib/identity";
 import {
   closeOpportunity,
   closeExpiredOpportunities,
+  notifyWaitingApplicantsBatch,
   createOpportunity,
   discoverOpportunities,
   getOpportunity,
@@ -59,6 +60,26 @@ export const closeExpired = internalMutation({
   handler: async (ctx) => {
     const hasMore = await closeExpiredOpportunities(ctx);
     if (hasMore) await ctx.scheduler.runAfter(0, internal.opportunities.closeExpired, {});
+    return null;
+  },
+});
+
+/**
+ * Tells one batch of waiting applicants that the opportunity closed and
+ * reschedules itself while more remain. Enqueued by every close, manual or at
+ * the deadline, because an opportunity's applications are unbounded.
+ */
+export const notifyClosed = internalMutation({
+  args: { opportunityId: v.id("opportunities"), cursor: v.union(v.string(), v.null()) },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const cursor = await notifyWaitingApplicantsBatch(ctx, args.opportunityId, args.cursor);
+    if (cursor !== null) {
+      await ctx.scheduler.runAfter(0, internal.opportunities.notifyClosed, {
+        opportunityId: args.opportunityId,
+        cursor,
+      });
+    }
     return null;
   },
 });

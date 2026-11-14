@@ -35,13 +35,12 @@ export async function createAiReviewAttempt(
   const criteria = normalizeReviewCriteria(deliverable.reviewCriteria ?? []);
   if (criteria.length === 0)
     throw apiError("invalid_state", { reason: "ai_review_criteria_required" });
-  const { title, description, contentRequirements, prohibitedClaims, disclosureRequirements } =
-    opportunity;
+  const { title, description, contentRequirements, reviewPolicy } = opportunity;
   return await ctx.db.insert("aiReviewAttempts", {
     submissionId,
     mediaId: submission.mediaId,
     criteria,
-    context: { title, description, contentRequirements, prohibitedClaims, disclosureRequirements },
+    context: { title, description, contentRequirements, reviewPolicy },
     // The creator submission transaction enqueues work when automation is enabled.
     status: "ready",
   });

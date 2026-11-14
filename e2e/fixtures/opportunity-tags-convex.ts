@@ -17,6 +17,11 @@ export function useQuery(reference: FunctionReference<"query">) {
         { name: "identity-access-management", label: "Identity & Access Management" },
         { name: "typescript", label: "TypeScript" },
       ];
+    case "languages:list":
+      return [
+        { name: "english", label: "English" },
+        { name: "spanish", label: "Spanish" },
+      ];
     default:
       throw new Error(`Unexpected fixture query: ${getFunctionName(reference)}`);
   }

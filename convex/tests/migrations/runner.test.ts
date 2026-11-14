@@ -28,8 +28,6 @@ const removeUserProfilePictures =
   internal.migrations["2026_10_07_remove_user_profile_pictures"].removeUserProfilePictures;
 const backfillCreatorNiches =
   internal.migrations["2026_10_25_backfill_creator_niches"].backfillCreatorNiches;
-const backfillOpportunityNiches =
-  internal.migrations["2026_10_25_backfill_opportunity_niches"].backfillOpportunityNiches;
 
 afterEach(() => vi.useRealTimers());
 
@@ -77,13 +75,9 @@ describe("identity schema migrations", () => {
       { creatorId, name: "databases" },
     ]);
     const statuses = await t.query(components.migrations.lib.getStatus, {
-      names: [
-        getFunctionName(removeUserProfilePictures),
-        getFunctionName(backfillCreatorNiches),
-        getFunctionName(backfillOpportunityNiches),
-      ],
+      names: [getFunctionName(removeUserProfilePictures), getFunctionName(backfillCreatorNiches)],
     });
-    expect(statuses).toHaveLength(3);
+    expect(statuses).toHaveLength(2);
     expect(statuses).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -97,12 +91,6 @@ describe("identity schema migrations", () => {
           isDone: true,
           state: "success",
           processed: 1,
-        }),
-        expect.objectContaining({
-          name: getFunctionName(backfillOpportunityNiches),
-          isDone: true,
-          state: "success",
-          processed: 0,
         }),
       ]),
     );

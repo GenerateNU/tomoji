@@ -7,6 +7,7 @@ import type { ReactNode } from "react";
 import { Badge } from "@/components/ui/badge";
 import { formatDeadline, formatMoney, formatPay } from "../lib/format";
 import type { FeedOpportunity } from "../lib/types";
+import { MatchPanel } from "./match-panel";
 
 function Section({ label, children }: { label: string; children: ReactNode }) {
   return (
@@ -67,6 +68,7 @@ export function OpportunityDetails({ opportunity }: { opportunity: FeedOpportuni
   return (
     <div className="flex flex-col gap-6">
       <OpportunitySummary opportunity={opportunity} />
+      <MatchPanel opportunity={opportunity} />
       <div className="grid gap-6 sm:grid-cols-2">
         <Section label="Skills">
           <Tags tags={opportunity.skills.map((name) => label(skills, name))} />

@@ -534,17 +534,65 @@ describe("applications.searchMine", () => {
     );
   });
 
-  test("refuses the accepted tab", async () => {
+  test("refuses an unknown tab", async () => {
     const t = convexTest(schema, modules);
     const asCreator = await seedUser(t, { subject: "creator_a" });
 
     await expect(
       asCreator.query(api.applications.searchMine, {
         ...searchArgs,
-        // @ts-expect-error The accepted tab is not part of the contract yet.
-        tab: "accepted",
+        // @ts-expect-error A made-up tab is not part of the contract.
+        tab: "archived",
       }),
-    ).rejects.toThrow(/got `"accepted"`/);
+    ).rejects.toThrow(/got `"archived"`/);
+  });
+
+  test("the accepted tab lists only the caller's accepted applications, newest accepted first", async () => {
+    const t = convexTest(schema, modules);
+    const asCreator = await seedUser(t, { subject: "creator_a" });
+    const asOther = await seedUser(t, { subject: "creator_b" });
+    const older = await applyTo(t, asCreator, "Older");
+    const newer = await applyTo(t, asCreator, "Newer");
+    await applyTo(t, asCreator, "Still pending");
+    const theirs = await applyTo(t, asOther, "Theirs");
+    const now = Date.now();
+    await t.run(async (ctx) => {
+      await ctx.db.patch("applications", older.applicationId, {
+        status: "accepted",
+        offerAcceptedAt: now - 3 * 24 * 60 * 60 * 1000,
+      });
+      await ctx.db.patch("applications", newer.applicationId, {
+        status: "accepted",
+        offerAcceptedAt: now - 60 * 60 * 1000,
+      });
+      await ctx.db.patch("applications", theirs.applicationId, {
+        status: "accepted",
+        offerAcceptedAt: now - 60 * 60 * 1000,
+      });
+    });
+
+    const result = await asCreator.query(api.applications.searchMine, {
+      ...searchArgs,
+      tab: "accepted",
+    });
+
+    expect(result.tab).toBe("accepted");
+    expect(result.rows).toMatchObject([
+      {
+        applicationId: newer.applicationId,
+        title: "Newer",
+        status: "accepted",
+        offerAcceptedAt: now - 60 * 60 * 1000,
+      },
+      {
+        applicationId: older.applicationId,
+        title: "Older",
+        status: "accepted",
+        offerAcceptedAt: now - 3 * 24 * 60 * 60 * 1000,
+      },
+    ]);
+    expect(result.counts.accepted).toEqual({ count: 2, isCapped: false });
+    expect(result.counts.applications).toEqual({ count: 1, isCapped: false });
   });
 
   test("the offers tab lists only the caller's offers, soonest expiry first", async () => {

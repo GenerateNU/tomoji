@@ -4,10 +4,14 @@ import Link from "next/link";
 import {
   RiAuctionFill,
   RiAuctionLine,
+  RiBuilding2Fill,
+  RiBuilding2Line,
   RiCheckboxMultipleFill,
   RiCheckboxMultipleLine,
   RiFolderFill,
   RiFolderLine,
+  RiGroupFill,
+  RiGroupLine,
   RiHome4Fill,
   RiHome4Line,
   RiInboxFill,
@@ -107,10 +111,30 @@ export const companyNavItems = [
   { id: "disputes", label: "Disputes", icon: RiAuctionLine, activeIcon: RiAuctionFill },
 ] as const satisfies readonly NavEntry<string>[];
 
-/** Operators have no pages of their own yet beyond home. */
-export const operatorNavItems: readonly NavEntry<string>[] = creatorNavItems.filter(
-  (item) => item.id === "home",
-);
+export const operatorNavItems = [
+  { id: "home", label: "Home", icon: RiHome4Line, activeIcon: RiHome4Fill, href: "/" },
+  {
+    id: "users",
+    label: "Users",
+    icon: RiGroupLine,
+    activeIcon: RiGroupFill,
+    href: "/users",
+  },
+  {
+    id: "companies",
+    label: "Companies",
+    icon: RiBuilding2Line,
+    activeIcon: RiBuilding2Fill,
+    href: "/companies",
+  },
+  {
+    id: "disputes",
+    label: "Disputes",
+    icon: RiAuctionLine,
+    activeIcon: RiAuctionFill,
+    href: "/disputes",
+  },
+] as const satisfies readonly NavEntry<string>[];
 
 /**
  * A nav of sidebar items. Items with an `href` are links and items without are

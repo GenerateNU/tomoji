@@ -171,9 +171,10 @@ to settle earlier earnings. See [Earnings rules](EARNINGS.md) for the calculatio
 evidence contract.
 
 The analytics sync uses the same clock. It runs daily at 00:00 UTC and reads verified,
-active posts whose `firstVerifiedAt` is within the last `EARNING_WINDOW_MS` + 1 day, so
-a post verified late is still followed for its whole earning window. The extra day keeps
-a post in the first run after its window ends, so its stored total covers day 30. If
+active posts whose `firstVerifiedAt` is within the last `EARNING_WINDOW_MS` + 2 days, so
+a post verified late is still followed for its whole earning window. The extra days keep
+a post in the first run after its window ends, even a late one, so its stored total
+covers day 30. If
 that run fails, the post keeps the previous day's total. Posts with no recorded first
 verification (legacy `earningsTimingUnknown` posts) are skipped. `posts.listEarning`
 (internal) returns the posts a page at a time.
@@ -189,14 +190,17 @@ verification schedules extra reads through the same helper, but only while
 | Read                          | When                          | Function                                            |
 | ----------------------------- | ----------------------------- | --------------------------------------------------- |
 | Views at verification         | Immediately                   | `xMetrics.collect`                                  |
-| Views before the final cutoff | 3 and 1 minutes before day 30 | `xMetrics.collectForCutoff` (the second is a retry) |
+| Views before the final cutoff | 4 and 2 minutes before day 30 | `xMetrics.collectForCutoff` (the second is a retry) |
 
 Settlement takes the final period's views from the latest reading in the 5 minutes before
 the cutoff; without one, the remaining earnings stay pending for admin review. The retry
 is skipped when the first read already landed in that window, and neither runs after the
-cutoff. Re-verification keeps the original clock, so it schedules nothing new. Weekly
-boundaries and early cutoffs (cancellation or removal) use the last daily reading before
-them. How settlement picks readings is defined in [Earnings rules](EARNINGS.md).
+cutoff. Re-verification keeps the original clock, so it schedules nothing new.
+Replaced posts are held for review, and earnings reads aren't rescheduled for the new
+post: verifying a replacement schedules one `xMetrics.collect` read of the new link for
+the reviewer, and the daily sync follows it as usual. Weekly boundaries and early
+cutoffs (cancellation or removal) use the last daily reading before them. How settlement
+picks readings is defined in [Earnings rules](EARNINGS.md).
 The analytics sync skips posts on cancelled assignments and posts with a recorded removal
 (`removedAt`), since X no longer has them; posts with an open dispute stay in. Payouts decide eligibility separately: a cancellation stops accrual at its cutoff,
 and any readings earnings need around that cutoff come from the earnings flow, not this

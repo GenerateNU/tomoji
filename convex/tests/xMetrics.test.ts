@@ -187,7 +187,7 @@ describe("xMetrics.sync", () => {
     );
   });
 
-  test("a page whose save fails is skipped and the run continues", async () => {
+  test("a post whose save fails is skipped and the run continues", async () => {
     enableSync();
     const t = convexTest(schema, modules);
     const [conflicted, last] = await seedSyncedPosts(t, 2);
@@ -295,7 +295,7 @@ describe("xMetrics.collectForCutoff", () => {
 
     await t.action(internal.xMetrics.collectForCutoff, {
       postId: post!.postId,
-      cutoffAt: Date.now() + 3 * minute,
+      cutoffAt: Date.now() + 4 * minute,
     });
 
     expect(await storedPost(t, post!.postId)).toMatchObject({ views: 100 });
@@ -306,9 +306,9 @@ describe("xMetrics.collectForCutoff", () => {
     const t = convexTest(schema, modules);
     const [post] = await seedSyncedPosts(t, 1);
     const fetch = stubXByPage();
-    const cutoffAt = Date.now() + 3 * minute;
+    const cutoffAt = Date.now() + 4 * minute;
     await t.action(internal.xMetrics.collectForCutoff, { postId: post!.postId, cutoffAt });
-    vi.setSystemTime(cutoffAt - minute);
+    vi.setSystemTime(cutoffAt - 2 * minute);
 
     await t.action(internal.xMetrics.collectForCutoff, { postId: post!.postId, cutoffAt });
 
@@ -322,7 +322,7 @@ describe("xMetrics.collectForCutoff", () => {
     const fetch = stubXByPage();
     const cutoffAt = Date.now() + 10 * minute;
     await t.action(internal.xMetrics.collect, { postIds: [post!.postId] });
-    vi.setSystemTime(cutoffAt - minute);
+    vi.setSystemTime(cutoffAt - 2 * minute);
 
     await t.action(internal.xMetrics.collectForCutoff, { postId: post!.postId, cutoffAt });
 
@@ -357,8 +357,54 @@ describe("xMetrics.saveCounts", () => {
       ],
     });
 
-    expect(saved).toBe(1);
+    expect(saved).toEqual({ saved: 1, skipped: [] });
     expect(await storedPost(t, replaced!.postId)).not.toHaveProperty("views");
     expect(await storedPost(t, kept!.postId)).toMatchObject({ views: 20, likes: 2 });
+  });
+
+  test("a post that can't be saved is skipped and named, and the rest still save", async () => {
+    const t = convexTest(schema, modules);
+    const [conflicted, kept] = await seedSyncedPosts(t, 2);
+    // A snapshot already at this exact moment makes this post's views save fail.
+    await t.run(
+      async (ctx) =>
+        await ctx.db.insert("postViewSnapshots", {
+          postId: conflicted!.postId,
+          observedAt: Date.now(),
+          views: 1,
+          sourceKey: "preexisting",
+          receivedAt: Date.now(),
+        }),
+    );
+
+    const result = await t.mutation(internal.xMetrics.saveCounts, {
+      counts: [
+        { postId: conflicted!.postId, views: 10, engagement: { likes: 1 } },
+        { postId: kept!.postId, views: 20, engagement: { likes: 2 } },
+      ],
+    });
+
+    expect(result).toEqual({
+      saved: 1,
+      skipped: [{ postId: conflicted!.postId, reason: "view_snapshot_time_conflict" }],
+    });
+    expect(await storedPost(t, kept!.postId)).toMatchObject({ views: 20, likes: 2 });
+  });
+
+  test("bad engagement counts are caught before the views are written", async () => {
+    const t = convexTest(schema, modules);
+    const [post] = await seedSyncedPosts(t, 1);
+
+    const result = await t.mutation(internal.xMetrics.saveCounts, {
+      counts: [{ postId: post!.postId, views: 10, engagement: { likes: -1 } }],
+    });
+
+    expect(result).toEqual({
+      saved: 0,
+      skipped: [{ postId: post!.postId, reason: "invalid_engagement" }],
+    });
+    expect(await storedPost(t, post!.postId)).not.toHaveProperty("views");
+    const snapshots = await t.run(async (ctx) => await ctx.db.query("postViewSnapshots").take(5));
+    expect(snapshots).toEqual([]);
   });
 });

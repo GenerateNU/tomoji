@@ -806,12 +806,12 @@ describe("verifyPost", () => {
       { name: "xMetrics:collect", scheduledTime: Date.now(), args: [{ postIds: [postId] }] },
       {
         name: "xMetrics:collectForCutoff",
-        scheduledTime: cutoffAt - 3 * 60_000,
+        scheduledTime: cutoffAt - 4 * 60_000,
         args: [{ postId, cutoffAt }],
       },
       {
         name: "xMetrics:collectForCutoff",
-        scheduledTime: cutoffAt - 60_000,
+        scheduledTime: cutoffAt - 2 * 60_000,
         args: [{ postId, cutoffAt }],
       },
     ]);
@@ -827,6 +827,26 @@ describe("verifyPost", () => {
     await t.run(async (ctx) => await verifyPost(ctx, postId, { postedAt: POSTED_AT }));
 
     expect(await scheduledReads(t)).toHaveLength(3);
+  });
+
+  test("verifying a replacement schedules one read now and no cutoff reads", async () => {
+    vi.stubEnv("X_METRICS_SYNC_ENABLED", "true");
+    const t = convexTest(schema, modules);
+    const { fixture, postId } = await seedFixturePost(t);
+    await t.run(async (ctx) => await verifyPost(ctx, postId, { postedAt: POSTED_AT }));
+    await t.run(async (ctx) => await unverifyPost(ctx, postId));
+    const replacementId = await replaceFixturePost(t, fixture, postId);
+
+    await t.run(async (ctx) => await verifyPost(ctx, replacementId, { postedAt: POSTED_AT }));
+
+    // Settlement keeps reading the original post and holds the replacement for
+    // review, so the reviewer just gets a current reading of the new link.
+    const reads = (await scheduledReads(t)).filter((read) =>
+      JSON.stringify(read.args).includes(replacementId),
+    );
+    expect(reads).toEqual([
+      { name: "xMetrics:collect", scheduledTime: Date.now(), args: [{ postIds: [replacementId] }] },
+    ]);
   });
 
   test("schedules no X reads while the sync is switched off", async () => {
@@ -1126,7 +1146,7 @@ describe("listEarningPosts", () => {
     return { postId, xPostId: post!.xPostId };
   }
 
-  test("returns verified, active posts first verified in the last 31 days", async () => {
+  test("returns verified, active posts first verified in the last 32 days", async () => {
     const t = convexTest(schema, modules);
     const { fixture, postId: recent } = await seedFixturePost(t);
     const atCutoff = await addPost(t, fixture, "cutoff_creator");
@@ -1135,8 +1155,8 @@ describe("listEarningPosts", () => {
     await addPost(t, fixture, "unverified_post");
     const now = Date.now();
     await verifyAt(t, recent, now - 10 * day);
-    await verifyAt(t, atCutoff, now - 31 * day);
-    await verifyAt(t, tooOld, now - 31 * day - 1);
+    await verifyAt(t, atCutoff, now - 32 * day);
+    await verifyAt(t, tooOld, now - 32 * day - 1);
     await verifyAt(t, inactive, now - 5 * day);
     // Flows only replace unverified posts; patch directly so only `isActive` differs.
     await t.run(async (ctx) => await ctx.db.patch("posts", inactive, { isActive: false }));
@@ -1239,7 +1259,7 @@ describe("listEarningPosts", () => {
     await verifyAt(t, postId, now - 10 * day);
 
     const later = await t.run(
-      async (ctx) => await listEarningPosts(ctx, now + 22 * day, { numItems: 10, cursor: null }),
+      async (ctx) => await listEarningPosts(ctx, now + 23 * day, { numItems: 10, cursor: null }),
     );
 
     expect(later.page).toEqual([]);

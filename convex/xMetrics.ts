@@ -14,6 +14,7 @@ import {
   listCollectionTargets,
   saveSyncedCounts,
   syncedCounts,
+  syncedCountsResult,
   type EarningPost,
 } from "./models/posts";
 
@@ -131,8 +132,9 @@ async function syncPage(
   }
   if (result.found.length === 0) return "synced";
   const postIds = new Map(posts.map((post) => [post.xPostId, post.postId]));
+  let saved;
   try {
-    await ctx.runMutation(internal.xMetrics.saveCounts, {
+    saved = await ctx.runMutation(internal.xMetrics.saveCounts, {
       counts: result.found.map(({ xPostId, views, engagement }) => ({
         postId: postIds.get(xPostId)!,
         views,
@@ -144,13 +146,16 @@ async function syncPage(
     console.warn("X metrics sync: page skipped, counts not saved", error.data);
     return "skipped";
   }
+  if (saved.skipped.length > 0) {
+    console.warn("X metrics sync: posts not saved", saved.skipped);
+  }
   return "synced";
 }
 
 /** Stores one page of synced counts, skipping posts replaced since they were listed. */
 export const saveCounts = internalMutation({
   args: { counts: v.array(syncedCounts) },
-  returns: v.number(),
+  returns: syncedCountsResult,
   handler: async (ctx, { counts }) => await saveSyncedCounts(ctx, counts),
 });
 

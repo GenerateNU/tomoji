@@ -162,6 +162,29 @@ Campaign end dates and offer expiries share `isHalfHourTimestamp` and `HALF_HOUR
 from `lib/validation.ts`. Callers retain their own optionality, future-time checks,
 and error reasons.
 
+## Opportunity recommendations
+
+`opportunityScores` stores how well an open opportunity fits a creator, from 0 to 1.
+`scoreOpportunityMatch` weighs the opportunity's minimum follower range (0.45), skills
+(0.35), and niches (0.20) against the creator's profile. Signals the opportunity
+doesn't ask for are left out and the rest re-normalized.
+
+Follower ranges are self-reported (`creators.followerRange`,
+`opportunities.minFollowerRange`; `null` clears them). They're uneven, so
+`followerRangeFit` measures the shortfall on a log scale: the score drops by 1 for
+every 10x a creator falls short. A minimum ranks a brief lower but never hides it.
+
+Only matches are stored; no row means a score of 0. The internal mutations
+`opportunityScores.scoreOpportunity` and `scoreCreator` rebuild scores in bounded,
+self-scheduling batches: first rescoring existing rows, then one stage per shared
+niche or skill (named, not numbered, so edits between batches don't misdirect them).
+Both read candidates through the `by_name_and_*Id` selection indexes, so cost grows
+with matches, not with every creator or opportunity; a brief that only sets a
+follower minimum has no selections to look up and isn't scored. Both skip users who
+aren't active creators and clear scores once the opportunity or creator drops out of
+discovery. Nothing calls them on edits yet, and `discover` doesn't read scores yet;
+both come next.
+
 ## Opportunity deliverables
 
 A deliverable is one piece of content an opportunity asks every assigned creator

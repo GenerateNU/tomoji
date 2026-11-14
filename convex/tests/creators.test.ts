@@ -389,6 +389,16 @@ describe("creators.update", () => {
     expect(await asOther.query(api.creators.me, {})).toMatchObject({ niches: [], skills: [] });
   });
 
+  test("sets and clears the creator's follower range", async () => {
+    const t = convexTest(schema, modules);
+    const asCreator = await seedUser(t, { subject: "creator_followers" });
+
+    const set = await asCreator.mutation(api.creators.update, { followerRange: "1k-5k" });
+    expect(set.followerRange).toBe("1k-5k");
+    const cleared = await asCreator.mutation(api.creators.update, { followerRange: null });
+    expect(cleared).not.toHaveProperty("followerRange");
+  });
+
   test("rejects manual X ID editing", async () => {
     const t = convexTest(schema, modules);
     const asCreator = await seedUser(t, { subject: "creator_manual_x" });

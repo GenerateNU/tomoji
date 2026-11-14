@@ -24,6 +24,7 @@ import {
 } from "./opportunityNiches";
 import { listOpportunitySkills, updateOpportunitySkills } from "./opportunitySkills";
 import schema from "../schema";
+import { followerRange } from "../schemas/creators.schema";
 
 export const opportunityCreate = schema
   .doc("opportunities")
@@ -134,10 +135,11 @@ export async function getOpportunity(
 
 // Deliverables change through the `deliverables` routes.
 export const opportunityUpdate = opportunityCreate
-  .omit("campaignId", "status", "productAccessLink", "deliverables")
+  .omit("campaignId", "status", "productAccessLink", "minFollowerRange", "deliverables")
   .partial()
   .extend({
     productAccessLink: v.optional(v.union(v.string(), v.null())),
+    minFollowerRange: v.optional(v.union(followerRange, v.null())),
   });
 
 export type OpportunityUpdate = Infer<typeof opportunityUpdate>;
@@ -421,6 +423,9 @@ export async function updateOpportunity(
         ? undefined
         : requireUrl(updates.productAccessLink, { reason: "invalid_product_access_link" });
   }
+  if (updates.minFollowerRange !== undefined) {
+    patch.minFollowerRange = updates.minFollowerRange ?? undefined;
+  }
   const updated = { ...opportunity, ...patch };
   if (updated.usesAiReviewDefault) {
     requireAiReviewCriteria(true, await listOpportunityDeliverables(ctx, opportunityId));
@@ -472,6 +477,20 @@ export async function getVisibleCreatorOpportunity(
   ctx: QueryCtx,
   opportunity: Doc<"opportunities">,
 ): Promise<CreatorOpportunity | null> {
+  const company = await getVisibleOpportunityCompany(ctx, opportunity);
+  return company === null
+    ? null
+    : toCreatorOpportunity(opportunity, company, await getOpportunityView(ctx, opportunity));
+}
+
+/**
+ * Returns the opportunity's company if creators may see the opportunity: it's
+ * open, its campaign is open, and its company is active. Otherwise `null`.
+ */
+export async function getVisibleOpportunityCompany(
+  ctx: QueryCtx | MutationCtx,
+  opportunity: Doc<"opportunities">,
+): Promise<Doc<"companies"> | null> {
   if (opportunity.status !== "open") return null;
   const campaign = await ctx.db.get("campaigns", opportunity.campaignId);
   if (
@@ -482,9 +501,7 @@ export async function getVisibleCreatorOpportunity(
     return null;
   }
   const company = await ctx.db.get("companies", opportunity.companyId);
-  return company !== null && company.isActive
-    ? toCreatorOpportunity(opportunity, company, await getOpportunityView(ctx, opportunity))
-    : null;
+  return company !== null && company.isActive ? company : null;
 }
 
 /** Discovers open briefs across active companies without ranking or application eligibility rules. */

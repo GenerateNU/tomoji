@@ -1,5 +1,6 @@
 import { defineTable } from "convex/server";
 import { v } from "convex/values";
+import { followerRange } from "./creators.schema";
 
 export const opportunityStatus = v.union(
   v.literal("draft"),
@@ -34,6 +35,8 @@ export const opportunitiesTable = defineTable({
   productAccessLink: v.optional(v.string()),
   // Legacy selections remain readable until backfilled into opportunityNiches.
   niches: v.optional(v.array(v.string())),
+  // Smallest reach the company wants. Ranks creators below it lower; never hides the brief.
+  minFollowerRange: v.optional(followerRange),
 })
   .index("by_companyId_and_status", ["companyId", "status"])
   .index("by_campaignId_and_status", ["campaignId", "status"])

@@ -13,7 +13,7 @@ import { getXAccountByCreatorId } from "./xAccountLookup";
 import { requireCountry } from "./countries";
 import { requireAdultBirthdate } from "../lib/birthdate";
 import schema from "../schema";
-import { MAX_ADDITIONAL_LINKS } from "../schemas/creators.schema";
+import { followerRange, MAX_ADDITIONAL_LINKS } from "../schemas/creators.schema";
 
 /**
  * What anyone who may see a creator gets, companies included. Private fields
@@ -35,6 +35,7 @@ export const creatorProfile = v.object({
   isPrivate: v.boolean(),
   niches: v.array(v.string()),
   skills: v.array(v.string()),
+  followerRange: v.optional(followerRange),
 });
 
 /** The creator's own view, which adds what only they may read. */
@@ -55,6 +56,8 @@ export const creatorProfileUpdate = v.object({
   // Names from models/niches.ts. An empty list clears them.
   niches: v.optional(v.array(v.string())),
   skills: v.optional(v.array(v.string())),
+  // Null clears it, like the links.
+  followerRange: v.optional(v.union(followerRange, v.null())),
 });
 
 export type CreatorProfile = Infer<typeof creatorProfile>;
@@ -86,6 +89,7 @@ function toCreatorProfile(
     isPrivate: creator.isPrivate ?? false,
     niches: details.niches,
     skills: details.skills,
+    followerRange: creator.followerRange,
   };
 }
 
@@ -265,6 +269,9 @@ export async function updateCreatorProfile(
     patch.dateOfBirth = requireAdultBirthdate(updates.dateOfBirth);
   }
   if (updates.isPrivate !== undefined) patch.isPrivate = updates.isPrivate;
+  if (updates.followerRange !== undefined) {
+    patch.followerRange = updates.followerRange ?? undefined;
+  }
   // Clients use null to clear a field because Convex cannot serialize undefined.
   if ("githubLink" in updates) {
     patch.githubLink = optionalProfileUrl(updates.githubLink, {

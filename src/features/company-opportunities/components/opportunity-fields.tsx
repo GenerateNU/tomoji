@@ -5,6 +5,7 @@ import { useId, useState, type ReactNode } from "react";
 import { ModalIconButton } from "@/components/modal";
 import { MultiSelectField } from "@/components/multi-select-field";
 import { SelectField } from "@/components/select-field";
+import { RichTextEditor } from "@/components/rich-text";
 import { TextAreaField } from "@/components/text-area-field";
 import { TextField } from "@/components/text-field";
 import { Button } from "@/components/ui/button";
@@ -268,14 +269,13 @@ export function RequirementsFields(props: FieldsProps) {
   return (
     <div className="flex flex-col gap-6">
       {show("contentRequirements") && (
-        <TextAreaField
-          label="Requirement Description"
-          placeholder="Write a message..."
-          maxLength={TEXT_LIMITS.contentRequirements}
+        <RichTextEditor
+          label="Requirements + Guidelines"
+          placeholder="What should creators make, and how?"
           value={values.contentRequirements}
-          onChange={(event) => onChange({ contentRequirements: event.target.value })}
+          onChange={(contentRequirements) => onChange({ contentRequirements })}
           error={errors.contentRequirements}
-          helper="One requirement per line."
+          helper="Use lists for separate requirements. Links must start with https://."
         />
       )}
       {show("productAccessLink") && (
@@ -415,12 +415,10 @@ export function PolicyFields({ values, errors, onChange, only }: FieldsProps) {
   return (
     <div className="flex flex-col gap-6">
       {show("reviewPolicy") && (
-        <TextAreaField
+        <RichTextEditor
           label="Content Review Policy"
-          rows={12}
-          maxLength={TEXT_LIMITS.reviewPolicy}
           value={values.reviewPolicy}
-          onChange={(event) => onChange({ reviewPolicy: event.target.value })}
+          onChange={(reviewPolicy) => onChange({ reviewPolicy })}
           error={errors.reviewPolicy}
           helper="Creators see this before they apply."
         />

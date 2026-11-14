@@ -1,5 +1,6 @@
 "use client";
 
+import { RichText } from "@/components/rich-text";
 import { RiCheckLine, RiPencilLine } from "@remixicon/react";
 import { useState, type ReactNode } from "react";
 import { ModalIconButton } from "@/components/modal";
@@ -125,7 +126,6 @@ export function OpportunityReview({
 }) {
   const [now] = useState(() => Date.now());
   const props: FieldsProps = { values, errors, onChange, campaignEndsAt };
-  const requirements = input.contentRequirements.split("\n").filter((line) => line.trim());
   const sections: Section[] = [
     {
       id: "description",
@@ -143,15 +143,9 @@ export function OpportunityReview({
     },
     {
       id: "contentRequirements",
-      label: "Requirement Description",
+      label: "Requirements + Guidelines",
       fields: ["contentRequirements"],
-      view: (
-        <ul className="list-disc pl-6">
-          {requirements.map((line, index) => (
-            <li key={index}>{line}</li>
-          ))}
-        </ul>
-      ),
+      view: <RichText markdown={input.contentRequirements} />,
       edit: <RequirementsFields {...props} only={["contentRequirements"]} />,
     },
     {
@@ -230,7 +224,7 @@ export function OpportunityReview({
       fields: ["reviewPolicy", "usesAiReview"],
       view: (
         <div className="flex flex-col gap-3">
-          <p className="whitespace-pre-line">{input.reviewPolicy}</p>
+          <RichText markdown={input.reviewPolicy} />
           <p className="text-body-sm text-gray-500">
             {input.usesAiReviewDefault
               ? "AI reviews submissions first."

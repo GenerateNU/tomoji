@@ -39,6 +39,21 @@ function Paragraphs({ label, text }: { label: string; text: string }) {
   );
 }
 
+/** What the opportunity is and what it pays, at the top of every pop-up step. */
+export function OpportunitySummary({ opportunity }: { opportunity: FeedOpportunity }) {
+  return (
+    <div className="flex flex-col gap-4">
+      <p className="text-body text-gray-950">{opportunity.description}</p>
+      <div className="flex flex-col gap-0.5">
+        <p className="text-body-lg text-gray-950">{formatPay(opportunity)}</p>
+        <p className="text-body-sm text-gray-500">
+          Apply by {formatDeadline(opportunity.deadline)}
+        </p>
+      </div>
+    </div>
+  );
+}
+
 /** The brief inside the opportunity pop-up: pay, selections, and what the work involves. */
 export function OpportunityDetails({ opportunity }: { opportunity: FeedOpportunity }) {
   const niches = useQuery(api.niches.list, {});
@@ -51,15 +66,7 @@ export function OpportunityDetails({ opportunity }: { opportunity: FeedOpportuni
 
   return (
     <div className="flex flex-col gap-6">
-      <div className="flex flex-col gap-4">
-        <p className="text-body text-gray-950">{opportunity.description}</p>
-        <div className="flex flex-col gap-0.5">
-          <p className="text-body-lg text-gray-950">{formatPay(opportunity)}</p>
-          <p className="text-body-sm text-gray-500">
-            Apply by {formatDeadline(opportunity.deadline)}
-          </p>
-        </div>
-      </div>
+      <OpportunitySummary opportunity={opportunity} />
       <div className="grid gap-6 sm:grid-cols-2">
         <Section label="Skills">
           <Tags tags={opportunity.skills.map((name) => label(skills, name))} />

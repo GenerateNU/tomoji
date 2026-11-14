@@ -8,8 +8,8 @@ now.
 Companies pay with a card they save once through Stripe Checkout. It is stored on a Stripe
 customer on Tomoji's own account and copied to a creator's account for each charge.
 
-This covers creator onboarding and saving company cards. Charging and payment webhooks come in
-later PRs.
+This covers creator onboarding, saving company cards, and recording payout charges. Making the
+charges, recovering failed ones, and refunds and disputes come in later PRs.
 
 ## Setup on your dev deployment
 
@@ -22,8 +22,9 @@ fail with `misconfigured`. To work on payments:
    - Scope: **Connected accounts** (creators are Connect v1 accounts).
    - Payload style: **Snapshot**, API version `2026-09-30.endive` (the version our `stripe`
      package pins).
-   - Events: `account.updated` and `account.application.deauthorized`. If you made the
-     destination before the second existed, edit it and add that event.
+   - Events: `account.updated`, `account.application.deauthorized`,
+     `payment_intent.succeeded`, `payment_intent.payment_failed`, and `charge.updated`. If you
+     made the destination earlier, edit it and add the ones it's missing.
    - Type: **Webhook endpoint**, URL `https://<your-deployment>.convex.site/stripe/webhook`.
      Running `just convex-env` with an empty secret prints your exact URL.
    - Name it after yourself (`<name>-dev-creator-onboarding`). The sandbox is shared, so
@@ -250,3 +251,50 @@ bunx convex run stripeCustomers:setupPaymentMethod '{"returnPath":"/campaigns"}'
 
 Open the URL, enter card `4242 4242 4242 4242` with any future expiry, CVC, and ZIP, and save.
 Then `stripeCustomers:me '{"asOf": <now in ms>}'` with the same identity returns `ready` with the Visa ending in 4242.
+
+# Payout charges
+
+Approving a payout doesn't move money (see `docs/EARNINGS.md`). Collecting it charges the
+company's saved card on the creator's Stripe account, for exactly the payout's `amount` in USD.
+Each try is a row in `payments`; the payout keeps only the summary `paymentStatus`.
+
+## Attempts
+
+`internal.payments.start({ payoutId, stripeAccountId })` begins the next attempt (1, 2, …) and
+sets the payout to `processing`. It refuses a payout that isn't approved
+(`payout_not_approved`), is already paid (`payout_already_paid`), has an attempt in flight
+(`payment_in_progress`), or whose assignment has an open dispute (`payout_disputed`).
+
+The charge's idempotency key and `metadata.paymentId` come from the attempt, so an attempt can
+never charge twice. **Every retry is a new attempt with a new charge**, never a reuse of a
+failed one; that keeps each attempt's outcome final.
+
+| Payout `paymentStatus` | When                                         |
+| ---------------------- | -------------------------------------------- |
+| `notStarted`           | Approved, not charged yet                    |
+| `processing`           | An attempt's charge is in flight             |
+| `transferred`          | The charge succeeded; `transferredAt` is set |
+| `needsAttention`       | The latest attempt failed; still owed        |
+
+`transferred` means the money reached the creator's Stripe balance, not their bank.
+
+## How outcomes are recorded
+
+Charges happen on creators' accounts, so their events arrive on the Connect webhook,
+`POST /stripe/webhook`. Each event names its attempt by `metadata.paymentId` (Stripe copies it
+onto the charge), because it can arrive before the charge id is saved.
+
+- `payment_intent.succeeded`: the attempt becomes `succeeded` and the payout `transferred`.
+- `payment_intent.payment_failed`: the attempt becomes `failed` with the issuer's reason
+  (`failureCode`, e.g. `insufficient_funds`), and the payout `needsAttention`.
+- `charge.updated` with a newly attached balance transaction: Stripe adds the fee a few seconds
+  after success, for US and non-US accounts alike. The webhook reads it and records
+  `stripeFee`, `creatorNet`, and `settlementCurrency`. These are in the creator account's
+  currency. In the sandbox, a US$1.00 charge settled as US$0.33 fee and US$0.67 net on a US
+  account, and as CA$1.43 with a CA$0.38 fee (including CA$0.03 for currency conversion) and
+  CA$1.05 net on a Canadian one. The payout's earned `amount` is never rewritten.
+
+Only a `processing` attempt changes, so repeated or late events can't undo an outcome. Events
+without our tag, from another deployment, or from a different account than the attempt charged
+are acknowledged and ignored. If the fee can't be fetched the webhook answers 500 so Stripe
+redelivers.

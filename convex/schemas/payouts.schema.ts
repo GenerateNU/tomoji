@@ -67,4 +67,10 @@ export const payoutsTable = defineTable({
   .index("by_approvalStatus_and_reviewRequestedAt", ["approvalStatus", "reviewRequestedAt"])
   .index("by_assignmentId_and_sourceKey", ["assignmentId", "sourceKey"])
   .index("by_assignmentId_and_deliverableId", ["assignmentId", "deliverableId"])
-  .index("by_approvalStatus_and_approvalDueAt", ["approvalStatus", "approvalDueAt"]);
+  .index("by_approvalStatus_and_approvalDueAt", ["approvalStatus", "approvalDueAt"])
+  // Collection finds approved payouts not yet charged, oldest approval first.
+  .index("by_approvalStatus_and_paymentStatus_and_approvedAt", [
+    "approvalStatus",
+    "paymentStatus",
+    "approvedAt",
+  ]);

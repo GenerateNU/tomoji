@@ -25,6 +25,8 @@ import {
   postEngagement,
   postReplacement,
   postVerification,
+  postView,
+  toPostView,
   replacePost,
   requirePost,
   unverifyPost,
@@ -65,9 +67,11 @@ export const create = creatorMutation({
  */
 export const get = authedQuery({
   args: { postId: v.id("posts") },
-  returns: schema.doc("posts"),
+  returns: postView,
   handler: async (ctx, args) => {
-    return await requirePost(ctx, await requireCallerViewer(ctx, ctx.user), args.postId);
+    return toPostView(
+      await requirePost(ctx, await requireCallerViewer(ctx, ctx.user), args.postId),
+    );
   },
 });
 
@@ -83,9 +87,10 @@ export const get = authedQuery({
  */
 export const list = authedQuery({
   args: postListFilters.fields,
-  returns: paginationResultValidator(schema.doc("posts")),
+  returns: paginationResultValidator(postView),
   handler: async (ctx, args) => {
-    return await listPosts(ctx, await requireCallerViewer(ctx, ctx.user), args);
+    const result = await listPosts(ctx, await requireCallerViewer(ctx, ctx.user), args);
+    return { ...result, page: result.page.map(toPostView) };
   },
 });
 
@@ -101,10 +106,10 @@ export const list = authedQuery({
  */
 export const replace = creatorMutation({
   args: { postId: v.id("posts"), ...postReplacement.fields },
-  returns: schema.doc("posts"),
+  returns: postView,
   handler: async (ctx, { postId, ...fields }) => {
     const creatorId = await requireCallerCreatorId(ctx, ctx.user);
-    return await replacePost(ctx, creatorId, postId, fields);
+    return toPostView(await replacePost(ctx, creatorId, postId, fields));
   },
 });
 
@@ -118,9 +123,9 @@ export const replace = creatorMutation({
  */
 export const verify = operatorMutation({
   args: { postId: v.id("posts"), ...postVerification.fields },
-  returns: schema.doc("posts"),
+  returns: postView,
   handler: async (ctx, { postId, ...verification }) => {
-    return await verifyPost(ctx, postId, verification);
+    return toPostView(await verifyPost(ctx, postId, verification));
   },
 });
 
@@ -133,9 +138,9 @@ export const verify = operatorMutation({
  */
 export const unverify = operatorMutation({
   args: { postId: v.id("posts") },
-  returns: schema.doc("posts"),
+  returns: postView,
   handler: async (ctx, args) => {
-    return await unverifyPost(ctx, args.postId);
+    return toPostView(await unverifyPost(ctx, args.postId));
   },
 });
 

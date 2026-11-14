@@ -28,6 +28,8 @@ import { xAccountCredentialsTable } from "./schemas/xAccountCredentials.schema";
 import { xLinkAttemptsTable } from "./schemas/xLinkAttempts.schema";
 import { deliverablesTable } from "./schemas/deliverables.schema";
 import { aiReviewAttemptsTable } from "./schemas/aiReviewAttempts.schema";
+import { deliverableEarningsTable } from "./schemas/deliverableEarnings.schema";
+import { postViewSnapshotsTable } from "./schemas/postViewSnapshots.schema";
 
 export default defineSchema({
   users: usersTable,
@@ -46,6 +48,8 @@ export default defineSchema({
   opportunityStars: opportunityStarsTable,
   opportunityScores: opportunityScoresTable,
   deliverables: deliverablesTable,
+  deliverableEarnings: deliverableEarningsTable,
+  postViewSnapshots: postViewSnapshotsTable,
   applications: applicationsTable,
   assignments: assignmentsTable,
   submissions: submissionsTable,

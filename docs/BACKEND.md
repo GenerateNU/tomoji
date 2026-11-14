@@ -237,6 +237,11 @@ deliverable separately:
   assignment returns every active post on it in one page, newest first, which
   the 20-deliverable cap keeps bounded.
 
+Public post reads and mutation responses use the explicit `postView` projection.
+They include verification/removal times and caption-check status, but omit earnings
+tracking markers, removal evidence keys, and the in-flight caption reservation.
+Internal operations retain the full stored post for reconciliation.
+
 `deliverableId` is required with no migration, since nothing is deployed yet. A
 dev deployment holding submissions from before it won't accept the schema:
 clear its `submissions`, `posts`, and `disputes` tables, then push again.
@@ -307,9 +312,10 @@ the caller's applications with its opportunity brief (`creatorOpportunity`, incl
 
 The [earnings rules and payment contract](EARNINGS.md) defines the
 calculator's verification clock, fixed/variable earnings, cutoffs, and handoff to
-Stripe collection. The pure calculator is implemented; measurement records and
-settlement follow in separate stacked PRs. This section describes the existing
-payout operations.
+Stripe collection. The calculator and verification/measurement records are
+implemented. Its [internal operations](EARNINGS.md#internal-operations) persist
+trusted evidence; settlement follows in the next stacked PR. This section
+describes the existing payout operations.
 
 `payouts` records individual finalized earning obligations. Every payout identifies
 one post and its assignment; both an assignment and a post can have several payouts.

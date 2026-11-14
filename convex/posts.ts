@@ -202,6 +202,8 @@ export const saveCaptionCheck = internalMutation({
       authorId: v.string(),
       postedAt: v.number(),
       hasExtraContent: v.boolean(),
+      views: v.optional(v.number()),
+      engagement: v.optional(postEngagement),
     }),
   },
   returns: creatorCaptionCheck,

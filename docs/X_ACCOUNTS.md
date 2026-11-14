@@ -181,6 +181,13 @@ separately:
 added to `reposts`. An unusable engagement count is left out on its own, keeping its
 stored value, so it can never hold back the views or the other counts.
 
+A creator's caption check (`posts.checkMyCaption`) asks for `public_metrics` in the same
+X request at no extra cost. When the match verifies the post, it stores the views and
+engagement, so analytics has counts from the moment of verification. Unusable counts are
+left out and never block verification. This reading is also the natural baseline for
+earnings, which exclude views a post had before verification; recording it as an
+earnings snapshot (`postViewSnapshots`) waits on the earnings stack.
+
 One unusable post never fails the batch. Each such post is listed in `missing` with a
 reason:
 

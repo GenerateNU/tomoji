@@ -889,3 +889,62 @@ describe("assignments.complete", () => {
     expect(result.status).toBe("completed");
   });
 });
+
+describe("creator assignment workspace", () => {
+  test("keeps completed work and its brief visible after an opportunity closes", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(t, { subject: "workspace-owner" });
+    const asCreator = await seedUser(t, { subject: "workspace-creator" });
+    const creatorId = await seedCreatorId(t, "workspace-creator");
+    const assignmentId = await seedAssignment(t, {
+      opportunityId: owner.opportunityId,
+      creatorId,
+    });
+    await t.run(async (ctx) => {
+      await ctx.db.patch("opportunities", owner.opportunityId, {
+        status: "closed",
+      });
+      await ctx.db.patch("assignments", assignmentId, { status: "completed" });
+    });
+
+    const past = await asCreator.query(api.assignments.listMineSummaries, {
+      phase: "past",
+      paginationOpts: { numItems: 12, cursor: null },
+    });
+    const details = await asCreator.query(api.assignments.getMineDetails, {
+      assignmentId,
+    });
+
+    expect(past.page).toEqual([
+      expect.objectContaining({
+        _id: assignmentId,
+        status: "completed",
+        title: expect.any(String),
+      }),
+    ]);
+    expect(details).toMatchObject({
+      assignment: { _id: assignmentId, status: "completed" },
+      brief: { description: expect.any(String) },
+    });
+  });
+
+  test("returns the same unavailable result for malformed IDs and another creator's assignment", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(t, {
+      subject: "private-workspace-owner",
+    });
+    const creatorId = await seedCreatorId(t, "private-workspace-creator");
+    const assignmentId = await seedAssignment(t, {
+      opportunityId: owner.opportunityId,
+      creatorId,
+    });
+    const asOther = await seedUser(t, { subject: "private-workspace-other" });
+
+    expect(await asOther.query(api.assignments.getMineDetails, { assignmentId })).toBeNull();
+    expect(
+      await asOther.query(api.assignments.getMineDetails, {
+        assignmentId: "invalid",
+      }),
+    ).toBeNull();
+  });
+});

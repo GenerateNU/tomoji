@@ -29,6 +29,12 @@ import {
   requireAssignment,
   toCreatorAssignment,
 } from "./models/assignments";
+import {
+  creatorAssignmentDetails,
+  creatorAssignmentSummary,
+  getCreatorAssignmentDetails,
+  listCreatorAssignmentSummaries,
+} from "./models/creatorAssignments";
 import { requireCallerCreatorId } from "./models/users";
 import schema from "./schema";
 
@@ -105,6 +111,26 @@ export const listMine = creatorQuery({
     const creatorId = await requireCallerCreatorId(ctx, ctx.user);
     const result = await listCreatorAssignments(ctx, creatorId, args);
     return { ...result, page: result.page.map(toCreatorAssignment) };
+  },
+});
+
+/** Lists the creator's assignments with display names for the assignments page. */
+export const listMineSummaries = creatorQuery({
+  args: creatorAssignmentListFilters.fields,
+  returns: paginationResultValidator(creatorAssignmentSummary),
+  handler: async (ctx, args) => {
+    const creatorId = await requireCallerCreatorId(ctx, ctx.user);
+    return await listCreatorAssignmentSummaries(ctx, creatorId, args);
+  },
+});
+
+/** Gets the owned assignment workspace, including its brief and deliverables. */
+export const getMineDetails = creatorQuery({
+  args: { assignmentId: v.string() },
+  returns: v.union(creatorAssignmentDetails, v.null()),
+  handler: async (ctx, { assignmentId }) => {
+    const creatorId = await requireCallerCreatorId(ctx, ctx.user);
+    return await getCreatorAssignmentDetails(ctx, creatorId, assignmentId);
   },
 });
 

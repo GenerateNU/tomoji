@@ -28,6 +28,7 @@ import { Button, buttonVariants } from "@/components/ui/button";
 import { DialogOverlay, DialogPortal, DialogTitle } from "@/components/ui/dialog";
 import { SidebarPage } from "@/components/ui/sidebar";
 import { Skeleton } from "@/components/ui/skeleton";
+import { NotificationBell } from "@/features/notifications/components/notifications-panel";
 import { useProfilePicture } from "@/features/profile/hooks/use-profile-picture";
 import { useMe, type Me } from "@/features/users/hooks/use-me";
 import { useMediaQuery } from "@/hooks/use-media-query";
@@ -147,18 +148,22 @@ function SyncedChrome({ me }: { me: SyncedMe }) {
         <Link href="/" aria-label="ohani home" className={cn("rounded-xs", focusRing)}>
           <Logo size={16} />
         </Link>
-        <button
-          type="button"
-          aria-label="Open navigation"
-          aria-expanded={drawerOpen}
-          onClick={() => setDrawerPath(pathname)}
-          className={cn(
-            "-mr-2 flex size-11 cursor-pointer items-center justify-center rounded text-gray-950 transition-colors hover:bg-gray-50",
-            focusRing,
-          )}
-        >
-          <RiMenuLine {...iconProps} size={20} />
-        </button>
+        <div className="flex items-center gap-1">
+          {/* Home only, and one bell at a time; from md up it sits at the page's top right instead. */}
+          {!isDesktop && pathname === "/" && <NotificationBell />}
+          <button
+            type="button"
+            aria-label="Open navigation"
+            aria-expanded={drawerOpen}
+            onClick={() => setDrawerPath(pathname)}
+            className={cn(
+              "-mr-2 flex size-11 cursor-pointer items-center justify-center rounded text-gray-950 transition-colors hover:bg-gray-50",
+              focusRing,
+            )}
+          >
+            <RiMenuLine {...iconProps} size={20} />
+          </button>
+        </div>
       </div>
 
       <div className="sticky top-0 hidden h-svh shrink-0 md:block">
@@ -246,6 +251,23 @@ function ShellChrome() {
 }
 
 /**
+ * The notifications bell at the page's top right, level with the page title, as
+ * in the design. Only on the home page, and desktop only: below md it lives in
+ * the top bar beside the menu. Other pages reach notifications from the account menu.
+ */
+function PageBell() {
+  const me = useMe();
+  const pathname = usePathname();
+  const isDesktop = useMediaQuery("(min-width: 768px)");
+  if (!isDesktop || !me?.synced || pathname !== "/") return null;
+  return (
+    <div className="absolute top-8 right-8 z-20 md:top-11">
+      <NotificationBell />
+    </div>
+  );
+}
+
+/**
  * The signed-in layout: a sidebar beside the page on md and up, and a top bar
  * with a navigation drawer below it. The sidebar sits in its own error
  * boundary, because a failed account read there would otherwise take down
@@ -263,7 +285,10 @@ export function AppShell({ children }: { children: ReactNode }) {
       >
         <ShellChrome />
       </ErrorBoundary>
-      <SidebarPage className="flex min-w-0 flex-1 flex-col">{children}</SidebarPage>
+      <SidebarPage className="flex min-w-0 flex-1 flex-col">
+        <PageBell />
+        {children}
+      </SidebarPage>
     </div>
   );
 }

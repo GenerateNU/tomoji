@@ -26,6 +26,8 @@ const modules = import.meta.glob("../../**/*.ts");
 
 const removeUserProfilePictures =
   internal.migrations["2026_10_07_remove_user_profile_pictures"].removeUserProfilePictures;
+const backfillEarningsSchedules =
+  internal.migrations["2026_11_11_backfill_earnings_schedules"].backfillEarningsSchedules;
 
 afterEach(() => vi.useRealTimers());
 
@@ -50,7 +52,7 @@ async function seedUser(t: ReturnType<typeof setup>, workosId: string) {
   );
 }
 
-describe("identity schema migrations", () => {
+describe("registered schema migrations", () => {
   test("runAll completes every registered migration", async () => {
     vi.useFakeTimers();
     const t = setup();
@@ -63,16 +65,28 @@ describe("identity schema migrations", () => {
       "profilePicture",
     );
     const statuses = await t.query(components.migrations.lib.getStatus, {
-      names: [getFunctionName(removeUserProfilePictures)],
+      names: [
+        getFunctionName(removeUserProfilePictures),
+        getFunctionName(backfillEarningsSchedules),
+      ],
     });
-    expect(statuses).toEqual([
-      expect.objectContaining({
-        name: getFunctionName(removeUserProfilePictures),
-        isDone: true,
-        state: "success",
-        processed: 1,
-      }),
-    ]);
+    expect(statuses).toHaveLength(2);
+    expect(statuses).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: getFunctionName(removeUserProfilePictures),
+          isDone: true,
+          state: "success",
+          processed: 1,
+        }),
+        expect.objectContaining({
+          name: getFunctionName(backfillEarningsSchedules),
+          isDone: true,
+          state: "success",
+          processed: 0,
+        }),
+      ]),
+    );
   });
 
   test("run executes only the migration selected by fn", async () => {

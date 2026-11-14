@@ -22,6 +22,14 @@ export const postsTable = defineTable({
   // When the post went live on X, recorded on verification.
   // Submission time is `_creationTime`.
   postedAt: v.optional(v.number()), // Unix milliseconds.
+  // Preserved when verification is revoked; publication time is not an earnings clock.
+  firstVerifiedAt: v.optional(v.number()),
+  // Set on genuinely new posts; replacements inherit it without certifying legacy history.
+  earningsTrackingVersion: v.optional(v.literal(1)),
+  // Legacy verification without a recorded time cannot be treated as a fresh agreement.
+  earningsTimingUnknown: v.optional(v.boolean()),
+  removedAt: v.optional(v.number()),
+  removalSourceKey: v.optional(v.string()),
   isVerified: v.boolean(),
   captionCheck: v.optional(postCaptionCheck),
   // Reserves a short window for an in-flight X read and bounds retries.

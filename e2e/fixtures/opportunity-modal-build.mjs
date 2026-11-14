@@ -21,7 +21,7 @@ const result = await build({
           path: resolve("e2e/fixtures/next-navigation.ts"),
         }));
         builder.onResolve({ filter: /^next\/link$/ }, () => ({
-          path: resolve("e2e/fixtures/next-link.tsx"),
+          path: resolve("e2e/fixtures/plain-next-link.tsx"),
         }));
         builder.onResolve({ filter: /^next\/image$/ }, () => ({
           path: resolve("e2e/fixtures/next-image.tsx"),

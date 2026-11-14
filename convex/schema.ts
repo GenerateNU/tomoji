@@ -19,8 +19,10 @@ import { opportunityLanguagesTable } from "./schemas/opportunityLanguages.schema
 import { opportunityNichesTable } from "./schemas/opportunityNiches.schema";
 import { opportunitySkillsTable } from "./schemas/opportunitySkills.schema";
 import { postsTable } from "./schemas/posts.schema";
+import { paymentsTable } from "./schemas/payments.schema";
 import { payoutsTable } from "./schemas/payouts.schema";
 import { stripeAccountCreationsTable, stripeAccountsTable } from "./schemas/stripeAccounts.schema";
+import { stripeCustomersTable } from "./schemas/stripeCustomers.schema";
 import { submissionsTable } from "./schemas/submissions.schema";
 import { usersTable } from "./schemas/users.schema";
 import { xAccountsTable } from "./schemas/xAccounts.schema";
@@ -28,6 +30,10 @@ import { xAccountCredentialsTable } from "./schemas/xAccountCredentials.schema";
 import { xLinkAttemptsTable } from "./schemas/xLinkAttempts.schema";
 import { deliverablesTable } from "./schemas/deliverables.schema";
 import { aiReviewAttemptsTable } from "./schemas/aiReviewAttempts.schema";
+import { deliverableEarningsTable } from "./schemas/deliverableEarnings.schema";
+import { postViewSnapshotsTable } from "./schemas/postViewSnapshots.schema";
+import { earningCalculationsTable } from "./schemas/earningCalculations.schema";
+import { earningsSchedulesTable } from "./schemas/earningsSchedules.schema";
 
 export default defineSchema({
   users: usersTable,
@@ -46,12 +52,17 @@ export default defineSchema({
   opportunityStars: opportunityStarsTable,
   opportunityScores: opportunityScoresTable,
   deliverables: deliverablesTable,
+  deliverableEarnings: deliverableEarningsTable,
+  postViewSnapshots: postViewSnapshotsTable,
+  earningCalculations: earningCalculationsTable,
+  earningsSchedules: earningsSchedulesTable,
   applications: applicationsTable,
   assignments: assignmentsTable,
   submissions: submissionsTable,
   aiReviewAttempts: aiReviewAttemptsTable,
   posts: postsTable,
   payouts: payoutsTable,
+  payments: paymentsTable,
   disputes: disputesTable,
   mediaUploads: mediaUploadsTable,
   xAccounts: xAccountsTable,
@@ -59,5 +70,6 @@ export default defineSchema({
   xLinkAttempts: xLinkAttemptsTable,
   stripeAccounts: stripeAccountsTable,
   stripeAccountCreations: stripeAccountCreationsTable,
+  stripeCustomers: stripeCustomersTable,
   notifications: notificationsTable,
 });

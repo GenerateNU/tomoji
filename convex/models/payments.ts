@@ -1,7 +1,9 @@
 import type { Doc, Id } from "../_generated/dataModel";
-import type { MutationCtx } from "../_generated/server";
+import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { apiError } from "../lib/errors";
 import { hasOpenDispute } from "./disputes";
+import { getStripeAccountByCreatorId, toStripeAccountStatus } from "./stripeAccounts";
+import { getStripeCustomerByCompanyId } from "./stripeCustomers";
 
 /**
  * Attempts to collect approved payouts by charging the company's card on the
@@ -58,6 +60,175 @@ export async function startPayment(
   const payment = await ctx.db.get("payments", id);
   if (payment === null) throw new Error("inserted payment vanished");
   return payment;
+}
+
+async function latestAttempt(
+  ctx: QueryCtx | MutationCtx,
+  payoutId: Id<"payouts">,
+): Promise<Doc<"payments"> | null> {
+  return await ctx.db
+    .query("payments")
+    .withIndex("by_payoutId_and_attempt", (q) => q.eq("payoutId", payoutId))
+    .order("desc")
+    .first();
+}
+
+/**
+ * Moves up to `limit` approved, uncharged payouts to `queued`, oldest approval
+ * first, and returns them for charging. Once queued a payout is never claimed
+ * again, so overlapping runs cannot charge it twice.
+ */
+export async function claimDuePayouts(ctx: MutationCtx, limit: number): Promise<Id<"payouts">[]> {
+  const due = await ctx.db
+    .query("payouts")
+    .withIndex("by_approvalStatus_and_paymentStatus_and_approvedAt", (q) =>
+      q.eq("approvalStatus", "approved").eq("paymentStatus", "notStarted"),
+    )
+    .take(limit);
+  for (const payout of due) {
+    await ctx.db.patch("payouts", payout._id, { paymentStatus: "queued" });
+  }
+  return due.map((payout) => payout._id);
+}
+
+/**
+ * The Stripe account a payout would be charged on: its creator's current one,
+ * or null if they have none.
+ */
+export async function getChargeAccountId(
+  ctx: QueryCtx,
+  payoutId: Id<"payouts">,
+): Promise<string | null> {
+  const payout = await ctx.db.get("payouts", payoutId);
+  if (payout === null) return null;
+  return (await getStripeAccountByCreatorId(ctx, payout.creatorId))?.stripeAccountId ?? null;
+}
+
+/** Why a queued payout cannot be charged now. Each is recorded as a failed attempt. */
+export type ChargeBlock =
+  | "company_card_missing"
+  | "creator_not_ready"
+  | "creator_account_missing"
+  | "payout_disputed";
+
+/** What to do with a payout: charge this attempt, nothing, or nothing because it is blocked. */
+export type ChargePlan =
+  | {
+      kind: "charge";
+      payment: Doc<"payments">;
+      stripeCustomerId: string;
+      paymentMethodId: string;
+      amount: number;
+      currency: string;
+    }
+  | { kind: "blocked"; reason: ChargeBlock }
+  | { kind: "settled" };
+
+/**
+ * Decides how to charge a payout and, for a new charge, starts its attempt.
+ * `chargesEnabled` is Stripe's live answer for the creator's account, or null
+ * if the creator has none.
+ *
+ * - A `queued` payout that can be charged starts an attempt (`charge`).
+ * - A `processing` attempt whose charge Stripe never confirmed is resumed with
+ *   the same attempt, so its idempotency key makes Stripe return the original
+ *   charge if there was one.
+ * - A payout that cannot be charged now is `blocked`: it records a failed
+ *   attempt with the reason and needs attention, leaving the queue so it cannot
+ *   hold up other payouts. Recovery decides when to try again.
+ * - Anything else, such as a paid payout or a charge awaiting Stripe's
+ *   outcome, is `settled`.
+ */
+export async function prepareCharge(
+  ctx: MutationCtx,
+  payoutId: Id<"payouts">,
+  chargesEnabled: boolean | null,
+): Promise<ChargePlan> {
+  const payout = await ctx.db.get("payouts", payoutId);
+  if (payout === null) return { kind: "settled" };
+  const latest = await latestAttempt(ctx, payoutId);
+  const customer = await getStripeCustomerByCompanyId(ctx, payout.companyId);
+  const card = customer?.card;
+
+  if (payout.paymentStatus === "processing") {
+    if (
+      latest === null ||
+      latest.status !== "processing" ||
+      latest.stripePaymentIntentId !== undefined
+    ) {
+      return { kind: "settled" };
+    }
+    if (customer === null || card === undefined) {
+      return await failAttempt(ctx, latest, "company_card_missing");
+    }
+    return {
+      kind: "charge",
+      payment: latest,
+      stripeCustomerId: customer.stripeCustomerId,
+      paymentMethodId: card.paymentMethodId,
+      amount: payout.amount,
+      currency: payout.currency,
+    };
+  }
+
+  if (payout.paymentStatus !== "queued" || payout.approvalStatus !== "approved") {
+    return { kind: "settled" };
+  }
+  const account = await getStripeAccountByCreatorId(ctx, payout.creatorId);
+  if (account === null) {
+    // Applying requires a ready account, so this is a broken invariant. There is
+    // no account to record an attempt against, so only the payout is flagged.
+    console.error("Payout's creator has no Stripe account", { payoutId });
+    await ctx.db.patch("payouts", payoutId, { paymentStatus: "needsAttention" });
+    return { kind: "blocked", reason: "creator_account_missing" };
+  }
+  if (await hasOpenDispute(ctx, payout.assignmentId)) {
+    return await blockPayout(ctx, payout, latest, account.stripeAccountId, "payout_disputed");
+  }
+  if (toStripeAccountStatus(account) !== "ready" || chargesEnabled !== true) {
+    return await blockPayout(ctx, payout, latest, account.stripeAccountId, "creator_not_ready");
+  }
+  if (customer === null || card === undefined) {
+    return await blockPayout(ctx, payout, latest, account.stripeAccountId, "company_card_missing");
+  }
+  return {
+    kind: "charge",
+    payment: await startPayment(ctx, payoutId, account.stripeAccountId),
+    stripeCustomerId: customer.stripeCustomerId,
+    paymentMethodId: card.paymentMethodId,
+    amount: payout.amount,
+    currency: payout.currency,
+  };
+}
+
+/** Records why a payout cannot be charged as a failed attempt, and flags it. */
+async function blockPayout(
+  ctx: MutationCtx,
+  payout: Doc<"payouts">,
+  latest: Doc<"payments"> | null,
+  stripeAccountId: string,
+  reason: ChargeBlock,
+): Promise<ChargePlan> {
+  await ctx.db.insert("payments", {
+    payoutId: payout._id,
+    attempt: (latest?.attempt ?? 0) + 1,
+    stripeAccountId,
+    status: "failed",
+    failureCode: reason,
+  });
+  await ctx.db.patch("payouts", payout._id, { paymentStatus: "needsAttention" });
+  return { kind: "blocked", reason };
+}
+
+/** Fails an in-flight attempt that cannot be resumed, and flags its payout. */
+async function failAttempt(
+  ctx: MutationCtx,
+  payment: Doc<"payments">,
+  reason: ChargeBlock,
+): Promise<ChargePlan> {
+  await ctx.db.patch("payments", payment._id, { status: "failed", failureCode: reason });
+  await ctx.db.patch("payouts", payment.payoutId, { paymentStatus: "needsAttention" });
+  return { kind: "blocked", reason };
 }
 
 /** Saves the id of the charge Stripe created for an attempt. */

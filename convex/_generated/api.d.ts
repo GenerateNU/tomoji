@@ -16,6 +16,7 @@ import type * as assignments from "../assignments.js";
 import type * as auth from "../auth.js";
 import type * as authorize from "../authorize.js";
 import type * as campaigns from "../campaigns.js";
+import type * as charging from "../charging.js";
 import type * as companies from "../companies.js";
 import type * as companyUsers from "../companyUsers.js";
 import type * as countries from "../countries.js";
@@ -137,6 +138,7 @@ declare const fullApi: ApiFromModules<{
   auth: typeof auth;
   authorize: typeof authorize;
   campaigns: typeof campaigns;
+  charging: typeof charging;
   companies: typeof companies;
   companyUsers: typeof companyUsers;
   countries: typeof countries;

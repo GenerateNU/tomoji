@@ -206,6 +206,70 @@ export async function findCreatedConnectAccount(
   return null;
 }
 
+/** What Stripe said about a payout charge. `pending` outcomes arrive by webhook. */
+export type ChargeOutcome =
+  | { kind: "succeeded"; paymentIntentId: string }
+  | { kind: "failed"; paymentIntentId: string; failureCode: string }
+  | { kind: "pending"; paymentIntentId: string };
+
+/**
+ * Charges a company's saved card on the creator's Standard account for one
+ * payout attempt. The card lives on Tomoji's account, so it is first copied
+ * onto the creator's; the charge then runs there off-session, since the
+ * company is not present. Both requests are keyed by the attempt, so repeating
+ * an attempt whose outcome was lost returns the original card and charge
+ * instead of charging twice. The charge carries `metadata.paymentId` so
+ * webhooks find the attempt.
+ *
+ * @throws whatever Stripe throws when the outcome is unknown, such as a network
+ * error; a card decline is returned as `failed` instead.
+ */
+export async function chargeConnectAccount(
+  stripe: Stripe,
+  charge: {
+    payment: Doc<"payments">;
+    stripeCustomerId: string;
+    paymentMethodId: string;
+    amount: number;
+    currency: string;
+  },
+): Promise<ChargeOutcome> {
+  const { payment } = charge;
+  const onCreatorAccount = { stripeAccount: payment.stripeAccountId };
+  const card = await stripe.paymentMethods.create(
+    { customer: charge.stripeCustomerId, payment_method: charge.paymentMethodId },
+    { ...onCreatorAccount, idempotencyKey: `payment:${payment._id}:card` },
+  );
+  try {
+    const intent = await stripe.paymentIntents.create(
+      {
+        amount: charge.amount,
+        currency: charge.currency,
+        payment_method: card.id,
+        confirm: true,
+        off_session: true,
+        // Off-session charges cannot redirect the company to their bank.
+        automatic_payment_methods: { enabled: true, allow_redirects: "never" },
+        metadata: { paymentId: payment._id, payoutId: payment.payoutId },
+      },
+      { ...onCreatorAccount, idempotencyKey: `payment:${payment._id}` },
+    );
+    return intent.status === "succeeded"
+      ? { kind: "succeeded", paymentIntentId: intent.id }
+      : { kind: "pending", paymentIntentId: intent.id };
+  } catch (error) {
+    // Stripe made the charge and the card refused it; the outcome is known.
+    if (error instanceof Stripe.errors.StripeCardError && error.payment_intent !== undefined) {
+      return {
+        kind: "failed",
+        paymentIntentId: error.payment_intent.id,
+        failureCode: error.decline_code ?? error.code ?? "card_declined",
+      };
+    }
+    throw error;
+  }
+}
+
 /**
  * The card details Tomoji keeps from a payment method, or null if it is not a
  * card. The brand is the one Stripe displays, which for a co-branded card is

@@ -93,7 +93,7 @@ function Sidebar({
       <div
         className={cn(
           "flex h-full flex-col justify-between gap-5 overflow-x-hidden overflow-y-auto px-2 py-6",
-          collapsed && peek === "panel" ? "w-44" : "w-50",
+          collapsed ? (peek === "panel" ? "w-44" : "w-50") : "w-full min-w-50",
         )}
       >
         <SidebarContext.Provider value={value}>{children}</SidebarContext.Provider>
@@ -196,12 +196,19 @@ function SidebarItem({
   icon,
   activeIcon,
   badge,
+  disabled = false,
   className,
   children,
   render,
   ...props
 }: useRender.ComponentProps<"a"> & {
   active?: boolean | "parent";
+  /**
+   * For a destination that doesn't exist yet: dimmed, out of the tab order, and
+   * announced as "(coming soon)". Like a disabled pagination link, it has no
+   * `href`, so pass a plain item rather than a `render={<Link />}`.
+   */
+  disabled?: boolean;
   icon?: React.ReactNode;
   /** A filled icon shown instead of `icon` while active. */
   activeIcon?: React.ReactNode;
@@ -209,15 +216,20 @@ function SidebarItem({
   badge?: React.ReactNode;
 }) {
   const { fade } = React.useContext(SidebarContext);
-  const selected = active !== false;
+  const selected = active !== false && !disabled;
   const element = useRender({
     defaultTagName: "a",
     props: mergeProps<"a">(
       {
-        "aria-current": active === true ? "page" : active === "parent" ? "true" : undefined,
+        "aria-current":
+          !disabled && active === true
+            ? "page"
+            : !disabled && active === "parent"
+              ? "true"
+              : undefined,
         className: cn(
-          "group/sidebar-item relative flex min-h-9.25 w-full items-center gap-2 rounded px-3 py-2 text-body text-gray-700 transition-colors hover:text-gray-950 data-active:font-medium data-active:text-gray-950 data-parent:font-medium data-parent:text-gray-950 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0 [&_svg]:text-gray-500 hover:[&_svg]:text-gray-700 data-active:[&_svg]:text-gray-950 data-parent:[&_svg]:text-gray-950",
-          "before:absolute before:inset-y-0 before:left-0 before:w-0.75 before:bg-transparent before:transition-colors hover:before:bg-gray-100 data-parent:before:bg-gray-200 data-active:before:bg-blue-primary",
+          "group/sidebar-item relative flex min-h-9.25 w-full items-center gap-2 rounded px-3 py-2 text-body text-gray-700 transition-colors not-aria-disabled:hover:text-gray-950 data-active:font-medium data-active:text-gray-950 data-parent:font-medium data-parent:text-gray-950 aria-disabled:cursor-not-allowed aria-disabled:opacity-40 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0 [&_svg]:text-gray-500 not-aria-disabled:hover:[&_svg]:text-gray-700 data-active:[&_svg]:text-gray-950 data-parent:[&_svg]:text-gray-950",
+          "before:absolute before:inset-y-0 before:left-0 before:w-0.75 before:bg-transparent before:transition-colors not-aria-disabled:hover:before:bg-gray-100 data-parent:before:bg-gray-200 data-active:before:bg-blue-primary",
           focusRing,
           className,
         ),
@@ -225,6 +237,7 @@ function SidebarItem({
           <>
             {selected && activeIcon ? activeIcon : icon}
             <span className={cn("min-w-0 flex-1 truncate", fade)}>{children}</span>
+            {disabled && <span className="sr-only">(coming soon)</span>}
             {badge != null && (
               <span
                 className={cn(
@@ -239,9 +252,14 @@ function SidebarItem({
         ),
       },
       props,
+      disabled ? { "aria-disabled": true as const, href: undefined, tabIndex: -1 } : {},
     ),
     render,
-    state: { slot: "sidebar-item", active: active === true, parent: active === "parent" },
+    state: {
+      slot: "sidebar-item",
+      active: active === true && !disabled,
+      parent: active === "parent" && !disabled,
+    },
   });
   return <li className="flex">{element}</li>;
 }

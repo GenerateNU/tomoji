@@ -47,11 +47,15 @@ export const disputeOverride = v.object({
 });
 export type DisputeOverride = Infer<typeof disputeOverride>;
 
-/** User IDs are optional because creators never get them (see `toCreatorView`). */
+/**
+ * User IDs are optional because creators never get them (see `toCreatorView`).
+ * `companyName` is read from the company, since creators can't look companies up.
+ */
 export const disputeView = v.union(
   ...disputeShapes(v.optional(v.id("users")), v.optional(v.id("users")), {
     _id: v.id("disputes"),
     _creationTime: v.number(),
+    companyName: v.string(),
   }),
 );
 export type DisputeView = Infer<typeof disputeView>;
@@ -213,7 +217,7 @@ export async function resolveDispute(
       target: disputeTarget(dispute._id),
     }),
   );
-  return toDisputeView(viewer, resolved);
+  return await toDisputeView(ctx, viewer, resolved);
 }
 
 /**
@@ -318,7 +322,7 @@ export async function requireDispute(
   viewer: AssignmentViewer,
   disputeId: Id<"disputes">,
 ): Promise<DisputeView> {
-  return toDisputeView(viewer, await requireVisibleDispute(ctx, viewer, disputeId));
+  return await toDisputeView(ctx, viewer, await requireVisibleDispute(ctx, viewer, disputeId));
 }
 
 /** Reports a missing dispute and someone else's the same way. */
@@ -351,7 +355,17 @@ export async function listDisputes(
   const result = await disputesOf(ctx, viewer, status, openedByRole)
     .order(order)
     .paginate(paginationOpts);
-  return { ...result, page: result.page.map((dispute) => toDisputeView(viewer, dispute)) };
+  // A page often repeats a company, so each name is read once.
+  const companyNames = new Map<Id<"companies">, Promise<string>>();
+  const page = await Promise.all(
+    result.page.map((dispute) => {
+      if (!companyNames.has(dispute.companyId)) {
+        companyNames.set(dispute.companyId, requireCompanyName(ctx, dispute.companyId));
+      }
+      return toDisputeView(ctx, viewer, dispute, companyNames.get(dispute.companyId));
+    }),
+  );
+  return { ...result, page };
 }
 
 function disputesOf(
@@ -393,26 +407,40 @@ function disputesOf(
   }
 }
 
-function toDisputeView(viewer: AssignmentViewer, dispute: Doc<"disputes">): DisputeView {
+async function toDisputeView(
+  ctx: QueryCtx,
+  viewer: AssignmentViewer,
+  dispute: Doc<"disputes">,
+  companyName: Promise<string> = requireCompanyName(ctx, dispute.companyId),
+): Promise<DisputeView> {
+  const named = { ...dispute, companyName: await companyName };
   switch (viewer.role) {
     case "company":
     case "operator":
-      return dispute;
+      return named;
     case "creator":
-      return toCreatorView(dispute);
+      return toCreatorView(named);
   }
+}
+
+/** Companies are deactivated, never deleted, so a dispute's company always exists. */
+async function requireCompanyName(ctx: QueryCtx, companyId: Id<"companies">): Promise<string> {
+  const company = await ctx.db.get("companies", companyId);
+  if (company === null) throw apiError("misconfigured");
+  return company.name;
 }
 
 /**
  * Copies an explicit list of fields rather than removing user IDs, so a field
  * added to the schema later stays hidden from creators until it's added here.
  */
-function toCreatorView(dispute: Doc<"disputes">): DisputeView {
+function toCreatorView(dispute: Doc<"disputes"> & { companyName: string }): DisputeView {
   const opened = {
     _id: dispute._id,
     _creationTime: dispute._creationTime,
     assignmentId: dispute.assignmentId,
     companyId: dispute.companyId,
+    companyName: dispute.companyName,
     creatorId: dispute.creatorId,
     campaignId: dispute.campaignId,
     postId: dispute.postId,

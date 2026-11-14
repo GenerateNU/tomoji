@@ -53,8 +53,8 @@ export function stripeErrorDetails(error: unknown): Record<string, string | unde
 }
 
 /**
- * What a Stripe account says about onboarding. `updatedAt` is when Stripe
- * produced it, in Unix ms: the account's creation time, or a webhook event's.
+ * What a Stripe account says about onboarding. `updatedAt` is when Tomoji
+ * received it from Stripe, in Unix ms on our clock, so later reads win.
  */
 export function toStripeAccountState(
   account: Stripe.Account,

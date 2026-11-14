@@ -13,8 +13,8 @@ import {
   type StripeAccountState,
 } from "../../models/stripeAccounts";
 import schema from "../../schema";
-import type { Doc } from "../../_generated/dataModel";
-import { expectApiError, seedCreatorId } from "../helpers";
+import type { Doc, Id } from "../../_generated/dataModel";
+import { expectApiError, seedCreatorId, type TestConvex } from "../helpers";
 
 const modules = import.meta.glob("../../**/*.ts");
 
@@ -96,11 +96,18 @@ describe("toStripeAccountStatus", () => {
 });
 
 describe("beginAccountCreation", () => {
+  /** Starts or resumes an attempt, failing the test if an account came back instead. */
+  async function begin(t: TestConvex, creatorId: Id<"creators">, country: string | undefined) {
+    const result = await t.run((ctx) => beginAccountCreation(ctx, creatorId, country));
+    if (!("attempt" in result)) throw new Error("expected an attempt, got an account");
+    return result;
+  }
+
   test("records the attempt with the creator's country before Stripe is called", async () => {
     const t = convexTest(schema, modules);
     const creatorId = await seedCreatorId(t, "attempt_new");
 
-    const { attempt, retry } = await t.run((ctx) => beginAccountCreation(ctx, creatorId, "CA"));
+    const { attempt, retry } = await begin(t, creatorId, "CA");
 
     expect(retry).toBe(false);
     expect(attempt).toMatchObject({ creatorId, country: "CA" });
@@ -111,13 +118,40 @@ describe("beginAccountCreation", () => {
   test("returns the pending attempt unchanged on a retry, even if the country changed", async () => {
     const t = convexTest(schema, modules);
     const creatorId = await seedCreatorId(t, "attempt_retry");
-    const first = await t.run((ctx) => beginAccountCreation(ctx, creatorId, "CA"));
+    const first = await begin(t, creatorId, "CA");
 
-    const again = await t.run((ctx) => beginAccountCreation(ctx, creatorId, "GB"));
+    const again = await begin(t, creatorId, "GB");
 
     expect(again.retry).toBe(true);
     expect(again.attempt._id).toBe(first.attempt._id);
     expect(again.attempt.country).toBe("CA");
+  });
+
+  // A second click that read "no account" before the first click saved one must
+  // not start another attempt, whose new key would make a second Stripe account.
+  test("returns the account another request already saved instead of starting an attempt", async () => {
+    const t = convexTest(schema, modules);
+    const creatorId = await seedCreatorId(t, "attempt_already_saved");
+    await t.run((ctx) => createStripeAccount(ctx, creatorId, created));
+
+    const result = await t.run((ctx) => beginAccountCreation(ctx, creatorId, "US"));
+
+    expect(result).toMatchObject({ account: { stripeAccountId: "acct_creator" } });
+    await t.run(async (ctx) => {
+      expect(await ctx.db.query("stripeAccountCreations").first()).toBeNull();
+    });
+  });
+
+  // Reconnecting needs a new account, so a disconnected one does not count.
+  test("starts an attempt for a creator whose account is disconnected", async () => {
+    const t = convexTest(schema, modules);
+    const creatorId = await seedCreatorId(t, "attempt_reconnect");
+    await t.run((ctx) => createStripeAccount(ctx, creatorId, created));
+    await t.run((ctx) => disconnectStripeAccount(ctx, "acct_creator", 1_700_000_100_000));
+
+    const { retry } = await begin(t, creatorId, "US");
+
+    expect(retry).toBe(false);
   });
 
   // Stripe fixes an account's country forever, so it must never be guessed.
@@ -138,13 +172,29 @@ describe("beginAccountCreation", () => {
   test("lets the creator start over once an attempt is abandoned", async () => {
     const t = convexTest(schema, modules);
     const creatorId = await seedCreatorId(t, "attempt_abandon");
-    await t.run((ctx) => beginAccountCreation(ctx, creatorId, "NG"));
+    const refused = await begin(t, creatorId, "NG");
 
-    await t.run((ctx) => abandonAccountCreation(ctx, creatorId));
-    const { attempt, retry } = await t.run((ctx) => beginAccountCreation(ctx, creatorId, "CA"));
+    await t.run((ctx) => abandonAccountCreation(ctx, refused.attempt._id));
+    const { attempt, retry } = await begin(t, creatorId, "CA");
 
     expect(retry).toBe(false);
     expect(attempt.country).toBe("CA");
+  });
+
+  // A slow refusal of the old attempt must not delete the creator's new one,
+  // or the next click would start a third attempt with yet another key.
+  test("abandoning an old attempt leaves the creator's newer attempt alone", async () => {
+    const t = convexTest(schema, modules);
+    const creatorId = await seedCreatorId(t, "attempt_abandon_late");
+    const old = await begin(t, creatorId, "NG");
+    await t.run((ctx) => abandonAccountCreation(ctx, old.attempt._id));
+    const current = await begin(t, creatorId, "CA");
+
+    await t.run((ctx) => abandonAccountCreation(ctx, old.attempt._id));
+
+    const again = await begin(t, creatorId, "CA");
+    expect(again.retry).toBe(true);
+    expect(again.attempt._id).toBe(current.attempt._id);
   });
 });
 
@@ -361,15 +411,39 @@ describe("updateStripeAccount", () => {
     });
   });
 
-  // Stripe timestamps are whole seconds, so two real changes can share one.
-  test("applies a state with the same timestamp as the stored one", async () => {
-    const { t, creatorId } = await seedAccount("stripe_same_second");
+  test("applies a state read at the same moment as the stored one", async () => {
+    const { t, creatorId } = await seedAccount("stripe_same_moment");
     const submitted = { ...created, detailsSubmitted: true };
 
     expect(await t.run((ctx) => updateStripeAccount(ctx, submitted))).toBe("updated");
 
     await t.run(async (ctx) => {
       expect(await getStripeAccountByCreatorId(ctx, creatorId)).toMatchObject(submitted);
+    });
+  });
+
+  // Two webhook deliveries can read the account and then save in reverse order.
+  // The read that finished later reflects Stripe's newer state and must win.
+  test("keeps a later read when an earlier read is saved after it", async () => {
+    const { t, creatorId } = await seedAccount("stripe_reads_reordered");
+    const laterRead = {
+      ...created,
+      detailsSubmitted: true,
+      payoutsEnabled: false,
+      stripeUpdatedAt: created.stripeUpdatedAt + 2_000,
+    };
+    const earlierRead = {
+      ...created,
+      detailsSubmitted: true,
+      payoutsEnabled: true,
+      stripeUpdatedAt: created.stripeUpdatedAt + 1_000,
+    };
+
+    await t.run((ctx) => updateStripeAccount(ctx, laterRead));
+    expect(await t.run((ctx) => updateStripeAccount(ctx, earlierRead))).toBe("stale");
+
+    await t.run(async (ctx) => {
+      expect(await getStripeAccountByCreatorId(ctx, creatorId)).toMatchObject(laterRead);
     });
   });
 

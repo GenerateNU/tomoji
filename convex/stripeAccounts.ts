@@ -115,9 +115,10 @@ async function createAccount(
   stripe: Stripe,
   creatorId: Id<"creators">,
 ): Promise<Doc<"stripeAccounts">> {
-  const { attempt, retry } = await ctx.runMutation(internal.stripeAccounts.beginCreation, {
-    creatorId,
-  });
+  const begun = await ctx.runMutation(internal.stripeAccounts.beginCreation, { creatorId });
+  // A concurrent request saved the account after this one looked.
+  if ("account" in begun) return begun.account;
+  const { attempt, retry } = begun;
   // Stripe forgets idempotency keys after 24 hours, so a late retry must look
   // for the account the earlier attempt made instead of relying on the key.
   let created = retry ? await findCreatedAccount(stripe, attempt) : null;
@@ -153,17 +154,19 @@ async function createAccount(
         error.code === "country_unsupported"
       ) {
         // Refused outright, so no account exists; the creator may change country.
-        await ctx.runMutation(internal.stripeAccounts.abandonCreation, { creatorId });
+        await ctx.runMutation(internal.stripeAccounts.abandonCreation, {
+          attemptId: attempt._id,
+        });
         throw apiError("invalid_state", { reason: "stripe_country_unsupported" });
       }
       throw apiError("upstream_failure", { reason: "stripe_account_failed" });
     }
   }
   // Saved before requesting the link, so a failed link never orphans the account.
-  // Without a creation time, 0 lets the first webhook replace this snapshot.
+  // Stamped with when it arrived, on the same clock the webhook's reads use.
   return await ctx.runMutation(internal.stripeAccounts.create, {
     creatorId,
-    state: toStripeAccountState(created, (created.created ?? 0) * 1000),
+    state: toStripeAccountState(created, Date.now()),
   });
 }
 
@@ -202,7 +205,10 @@ export const getForCreator = internalQuery({
  */
 export const beginCreation = internalMutation({
   args: { creatorId: v.id("creators") },
-  returns: v.object({ attempt: schema.doc("stripeAccountCreations"), retry: v.boolean() }),
+  returns: v.union(
+    v.object({ account: schema.doc("stripeAccounts") }),
+    v.object({ attempt: schema.doc("stripeAccountCreations"), retry: v.boolean() }),
+  ),
   handler: async (ctx, args) => {
     const creator = await ctx.db.get("creators", args.creatorId);
     return await beginAccountCreation(ctx, args.creatorId, creator?.countryOfResidence);
@@ -211,10 +217,10 @@ export const beginCreation = internalMutation({
 
 /** Forgets an attempt Stripe refused outright. See `abandonAccountCreation`. */
 export const abandonCreation = internalMutation({
-  args: { creatorId: v.id("creators") },
+  args: { attemptId: v.id("stripeAccountCreations") },
   returns: v.null(),
   handler: async (ctx, args) => {
-    await abandonAccountCreation(ctx, args.creatorId);
+    await abandonAccountCreation(ctx, args.attemptId);
     return null;
   },
 });

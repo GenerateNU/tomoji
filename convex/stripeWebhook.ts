@@ -55,8 +55,9 @@ export const stripeWebhook = httpAction(async (ctx, request) => {
       return new Response("Could not fetch the account", { status: 500 });
     }
     const result = await ctx.runMutation(internal.stripeAccounts.update, {
-      // Stripe's event time, not ours, decides which state is newer.
-      state: toStripeAccountState(account, event.created * 1000),
+      // When this read finished, not the event's time: concurrent deliveries can
+      // save in either order, and the later read reflects Stripe's newer state.
+      state: toStripeAccountState(account, Date.now()),
       taggedCreatorId: account.metadata?.creatorId,
     });
     if (result !== "unknown") {

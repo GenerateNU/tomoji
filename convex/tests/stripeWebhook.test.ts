@@ -115,6 +115,7 @@ function deauthorized(stripeAccountId: string, created = 1_700_000_200) {
 describe("POST /stripe/webhook", () => {
   test("applies a verified account.updated event", async () => {
     const { t, account } = await seedStoredAccount("webhook_update");
+    const before = Date.now();
 
     const response = await deliver(t, accountUpdated({}));
 
@@ -124,8 +125,11 @@ describe("POST /stripe/webhook", () => {
       detailsSubmitted: true,
       payoutsEnabled: true,
       requirementsDue: false,
-      stripeUpdatedAt: 1_700_000_100_000,
     });
+    // Stamped with when Tomoji read the account, which orders concurrent deliveries;
+    // the event's own time cannot, since two events can share a second.
+    expect((await account())?.stripeUpdatedAt).toBeGreaterThanOrEqual(before);
+    expect((await account())?.stripeUpdatedAt).toBeLessThanOrEqual(Date.now());
   });
 
   // Two events in the same second can arrive in either order, and Stripe's
@@ -208,13 +212,14 @@ describe("POST /stripe/webhook", () => {
     expect(await account()).not.toHaveProperty("disconnectedAt");
   });
 
-  test("skips an event older than the stored state", async () => {
+  // The account is read fresh, so a late, old event still saves the current state.
+  test("saves the current account even for an event older than the stored state", async () => {
     const { t, account } = await seedStoredAccount("webhook_stale");
 
     const response = await deliver(t, accountUpdated({}, 1_699_999_000));
 
     expect(response.status).toBe(200);
-    expect(await account()).toMatchObject(stored);
+    expect(await account()).toMatchObject({ payoutsEnabled: true });
   });
 
   test("adopts an unsaved account tagged with one of our creators", async () => {

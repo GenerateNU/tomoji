@@ -26,7 +26,7 @@ export const stripeAccountStatus = v.union(
   v.literal("disconnected"),
 );
 
-/** What Stripe reported about an account, and when (Unix ms, Stripe's clock). */
+/** What Stripe reported about an account, and when Tomoji read it (Unix ms, our clock). */
 export const stripeAccountState = v.object({
   stripeAccountId: v.string(),
   detailsSubmitted: v.boolean(),
@@ -84,6 +84,10 @@ async function getAccountCreation(
  * original country, so the request repeats exactly and Stripe cannot create a
  * second account. `country` is the creator's profile country.
  *
+ * Returns `{ account }` instead if a concurrent request saved a connected
+ * account after the caller looked; another attempt would use a new key and
+ * make Stripe create a second account.
+ *
  * @throws `not_found` if the creator no longer exists.
  * @throws `invalid_state` with reason `country_required` if nothing is pending
  * and the creator has not set a country, because Stripe fixes it for good.
@@ -92,8 +96,12 @@ export async function beginAccountCreation(
   ctx: MutationCtx,
   creatorId: Id<"creators">,
   country: string | undefined,
-): Promise<{ attempt: Doc<"stripeAccountCreations">; retry: boolean }> {
+): Promise<
+  { account: Doc<"stripeAccounts"> } | { attempt: Doc<"stripeAccountCreations">; retry: boolean }
+> {
   await requireCreatorProfileById(ctx, creatorId);
+  const account = await getStripeAccountByCreatorId(ctx, creatorId);
+  if (account !== null && account.disconnectedAt === undefined) return { account };
   const pending = await getAccountCreation(ctx, creatorId);
   if (pending !== null) return { attempt: pending, retry: true };
   if (country === undefined) throw apiError("invalid_state", { reason: "country_required" });
@@ -108,14 +116,22 @@ export async function beginAccountCreation(
 }
 
 /**
- * Forgets a pending attempt that Stripe refused outright, such as for an
- * unsupported country, so the creator can fix it and start over. Only for
- * refusals that prove no account was made.
+ * Forgets an attempt that Stripe refused outright, such as for an unsupported
+ * country, so the creator can fix it and start over. Only for refusals that
+ * prove no account was made. Takes the attempt's id, not the creator's: a slow
+ * refusal must not delete a newer attempt the creator has since started.
  */
 export async function abandonAccountCreation(
   ctx: MutationCtx,
-  creatorId: Id<"creators">,
+  attemptId: Id<"stripeAccountCreations">,
 ): Promise<void> {
+  if ((await ctx.db.get("stripeAccountCreations", attemptId)) !== null) {
+    await ctx.db.delete("stripeAccountCreations", attemptId);
+  }
+}
+
+/** Closes the creator's pending attempt once their account is saved. */
+async function finishAccountCreation(ctx: MutationCtx, creatorId: Id<"creators">): Promise<void> {
   const pending = await getAccountCreation(ctx, creatorId);
   if (pending !== null) await ctx.db.delete("stripeAccountCreations", pending._id);
 }
@@ -149,7 +165,7 @@ export async function createStripeAccount(
   } else {
     throw apiError("conflict", { reason: "stripe_account_exists" });
   }
-  await abandonAccountCreation(ctx, creatorId);
+  await finishAccountCreation(ctx, creatorId);
   const account = await ctx.db.get("stripeAccounts", id);
   if (account === null) throw new Error("saved Stripe account vanished");
   return account;
@@ -174,11 +190,11 @@ export async function disconnectStripeAccount(
 }
 
 /**
- * Applies an `account.updated` webhook. Stripe delivers events out of order,
- * so a state older than the stored one is skipped. Equal timestamps apply:
- * Stripe's clock has one-second resolution, and the webhook passes the
- * account as Stripe has it now rather than the event's copy. It never clears
- * `disconnectedAt`; only reconnecting with a new account does.
+ * Applies an `account.updated` webhook. The webhook reads the account from
+ * Stripe and stamps it with when the read finished, so the later read wins:
+ * two deliveries can read and then save in either order, and a state read
+ * before the stored one is skipped. It never clears `disconnectedAt`; only
+ * reconnecting with a new account does.
  *
  * `taggedCreatorId` is the `metadata.creatorId` set when the account was
  * created. If the server stopped before saving a new account, this adopts it
@@ -215,6 +231,6 @@ async function adoptStripeAccount(
   if ((await getStripeAccountByCreatorId(ctx, creatorId)) !== null) return "unknown";
   await ctx.db.insert("stripeAccounts", { creatorId, ...state });
   // Finished; a later reconnect must start a fresh attempt.
-  await abandonAccountCreation(ctx, creatorId);
+  await finishAccountCreation(ctx, creatorId);
   return "adopted";
 }

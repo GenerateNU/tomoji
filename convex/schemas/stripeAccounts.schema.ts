@@ -17,8 +17,9 @@ export const stripeAccountsTable = defineTable({
   // Stripe is waiting on the creator: its `requirements.currently_due` list is
   // not empty. False after submission means Stripe is still verifying.
   requirementsDue: v.boolean(),
-  // When Stripe produced the stored state, in Unix ms. Stripe does not deliver
-  // webhooks in order, so older events are skipped against this.
+  // When Tomoji read the stored state from Stripe, in Unix ms on our clock.
+  // Webhook deliveries can save in any order, so earlier reads are skipped
+  // against this.
   stripeUpdatedAt: v.number(),
   // When the creator removed Tomoji from their Stripe account, in Unix ms.
   // Tomoji can no longer use it, whatever the flags say.

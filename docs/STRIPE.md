@@ -101,9 +101,11 @@ Only the `POST /stripe/webhook` endpoint changes a creator's Stripe details. It:
 - rejects any request whose signature doesn't match `STRIPE_WEBHOOK_SECRET` (400), and
   answers 500 while the secret is unset so Stripe keeps retrying;
 - on `account.updated`, reads the account from Stripe as it is now rather than trusting the
-  event's copy, because two events in the same second can arrive in either order. Events older
-  than the details already saved are skipped. If Stripe can't be reached it answers 500 so
-  Stripe redelivers; if Tomoji has lost access (the creator disconnected) it answers 200;
+  event's copy, because two events in the same second can arrive in either order. Each save is
+  stamped with when that read finished, and a read older than the saved one is skipped, so two
+  deliveries saving in reverse order can't restore an earlier state. If Stripe can't be reached
+  it answers 500 so Stripe redelivers; if Tomoji has lost access (the creator disconnected) it
+  answers 200;
 - on `account.application.deauthorized`, marks the account `disconnected`. Later updates never
   undo that, and events for an account the creator has since replaced are ignored;
 - answers 200 to every other verified event, including types it ignores.
@@ -116,7 +118,10 @@ A creator never ends up with two accounts:
   that can change (no email).
 - Concurrent clicks and retries share one idempotency key per attempt and get the same account
   back. The key includes a fingerprint of the request, because Stripe refuses a reused key with
-  different parameters for 24 hours.
+  different parameters for 24 hours. A click that starts after another has already saved the
+  account gets that account instead of a new attempt.
+- An unsupported-country refusal deletes only its own attempt, so a slow refusal can't remove
+  a newer attempt the creator started after changing country.
 - Stripe forgets idempotency keys after 24 hours, so a retry first lists accounts created
   around the attempt's start and reuses the one tagged with `metadata.creatorId`.
 - The account is saved before the onboarding link is requested, so a failed link reuses it.

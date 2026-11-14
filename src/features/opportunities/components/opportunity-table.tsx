@@ -29,15 +29,13 @@ export function OpportunityTable({
   return (
     <Table bare className="min-w-[880px]">
       <TableHeader>
-        <TableRow>
-          <TableHead className="w-[30%]">Opportunity</TableHead>
-          <TableHead className="w-[17%]">Company</TableHead>
-          <TableHead className="w-28">Posted</TableHead>
-          {/* Dates stay whole, so this column doesn't shrink. */}
-          <TableHead className="w-44">Deadline</TableHead>
-          <TableHead className="w-48">Type</TableHead>
-          <TableHead className="w-44">Compensation</TableHead>
-        </TableRow>
+        <TableHead className="w-[30%]">Opportunity</TableHead>
+        <TableHead className="w-[17%]">Company</TableHead>
+        <TableHead className="w-28">Posted</TableHead>
+        {/* Dates stay whole, so this column doesn't shrink. */}
+        <TableHead className="w-44">Deadline</TableHead>
+        <TableHead className="w-48">Type</TableHead>
+        <TableHead className="w-44">Compensation</TableHead>
       </TableHeader>
       <TableBody>
         {opportunities.map((opportunity) => {

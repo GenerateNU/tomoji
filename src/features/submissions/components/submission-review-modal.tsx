@@ -4,7 +4,7 @@ import { api } from "@convex/_generated/api";
 import type { Id } from "@convex/_generated/dataModel";
 import { useMutation, usePaginatedQuery } from "convex/react";
 import type { FunctionReturnType } from "convex/server";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ErrorBoundary } from "@/components/error-boundary";
 import { Modal } from "@/components/modal";
 import { TextAreaField } from "@/components/text-area-field";
@@ -39,9 +39,9 @@ export function SubmissionReviewModal({
       onOpenChange={(open) => {
         if (!open) onClose();
       }}
-      eyebrow={<p className="text-body-sm text-gray-500">{row.campaignTitle}</p>}
+      eyebrow={<p className="text-body font-normal text-gray-600">{row.campaignTitle}</p>}
       title={row.title}
-      titleSize="lg"
+      titleSize="xl"
       className="max-w-[1120px] shadow-overlay"
     >
       <ErrorBoundary
@@ -69,6 +69,11 @@ function SubmissionRounds({ row }: { row: SubmissionQueueRow }) {
     { initialNumItems: historyPageSize },
   );
   const [selected, setSelected] = useState<Id<"submissions">>();
+  const roundScroller = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const scroller = roundScroller.current;
+    if (selected === undefined && scroller) scroller.scrollLeft = scroller.scrollWidth;
+  }, [results.length, selected]);
   const now = useNow();
   if (status === "LoadingFirstPage")
     return (
@@ -102,17 +107,20 @@ function SubmissionRounds({ row }: { row: SubmissionQueueRow }) {
           </Button>
         </div>
       )}
-      <div className="overflow-x-auto">
+      <div ref={roundScroller} className="overflow-x-auto">
         <TabsList aria-label="Submission rounds" className="w-max min-w-full">
-          {results.map((draft, index) => (
-            <TabsTrigger key={draft._id} value={draft._id}>
-              {newestNumber !== undefined && newestNumber > index
-                ? `Round ${newestNumber - index}`
-                : index === 0
-                  ? "Latest round"
-                  : `Previous round ${index}`}
-            </TabsTrigger>
-          ))}
+          {[...results].reverse().map((draft, index) => {
+            const roundsBack = results.length - 1 - index;
+            return (
+              <TabsTrigger key={draft._id} value={draft._id}>
+                {newestNumber !== undefined && newestNumber > roundsBack
+                  ? `Round ${newestNumber - roundsBack}`
+                  : roundsBack === 0
+                    ? "Latest round"
+                    : `Previous round ${roundsBack}`}
+              </TabsTrigger>
+            );
+          })}
         </TabsList>
       </div>
       <TabsContent value={active._id} key={active._id}>
@@ -148,7 +156,7 @@ function DraftReview({
           <Avatar size={40} initials={getInitials(creatorName)} />
           <div className="min-w-0">
             <p className="text-body font-medium wrap-anywhere">{creatorName}</p>
-            <p className="text-body-sm text-gray-500">
+            <p className="text-body-sm font-normal text-gray-500">
               Submitted{" "}
               <time dateTime={new Date(draft._creationTime).toISOString()}>
                 {formatRelativeTime(draft._creationTime, now)}
@@ -157,13 +165,13 @@ function DraftReview({
           </div>
         </div>
         {draft.caption && (
-          <p className="text-body whitespace-pre-wrap wrap-anywhere">{draft.caption}</p>
+          <p className="text-body font-normal whitespace-pre-wrap wrap-anywhere">{draft.caption}</p>
         )}
         {draft.mediaId && <SubmittedVideo mediaId={draft.mediaId} eager />}
       </div>
       <div className="min-w-0 space-y-3 self-start rounded-lg border border-gray-100 p-4">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <h3 className="text-body-lg font-medium">Review</h3>
+          <h3 className="text-xl font-medium">Review</h3>
           <Badge
             tone={draft.status === "pending" && !draft.closedWithoutReview ? "primary" : "neutral"}
           >
@@ -172,14 +180,14 @@ function DraftReview({
         </div>
         <div className="space-y-1">
           <h4 className="text-body-sm font-medium text-gray-700">Creator note</h4>
-          <p className="text-body-sm whitespace-pre-wrap wrap-anywhere text-gray-700">
+          <p className="text-body-sm font-normal whitespace-pre-wrap wrap-anywhere text-gray-500">
             {draft.draftDescription}
           </p>
         </div>
         {draft.status !== "pending" && draft.reviewNote && (
           <div className="space-y-1 border-t border-gray-100 pt-3">
             <h4 className="text-body-sm font-medium text-gray-700">Review feedback</h4>
-            <p className="text-body-sm whitespace-pre-wrap wrap-anywhere text-gray-700">
+            <p className="text-body-sm font-normal whitespace-pre-wrap wrap-anywhere text-gray-500">
               {draft.reviewNote}
             </p>
           </div>
@@ -236,6 +244,7 @@ function ReviewDecision({ submissionId }: { submissionId: Id<"submissions"> }) {
   return (
     <div className="space-y-3 border-t border-gray-100 pt-3">
       <TextAreaField
+        className="[&_[data-slot=label]]:text-xl [&_[data-slot=label]]:text-gray-950"
         label="Write a note"
         placeholder="Tell the creator what to change, or what worked."
         maxLength={noteLimit}

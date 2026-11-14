@@ -44,8 +44,8 @@ type ModalProps = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   title: ReactNode;
-  /** "lg" is 28px; breadcrumbs always use it. */
-  titleSize?: "sm" | "lg";
+  /** Uses the 18px, 28px or 32px heading treatment. Breadcrumbs use at least 28px. */
+  titleSize?: "sm" | "lg" | "xl";
   breadcrumbs?: BreadcrumbItemData[];
   /** A row above the title, level with the header controls, e.g. who the modal is about. */
   eyebrow?: ReactNode;
@@ -81,7 +81,9 @@ export function Modal({
   finalFocus,
 }: ModalProps) {
   const above = breadcrumbs ? <Breadcrumbs items={breadcrumbs} className="min-w-0" /> : eyebrow;
-  const big = titleSize === "lg" || Boolean(breadcrumbs);
+  const big = titleSize !== "sm" || Boolean(breadcrumbs);
+  const titleTypography =
+    titleSize === "xl" ? "text-heading-lg" : big ? "text-heading-md" : "text-body-lg";
   const close = (
     <DialogPrimitive.Close render={<ModalIconButton icon={RiCloseLine} label="Close" />} />
   );
@@ -96,8 +98,8 @@ export function Modal({
   const heading = (
     <DialogPrimitive.Title
       className={cn(
-        "min-w-0 text-gray-950",
-        big ? "text-heading-md font-medium" : "text-body-lg font-medium",
+        "min-w-0 font-medium text-gray-950",
+        titleTypography,
         titleAddon && "break-words",
       )}
     >

@@ -37,4 +37,6 @@ export const opportunitiesTable = defineTable({
   .index("by_campaignId_and_status", ["campaignId", "status"])
   .index("by_campaignId_and_deadline", ["campaignId", "deadline"])
   .index("by_createdBy", ["createdBy"])
-  .index("by_status_and_deadline", ["status", "deadline"]);
+  .index("by_status_and_deadline", ["status", "deadline"])
+  // Creators search open briefs by title in discovery.
+  .searchIndex("search_title", { searchField: "title", filterFields: ["status"] });

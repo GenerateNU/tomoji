@@ -2945,11 +2945,14 @@ describe("opportunity associations", () => {
     );
     const second = await seedOpportunity(t, { subject: "second_niche" }, { niches: ["llms"] });
     const firstPage = await t.run((ctx) =>
-      discoverOpportunities(ctx, { niche: "LLMs", paginationOpts: { numItems: 1, cursor: null } }),
+      discoverOpportunities(ctx, {
+        niches: ["LLMs"],
+        paginationOpts: { numItems: 1, cursor: null },
+      }),
     );
     const secondPage = await t.run((ctx) =>
       discoverOpportunities(ctx, {
-        niche: "LLMs",
+        niches: ["LLMs"],
         paginationOpts: { numItems: 1, cursor: firstPage.continueCursor },
       }),
     );
@@ -2963,7 +2966,7 @@ describe("opportunity associations", () => {
     // A full stream page may need one more read to discover the end of the index.
     const lastPage = await t.run((ctx) =>
       discoverOpportunities(ctx, {
-        niche: "LLMs",
+        niches: ["LLMs"],
         paginationOpts: { numItems: 1, cursor: secondPage.continueCursor },
       }),
     );
@@ -3113,7 +3116,7 @@ describe("opportunity niches", () => {
 
     const feed = await t.run(
       async (ctx) =>
-        await discoverOpportunities(ctx, { niche: "cybersecurity", paginationOpts: firstPage }),
+        await discoverOpportunities(ctx, { niches: ["cybersecurity"], paginationOpts: firstPage }),
     );
 
     expect(feed.page.map((brief) => brief._id)).toEqual([fitness.opportunityId]);
@@ -3130,7 +3133,7 @@ describe("opportunity niches", () => {
     const feed = await t.run(
       async (ctx) =>
         await discoverOpportunities(ctx, {
-          niche: "LLMs",
+          niches: ["LLMs"],
           paginationOpts: { numItems: 2, cursor: null },
         }),
     );
@@ -3145,7 +3148,7 @@ describe("opportunity niches", () => {
     await expect(
       t.run(
         async (ctx) =>
-          await discoverOpportunities(ctx, { niche: "crypto", paginationOpts: firstPage }),
+          await discoverOpportunities(ctx, { niches: ["crypto"], paginationOpts: firstPage }),
       ),
     ).rejects.toMatchObject({ data: { code: "invalid_state", reason: "invalid_niche" } });
   });

@@ -179,6 +179,18 @@ Campaign end dates and offer expiries share `isHalfHourTimestamp` and `HALF_HOUR
 from `lib/validation.ts`. Callers retain their own optionality, future-time checks,
 and error reasons.
 
+## Opportunity discovery
+
+`opportunities.discover` lists open briefs creators can see, in deadline order. Filters
+combine with AND; within `niches` or `skills` a brief needs any one. `isGated` picks
+briefs that need an application (true) or have spots to claim (false), and `applied`
+keeps only briefs the caller applied to. Each item carries the caller's `isStarred`,
+`application`, and `assignment`.
+
+`search` matches title words through the `search_title` index, best match first. Search
+results can't be streamed, so it reads the top 200 matches, filters them, and pages by
+position; its cursor is a count, not a stream cursor.
+
 ## Opportunity recommendations
 
 `opportunityScores` stores how well an open opportunity fits a creator, from 0 to 1.

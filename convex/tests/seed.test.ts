@@ -11,7 +11,7 @@ const paginationOpts = { numItems: 20, cursor: null };
 
 afterEach(() => vi.unstubAllEnvs());
 
-test("seeds every application table and preserves existing data on repeat runs", async () => {
+test("seeds demo tables without earnings evidence and preserves existing data on repeat runs", async () => {
   vi.stubEnv("TOMOJI_DEV_SEED", "true");
   const t = convexTest(schema, modules);
   await t.run((ctx) =>
@@ -32,7 +32,12 @@ test("seeds every application table and preserves existing data on repeat runs",
       Promise.all(tables.map(async (table) => (await ctx.db.query(table).collect()).length)),
     );
   const counts = await countRows();
-  expect(tables.filter((_, index) => counts[index] === 0)).toEqual([]);
+  // Synthetic demo posts have no verified earnings clock or X observations.
+  // Keep those tables empty rather than inventing payable earnings evidence.
+  expect(tables.filter((_, index) => counts[index] === 0).sort()).toEqual([
+    "deliverableEarnings",
+    "postViewSnapshots",
+  ]);
   expect(first.created).toBe(true);
 
   expect(await t.mutation(internal.seed.run, {})).toEqual({ ...first, created: false });

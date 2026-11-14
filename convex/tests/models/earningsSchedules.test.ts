@@ -81,7 +81,8 @@ test.each([
   ["unknown cancellation time", "cancellation_time_missing"],
   ["invalid window", "earning_timeline_invalid"],
   ["future verification", "earning_timeline_invalid"],
-  ["cutoff before verification", "earning_timeline_invalid"],
+  ["cutoff before verification", "cutoff_precedes_verification"],
+  ["cancellation before verification", "cutoff_precedes_verification"],
   ["missing assignment", "assignment_missing"],
 ] as const)("parks %s without inventing a due date", async (scenario, reason) => {
   const t = convexTest(schema, modules);
@@ -99,6 +100,12 @@ test.each([
         break;
       case "cutoff before verification":
         await ctx.db.patch("deliverableEarnings", earningsId, { cutoffAt: START - 1 });
+        break;
+      case "cancellation before verification":
+        await ctx.db.patch("assignments", assignmentId, {
+          status: "cancelled",
+          cancelledAt: START - 1,
+        });
         break;
       case "missing assignment":
         await ctx.db.delete("assignments", assignmentId);
@@ -145,7 +152,7 @@ test("an invalid retrospective cutoff parks due work and retains attempt diagnos
   const parked = await t.run((ctx) => bringForwardEarningsSchedule(ctx, earningsId));
   expect(parked).toMatchObject({
     status: "needsAttention",
-    lastError: "earning_timeline_invalid",
+    lastError: "cutoff_precedes_verification",
     lastAttemptedAt: START,
     lastAttemptedPeriodIndex: 0,
     retryCount: 2,

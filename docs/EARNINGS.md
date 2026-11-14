@@ -236,6 +236,14 @@ than skip to the last attempted period. If the effective cutoff remains the
 stored window end, the schedule is unchanged. Cancellation checks every agreement within
 the 20-deliverable limit and rejects inconsistent overflow instead of skipping rows.
 
+Known cancellation or removal prevents a new live-post verification. If late evidence
+instead places a cutoff before an existing agreement's verification, its schedule is
+parked as `needsAttention` with `cutoff_precedes_verification`. This contradicts the
+stored earning history and needs reconciliation; it is not an automatic zero-dollar
+completion or reversal of a fixed-fee obligation. Existing payouts and review deadlines
+stay unchanged. A cutoff exactly at verification remains eligible for the earned fixed
+fee and is scheduled immediately.
+
 The [schedule backfill](MIGRATIONS.md#backfill-earnings-schedules) adds
 missing schedules in batches from existing agreements, including ones older than
 30 days. It preserves existing schedules and obligations. Invalid timing or a

@@ -24,6 +24,15 @@ async function readScheduleTiming(
   ) {
     return { reason: "earning_timeline_invalid" };
   }
+  if (
+    [earnings.cutoffAt, assignment.cancelledAt].some(
+      (time) => time !== undefined && time < earnings.startedAt,
+    )
+  ) {
+    // Late cutoff evidence contradicts the stored verification. Existing fixed-fee
+    // obligations may already exist, so reconcile instead of declaring zero owed.
+    return { reason: "cutoff_precedes_verification" };
+  }
   const cutoffAt = Math.min(
     earnings.endsAt,
     earnings.cutoffAt ?? Infinity,

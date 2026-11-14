@@ -3,6 +3,7 @@ import { convexTest } from "convex-test";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { createPost, replacePost, unverifyPost, verifyPost } from "../../models/posts";
 import { cancelAssignment } from "../../models/assignments";
+import { settleEarnings } from "../../models/earnings";
 import {
   initializePostEarnings,
   recordPostRemoval,
@@ -194,6 +195,94 @@ test("delayed removal wakes a completed schedule at the actual cutoff and retrie
   await t.run((ctx) => recordPostRemoval(ctx, evidence));
   expect(await t.run((ctx) => ctx.db.get("earningsSchedules", schedule._id))).toEqual(complete);
   expect(await t.run((ctx) => ctx.db.query("payouts").take(1))).toEqual([]);
+});
+
+test.each(["cancelled", "removed"] as const)(
+  "verification after a known %s cutoff cannot initialize an earning agreement",
+  async (cutoff) => {
+    const t = convexTest(schema, modules);
+    const { fixture, postId } = await fixturePost(t);
+    if (cutoff === "cancelled") {
+      await t.run(async (ctx) =>
+        cancelAssignment(ctx, (await ctx.db.get("assignments", fixture.assignmentId))!),
+      );
+    } else {
+      await t.run((ctx) =>
+        recordPostRemoval(ctx, { postId, removedAt: START, sourceKey: "removed:before-verify" }),
+      );
+    }
+    vi.setSystemTime(START + DAY);
+    await expect(
+      t.run((ctx) => verifyPost(ctx, postId, { postedAt: START - DAY })),
+    ).rejects.toMatchObject({
+      data: {
+        code: "invalid_state",
+        reason: cutoff === "cancelled" ? "assignment_not_active" : "post_removed",
+      },
+    });
+    expect(await t.run((ctx) => ctx.db.query("deliverableEarnings").take(1))).toEqual([]);
+    expect(await t.run((ctx) => ctx.db.query("earningsSchedules").take(1))).toEqual([]);
+    expect(await t.run((ctx) => ctx.db.query("payouts").take(1))).toEqual([]);
+  },
+);
+
+test("late pre-verification removal parks work without cancelling the fixed-fee obligation", async () => {
+  const t = convexTest(schema, modules);
+  const { fixture, postId, schedule } = await verifiedFixture(t);
+  vi.setSystemTime(START + 7 * DAY);
+  const settlement = await t.run((ctx) =>
+    settleEarnings(ctx, {
+      assignmentId: fixture.assignmentId,
+      deliverableId: fixture.deliverableId,
+      periodIndex: 0,
+    }),
+  );
+  expect(settlement.status).toBe("pendingMetrics");
+  const payouts = await t.run((ctx) => ctx.db.query("payouts").take(2));
+  expect(payouts).toHaveLength(1);
+  expect(payouts[0]).toMatchObject({
+    amount: 10_000,
+    approvalStatus: "pending",
+    approvalDueAt: START + 10 * DAY,
+  });
+  const calculations = await t.run((ctx) => ctx.db.query("earningCalculations").take(3));
+
+  vi.setSystemTime(START + 8 * DAY);
+  const removal = { postId, removedAt: START - 1, sourceKey: "removed:late-before-verify" };
+  await t.run((ctx) => recordPostRemoval(ctx, removal));
+  const parked = await t.run((ctx) => ctx.db.get("earningsSchedules", schedule._id));
+  expect(parked).toMatchObject({
+    status: "needsAttention",
+    lastError: "cutoff_precedes_verification",
+  });
+  expect(parked?.nextCheckAt).toBeUndefined();
+  await t.run((ctx) => recordPostRemoval(ctx, removal));
+  expect(await t.run((ctx) => ctx.db.get("earningsSchedules", schedule._id))).toEqual(parked);
+  expect(await t.run((ctx) => ctx.db.query("payouts").take(2))).toEqual(payouts);
+  expect(await t.run((ctx) => ctx.db.query("earningCalculations").take(3))).toEqual(calculations);
+});
+
+test("removal at verification schedules the earned fixed fee immediately", async () => {
+  const t = convexTest(schema, modules);
+  const { fixture, postId, schedule } = await verifiedFixture(t);
+  await t.run((ctx) =>
+    recordPostRemoval(ctx, { postId, removedAt: START, sourceKey: "removed:at-verify" }),
+  );
+  expect(await t.run((ctx) => ctx.db.get("earningsSchedules", schedule._id))).toMatchObject({
+    status: "scheduled",
+    nextCheckAt: START,
+  });
+  const settlement = await t.run((ctx) =>
+    settleEarnings(ctx, {
+      assignmentId: fixture.assignmentId,
+      deliverableId: fixture.deliverableId,
+      periodIndex: 0,
+    }),
+  );
+  expect(settlement.status).toBe("recorded");
+  const payouts = await t.run((ctx) => ctx.db.query("payouts").take(2));
+  expect(payouts).toHaveLength(1);
+  expect(payouts[0]).toMatchObject({ amount: 10_000, approvalDueAt: START + 3 * DAY });
 });
 
 test("a removal retry wakes a parked schedule only when it clears an obsolete hold", async () => {

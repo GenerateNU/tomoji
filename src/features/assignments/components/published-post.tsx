@@ -7,6 +7,7 @@ import { useId, useRef, useState, type FormEvent } from "react";
 import { ConvexError } from "convex/values";
 import { RiCheckLine, RiCloseLine, RiTimeLine } from "@remixicon/react";
 import { IconContainer } from "@/components/icon-container";
+import { ProgressRing } from "@/components/progress-ring";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -15,7 +16,6 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
-import { Progress, ProgressLabel } from "@/components/ui/progress";
 import { Input } from "@/components/ui/input";
 import { errorCode, errorMessage } from "@/lib/errors";
 import { cn } from "@/lib/utils";
@@ -225,19 +225,20 @@ export function PublishedPost({
           </div>
 
           {checking ? (
-            <div className="mx-auto mt-10 max-w-[446px] rounded-lg bg-gray-0 p-5">
+            <div className="mx-auto mt-10 flex w-fit max-w-full items-center gap-4 rounded-lg bg-gray-0 p-4 shadow-page">
               <DialogTitle className="sr-only">Checking published caption</DialogTitle>
               <DialogDescription className="sr-only">
                 Comparing the published post with your approved submission
               </DialogDescription>
-              <Progress
-                value={null}
-                className="[&_[data-slot=progress-indicator]]:w-2/5 [&_[data-slot=progress-indicator]]:bg-gray-950 motion-safe:[&_[data-slot=progress-indicator]]:animate-pulse [&_[data-slot=progress-track]]:h-3"
-              >
-                <ProgressLabel className="font-normal text-gray-500">
-                  Checking to see if it’s a match
-                </ProgressLabel>
-              </Progress>
+              <ProgressRing
+                value={40}
+                size="md"
+                showLabel={false}
+                label="Checking to see if it’s a match"
+                aria-valuenow={undefined}
+                className="motion-safe:animate-spin"
+              />
+              <p className="text-body font-medium">Checking to see if it’s a match...</p>
             </div>
           ) : showForm ? (
             <form

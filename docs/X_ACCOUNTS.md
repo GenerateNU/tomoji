@@ -259,9 +259,10 @@ stored value, so it can never hold back the views or the other counts.
 A creator's caption check (`posts.checkMyCaption`) asks for `public_metrics` in the same
 X request at no extra cost. When the match verifies the post, it stores the views and
 engagement, so analytics has counts from the moment of verification. Unusable counts are
-left out and never block verification. This reading is also the natural baseline for
-earnings, which exclude views a post had before verification; recording it as an
-earnings snapshot (`postViewSnapshots`) waits on the earnings stack.
+left out and never block verification. Like every views save, this reading is also
+recorded as an earnings snapshot (`postViewSnapshots`), so it serves as the reading at
+verification, and the immediate `xMetrics.collect` read that verification schedules is
+skipped. When the caption check had no usable views, that read still runs.
 
 One unusable post never fails the batch. Each such post is listed in `missing` with a
 reason:

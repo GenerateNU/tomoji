@@ -61,15 +61,20 @@ export const sync = internalAction({
 
 /**
  * Reads the given posts now. Scheduled on a post's first verification, so
- * earnings have a reading close to the start of the window.
+ * earnings have a reading close to the start of the window. With `readSince`, a
+ * post that already has a reading from then on is skipped, such as one whose
+ * creator caption check stored counts as it verified the post.
  */
 export const collect = internalAction({
-  args: { postIds: v.array(v.id("posts")) },
+  args: { postIds: v.array(v.id("posts")), readSince: v.optional(v.number()) },
   returns: v.null(),
-  handler: async (ctx, { postIds }): Promise<null> => {
+  handler: async (ctx, { postIds, readSince }): Promise<null> => {
     const config = readXMetricsConfig(env);
     if (!config.enabled) return null;
-    const posts = await ctx.runQuery(internal.xMetrics.collectionTargets, { postIds });
+    const posts = await ctx.runQuery(internal.xMetrics.collectionTargets, {
+      postIds,
+      readSince,
+    });
     if (posts.length > 0) await syncPage(ctx, config.bearerToken, posts);
     return null;
   },

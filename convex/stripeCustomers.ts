@@ -4,7 +4,7 @@ import { internal } from "./_generated/api";
 import { internalMutation, internalQuery } from "./_generated/server";
 import { apiError } from "./lib/errors";
 import { companyAdminAction, companyQuery } from "./lib/functions";
-import { fingerprint, siteUrl, stripeClient, stripeErrorDetails } from "./lib/stripe";
+import { checkoutReturnUrl, fingerprint, stripeClient, stripeErrorDetails } from "./lib/stripe";
 import { requireCompany } from "./models/companies";
 import {
   createStripeCustomer,
@@ -29,24 +29,6 @@ import schema from "./schema";
  * pass the company `companyAdminAction` resolved, or a card from a verified
  * Stripe event, never one taken from a client.
  */
-
-/**
- * The page on the Tomoji site Checkout sends the admin back to, marked with
- * `stripe=return` or `stripe=cancel`. Returning does not mean the card is
- * saved; `me` updates when the webhook arrives.
- *
- * @throws `invalid_state` with reason `return_path_invalid` unless `returnPath`
- * is a path on the Tomoji site, so the flow cannot redirect to another site.
- */
-function checkoutReturnUrl(returnPath: string, outcome: "return" | "cancel"): string {
-  const url = new URL(siteUrl(returnPath));
-  // `//host` and `/\host` resolve to another origin, so compare origins too.
-  if (!returnPath.startsWith("/") || url.origin !== new URL(siteUrl("/")).origin) {
-    throw apiError("invalid_state", { reason: "return_path_invalid" });
-  }
-  url.searchParams.set("stripe", outcome);
-  return url.toString();
-}
 
 /** Whether the company has a card on file: `missing`, or `ready` with the card to display. */
 export const me = companyQuery({

@@ -664,3 +664,27 @@ export async function listEarningPosts(
   }
   return { ...result, page };
 }
+
+/** One post's counts from the daily X sync. */
+export const syncedCounts = v.object({
+  postId: v.id("posts"),
+  views: v.number(),
+  engagement: postEngagement,
+});
+export type SyncedCounts = Infer<typeof syncedCounts>;
+
+/**
+ * Stores the sync's counts for each post that's still active, skipping posts
+ * replaced or removed since they were listed. Returns how many were stored.
+ */
+export async function saveSyncedCounts(ctx: MutationCtx, counts: SyncedCounts[]): Promise<number> {
+  let saved = 0;
+  for (const { postId, views, engagement } of counts) {
+    const post = await ctx.db.get("posts", postId);
+    if (post === null || !post.isActive) continue;
+    await updatePostViews(ctx, postId, views);
+    await updatePostEngagement(ctx, postId, engagement);
+    saved++;
+  }
+  return saved;
+}

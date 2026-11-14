@@ -119,6 +119,7 @@ import type * as tests_helpers from "../tests/helpers.js";
 import type * as users from "../users.js";
 import type * as xAccounts from "../xAccounts.js";
 import type * as xAccountsInternal from "../xAccountsInternal.js";
+import type * as xMetrics from "../xMetrics.js";
 
 import type {
   ApiFromModules,
@@ -238,6 +239,7 @@ declare const fullApi: ApiFromModules<{
   users: typeof users;
   xAccounts: typeof xAccounts;
   xAccountsInternal: typeof xAccountsInternal;
+  xMetrics: typeof xMetrics;
 }>;
 
 /**

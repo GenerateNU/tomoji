@@ -141,10 +141,9 @@ Post metrics come from X's public post lookup, which accepts the app-only bearer
 token, so the sync never decrypts creator credentials. Every read is billed against
 the team's X credits.
 
-Nothing calls the lookup yet: no cron runs and no post's counts are updated. A daily
-analytics sync will call it, and earnings will request their own boundary readings. The
-X field names below come from X's documentation and haven't been checked against a live
-response. Before enabling the sync anywhere, make one lookup for a post you own (about
+The daily analytics sync (`xMetrics.sync`, cron `sync X post metrics` at 00:00 UTC) calls
+the lookup; earnings will request their own boundary readings. The X field names below
+come from X's documentation and haven't been checked against a live response. Before enabling the sync anywhere, make one lookup for a post you own (about
 $0.005) and confirm `public_metrics` includes `impression_count`:
 
 ```bash
@@ -186,6 +185,14 @@ The analytics sync skips posts on cancelled assignments; posts with an open disp
 in. Payouts decide eligibility separately: a cancellation stops accrual at its cutoff,
 and any readings earnings need around that cutoff come from the earnings flow, not this
 sync.
+
+Each run reads one page of 100 posts from `posts.listEarning`, looks them up in one X
+request, and stores views and engagement through `xMetrics.saveCounts`, skipping posts
+replaced since they were listed. It then schedules the next page with the same `now`
+until every page is done. Posts X leaves out keep their stored counts and are logged by
+reason. Any X failure, including a rate limit, is logged and stops the run without
+retrying, since each read is billed; the next day's run reads the same posts again. With
+`X_METRICS_SYNC_ENABLED` off, the cron does nothing and calls nothing.
 
 `getXPostMetrics` looks up at most 100 post IDs per call through `GET /2/tweets` with
 `tweet.fields=public_metrics`. Each post's counts come back in two parts, stored

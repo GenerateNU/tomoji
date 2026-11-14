@@ -19,4 +19,8 @@ crons.interval("approve due payouts", { minutes: 1 }, internal.payouts.autoAppro
 // Each deliverable keeps its own verification-based earning boundaries.
 crons.interval("create due earnings", { minutes: 1 }, internal.earningsSchedules.sweep, {});
 
+// Analytics only: payouts settle from their own readings. Does nothing unless
+// X_METRICS_SYNC_ENABLED is "true", so personal deployments don't spend X credits.
+crons.cron("sync X post metrics", "0 0 * * *", internal.xMetrics.sync, {});
+
 export default crons;

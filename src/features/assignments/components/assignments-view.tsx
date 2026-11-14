@@ -321,7 +321,9 @@ function AssignmentRows({
               <div className="col-start-2 row-span-3 row-start-2 flex flex-wrap items-center justify-end gap-2 lg:col-start-auto lg:row-span-1 lg:row-start-auto">
                 {row.queue === "approved" && !row.next && <Badge>Posted</Badge>}
                 {row.queue === "review" && row.status === "active" && <Badge>In review</Badge>}
-                {row.status !== "active" && <Badge>{assignmentStatusLabel[row.status]}</Badge>}
+                {(row.status === "completed" || row.status === "cancelled") && (
+                  <Badge>{assignmentStatusLabel[row.status]}</Badge>
+                )}
                 <Link
                   href={task && row.next ? `${href}&task=${task}&deliverable=${row.next.id}` : href}
                   className={buttonVariants({

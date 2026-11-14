@@ -5,7 +5,8 @@ import type { Doc, Id } from "@convex/_generated/dataModel";
 import { useAction, useMutation } from "convex/react";
 import { useId, useRef, useState, type FormEvent } from "react";
 import { ConvexError } from "convex/values";
-import { RiCheckLine, RiCloseLine, RiTimeLine } from "@remixicon/react";
+import { RiCloseLine, RiTimeLine } from "@remixicon/react";
+import { CountdownButton } from "@/components/countdown-button";
 import { IconContainer } from "@/components/icon-container";
 import { ProgressRing } from "@/components/progress-ring";
 import { Button } from "@/components/ui/button";
@@ -46,6 +47,7 @@ export function PublishedPost({
   const check = useAction(api.posts.checkMyCaption);
   const inputId = useId();
   const [open, setOpen] = useState(startOpen);
+  const [verifiedOnOpen, setVerifiedOnOpen] = useState(post?.isVerified ?? false);
   const [editing, setEditing] = useState(false);
   const [url, setUrl] = useState("");
   const [invalidUrl, setInvalidUrl] = useState(false);
@@ -123,6 +125,7 @@ export function PublishedPost({
 
   if (!active && !post) return null;
   const checking = phase === "checking" && (!post || checkingPost === post._id);
+  const showSuccess = open && post?.isVerified && !verifiedOnOpen && !phase;
   const mismatch = post?.captionCheck === "mismatch" && !post.isVerified;
   const showForm = active && !post?.isVerified && (!post || editing) && !checking;
   const needsReview = post?.captionCheck === "match" || post?.captionCheck === "manualReview";
@@ -132,11 +135,8 @@ export function PublishedPost({
   let title = "Add post link";
   let description = "Publish your approved draft on X, then paste the link here.";
   if (post?.isVerified) {
-    title =
-      post.captionCheck === "match"
-        ? "It’s a match. Your post has been verified."
-        : "Your post has been verified.";
-    description = "You can view the verified post on X.";
+    title = "Your post is verified";
+    description = showSuccess ? "Your post is live on X." : "You can view the verified post on X.";
   } else if (showMismatch) {
     title = "This post doesn’t match your submission";
     description =
@@ -168,7 +168,9 @@ export function PublishedPost({
       onOpenChange={(next) => {
         if (phase) return;
         setOpen(next);
-        if (!next) {
+        if (next) {
+          setVerifiedOnOpen(post?.isVerified ?? false);
+        } else {
           setEditing(false);
           setError(undefined);
           setInvalidUrl(false);
@@ -190,7 +192,12 @@ export function PublishedPost({
         )}
         overlayClassName="bg-gray-950/20 backdrop-blur-[2px]"
       >
-        <div className={cn("mx-auto w-full max-w-[912px]", checking ? "space-y-8" : "space-y-5")}>
+        <div
+          className={cn(
+            "mx-auto w-full max-w-[912px]",
+            checking || showSuccess ? "space-y-8" : "space-y-5",
+          )}
+        >
           <div className={cn("grid gap-5", (showMismatch || checking) && "sm:grid-cols-2")}>
             <div
               className={cn(
@@ -204,13 +211,17 @@ export function PublishedPost({
                   The content you submitted
                 </p>
               )}
-              <SubmissionPreview caption={caption} compact={checking}>
-                {mediaId && <SubmittedVideo mediaId={mediaId} eager />}
-              </SubmissionPreview>
+              <div className={cn(showSuccess && "rounded-lg shadow-overlay")}>
+                <SubmissionPreview caption={caption} compact={checking || showSuccess}>
+                  {mediaId && <SubmittedVideo mediaId={mediaId} eager />}
+                </SubmissionPreview>
+              </div>
               {showMismatch && (
                 <p className="text-center text-body-sm text-gray-500">The content you submitted</p>
               )}
-              {post?.isVerified && <ResultIcon />}
+              {post?.isVerified && (
+                <IconContainer className="absolute -top-3 -right-3 bg-blue-primary text-gray-0" />
+              )}
             </div>
             {checking && (
               <div className="min-w-0 space-y-5">
@@ -236,7 +247,12 @@ export function PublishedPost({
             {showMismatch && (
               <div className="min-w-0 space-y-4">
                 <div className="relative space-y-4 rounded-lg bg-gray-0 p-4 shadow-raised">
-                  <ResultIcon mismatch />
+                  <span
+                    aria-hidden
+                    className="absolute -top-3 -right-3 grid size-9 place-items-center rounded-full bg-red-600 text-white"
+                  >
+                    <RiCloseLine size={20} />
+                  </span>
                   <div className="flex items-center gap-3">
                     <span className="size-8 shrink-0 rounded-full bg-gray-100" aria-hidden />
                     <p className="text-body-sm font-medium">Published post</p>
@@ -350,21 +366,17 @@ export function PublishedPost({
               </div>
             </form>
           ) : (
-            <div className="mx-auto max-w-lg space-y-3 pt-4 text-center">
+            <div className={cn("mx-auto max-w-lg space-y-3 text-center", !showSuccess && "pt-4")}>
               {post && !post.isVerified && !mismatch && (
                 <RiTimeLine size={24} className="mx-auto text-gray-700" aria-hidden />
               )}
               <div role="status" className="space-y-3">
-                <DialogTitle
-                  className={
-                    post?.isVerified ? "text-body font-medium" : "text-[24px] leading-tight"
-                  }
-                >
-                  {title}
-                </DialogTitle>
-                <DialogDescription>{description}</DialogDescription>
+                <DialogTitle className="text-[24px] leading-tight">{title}</DialogTitle>
+                <DialogDescription className={cn(showSuccess && "text-body text-gray-500")}>
+                  {description}
+                </DialogDescription>
               </div>
-              {post && !showMismatch && <XLink url={post.url} />}
+              {post && !showMismatch && !showSuccess && <XLink url={post.url} />}
             </div>
           )}
 
@@ -387,15 +399,19 @@ export function PublishedPost({
                   )}
                 </>
               )}
-              {(post.isVerified || needsReview || !active) && (
-                <Button
-                  type="button"
-                  className="min-w-40"
-                  disabled={!!phase}
-                  onClick={() => setOpen(false)}
-                >
-                  Done
-                </Button>
+              {showSuccess ? (
+                <CountdownButton className="w-60 max-w-full" onComplete={() => setOpen(false)} />
+              ) : (
+                (post.isVerified || needsReview || !active) && (
+                  <Button
+                    type="button"
+                    className="min-w-40"
+                    disabled={!!phase}
+                    onClick={() => setOpen(false)}
+                  >
+                    Done
+                  </Button>
+                )
               )}
             </div>
           )}
@@ -408,22 +424,6 @@ export function PublishedPost({
         </div>
       </DialogContent>
     </Dialog>
-  );
-}
-
-/** Marks the verified or mismatched post card. */
-function ResultIcon({ mismatch = false }: { mismatch?: boolean }) {
-  const Icon = mismatch ? RiCloseLine : RiCheckLine;
-  return (
-    <span
-      className={
-        "absolute -top-3 -right-3 grid size-9 place-items-center rounded-full text-white " +
-        (mismatch ? "bg-red-600" : "bg-gray-950")
-      }
-      aria-hidden
-    >
-      <Icon size={20} />
-    </span>
   );
 }
 

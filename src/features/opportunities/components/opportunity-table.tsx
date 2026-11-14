@@ -42,7 +42,7 @@ export function OpportunityTable({
             <tr key={opportunity._id}>
               <td>
                 <div className="flex items-center gap-4">
-                  <CompanyAvatar name={opportunity.companyName} size="md" />
+                  <CompanyAvatar name={opportunity.companyName} size="sm" />
                   <div>
                     <div className="flex items-center gap-2">
                       <button

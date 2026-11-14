@@ -1,5 +1,7 @@
 import type { Doc } from "@convex/_generated/dataModel";
 
+import { formatMoney } from "@/lib/money";
+
 export { formatCompensation, formatMoney } from "@/lib/money";
 
 const DAY_MS = 86_400_000;
@@ -30,4 +32,15 @@ export function formatPostedAgo(createdAt: number, now: number): string {
   const days = Math.floor((now - createdAt) / DAY_MS);
   if (days <= 0) return "Today";
   return days === 1 ? "1 day ago" : `${days} days ago`;
+}
+
+/** `$300 + $2.50 CPM`: the pay a card leads with, without the cap. */
+export function formatPay({
+  fixedFeeCents,
+  cpmRateCents,
+}: Pick<Doc<"opportunities">, "fixedFeeCents" | "cpmRateCents">): string {
+  const parts: string[] = [];
+  if (fixedFeeCents > 0) parts.push(formatMoney(fixedFeeCents));
+  if (cpmRateCents > 0) parts.push(`${formatMoney(cpmRateCents)} CPM`);
+  return parts.length === 0 ? "Unpaid" : parts.join(" + ");
 }

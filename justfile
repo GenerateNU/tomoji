@@ -96,6 +96,10 @@ convex-env:
 seed ARGS="{}":
     @bunx convex run seed:run {{quote(ARGS)}}
 
+# Delete the demo workspace so a later seed can rebuild it for another account
+seed-clear:
+    @bunx convex run seed:clearDemo
+
 # Ensure the demo workspace has enough open briefs to test pagination
 seed-more COUNT="30":
     @bunx convex run seed:more {{quote('{"count": ' + COUNT + '}')}}

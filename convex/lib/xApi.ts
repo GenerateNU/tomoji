@@ -2,12 +2,6 @@ import type { ConvexError } from "convex/values";
 import { apiError, type ApiErrorData } from "./errors";
 import type { PostEngagement } from "../models/posts";
 
-/**
- * Default earning duration from the original live-post verification, not publication.
- * Collection must follow the stored agreement's window and any earlier cutoff.
- */
-export const X_POST_EARNING_DAYS = 30;
-
 const requestTimeoutMs = 8_000;
 // X's documented limit for one post lookup.
 const maxPostsPerLookup = 100;

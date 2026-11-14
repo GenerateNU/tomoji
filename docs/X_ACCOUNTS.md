@@ -141,11 +141,11 @@ Post metrics come from X's public post lookup, which accepts the app-only bearer
 token, so the sync never decrypts creator credentials. Every read is billed against
 the team's X credits.
 
-Nothing calls the lookup yet: no cron runs and no post's counts are updated. The weekly
-fetch will run inside the payout cron, before payouts are calculated. The X field names
-below come from X's documentation and haven't been checked against a live response.
-Before enabling the sync anywhere, make one lookup for a post you own (about $0.005)
-and confirm `public_metrics` includes `impression_count`:
+Nothing calls the lookup yet: no cron runs and no post's counts are updated. A daily
+analytics sync will call it, and earnings will request their own boundary readings. The
+X field names below come from X's documentation and haven't been checked against a live
+response. Before enabling the sync anywhere, make one lookup for a post you own (about
+$0.005) and confirm `public_metrics` includes `impression_count`:
 
 ```bash
 curl -s -H "Authorization: Bearer $X_BEARER_TOKEN" "https://api.x.com/2/tweets?ids=<post_id>&tweet.fields=public_metrics"
@@ -163,13 +163,29 @@ copies each setting that is filled in and rejects `X_METRICS_SYNC_ENABLED=true` 
 token, but it never clears a deployment value. To turn an enabled deployment off, run
 `bunx convex env set X_METRICS_SYNC_ENABLED false`.
 
-`X_POST_EARNING_DAYS` (30) is the default duration from the original live-post
-verification, not publication. The stored earnings agreement determines the actual
-window; cancellation or confirmed removal can shorten it. Earnings are calculated
-every seven days, with a final partial period ending exactly at day 30 rather than
-the end of that week. Collectors must use the agreement's verification baseline
-and period/cutoff timestamps, and retain delayed evidence needed to settle earlier
-earnings. See [Earnings rules](EARNINGS.md) for the calculation and evidence contract.
+Earnings last 30 days (`EARNING_WINDOW_MS`) from a post's first verification, not
+its publication. The stored earnings agreement determines the actual window; cancellation
+or confirmed removal can shorten it. Earnings are calculated every seven days, with a
+final partial period ending exactly at day 30. Collectors must use the agreement's
+verification baseline and period/cutoff timestamps, and retain delayed evidence needed
+to settle earlier earnings. See [Earnings rules](EARNINGS.md) for the calculation and
+evidence contract.
+
+The analytics sync uses the same clock. It runs daily at 00:00 UTC and reads verified,
+active posts whose `firstVerifiedAt` is within the last `EARNING_WINDOW_MS` + 1 day, so
+a post verified late is still followed for its whole earning window. The extra day keeps
+a post in the first run after its window ends, so its stored total covers day 30. If
+that run fails, the post keeps the previous day's total. Posts with no recorded first
+verification (legacy `earningsTimingUnknown` posts) are skipped. `posts.listEarning`
+(internal) returns the posts a page at a time.
+
+The daily sync's counts keep `posts` current for analytics; payouts don't settle from them.
+Earnings settle from view snapshots taken at each post's verification and period
+boundaries (`postViewSnapshots`), recorded through the earnings flow rather than this sync.
+The analytics sync skips posts on cancelled assignments; posts with an open dispute stay
+in. Payouts decide eligibility separately: a cancellation stops accrual at its cutoff,
+and any readings earnings need around that cutoff come from the earnings flow, not this
+sync.
 
 `getXPostMetrics` looks up at most 100 post IDs per call through `GET /2/tweets` with
 `tweet.fields=public_metrics`. Each post's counts come back in two parts, stored

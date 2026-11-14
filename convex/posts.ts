@@ -1,4 +1,4 @@
-import { paginationResultValidator } from "convex/server";
+import { paginationOptsValidator, paginationResultValidator } from "convex/server";
 import { v, type Infer } from "convex/values";
 import { internal } from "./_generated/api";
 import { apiError } from "./lib/errors";
@@ -19,6 +19,8 @@ import {
   creatorCaptionCheck,
   startCreatorCaptionCheck,
   finishCreatorCaptionCheck,
+  earningPost,
+  listEarningPosts,
   listPosts,
   postCreate,
   postListFilters,
@@ -246,4 +248,11 @@ export const checkMyCaption = action({
     // Only return the public text after the write rechecks the caller and the active link.
     return status === "mismatch" ? { status, publishedCaption: published.text } : { status };
   },
+});
+
+/** Internal: posts for the daily X metrics sync, across every company. */
+export const listEarning = internalQuery({
+  args: { now: v.number(), paginationOpts: paginationOptsValidator },
+  returns: paginationResultValidator(earningPost),
+  handler: async (ctx, { now, paginationOpts }) => await listEarningPosts(ctx, now, paginationOpts),
 });

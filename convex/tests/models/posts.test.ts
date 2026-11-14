@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import type { Id } from "../../_generated/dataModel";
 import {
   createPost,
+  listEarningPosts,
   listPosts,
   replacePost,
   requirePost,
@@ -20,6 +21,7 @@ import {
   seedCampaign,
   seedCreatorId,
   seedDeliverable,
+  seedDispute,
   seedMembership,
   seedOneSubmission,
   seedOpportunity,
@@ -1037,5 +1039,151 @@ describe("unverifyPost", () => {
     await t.run(async (ctx) => await ctx.db.delete("posts", postId));
 
     await expectApiError(() => t.run(async (ctx) => await unverifyPost(ctx, postId)), "not_found");
+  });
+});
+
+describe("listEarningPosts", () => {
+  const day = 24 * 60 * 60 * 1000;
+
+  /**
+   * Verifies a post with the clock set to `verifiedAt`, which `verifyPost` records
+   * as `firstVerifiedAt`. `postedAt` defaults to the same moment.
+   */
+  async function verifyAt(
+    t: TestConvex,
+    postId: Id<"posts">,
+    verifiedAt: number,
+    postedAt = verifiedAt,
+  ) {
+    const now = Date.now();
+    vi.setSystemTime(verifiedAt);
+    await t.run(async (ctx) => await verifyPost(ctx, postId, { postedAt }));
+    vi.setSystemTime(now);
+  }
+
+  /** The post as the sync sees it. */
+  async function earning(t: TestConvex, postId: Id<"posts">) {
+    const post = await t.run(async (ctx) => await ctx.db.get("posts", postId));
+    return { postId, xPostId: post!.xPostId };
+  }
+
+  test("returns verified, active posts first verified in the last 31 days", async () => {
+    const t = convexTest(schema, modules);
+    const { fixture, postId: recent } = await seedFixturePost(t);
+    const atCutoff = await addPost(t, fixture, "cutoff_creator");
+    const tooOld = await addPost(t, fixture, "old_creator");
+    const inactive = await addPost(t, fixture, "inactive_post");
+    await addPost(t, fixture, "unverified_post");
+    const now = Date.now();
+    await verifyAt(t, recent, now - 10 * day);
+    await verifyAt(t, atCutoff, now - 31 * day);
+    await verifyAt(t, tooOld, now - 31 * day - 1);
+    await verifyAt(t, inactive, now - 5 * day);
+    // Flows only replace unverified posts; patch directly so only `isActive` differs.
+    await t.run(async (ctx) => await ctx.db.patch("posts", inactive, { isActive: false }));
+
+    const result = await t.run(
+      async (ctx) => await listEarningPosts(ctx, now, { numItems: 10, cursor: null }),
+    );
+
+    expect(result.isDone).toBe(true);
+    expect(result.page).toEqual([await earning(t, atCutoff), await earning(t, recent)]);
+  });
+
+  test("a post verified late is synced for its full window, not cut short by postedAt", async () => {
+    const t = convexTest(schema, modules);
+    const { postId } = await seedFixturePost(t);
+    const now = Date.now();
+    // Went live 40 days ago but was only verified 15 days ago.
+    await verifyAt(t, postId, now - 15 * day, now - 40 * day);
+
+    const result = await t.run(
+      async (ctx) => await listEarningPosts(ctx, now, { numItems: 10, cursor: null }),
+    );
+
+    expect(result.page).toEqual([await earning(t, postId)]);
+  });
+
+  test("skips verified posts with no recorded first verification", async () => {
+    const t = convexTest(schema, modules);
+    const { postId } = await seedFixturePost(t);
+    const now = Date.now();
+    await verifyAt(t, postId, now - day);
+    // Legacy verifications have unknown timing and no `firstVerifiedAt`.
+    await t.run(
+      async (ctx) =>
+        await ctx.db.patch("posts", postId, {
+          firstVerifiedAt: undefined,
+          earningsTimingUnknown: true,
+        }),
+    );
+
+    const result = await t.run(
+      async (ctx) => await listEarningPosts(ctx, now, { numItems: 10, cursor: null }),
+    );
+
+    expect(result.page).toEqual([]);
+  });
+
+  test("skips posts on cancelled assignments but keeps completed and disputed ones", async () => {
+    const t = convexTest(schema, modules);
+    const { fixture, postId: disputed } = await seedFixturePost(t);
+    const cancelled = await addPost(t, fixture, "cancelled_post");
+    const completed = await addPost(t, fixture, "completed_post");
+    const now = Date.now();
+    for (const id of [disputed, cancelled, completed]) await verifyAt(t, id, now - day);
+    await seedDispute(t, fixture);
+    await t.run(async (ctx) => {
+      for (const [postId, status] of [
+        [cancelled, "cancelled"],
+        [completed, "completed"],
+      ] as const) {
+        const post = await ctx.db.get("posts", postId);
+        const submission = await ctx.db.get("submissions", post!.submissionId);
+        await ctx.db.patch("assignments", submission!.assignmentId, { status });
+      }
+    });
+
+    const result = await t.run(
+      async (ctx) => await listEarningPosts(ctx, now, { numItems: 10, cursor: null }),
+    );
+
+    expect(result.page.map((post) => post.postId).sort()).toEqual([disputed, completed].sort());
+  });
+
+  test("the window moves with `now`", async () => {
+    const t = convexTest(schema, modules);
+    const { postId } = await seedFixturePost(t);
+    const now = Date.now();
+    await verifyAt(t, postId, now - 10 * day);
+
+    const later = await t.run(
+      async (ctx) => await listEarningPosts(ctx, now + 22 * day, { numItems: 10, cursor: null }),
+    );
+
+    expect(later.page).toEqual([]);
+  });
+
+  test("pages through every post in the window exactly once", async () => {
+    const t = convexTest(schema, modules);
+    const { fixture, postId } = await seedFixturePost(t);
+    const second = await addPost(t, fixture, "second_creator");
+    const third = await addPost(t, fixture, "third_creator");
+    const now = Date.now();
+    for (const id of [postId, second, third]) await verifyAt(t, id, now - day);
+
+    const first = await t.run(
+      async (ctx) => await listEarningPosts(ctx, now, { numItems: 2, cursor: null }),
+    );
+    const next = await t.run(
+      async (ctx) =>
+        await listEarningPosts(ctx, now, { numItems: 2, cursor: first.continueCursor }),
+    );
+
+    expect(first.isDone).toBe(false);
+    expect(next.isDone).toBe(true);
+    expect(new Set([...first.page, ...next.page].map((post) => post.postId))).toEqual(
+      new Set([postId, second, third]),
+    );
   });
 });

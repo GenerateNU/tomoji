@@ -15,64 +15,71 @@ export const run = aiReviewWorkflow
     returns: v.null(),
   })
   .handler(async (step, args): Promise<null> => {
-    await step.runMutation(internal.aiReviewInternal.claim, args);
-    // An external POST is never automatically retried, including after a process interruption.
-    const submitted = await step.runAction(internal.aiReviewActions.submit, args, { retry: false });
-    if (!submitted.ok) {
-      await step.runMutation(internal.aiReviewInternal.fallback, {
-        ...args,
-        reason: submitted.reason,
-      });
-      return null;
-    }
-    let pollFailures = 0;
-    let transcriptReady = false;
-    for (let i = 0; i < AI_REVIEW_MAX_POLLS; i++) {
-      const response = await step.runAction(internal.aiReviewActions.poll, args, {
+    const attempt = await step.runMutation(internal.aiReviewInternal.claim, args);
+    if (attempt.mediaId) {
+      // An external POST is never automatically retried, including after a process interruption.
+      const submitted = await step.runAction(internal.aiReviewActions.submit, args, {
         retry: false,
-        runAfter: AI_REVIEW_POLL_INTERVAL_MS,
       });
-      if (!response.ok) {
-        pollFailures++;
-        if (!response.retryable || pollFailures >= AI_REVIEW_MAX_RETRIES) {
+      if (!submitted.ok) {
+        await step.runMutation(internal.aiReviewInternal.fallback, {
+          ...args,
+          reason: submitted.reason,
+        });
+        return null;
+      }
+      let pollFailures = 0;
+      let transcriptReady = false;
+      for (let i = 0; i < AI_REVIEW_MAX_POLLS; i++) {
+        const response = await step.runAction(internal.aiReviewActions.poll, args, {
+          retry: false,
+          runAfter: AI_REVIEW_POLL_INTERVAL_MS,
+        });
+        if (!response.ok) {
+          pollFailures++;
+          if (!response.retryable || pollFailures >= AI_REVIEW_MAX_RETRIES) {
+            await step.runMutation(internal.aiReviewInternal.fallback, {
+              ...args,
+              reason: response.reason,
+            });
+            return null;
+          }
+          await step.sleep(Math.max(response.retryAfterMs, 1000 * 2 ** pollFailures));
+          continue;
+        }
+        const transcript = response.transcription;
+        if (transcript.status === "queued" || transcript.status === "processing") continue;
+        if (transcript.status === "error") {
           await step.runMutation(internal.aiReviewInternal.fallback, {
             ...args,
-            reason: response.reason,
+            reason: "transcription_failed",
           });
           return null;
         }
-        await step.sleep(Math.max(response.retryAfterMs, 1000 * 2 ** pollFailures));
-        continue;
-      }
-      const transcript = response.transcription;
-      if (transcript.status === "queued" || transcript.status === "processing") continue;
-      if (transcript.status === "error") {
-        await step.runMutation(internal.aiReviewInternal.fallback, {
+        if (
+          transcript.durationSeconds > AI_REVIEW_MAX_DURATION_SECONDS ||
+          (!transcript.text.trim() && !attempt.caption)
+        ) {
+          await step.runMutation(internal.aiReviewInternal.fallback, {
+            ...args,
+            reason:
+              transcript.durationSeconds > AI_REVIEW_MAX_DURATION_SECONDS
+                ? "duration_exceeded"
+                : "no_speech",
+          });
+          return null;
+        }
+        await step.runMutation(internal.aiReviewInternal.saveTranscript, {
           ...args,
-          reason: "transcription_failed",
+          transcription: transcript,
         });
+        transcriptReady = true;
+        break;
+      }
+      if (!transcriptReady) {
+        await step.runMutation(internal.aiReviewInternal.fallback, { ...args, reason: "timeout" });
         return null;
       }
-      if (transcript.durationSeconds > AI_REVIEW_MAX_DURATION_SECONDS || !transcript.text.trim()) {
-        await step.runMutation(internal.aiReviewInternal.fallback, {
-          ...args,
-          reason:
-            transcript.durationSeconds > AI_REVIEW_MAX_DURATION_SECONDS
-              ? "duration_exceeded"
-              : "no_speech",
-        });
-        return null;
-      }
-      await step.runMutation(internal.aiReviewInternal.saveTranscript, {
-        ...args,
-        transcription: transcript,
-      });
-      transcriptReady = true;
-      break;
-    }
-    if (!transcriptReady) {
-      await step.runMutation(internal.aiReviewInternal.fallback, { ...args, reason: "timeout" });
-      return null;
     }
     for (let i = 0; i < AI_REVIEW_MAX_RETRIES; i++) {
       const response = await step.runAction(internal.aiReviewActions.evaluate, args, {

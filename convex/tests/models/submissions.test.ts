@@ -866,7 +866,7 @@ test("paginated creator reads retain safe review outcomes on the second page", a
       status: "changesRequested",
       reviewerType: "ai",
       reviewedAt: expect.any(Number),
-      reviewNote: "Please address these spoken requirements: Mention Driftwood.",
+      reviewNote: "Please address these requirements: Mention Driftwood.",
       aiReview: { status: "completed", results: [{ criterionId: "product", outcome: "not_met" }] },
     },
   ]);

@@ -423,3 +423,14 @@ export async function listPosts(
     .order("desc")
     .paginate(paginationOpts);
 }
+
+/** Reads the approved caption for the current linked post before a paid X lookup. */
+export async function getPostCaptionInput(ctx: QueryCtx, postId: Id<"posts">) {
+  const post = await ctx.db.get("posts", postId);
+  if (post === null) throw apiError("not_found", { resource: "post" });
+  requireActive(post);
+  const submission = await ctx.db.get("submissions", post.submissionId);
+  if (submission?.status !== "approved")
+    throw apiError("invalid_state", { reason: "submission_not_approved" });
+  return { xPostId: post.xPostId, caption: submission.caption };
+}

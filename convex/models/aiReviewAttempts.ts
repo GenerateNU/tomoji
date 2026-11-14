@@ -21,7 +21,9 @@ export async function createAiReviewAttempt(
   const assignment = await ctx.db.get("assignments", submission.assignmentId);
   if (!assignment) throw apiError("not_found", { resource: "assignment" });
   requireActiveAssignment(assignment);
-  await requireSubmissionVideo(ctx, assignment, submission.mediaId);
+  if (submission.mediaId) await requireSubmissionVideo(ctx, assignment, submission.mediaId);
+  else if (!submission.caption)
+    throw apiError("invalid_state", { reason: "submission_evidence_required" });
   const existing = await ctx.db
     .query("aiReviewAttempts")
     .withIndex("by_submissionId", (q) => q.eq("submissionId", submissionId))
@@ -40,6 +42,7 @@ export async function createAiReviewAttempt(
   return await ctx.db.insert("aiReviewAttempts", {
     submissionId,
     mediaId: submission.mediaId,
+    caption: submission.caption,
     criteria,
     context: { title, description, contentRequirements, prohibitedClaims, disclosureRequirements },
     // The creator submission transaction enqueues work when automation is enabled.
@@ -68,10 +71,11 @@ export async function requireCurrentAiReviewAttempt(
     submission?.status !== "pending" ||
     !submission.usesAiReview ||
     submission.mediaId !== attempt.mediaId ||
+    submission.caption !== attempt.caption ||
     assignment?.status !== "active"
   )
     throw apiError("invalid_state", { reason: "ai_review_stale" });
-  await requireSubmissionVideo(ctx, assignment, attempt.mediaId);
+  if (attempt.mediaId) await requireSubmissionVideo(ctx, assignment, attempt.mediaId);
   return attempt;
 }
 
@@ -81,7 +85,8 @@ export async function claimAiReviewAttempt(
   attemptId: Id<"aiReviewAttempts">,
 ): Promise<Doc<"aiReviewAttempts">> {
   const attempt = await requireCurrentAiReviewAttempt(ctx, attemptId, "ready");
-  const patch = { status: "transcribing" as const, startedAt: Date.now() };
+  const status = attempt.mediaId ? "transcribing" : "evaluating";
+  const patch = { status, startedAt: Date.now() } as const;
   await ctx.db.patch("aiReviewAttempts", attemptId, patch);
   return { ...attempt, ...patch };
 }
@@ -179,6 +184,7 @@ export async function getAiReviewVideo(
   attemptId: Id<"aiReviewAttempts">,
 ): Promise<{ key: string }> {
   const attempt = await getAiReviewInput(ctx, attemptId);
+  if (!attempt.mediaId) throw apiError("invalid_state", { reason: "invalid_media_object" });
   const media = await ctx.db.get("mediaUploads", attempt.mediaId);
   if (!media?.permanentKey) throw apiError("invalid_state", { reason: "invalid_media_object" });
   return { key: media.permanentKey };
@@ -226,22 +232,4 @@ export async function enqueueAiReview(
   await ctx.db.patch("aiReviewAttempts", attemptId, { workflowId, deadlineAt });
   // Also releases a draft if execution stops before the completion callback can run.
   await ctx.scheduler.runAt(deadlineAt, internal.aiReviewInternal.expire, { attemptId });
-}
-
-/** Gets the saved review evidence for an active post's approved submission. */
-export async function getAiPostReviewInput(ctx: QueryCtx, postId: Id<"posts">) {
-  const post = await ctx.db.get("posts", postId);
-  if (!post) throw apiError("not_found", { resource: "post" });
-  if (!post.isActive) throw apiError("invalid_state", { reason: "post_inactive" });
-  const attempt = await ctx.db
-    .query("aiReviewAttempts")
-    .withIndex("by_submissionId", (q) => q.eq("submissionId", post.submissionId))
-    .unique();
-  if (!attempt) throw apiError("invalid_state", { reason: "ai_review_criteria_required" });
-  return {
-    xPostId: post.xPostId,
-    criteria: attempt.criteria,
-    context: attempt.context,
-    transcript: attempt.transcription?.text ?? "",
-  };
 }

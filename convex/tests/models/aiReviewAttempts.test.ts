@@ -414,12 +414,12 @@ test("a confident unmet criterion requests actionable changes and notifies the c
   expect(await t.run((ctx) => ctx.db.get("submissions", fixture.submissionId))).toMatchObject({
     status: "changesRequested",
     reviewerType: "ai",
-    reviewNote: "Please address these spoken requirements: Mention Driftwood.",
+    reviewNote: "Please address these requirements: Mention Driftwood.",
   });
   expect(await creatorNotifications(t, fixture.creatorId)).toContainEqual(
     expect.objectContaining({
       type: "submissionChangesRequested",
-      body: "Please address these spoken requirements: Mention Driftwood.",
+      body: "Please address these requirements: Mention Driftwood.",
     }),
   );
 });

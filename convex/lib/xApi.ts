@@ -111,6 +111,33 @@ export type XMissingPost = { xPostId: string; reason: XMissingReason };
 // links that can never be looked up are stored; tighten it to this format.
 const xPostIdPattern = /^[1-9]\d{0,18}$/;
 
+/** Reads the exact linked post's full caption, including long-form text. */
+export async function getXPostText(bearerToken: string, xPostId: string): Promise<string> {
+  if (!xPostIdPattern.test(xPostId))
+    throw apiError("invalid_state", { reason: "x_post_id_invalid" });
+  const response = await xJson(
+    await xRequest(
+      `tweets/${xPostId}?post.fields=note_post,entities`,
+      { headers: { Authorization: `Bearer ${bearerToken}` } },
+      rateLimited,
+    ),
+  );
+  const post = object(response.data);
+  const caption = post.note_post === undefined ? post : object(post.note_post);
+  if (post.id !== xPostId || typeof caption.text !== "string")
+    throw apiError("upstream_failure", { reason: "invalid_response" });
+  const text = caption.text.trimEnd();
+  const urls = caption.entities === undefined ? undefined : object(caption.entities).urls;
+  if (!Array.isArray(urls)) return text;
+  // X may append a short link for the attached media. Keep creator-authored links.
+  for (const entry of urls) {
+    const { url, media_key: mediaKey } = object(entry);
+    if (typeof mediaKey === "string" && typeof url === "string" && text.endsWith(` ${url}`))
+      return text.slice(0, -url.length - 1);
+  }
+  return text;
+}
+
 /**
  * Looks up current public counts for up to 100 posts with the app-only token.
  * One unusable post never fails the batch: ids X would reject, posts X leaves

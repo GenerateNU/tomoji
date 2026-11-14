@@ -640,6 +640,7 @@ export async function seedAiReviewFixture(
   reviewCriteria: NonNullable<DeliverableCreate["reviewCriteria"]> = [
     { id: "product", description: "Mention Driftwood." },
   ],
+  draft: Partial<SubmissionDraft> = {},
 ): Promise<
   AssignmentFixture & {
     mediaId: Id<"mediaUploads">;
@@ -666,7 +667,7 @@ export async function seedAiReviewFixture(
   });
   const mediaId = fixture.mediaId;
   const submissionId = await t.run((ctx) =>
-    createSubmission(ctx, fixture.creatorId, submissionArgs(fixture, { mediaId })),
+    createSubmission(ctx, fixture.creatorId, submissionArgs(fixture, draft)),
   );
   const attempt = await t.run((ctx) =>
     ctx.db

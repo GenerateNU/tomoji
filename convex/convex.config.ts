@@ -18,7 +18,6 @@ const app = defineApp({
     ASSEMBLYAI_API_KEY: v.optional(v.string()),
     TYPESAFE_API_KEY: v.optional(v.string()),
     AI_REVIEW_ENABLED: v.optional(v.string()),
-    X_BEARER_TOKEN: v.optional(v.string()),
     X_CLIENT_ID: v.optional(v.string()),
     X_CLIENT_SECRET: v.optional(v.string()),
     X_REDIRECT_URI: v.optional(v.string()),

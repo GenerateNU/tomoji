@@ -164,12 +164,11 @@ test("rejects partial X encryption configuration before making deployment change
   expect(spawnSync).not.toHaveBeenCalled();
 });
 
-test("copies AI review settings and the optional X app token", async () => {
+test("copies both AI credentials and the explicit enable flag without printing secret values", async () => {
   const all = {
     ...values,
     ASSEMBLYAI_API_KEY: "assembly-test",
     TYPESAFE_API_KEY: "jev-test",
-    X_BEARER_TOKEN: "x-app-test",
     AI_REVIEW_ENABLED: "false",
   };
   vi.mocked(readFileSync).mockReturnValue(
@@ -178,12 +177,7 @@ test("copies AI review settings and the optional X app token", async () => {
       .join("\n"),
   );
   await import("../set-convex-env");
-  for (const key of [
-    "ASSEMBLYAI_API_KEY",
-    "TYPESAFE_API_KEY",
-    "X_BEARER_TOKEN",
-    "AI_REVIEW_ENABLED",
-  ] as const) {
+  for (const key of ["ASSEMBLYAI_API_KEY", "TYPESAFE_API_KEY", "AI_REVIEW_ENABLED"] as const) {
     expect(spawnSync).toHaveBeenCalledWith(
       "bunx",
       ["convex", "env", "set", key, all[key]],

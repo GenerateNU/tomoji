@@ -10,8 +10,6 @@ import {
   type TestConvex,
   assemblyTranscriptResponse,
   seedAiReviewFixture,
-  seedOperator,
-  expectApiError,
   jevReviewResponse,
   memberNotifications,
   creatorNotifications,
@@ -27,7 +25,6 @@ beforeEach(() => {
   vi.stubEnv("AI_REVIEW_ENABLED", "false");
   vi.stubEnv("ASSEMBLYAI_API_KEY", "assembly-test");
   vi.stubEnv("TYPESAFE_API_KEY", "jev-test");
-  vi.stubEnv("X_BEARER_TOKEN", "x-test");
   vi.stubEnv("S3_MEDIA_BUCKET", "test-media");
   vi.stubEnv("S3_MEDIA_REGION", "us-east-1");
   vi.stubGlobal("fetch", vi.fn());
@@ -66,7 +63,8 @@ async function finishReview(t: TestConvex, attemptId: Id<"aiReviewAttempts">) {
 test("runs the queued review end to end using mocked S3 and providers", async () => {
   const t = convexTest(schema, modules);
   workflowTest.register(t);
-  const fixture = await seedAiReviewFixture(t);
+  const caption = "Introducing Driftwood. #ad";
+  const fixture = await seedAiReviewFixture(t, undefined, { caption });
   vi.stubEnv("AI_REVIEW_ENABLED", "true");
   vi.mocked(fetch)
     .mockResolvedValueOnce(Response.json({ id: "job-1" }))
@@ -85,10 +83,12 @@ test("runs the queued review end to end using mocked S3 and providers", async ()
   });
   expect(fetch).toHaveBeenCalledTimes(3);
   const jevBody = JSON.parse(String(vi.mocked(fetch).mock.calls[2][1]?.body));
-  expect(jevBody.state.context).toEqual(fixture.attempt.context);
+  expect(jevBody.state).toMatchObject({ caption, context: fixture.attempt.context });
+  expect(jevBody.state.transcript).not.toBe("");
   const view = await fixture.asCreator.query(api.submissions.get, {
     submissionId: fixture.submissionId,
   });
+  expect(view.caption).toBe(caption);
   expect(view.aiReview).toEqual({
     status: "completed",
     results: [{ criterionId: "product", outcome: "met" }],
@@ -207,6 +207,23 @@ test("uncertain speech remains pending and notifies the company once", async () 
   expect(await memberNotifications(t, fixture.membership)).toEqual(notifications);
 });
 
+test("reviews a submitted caption without a video or an X lookup", async () => {
+  const t = convexTest(schema, modules);
+  workflowTest.register(t);
+  const caption = "A full tutorial for Driftwood. #ad";
+  const fixture = await seedAiReviewFixture(t, undefined, { mediaId: undefined, caption });
+  vi.stubEnv("AI_REVIEW_ENABLED", "true");
+  vi.mocked(fetch).mockResolvedValueOnce(jevReviewResponse({ answers: metAnswers }));
+
+  await t.run((ctx) => enqueueAiReview(ctx, fixture.attempt._id));
+
+  expect(await finishReview(t, fixture.attempt._id)).toMatchObject({ status: "completed" });
+  expect(fetch).toHaveBeenCalledTimes(1);
+  const [url, request] = vi.mocked(fetch).mock.calls[0];
+  expect(url).toBe("https://api.typesafe.ai/v1/systemone");
+  expect(JSON.parse(String(request?.body)).state).toMatchObject({ caption, transcript: "" });
+});
+
 test("silence falls back without sending empty evidence to Jev", async () => {
   const t = convexTest(schema, modules);
   workflowTest.register(t);
@@ -270,91 +287,4 @@ test("does not repeat a possibly billed Jev request after a server error", async
   expect(await t.run((ctx) => ctx.db.get("submissions", fixture.submissionId))).toMatchObject({
     status: "pending",
   });
-});
-
-/** Records an X post through the normal approval and posting routes. */
-async function seedPublishedAiReviewPost(t: TestConvex) {
-  const fixture = await seedAiReviewFixture(t);
-  await fixture.asCompany.mutation(api.submissions.review, {
-    submissionId: fixture.submissionId,
-    review: { status: "approved" },
-  });
-  const postId = await fixture.asCreator.mutation(api.posts.create, {
-    submissionId: fixture.submissionId,
-    url: "https://x.com/creator/status/123",
-  });
-  vi.stubEnv("AI_REVIEW_ENABLED", "true");
-  return { ...fixture, postId };
-}
-
-test("reviews the published X caption alongside the saved draft transcript", async () => {
-  const t = convexTest(schema, modules);
-  const fixture = await seedPublishedAiReviewPost(t);
-  const operator = await seedOperator(t, "caption-operator");
-  await t.run(async (ctx) => {
-    await ctx.db.patch("aiReviewAttempts", fixture.attempt._id, {
-      transcription: {
-        id: "draft-transcript",
-        status: "completed",
-        text: "Here is a quick demo.",
-        words: [],
-        durationSeconds: 12,
-        model: "test",
-      },
-    });
-  });
-  vi.mocked(fetch)
-    .mockResolvedValueOnce(
-      Response.json({
-        data: {
-          id: "123",
-          text: "Preview of a longer post.",
-          note_post: { text: "A full tutorial for Driftwood. #ad" },
-        },
-      }),
-    )
-    .mockResolvedValueOnce(jevReviewResponse({ answers: metAnswers }));
-  expect(
-    await operator.action(api.aiReviewActions.reviewPost, { postId: fixture.postId }),
-  ).toMatchObject({
-    results: [{ criterionId: "product", outcome: "met" }],
-  });
-
-  const [[xUrl, xRequest], [, jevRequest]] = vi.mocked(fetch).mock.calls;
-  expect(new Headers(xRequest?.headers).get("Authorization")).toBe("Bearer x-test");
-  expect(xUrl).toBe("https://api.x.com/2/tweets/123?tweet.fields=note_post");
-  expect(JSON.parse(String(jevRequest?.body)).state).toMatchObject({
-    transcript: "Here is a quick demo.",
-    postText: "A full tutorial for Driftwood. #ad",
-  });
-  expect(await t.run((ctx) => ctx.db.get("posts", fixture.postId))).toMatchObject({
-    isVerified: false,
-  });
-});
-
-test("rejects creator requests for a published caption review before calling providers", async () => {
-  const t = convexTest(schema, modules);
-  const { asCreator, postId } = await seedPublishedAiReviewPost(t);
-  await expectApiError(
-    () => asCreator.action(api.aiReviewActions.reviewPost, { postId }),
-    "forbidden",
-  );
-  expect(fetch).not.toHaveBeenCalled();
-});
-
-test("rejects a mismatched X post before sending its text to Jev", async () => {
-  const t = convexTest(schema, modules);
-  const fixture = await seedPublishedAiReviewPost(t);
-  const operator = await seedOperator(t, "caption-mismatch-operator");
-  vi.mocked(fetch).mockResolvedValueOnce(
-    Response.json({
-      data: { id: "456", text: "A different post." },
-    }),
-  );
-  await expectApiError(
-    () => operator.action(api.aiReviewActions.reviewPost, { postId: fixture.postId }),
-    "upstream_failure",
-    "invalid_response",
-  );
-  expect(fetch).toHaveBeenCalledTimes(1);
 });

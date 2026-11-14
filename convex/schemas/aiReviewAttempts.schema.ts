@@ -17,7 +17,8 @@ export const aiReviewFailureReason = v.union(
 /** Operational review data stays separate from the submission's business status. */
 export const aiReviewAttemptsTable = defineTable({
   submissionId: v.id("submissions"),
-  mediaId: v.id("mediaUploads"),
+  mediaId: v.optional(v.id("mediaUploads")),
+  caption: v.optional(v.string()),
   criteria: v.array(reviewCriterion),
   // TODO(#177/#178): reconcile this brief snapshot with Afnan's schema updates before merge.
   context: v.object({

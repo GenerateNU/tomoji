@@ -12,6 +12,8 @@ import { canViewResource, type ResourceViewer } from "../lib/authz";
 import schema from "../schema";
 import { assignmentStatus } from "../schemas/assignments.schema";
 import { creatorName, notifyCompanyUser, notifyCreator } from "./notifications";
+import { recordAssignmentEarningsCancellation } from "./earningSources";
+import { bringForwardAssignmentEarningsSchedules } from "./earningsSchedules";
 
 /**
  * Creates a creator's assignment on an open, ungated opportunity.
@@ -159,6 +161,7 @@ export const creatorAssignment = schema
     "paymentCapCents",
     "usesAiReview",
     "status",
+    "cancelledAt",
     "productAccessDeliveredAt",
   );
 export type CreatorAssignment = Infer<typeof creatorAssignment>;
@@ -181,6 +184,7 @@ export function toCreatorAssignment(assignment: Doc<"assignments">): CreatorAssi
   if (assignment.productAccessDeliveredAt !== undefined) {
     result.productAccessDeliveredAt = assignment.productAccessDeliveredAt;
   }
+  if (assignment.cancelledAt !== undefined) result.cancelledAt = assignment.cancelledAt;
   return result;
 }
 
@@ -635,17 +639,25 @@ export async function cancelAssignment(
   ctx: MutationCtx,
   assignment: Doc<"assignments">,
 ): Promise<Doc<"assignments">> {
-  if (assignment.status !== "termsPending" && assignment.status !== "active") {
+  // The persisted state protects the cutoff and slot count even if a trusted caller
+  // holds a document read before an earlier cancellation.
+  const current = await ctx.db.get("assignments", assignment._id);
+  if (current === null) throw apiError("not_found", { resource: "assignment" });
+  if (current.status !== "termsPending" && current.status !== "active") {
     throw apiError("invalid_state", { reason: "assignment_not_cancellable" });
   }
-  await ctx.db.patch("assignments", assignment._id, { status: "cancelled" });
-  const opportunity = await ctx.db.get("opportunities", assignment.opportunityId);
+  // Settlement uses this cutoff to exclude later views while preserving accrued earnings.
+  const cancelledAt = Date.now();
+  await ctx.db.patch("assignments", assignment._id, { status: "cancelled", cancelledAt });
+  await recordAssignmentEarningsCancellation(ctx, assignment._id, cancelledAt);
+  await bringForwardAssignmentEarningsSchedules(ctx, assignment._id);
+  const opportunity = await ctx.db.get("opportunities", current.opportunityId);
   if (opportunity !== null && opportunity.numFilledSlots > 0) {
     await ctx.db.patch("opportunities", opportunity._id, {
       numFilledSlots: opportunity.numFilledSlots - 1,
     });
   }
-  return { ...assignment, status: "cancelled" };
+  return { ...current, status: "cancelled", cancelledAt };
 }
 
 /**

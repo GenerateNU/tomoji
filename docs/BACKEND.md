@@ -237,6 +237,11 @@ deliverable separately:
   assignment returns every active post on it in one page, newest first, which
   the 20-deliverable cap keeps bounded.
 
+Public post reads and mutation responses use the explicit `postView` projection.
+They include verification/removal times and caption-check status, but omit earnings
+tracking markers, removal evidence keys, and the in-flight caption reservation.
+Internal operations retain the full stored post for reconciliation.
+
 `deliverableId` is required with no migration, since nothing is deployed yet. A
 dev deployment holding submissions from before it won't accept the schema:
 clear its `submissions`, `posts`, and `disputes` tables, then push again.
@@ -305,7 +310,24 @@ the caller's applications with its opportunity brief (`creatorOpportunity`, incl
 
 ## Payout records
 
-`payouts` records individual finalized earnings payments. Every payout identifies
+The [earnings rules and payment contract](EARNINGS.md) defines the calculator's
+verification clock, fixed/variable earnings, cutoffs, and handoff to Stripe
+collection. Its [internal operations](EARNINGS.md#internal-operations) record
+measurement evidence and settle one due period.
+Its [scheduling state](EARNINGS.md#scheduling-state) tracks due work through
+verification and cutoffs. The minute cron discovers due work in pages of 25;
+isolated workers settle missed periods, retry missing evidence, and park failures
+for attention. See [execution and recovery](EARNINGS.md#scheduled-execution-and-recovery).
+This section describes the payout operations those settlements use.
+
+Public [`earnings.get` and `earnings.listCalculations`](EARNINGS.md#earnings-detail-and-calculation-history-reads)
+read a deliverable's agreement and calculation history. Their model is in
+`models/earningsHistory.ts`, separate from settlement writes. Access comes from
+the agreement's stored ownership, so history survives deleted parents. Calculation
+increments are not payment confirmations; unresolved and covered rows add no
+payable amount. The existing payout reads provide review and payment status.
+
+`payouts` records individual finalized earning obligations. Every payout identifies
 one post and its assignment; both an assignment and a post can have several payouts.
 An earning period is optional. Ownership is stored on the payout so historical reads
 do not depend on an assignment, campaign, or post remaining active or present.
@@ -328,6 +350,22 @@ do not depend on an assignment, campaign, or post remaining active or present.
 - Both endpoints return an explicit public view, excluding `sourceKey` and
   `approvedBy`. The source key is for internal earning-event deduplication and the
   approver ID is audit metadata.
+- `deliverableId` is returned when stored on the payout, including after related
+  records are deleted. It remains absent on legacy payouts without a stored ID;
+  reads neither infer it from a live post nor backfill historical records.
+- Each view includes `review: { hasOpenDispute, canApprove }`. `hasOpenDispute`
+  reflects any current open assignment dispute, including one about a different
+  post on the assignment. It remains true if a dispute opens after approval;
+  that does not revoke the stored approval. `canApprove` is true only for the
+  owning company's current admin when the payout is pending and undisputed.
+  Creators, company members, and operators receive false. Company scope and
+  role come from the caller's verified, active membership, never request input.
+- Review enrichment happens after ownership filtering and preserves every row,
+  sort order, and native pagination metadata. List reads check disputes once per
+  distinct assignment in the returned page. These reads do not write records or
+  change deadlines. An overdue payout stays pending until an approval operation
+  runs; clients can display the stored `approvalDueAt` without treating elapsed
+  time as proof of approval.
 
 Approval and payment status are separate. `transferred` means money reached the
 creator's payment-provider balance, not their bank. Times are Unix milliseconds;
@@ -367,12 +405,12 @@ the earned amount and deciding when it is final.
   details return `conflict` with reason `payout_source_conflict`. Identical retries
   still reconcile after related records have been deleted.
 
-Source-key generation belongs to the future earnings-calculation workflow, which
-has not been implemented yet. Illustrative formats are `post:<postId>:fixed-fee`
-for a post's fixed fee or `views:<postId>:<periodStart>:<periodEnd>` for one finalized
-measurement period. The final format depends on the agreed earning rules. Keys
-must identify the earning itself, not the attempt: a fresh random key on each
-retry would allow duplicate payouts.
+The earnings-calculation workflow generates stable source keys from the stored
+earnings agreement, period index, and settlement component. The
+[earnings handoff](EARNINGS.md#earnings-to-payment-handoff) defines identity at the
+assignment/deliverable level so a replacement post cannot reset the fixed fee or
+cap. Keys identify the earning itself, not the attempt: a fresh random key on
+each retry would allow duplicate payouts.
 
 This operation records obligations; it does not calculate fixed fees or view-based
 earnings, approve payouts, or schedule payments.
@@ -383,6 +421,10 @@ earnings, approve payouts, or schedule payments.
 The route uses `companyAdminMutation`; creators, ordinary members, and operators
 cannot approve on a company's behalf. Missing and foreign payouts return
 `not_found`. Successful approval returns the same public view as `get` and `list`.
+The returned review context reflects the new approved state. A previous read's
+`canApprove` value is only a UI hint: the mutation rechecks current membership,
+ownership, and open disputes before approving a pending payout. Cancellation or
+missing parent records do not independently block review of an existing obligation.
 
 - Manual approval records `approvalStatus: "approved"`, server-time `approvedAt`,
   `approvalSource: "company"`, and the authenticated user's ID in `approvedBy`.

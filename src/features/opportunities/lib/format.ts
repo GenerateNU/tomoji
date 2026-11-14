@@ -34,13 +34,16 @@ export function formatPostedAgo(createdAt: number, now: number): string {
   return days === 1 ? "1 day ago" : `${days} days ago`;
 }
 
-/** `$300 + $2.50 CPM`: the pay a card leads with, without the cap. */
-export function formatPay({
-  fixedFeeCents,
-  cpmRateCents,
-}: Pick<Doc<"opportunities">, "fixedFeeCents" | "cpmRateCents">): string {
+/**
+ * `$300 + $2.50 CPM`: the pay a card leads with, without the cap. The list
+ * view joins with ` • ` instead.
+ */
+export function formatPay(
+  { fixedFeeCents, cpmRateCents }: Pick<Doc<"opportunities">, "fixedFeeCents" | "cpmRateCents">,
+  separator = " + ",
+): string {
   const parts: string[] = [];
   if (fixedFeeCents > 0) parts.push(formatMoney(fixedFeeCents));
   if (cpmRateCents > 0) parts.push(`${formatMoney(cpmRateCents)} CPM`);
-  return parts.length === 0 ? "Unpaid" : parts.join(" + ");
+  return parts.length === 0 ? "Unpaid" : parts.join(separator);
 }

@@ -17,6 +17,9 @@ const result = await build({
         builder.onResolve({ filter: /^convex\/react$/ }, () => ({
           path: resolve("e2e/fixtures/opportunity-feed-convex.ts"),
         }));
+        builder.onResolve({ filter: /^next\/image$/ }, () => ({
+          path: resolve("e2e/fixtures/next-image.tsx"),
+        }));
       },
     },
   ],

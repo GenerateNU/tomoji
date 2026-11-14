@@ -97,7 +97,11 @@ function ApplicationsError({ onRetry, onClear }: { onRetry: () => void; onClear:
   );
 }
 
-const NOUNS = { applications: "applications", offers: "offers" } as const;
+const NOUNS = {
+  applications: "applications",
+  offers: "offers",
+  accepted: "offers",
+} as const;
 
 function ApplicationsContent({ table }: { table: ApplicationsTable }) {
   const isWide = useMediaQuery("(min-width: 768px)");

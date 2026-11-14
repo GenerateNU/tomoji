@@ -18,6 +18,7 @@ export type ApplicationTab = NonNullable<SearchArgs["tab"]>;
 const DEFAULT_SORT_BY_TAB: Record<ApplicationTab, ApplicationSort> = {
   applications: { key: "submitted", direction: "descending" },
   offers: { key: "expires", direction: "ascending" },
+  accepted: { key: "expires", direction: "ascending" },
 };
 
 /**

@@ -81,6 +81,7 @@ const OFFER_SORT_OPTIONS: SortOption[] = [
 const SORT_OPTIONS_BY_TAB: Record<ApplicationTab, SortOption[]> = {
   applications: APPLICATION_SORT_OPTIONS,
   offers: OFFER_SORT_OPTIONS,
+  accepted: OFFER_SORT_OPTIONS,
 };
 
 /** The sort choice for screens too narrow for clickable column headers. */

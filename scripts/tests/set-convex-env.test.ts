@@ -222,7 +222,7 @@ test("copies a complete Stripe configuration", async () => {
   for (const [key, value] of Object.entries(stripe)) {
     expect(spawnSync).toHaveBeenCalledWith(
       "bunx",
-      ["convex", "env", "set", key, value],
+      ["convex", "env", "set", "--", key, value],
       expect.any(Object),
     );
   }

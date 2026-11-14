@@ -171,7 +171,7 @@ if (configureStripe) {
   }
   const stripeResult = spawnSync(
     "bunx",
-    ["convex", "env", "set", "STRIPE_WEBHOOK_SECRET", stripeWebhookSecret],
+    ["convex", "env", "set", "--", "STRIPE_WEBHOOK_SECRET", stripeWebhookSecret],
     { stdio: "inherit", shell: process.platform === "win32" },
   );
   if (stripeResult.status !== 0) process.exit(stripeResult.status ?? 1);

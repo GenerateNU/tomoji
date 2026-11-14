@@ -85,7 +85,13 @@ export const creatorNavItems = [
     href: "/assignments",
   },
   { id: "posts", label: "Posts", icon: RiPlayLargeLine, activeIcon: RiPlayLargeFill },
-  { id: "earnings", label: "Earnings", icon: RiWallet3Line, activeIcon: RiWallet3Fill },
+  {
+    id: "earnings",
+    label: "Earnings",
+    icon: RiWallet3Line,
+    activeIcon: RiWallet3Fill,
+    href: "/earnings",
+  },
   {
     id: "disputes",
     label: "Disputes",

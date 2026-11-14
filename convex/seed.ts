@@ -596,6 +596,12 @@ async function seedNotifications(
       isRead: true,
     },
     {
+      type: "payoutDisputed",
+      title: "A company disputed a $250 payment to you",
+      target: assignment,
+      isRead: true,
+    },
+    {
       type: "applicationOpportunityFull",
       title: `${offer.title} has filled all its slots`,
       target: application,
@@ -672,10 +678,22 @@ async function seedNotifications(
       target: assignment,
       isRead: true,
     },
-    // Operators get this one; the demo admin shows it so every type renders.
+    // Operators get these; the demo admin shows them so every type renders.
     {
       type: "payoutChargedTwice",
       title: `A $250 payout to ${name} was charged twice`,
+      target: assignment,
+      isRead: true,
+    },
+    {
+      type: "payoutDisputeClosed",
+      title: `Dispute on a $250 payment to ${name} won`,
+      target: assignment,
+      isRead: true,
+    },
+    {
+      type: "payoutRefunded",
+      title: `${name} refunded $50 of a payment`,
       target: assignment,
       isRead: true,
     },

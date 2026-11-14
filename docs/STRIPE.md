@@ -8,8 +8,8 @@ now.
 Companies pay with a card they save once through Stripe Checkout. It is stored on a Stripe
 customer on Tomoji's own account and copied to a creator's account for each charge.
 
-This covers creator onboarding, saving company cards, charging approved payouts, and recovering
-failed charges. Refunds and disputes come in a later PR.
+This covers creator onboarding, saving company cards, charging approved payouts, recovering
+failed charges, and recording disputes and refunds made outside Tomoji.
 
 ## Setup on your dev deployment
 
@@ -23,8 +23,9 @@ fail with `misconfigured`. To work on payments:
    - Payload style: **Snapshot**, API version `2026-09-30.endive` (the version our `stripe`
      package pins).
    - Events: `account.updated`, `account.application.deauthorized`,
-     `payment_intent.succeeded`, `payment_intent.payment_failed`, and `charge.updated`. If you
-     made the destination earlier, edit it and add the ones it's missing.
+     `payment_intent.succeeded`, `payment_intent.payment_failed`, `charge.updated`,
+     `charge.dispute.created`, `charge.dispute.closed`, and `charge.refunded`. If you made the
+     destination earlier, edit it and add the ones it's missing.
    - Type: **Webhook endpoint**, URL `https://<your-deployment>.convex.site/stripe/webhook`.
      Running `just convex-env` with an empty secret prints your exact URL.
    - Name it after yourself (`<name>-dev-creator-onboarding`). The sandbox is shared, so
@@ -398,3 +399,33 @@ Stripe before failing or resending an attempt makes this very unlikely; this is 
 Verified in the sandbox: a payout declined twice (`needsAttention`, company notified, then a
 manual retry that declined again) was requeued the moment the company saved a working card and
 charged on its third attempt, with the fee recorded.
+
+## Disputes and refunds
+
+After a charge succeeds, two things outside Tomoji can reverse it. Because the charge was made
+on the creator's Standard account, the creator owns both:
+
+- **Dispute (chargeback):** the company disputes the charge with its bank. Stripe holds the
+  amount from the creator's balance until the bank decides; only the creator can respond with
+  evidence, in their Stripe Dashboard.
+- **Refund:** the creator refunds the charge from their Stripe Dashboard. Tomoji never starts
+  refunds (no refunds on cancellation).
+
+The Connect webhook records both on the payment attempt and **never changes the payout**, which
+stays `transferred`, so recovery can't charge the company again:
+
+| Event                    | Recorded on the attempt                                                                                                     | Notified                                                                                |
+| ------------------------ | --------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| `charge.dispute.created` | `dispute: { status: "open", reason, amount }`                                                                               | The creator (`payoutDisputed`, "respond in your Stripe Dashboard") and Tomoji operators |
+| `charge.dispute.closed`  | `dispute.status`: `lost`, or `won` for every other result (Stripe's inquiries closed without a chargeback return the money) | Operators (`payoutDisputeClosed`)                                                       |
+| `charge.refunded`        | `refundedAmount`, Stripe's running total for partial refunds                                                                | Operators (`payoutRefunded`)                                                            |
+
+Events find the attempt by the charge id (`payments.by_stripePaymentIntentId`) and must come from
+the account it was made on. A closed dispute is final, so a late `created` never reopens it, and
+a refund total only grows. Repeats change nothing and notify no one again. Operators decide what a
+lost dispute or a refund means for the work.
+
+Verified in the sandbox: a payout charged with Stripe's auto-dispute test card stayed
+`transferred` while its attempt recorded an open `fraudulent` dispute and the creator was
+notified; submitting Stripe's `winning_evidence` test value closed it as `won`. A US$2.00 partial
+refund from the creator's account recorded `refundedAmount: 200`.

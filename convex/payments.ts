@@ -3,9 +3,12 @@ import { internalMutation } from "./_generated/server";
 import { companyAdminMutation } from "./lib/functions";
 import {
   attachPaymentIntent,
+  recordDisputeClosed,
+  recordDisputeOpened,
   recordPaymentFailed,
   recordPaymentFee,
   recordPaymentSucceeded,
+  recordRefund,
   retryCompanyPayout,
   startPayment,
 } from "./models/payments";
@@ -90,4 +93,37 @@ export const recordFee = internalMutation({
   },
   returns: outcome,
   handler: async (ctx, args) => await recordPaymentFee(ctx, args),
+});
+
+const disputeEvent = {
+  stripeAccountId: v.string(),
+  stripePaymentIntentId: v.string(),
+  stripeDisputeId: v.string(),
+  reason: v.string(),
+  amount: v.number(),
+};
+
+/** Applies `charge.dispute.created`. See `recordDisputeOpened`. */
+export const disputeOpened = internalMutation({
+  args: disputeEvent,
+  returns: outcome,
+  handler: async (ctx, args) => await recordDisputeOpened(ctx, args),
+});
+
+/** Applies `charge.dispute.closed`. See `recordDisputeClosed`. */
+export const disputeClosed = internalMutation({
+  args: { ...disputeEvent, won: v.boolean() },
+  returns: outcome,
+  handler: async (ctx, args) => await recordDisputeClosed(ctx, args),
+});
+
+/** Applies `charge.refunded`. See `recordRefund`. */
+export const refunded = internalMutation({
+  args: {
+    stripeAccountId: v.string(),
+    stripePaymentIntentId: v.string(),
+    refundedAmount: v.number(),
+  },
+  returns: outcome,
+  handler: async (ctx, args) => await recordRefund(ctx, args),
 });

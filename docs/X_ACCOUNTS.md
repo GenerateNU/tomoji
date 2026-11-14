@@ -174,10 +174,15 @@ earnings. See [Earnings rules](EARNINGS.md) for the calculation and evidence con
 `X_POST_EARNING_DAYS` (30) is a placeholder for how long a post keeps earning after it
 goes live, pending product confirmation. The sync runs daily at 00:00 UTC and reads
 posts that went live within the last `X_POST_EARNING_DAYS` + 1 day. The extra day keeps a
-post in the first run after its last earning day, which stores its final total, so
-payouts cover the post through day 30. If that run fails, the post keeps the previous
-day's total. `posts.listEarning` (internal) returns those verified, active posts a page
-at a time.
+post in the first run after its last earning day, so its stored total covers day 30. If
+that run fails, the post keeps the previous day's total. `posts.listEarning` (internal)
+returns those verified, active posts a page at a time.
+
+The daily sync's counts keep `posts` current for analytics; payouts don't settle from them.
+Earnings settle from view snapshots taken at each post's verification and period
+boundaries (`postViewSnapshots`), recorded through the earnings flow rather than this sync.
+Posts on disputed or cancelled assignments stay in the sync. Payouts decide eligibility:
+a cancellation stops accrual at its cutoff, but views before it can still be earned.
 
 `getXPostMetrics` looks up at most 100 post IDs per call through `GET /2/tweets` with
 `tweet.fields=public_metrics`. Each post's counts come back in two parts, stored

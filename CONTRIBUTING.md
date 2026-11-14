@@ -126,6 +126,10 @@ but the backend reads the copied deployment values. Do not prefix them with
 `NEXT_PUBLIC_`. See [S3 media foundation](docs/S3.md) for production/preview setup
 and the separate credentials and browser-upload prerequisites.
 
+Stripe settings are optional; `just convex-env` copies them only when `STRIPE_SECRET_KEY`
+is set. To work on payments, follow the setup in [Stripe creator payouts](docs/STRIPE.md)
+first.
+
 Restart `just bd` and it should print `Convex functions ready!`.
 
 ## Step 5 — Run the app
@@ -222,3 +226,38 @@ just ci-full   # just ci, then the Playwright browser tests (not run in CI)
 just test      # tests once
 just format    # format everything in place
 ```
+
+### Demo data for local development
+
+With `just bd` running, confirm Convex is pointed at your local or personal dev deployment,
+then opt that deployment into seeding:
+
+```bash
+bunx convex env set TOMOJI_DEV_SEED true
+just seed
+just seed-more 30 # optional: fill out the opportunity feed for pagination
+```
+
+`just seed` populates every application table under the **[Demo] Northstar Studio launch**
+campaign. It includes an application offer, an assignment to start, a draft waiting for a
+company review, a change request, an approval waiting for a post, and a posted assignment
+with example earnings and a dispute. Run it on a fresh dev deployment if you want an empty
+starting point. Rerunning it reuses the demo campaign, preserves other data, and does not reset
+actions you took while testing. Run `just seed-clear` only when you want to delete the seeded
+campaigns and activity linked to them, then start over.
+
+Synthetic accounts cannot sign in through WorkOS. For browser testing, finish onboarding on your
+dev creator account and pass its email and the email of a dev company admin that has synced to
+Convex. Either field can be omitted to use the synthetic account for that role.
+
+```bash
+just seed '{"creatorEmail":"creator@example.com","companyAdminEmail":"admin@example.com"}'
+```
+
+Use the same arguments on retries. To add pagination data to the signed-in demo, use
+`bunx convex run seed:more` with the same JSON fields and `"count": 30`.
+
+Uploads, X credentials, Stripe records, and invitations are inert fixtures. Seeded drafts contain captions and
+review history; to test playback or AI transcription, upload a real clip to the **Not started**
+assignment using the app and the normal dev S3 configuration. Seeding makes no provider calls
+and does not send invites or initiate payments.

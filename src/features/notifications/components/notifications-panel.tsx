@@ -139,6 +139,7 @@ function NotificationsPanelContent({
       <div>
         <FilterChip
           selected={unreadOnly}
+          showClear={false}
           onPressedChange={setUnreadOnly}
           count={unreadCount === undefined ? undefined : formatUnreadCount(unreadCount)}
         >

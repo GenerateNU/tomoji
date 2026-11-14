@@ -10,6 +10,7 @@ import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { apiError } from "../lib/errors";
 import { canViewResource, type ResourceViewer } from "../lib/authz";
 import schema from "../schema";
+import { assignmentStatus } from "../schemas/assignments.schema";
 import { creatorName, notifyCompanyUser, notifyCreator } from "./notifications";
 
 /**
@@ -460,6 +461,66 @@ export async function listCreatorAssignments(
       .order("desc"),
   );
   return await mergedStream(streams, ["_creationTime"]).paginate(options.paginationOpts);
+}
+
+// Creators have few assignments, so match in memory instead of a search index.
+const ASSIGNMENT_SEARCH_SCAN_LIMIT = 200;
+const ASSIGNMENT_SEARCH_RESULT_LIMIT = 20;
+
+export const creatorAssignmentSearch = v.object({
+  companyName: v.optional(v.string()),
+});
+
+/** A creator's assignment, labeled for a picker. */
+export const creatorAssignmentOption = v.object({
+  assignmentId: v.id("assignments"),
+  companyId: v.id("companies"),
+  companyName: v.string(),
+  opportunityTitle: v.string(),
+  status: assignmentStatus,
+});
+export type CreatorAssignmentOption = Infer<typeof creatorAssignmentOption>;
+
+/** See `assignments.searchMine`. */
+export async function searchCreatorAssignments(
+  ctx: QueryCtx,
+  creatorId: Id<"creators">,
+  companyName: string | undefined,
+): Promise<CreatorAssignmentOption[]> {
+  const needle = companyName?.trim().toLowerCase() ?? "";
+  const streams = [...PHASE_STATUSES.current, ...PHASE_STATUSES.past].map((status) =>
+    stream(ctx.db, schema)
+      .query("assignments")
+      .withIndex("by_creatorId_and_status", (q) =>
+        q.eq("creatorId", creatorId).eq("status", status),
+      )
+      .order("desc"),
+  );
+  const assignments = await mergedStream(streams, ["_creationTime"]).take(
+    ASSIGNMENT_SEARCH_SCAN_LIMIT,
+  );
+
+  const companyNames = new Map<Id<"companies">, string | null>();
+  const options: CreatorAssignmentOption[] = [];
+  for (const assignment of assignments) {
+    if (!companyNames.has(assignment.companyId)) {
+      const company = await ctx.db.get("companies", assignment.companyId);
+      companyNames.set(assignment.companyId, company?.name ?? null);
+    }
+    const name = companyNames.get(assignment.companyId);
+    if (name == null || !name.toLowerCase().includes(needle)) continue;
+    const opportunity = await ctx.db.get("opportunities", assignment.opportunityId);
+    if (opportunity === null) continue;
+    options.push({
+      assignmentId: assignment._id,
+      companyId: assignment.companyId,
+      companyName: name,
+      opportunityTitle: opportunity.title,
+      status: assignment.status,
+    });
+    if (options.length === ASSIGNMENT_SEARCH_RESULT_LIMIT) break;
+  }
+  return options;
 }
 
 /**

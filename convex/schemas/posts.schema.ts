@@ -1,6 +1,12 @@
 import { defineTable } from "convex/server";
 import { v } from "convex/values";
 
+export const postCaptionCheck = v.union(
+  v.literal("match"),
+  v.literal("mismatch"),
+  v.literal("manualReview"),
+);
+
 export const postsTable = defineTable({
   submissionId: v.id("submissions"),
   // Denormalized from the assignment so companies can list a campaign's posts
@@ -13,10 +19,13 @@ export const postsTable = defineTable({
   // A submission has one active post. Replacing the link deactivates the old
   // post instead of overwriting it, so disputes can still see what was posted.
   isActive: v.boolean(),
-  // When the post went live on X, entered by the operator on verification.
+  // When the post went live on X, recorded on verification.
   // Submission time is `_creationTime`.
   postedAt: v.optional(v.number()), // Unix milliseconds.
   isVerified: v.boolean(),
+  captionCheck: v.optional(postCaptionCheck),
+  // Reserves a short window for an in-flight X read and bounds retries.
+  captionCheckStartedAt: v.optional(v.number()),
   // What payouts are based on, kept apart from engagement so analytics-only
   // counts can never hold it back.
   views: v.optional(v.number()),

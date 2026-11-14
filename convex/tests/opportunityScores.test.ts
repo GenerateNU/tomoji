@@ -2,7 +2,7 @@
 import { convexTest } from "convex-test";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import type { Id } from "../_generated/dataModel";
-import { internal } from "../_generated/api";
+import { api, internal } from "../_generated/api";
 import { updateCreatorNiches } from "../models/creatorNiches";
 import { updateCreatorSkills } from "../models/creatorSkills";
 import { createOpportunity } from "../models/opportunities";
@@ -12,6 +12,7 @@ import {
   seedCampaign,
   seedCreatorId,
   seedOpportunity,
+  seedUser,
   type TestConvex,
 } from "./helpers";
 
@@ -75,7 +76,7 @@ describe("opportunityScores.scoreOpportunity", () => {
     expect(await scoresFor(t, none)).toEqual([]);
   });
 
-  test("clears an opportunity's scores once creators can no longer see it", async () => {
+  test("clears an opportunity's scores once it closes", async () => {
     const t = convexTest(schema, modules);
     const { opportunityId } = await seedOpportunity(
       t,
@@ -87,7 +88,7 @@ describe("opportunityScores.scoreOpportunity", () => {
     expect(await scoreCount(t)).toBe(1);
 
     await t.run(async (ctx) => {
-      await ctx.db.patch("opportunities", opportunityId, { status: "paused" });
+      await ctx.db.patch("opportunities", opportunityId, { status: "closed" });
     });
     await scoreOpportunity(t, opportunityId);
 
@@ -96,12 +97,11 @@ describe("opportunityScores.scoreOpportunity", () => {
 });
 
 describe("opportunityScores.scoreCreator", () => {
-  test("rescores a creator after their profile changes and drops hidden opportunities", async () => {
+  test("rescores a creator after their profile changes and drops closed opportunities", async () => {
     const t = convexTest(schema, modules);
     const owner = await seedOpportunity(t, { subject: "scores_owner" }, { niches: ["ai-agents"] });
-    // A second campaign at the same company, so pausing it hides only this opportunity.
     const other = await seedCampaign(t, { subject: "scores_other_owner" });
-    const hiddenId = await t.run(
+    const closedId = await t.run(
       async (ctx) =>
         await createOpportunity(
           ctx,
@@ -111,11 +111,11 @@ describe("opportunityScores.scoreCreator", () => {
     );
     const creatorId = await seedCreatorWithNiches(t, "scores_creator", ["databases"]);
     await scoreCreator(t, creatorId);
-    expect(await scoresFor(t, creatorId)).toEqual([{ opportunityId: hiddenId, score: 1 }]);
+    expect(await scoresFor(t, creatorId)).toEqual([{ opportunityId: closedId, score: 1 }]);
 
     await t.run(async (ctx) => {
       await updateCreatorNiches(ctx, creatorId, ["ai-agents", "databases"]);
-      await ctx.db.patch("campaigns", other.campaignId, { status: "paused" });
+      await ctx.db.patch("opportunities", closedId, { status: "closed" });
     });
     await scoreCreator(t, creatorId);
 
@@ -144,5 +144,77 @@ describe("opportunityScores.scoreCreator", () => {
     expect(await scoresFor(t, creatorId)).toEqual([
       { opportunityId: owner.opportunityId, score: 1 },
     ]);
+  });
+});
+
+describe("opportunities.discover", () => {
+  test("lists a creator's matches first once they pick niches, then the rest by deadline", async () => {
+    const t = convexTest(schema, modules);
+    const sooner = await seedOpportunity(
+      t,
+      { subject: "scores_sooner" },
+      { niches: ["databases"] },
+    );
+    const later = await seedOpportunity(
+      t,
+      { subject: "scores_later" },
+      { niches: ["ai-agents"], deadline: Date.now() + 172_800_000 },
+    );
+    const asCreator = await seedUser(t, { subject: "scores_creator" });
+
+    await asCreator.mutation(api.creators.update, { niches: ["ai-agents"] });
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    const first = await asCreator.query(api.opportunities.discover, {
+      paginationOpts: { numItems: 1, cursor: null },
+    });
+    const second = await asCreator.query(api.opportunities.discover, {
+      paginationOpts: { numItems: 1, cursor: first.continueCursor },
+    });
+
+    expect(first.page.map(({ _id }) => _id)).toEqual([later.opportunityId]);
+    expect(second.page.map(({ _id }) => _id)).toEqual([sooner.opportunityId]);
+  });
+
+  test("pinned pages keep every brief exactly once when scores change between loads", async () => {
+    const t = convexTest(schema, modules);
+    const ids: Id<"opportunities">[] = [];
+    for (const subject of ["pinned_a", "pinned_b", "pinned_c"]) {
+      ids.push((await seedOpportunity(t, { subject })).opportunityId);
+    }
+    const unscored = (await seedOpportunity(t, { subject: "pinned_rest" })).opportunityId;
+    const asCreator = await seedUser(t, { subject: "pinned_creator" });
+    const creatorId = await seedCreatorId(t, "pinned_creator");
+    const scoreIds = await t.run(async (ctx) =>
+      Promise.all(
+        ids.map((opportunityId, index) =>
+          ctx.db.insert("opportunityScores", {
+            creatorId,
+            opportunityId,
+            score: 0.9 - index * 0.1,
+          }),
+        ),
+      ),
+    );
+    const load = (cursor: string | null, endCursor?: string) =>
+      asCreator.query(api.opportunities.discover, {
+        paginationOpts: { numItems: 2, cursor, endCursor },
+      });
+    const first = await load(null);
+    const second = await load(first.continueCursor);
+    const third = await load(second.continueCursor);
+
+    // The last match jumps to the top, as a rescore after a profile edit would.
+    await t.run((ctx) => ctx.db.patch("opportunityScores", scoreIds[2], { score: 1 }));
+    // usePaginatedQuery reruns each loaded page pinned to the cursor it ended at.
+    const pages = [
+      await load(null, first.continueCursor),
+      await load(first.continueCursor, second.continueCursor),
+      await load(second.continueCursor, third.continueCursor),
+    ];
+
+    const shown = pages.flatMap((page) => page.page.map((brief) => brief._id));
+    expect(shown).toHaveLength(4);
+    expect(new Set(shown)).toEqual(new Set([...ids, unscored]));
+    expect(shown[0]).toBe(ids[2]);
   });
 });

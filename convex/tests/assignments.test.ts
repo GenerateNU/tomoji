@@ -12,6 +12,7 @@ import {
   seedCreatorId,
   seedOperator,
   seedOpportunity,
+  seedOneSubmission,
   seedUser,
   seedWrongOrgCaller,
   type TestConvex,
@@ -523,6 +524,123 @@ describe("assignments.listMine", () => {
   });
 });
 
+describe("assignments.searchMine", () => {
+  /** Seeds an opportunity under its own company, renamed to `companyName`. */
+  async function seedNamedOpportunity(
+    t: TestConvex,
+    companyName: string,
+    title = "Moisturizer launch video",
+  ) {
+    const slug = companyName.toLowerCase();
+    const owner = await seedOpportunity(
+      t,
+      { subject: `owner_${slug}`, orgId: `org_${slug}` },
+      { title },
+    );
+    await t.run(
+      async (ctx) =>
+        await ctx.db.patch("companies", owner.membership.companyId, {
+          name: companyName,
+        }),
+    );
+    return owner;
+  }
+
+  test("finds the caller's assignments by company name, newest first", async () => {
+    const t = convexTest(schema, modules);
+    const asCreator = await seedUser(t, { subject: "creator" });
+    const creatorId = await seedCreatorId(t, "creator");
+    const clerk = await seedNamedOpportunity(t, "Clerk", "Auth walkthrough");
+    const cloudflare = await seedNamedOpportunity(t, "Cloudflare", "Edge deploy demo");
+    const vercel = await seedNamedOpportunity(t, "Vercel");
+    const clerkId = await seedAssignment(t, {
+      opportunityId: clerk.opportunityId,
+      creatorId,
+      status: "completed",
+    });
+    vi.advanceTimersByTime(1000);
+    const cloudflareId = await seedAssignment(t, {
+      opportunityId: cloudflare.opportunityId,
+      creatorId,
+      status: "active",
+    });
+    await seedAssignment(t, { opportunityId: vercel.opportunityId, creatorId });
+
+    const result = await asCreator.query(api.assignments.searchMine, {
+      companyName: " CL ",
+    });
+
+    expect(result).toStrictEqual([
+      {
+        assignmentId: cloudflareId,
+        companyId: cloudflare.membership.companyId,
+        companyName: "Cloudflare",
+        opportunityTitle: "Edge deploy demo",
+        status: "active",
+      },
+      {
+        assignmentId: clerkId,
+        companyId: clerk.membership.companyId,
+        companyName: "Clerk",
+        opportunityTitle: "Auth walkthrough",
+        status: "completed",
+      },
+    ]);
+  });
+
+  test("lists every assignment when the search is omitted or blank", async () => {
+    const t = convexTest(schema, modules);
+    const { owner, asCreator, creatorId, assignmentId } = await seedDeal(t);
+    vi.advanceTimersByTime(1000);
+    const cancelledId = await seedAssignment(t, {
+      opportunityId: owner.opportunityId,
+      creatorId,
+      status: "cancelled",
+    });
+
+    for (const args of [{}, { companyName: "   " }]) {
+      const result = await asCreator.query(api.assignments.searchMine, args);
+      expect(result.map((option) => option.assignmentId)).toEqual([cancelledId, assignmentId]);
+    }
+  });
+
+  test("leaves out other creators' assignments", async () => {
+    const t = convexTest(schema, modules);
+    const { owner } = await seedDeal(t);
+    const asOther = await seedUser(t, { subject: "other_creator" });
+    const otherCreatorId = await seedCreatorId(t, "other_creator");
+    const otherId = await seedAssignment(t, {
+      opportunityId: owner.opportunityId,
+      creatorId: otherCreatorId,
+    });
+
+    const result = await asOther.query(api.assignments.searchMine, {});
+
+    expect(result.map((option) => option.assignmentId)).toEqual([otherId]);
+  });
+
+  test("returns at most 20 matches", async () => {
+    const t = convexTest(schema, modules);
+    const { owner, asCreator, creatorId } = await seedDeal(t);
+    for (let i = 0; i < 21; i++) {
+      await seedAssignment(t, {
+        opportunityId: owner.opportunityId,
+        creatorId,
+      });
+    }
+
+    const result = await asCreator.query(api.assignments.searchMine, {});
+
+    expect(result).toHaveLength(20);
+  });
+
+  test("rejects a company user", async () => {
+    const t = convexTest(schema, modules);
+    const { owner } = await seedDeal(t);
+    await expectApiError(() => owner.asCompany.query(api.assignments.searchMine, {}), "forbidden");
+  });
+});
+
 describe("assignments.get", () => {
   test("hides the delivery actor from the creator while preserving delivery at timestamp zero", async () => {
     const t = convexTest(schema, modules);
@@ -887,5 +1005,120 @@ describe("assignments.complete", () => {
     const result = await t.mutation(internal.assignments.complete, { assignmentId });
 
     expect(result.status).toBe("completed");
+  });
+});
+
+describe("creator assignment workspace", () => {
+  test("keeps completed work and its brief visible after an opportunity closes", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(t, { subject: "workspace-owner" });
+    const asCreator = await seedUser(t, { subject: "workspace-creator" });
+    const creatorId = await seedCreatorId(t, "workspace-creator");
+    const assignmentId = await seedAssignment(t, {
+      opportunityId: owner.opportunityId,
+      creatorId,
+    });
+    await t.run(async (ctx) => {
+      await ctx.db.patch("opportunities", owner.opportunityId, {
+        status: "closed",
+      });
+      await ctx.db.patch("assignments", assignmentId, { status: "completed" });
+    });
+
+    const past = await asCreator.query(api.assignments.listMineSummaries, {
+      phase: "past",
+      paginationOpts: { numItems: 12, cursor: null },
+    });
+    const details = await asCreator.query(api.assignments.getMineDetails, {
+      assignmentId,
+    });
+
+    expect(past.page).toEqual([
+      expect.objectContaining({
+        _id: assignmentId,
+        status: "completed",
+        title: expect.any(String),
+      }),
+    ]);
+    expect(details).toMatchObject({
+      assignment: { _id: assignmentId, status: "completed" },
+      brief: { description: expect.any(String) },
+    });
+  });
+
+  test("updates tab counts and moves a draft into changes needed after review", async () => {
+    const t = convexTest(schema, modules);
+    const { fixture, submissionId } = await seedOneSubmission(t);
+    const initial = await fixture.asCreator.query(api.assignments.listMineFilterOptions, {});
+    expect(initial.counts).toEqual({ notStarted: 0, review: 1, changesNeeded: 0, approved: 0 });
+
+    await fixture.asCompany.mutation(api.submissions.review, {
+      submissionId,
+      review: { status: "changesRequested", reviewNote: "Add the sponsorship disclosure." },
+    });
+
+    const filters = await fixture.asCreator.query(api.assignments.listMineFilterOptions, {});
+    const changes = await fixture.asCreator.query(api.assignments.listMineSummaries, {
+      phase: "current",
+      queue: "changesNeeded",
+      paginationOpts: { cursor: null, numItems: 10 },
+    });
+    expect(filters.counts).toEqual({ notStarted: 0, review: 0, changesNeeded: 1, approved: 0 });
+    expect(changes.page).toMatchObject([
+      {
+        _id: fixture.assignmentId,
+        next: { id: fixture.deliverableId, status: "changesRequested" },
+      },
+    ]);
+  });
+
+  test("orders filter options by assignment creation across statuses", async () => {
+    const t = convexTest(schema, modules);
+    const asCreator = await seedUser(t, { subject: "filter-creator" });
+    const creatorId = await seedCreatorId(t, "filter-creator");
+    const older = await seedOpportunity(
+      t,
+      { subject: "older-filter-owner" },
+      { title: "An older assignment" },
+    );
+    const newer = await seedOpportunity(
+      t,
+      { subject: "newer-filter-owner" },
+      { title: "A newer assignment" },
+    );
+    await seedAssignment(t, { opportunityId: older.opportunityId, creatorId, status: "active" });
+    vi.setSystemTime(Date.now() + 60_000);
+    await seedAssignment(t, {
+      opportunityId: newer.opportunityId,
+      creatorId,
+      status: "termsPending",
+    });
+
+    const filters = await asCreator.query(api.assignments.listMineFilterOptions, {});
+
+    expect(filters.opportunities.map(({ id }) => id)).toEqual([
+      newer.opportunityId,
+      older.opportunityId,
+    ]);
+  });
+
+  test("returns the same unavailable result for malformed IDs and another creator's assignment", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(t, {
+      subject: "private-workspace-owner",
+    });
+    const creatorId = await seedCreatorId(t, "private-workspace-creator");
+    const assignmentId = await seedAssignment(t, {
+      opportunityId: owner.opportunityId,
+      creatorId,
+    });
+    const asOther = await seedUser(t, { subject: "private-workspace-other" });
+
+    expect(await asOther.query(api.assignments.getMineDetails, { assignmentId })).toBeNull();
+    expect(
+      await asOther.query(api.assignments.getMineDetails, {
+        assignmentId: "invalid",
+      }),
+    ).toBeNull();
   });
 });

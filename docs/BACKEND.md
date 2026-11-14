@@ -74,9 +74,10 @@ Default to internal for anything that is not intentionally part of the public AP
 | `companyScopedQuery` / `companyScopedMutation` | a company user, or an operator naming a `companyId` | `ctx.user`, `ctx.companyId`, `ctx.membership` (`null` for an operator) |
 | `operatorQuery` / `operatorMutation`           | a Tomoji operator                                   | `ctx.user`                                                             |
 | `operatorAction`                               | a Tomoji operator                                   | `ctx.user`                                                             |
+| `creatorAction`                                | a creator                                           | `ctx.user`, `ctx.creatorId`                                            |
 | `companyAdminAction`                           | a company **admin**                                 | `ctx.user`, `ctx.membership`, `ctx.orgId`                              |
 
-Actions have no `ctx.db`, so the two action builders run the same check through an
+Actions have no `ctx.db`, so the action builders run the same check through an
 internal query in `convex/authorize.ts` first. That keeps an action from being looser
 than the query or mutation it mirrors.
 
@@ -181,9 +182,24 @@ niche or skill (named, not numbered, so edits between batches don't misdirect th
 Both read candidates through the `by_name_and_*Id` selection indexes, so cost grows
 with matches, not with every creator or opportunity; a brief that only sets a
 follower minimum has no selections to look up and isn't scored. Both skip users who
-aren't active creators and clear scores once the opportunity or creator drops out of
-discovery. Nothing calls them on edits yet, and `discover` doesn't read scores yet;
-both come next.
+aren't active creators. Open and paused briefs keep their scores, so pausing and
+resuming a brief or campaign needs no rescoring; drafts and closed briefs have none.
+
+Routes schedule the jobs after the write commits:
+
+- `opportunities.create` (open, with niches or skills), `publish`, and `update` of
+  niches, skills, or `minFollowerRange` rescore the opportunity.
+- `opportunities.close` and the deadline cron clear a closed brief's scores, when it
+  has any.
+- `creators.update` of niches, skills, or `followerRange` rescores the creator.
+
+Briefs published before scoring existed are scored by the
+`2026_11_14_score_open_opportunities` migration.
+
+`opportunities.discover` lists the caller's matches first, best first, then every
+other open brief by deadline. Its cursor is a JSON `[section, cursor]` pair that
+names which list it continues. Visibility (paused briefs or campaigns, inactive
+companies) is checked as the feed is read, so stale scores never show.
 
 ## Opportunity deliverables
 
@@ -224,6 +240,68 @@ deliverable separately:
 `deliverableId` is required with no migration, since nothing is deployed yet. A
 dev deployment holding submissions from before it won't accept the schema:
 clear its `submissions`, `posts`, and `disputes` tables, then push again.
+
+## Creator applications table
+
+`applications.searchMine` feeds the creator's Applications page: one page of rows plus a
+count for each tab. It is a creator-only query; the creator always comes from the caller.
+
+- **Tabs.** `APPLICATION_TAB_STATUSES` maps every status to one tab. Applications lists
+  `pending`, `rejected`, and `opportunityFull`; Offers lists `offered`, `offerExpired`, and
+  `declined` (declined offers stay in Offers); Accepted lists `accepted`. The `tab` argument
+  accepts `applications`, `offers`, or `accepted`. The result echoes `tab` so the client can
+  tell which tab's rows it holds. "Hide rejected" hides `rejected` and `opportunityFull` (applications
+  closed because the opportunity filled) and does nothing on Offers or Accepted. The status
+  sort groups those two together, then falls back to newest submitted, then `_id`.
+- **Read budget.** Each count reads at most `MAX_APPLICATIONS_READ` (300) applications,
+  newest first within each status, and the applications tab's statuses share that budget.
+  Search, filters, sorting, and paging then run in memory over those rows. A count that
+  reaches its limit reports `isCapped: true`, and the UI shows "300+". Counts ignore the
+  search and filters; `totalCount` is the filtered total. The requested tab's count is its
+  joined rows (applications whose opportunity was deleted are skipped); the other tabs count the
+  raw rows read, so they can include rows that would be skipped.
+- **Arguments.** `page` is an integer from 1 and a page past the end is clamped to the last.
+  `pageSize` is an integer from 1 to 50 and the search is trimmed to at most 100
+  characters. Violations are `invalid_state` with reason `invalid_page`,
+  `invalid_page_size`, or `search_too_long`. Each tab has its own default sort: Applications
+  newest submitted first, Offers by `expires` ascending, Accepted by `accepted` descending
+  (most recently accepted first). Ties always fall back to newest first.
+- **Offer expiry.** Offer rows carry `offerExpiresAt` (absent when unset). The `expires`
+  sort keeps a fixed group order whatever the direction (`offered`, then `offerExpired`,
+  then `declined`) and sorts by `offerExpiresAt` within a group in the requested direction;
+  offers without an expiry come last in their group.
+- **Offer acceptance.** Accepted rows carry `offerAcceptedAt` (absent when unset). The
+  `accepted` sort orders by it in the requested direction; a row without it comes last in
+  both directions, and ties fall back to newest submitted, then application id.
+- **Rows keep their details after an opportunity closes.** A row reads the opportunity and
+  company directly rather than through `requireOpportunity`, so a closed, paused, or
+  inactive-company opportunity still shows its title, company, and pay. `canStar` says
+  whether creators can still see it, because starring a hidden opportunity is refused
+  (`not_found`) while unstarring always works. A row whose opportunity was deleted is
+  skipped, and a missing company shows an empty `companyName`.
+- `submittedAt` is the application's creation time. Company logos are private media, so the
+  row returns `companyLogoMediaId` and the client loads it with `media.getCompanyMedia`.
+
+### Offer details (`applications.getMineDetail`)
+
+`applications.getMineDetail({ applicationId })` is a creator-only query returning one of
+the caller's applications with its opportunity brief (`creatorOpportunity`, including
+`companyName`, with niches, skills and languages as names), `offerExpiresAt`,
+`offerAcceptedAt`, `companyLogoMediaId`, and `minFollowerRange`.
+
+- **Ownership.** Another creator's application, a missing one, and one whose opportunity was
+  deleted are all `not_found`. A missing company gives an empty `companyName`.
+- **Reads closed offers.** Like table rows, it reads the opportunity directly, so a closed,
+  paused, or inactive-company opportunity still shows its brief to its applicant. It works
+  for any application status.
+- **Flags leave out the clock.** `canAccept` is true when the status is `offered` and the
+  opportunity is `open` or `paused` with a free slot; `canDecline` is true whenever the status
+  is `offered`. `acceptBlockedReason` (`opportunity_closed` or `opportunity_full`) is set only
+  on an offered application that can't be accepted, and matches the `invalid_state` reason
+  `acceptApplication` throws. Queries must not call `Date.now()`, so an offer past its expiry
+  that the cron has not yet marked `offerExpired` still reports `canAccept: true`; the client
+  compares `offerExpiresAt` to its own clock and `accept` refuses with `offer_expired`.
+- **Follower range.** `minFollowerRange` is the stored enum value; the client labels it.
 
 ## Payout records
 

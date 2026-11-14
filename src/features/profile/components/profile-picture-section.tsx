@@ -16,7 +16,7 @@ import {
   type PictureUploadPhase,
 } from "../lib/profile-picture";
 
-const UPLOADS_ENABLED = false;
+const UPLOADS_ENABLED = true;
 
 type Selection = { file: File; url: string; upload: ReturnType<typeof createProfilePictureUpload> };
 

@@ -13,6 +13,8 @@ type FilterChipProps = Omit<Toggle.Props, "pressed" | "defaultPressed" | "onPres
   onPressedChange?: (pressed: boolean) => void;
   /** Leading 14px icon. A selected chip shows a close icon instead. */
   icon?: IconComponent;
+  /** Whether a selected chip swaps its icon for ×. Off for chips that read as a tab. */
+  showClear?: boolean;
   /** Muted count after the label. */
   count?: number | string;
   children: ReactNode;
@@ -24,12 +26,13 @@ export function FilterChip({
   selected = false,
   onPressedChange,
   icon,
+  showClear = true,
   count,
   className,
   children,
   ...props
 }: FilterChipProps) {
-  const Icon = selected ? RiCloseLine : icon;
+  const Icon = selected && showClear ? RiCloseLine : icon;
   return (
     <Toggle
       data-slot="filter-chip"

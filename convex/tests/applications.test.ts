@@ -3,10 +3,14 @@ import { convexTest } from "convex-test";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { api } from "../_generated/api";
 import schema from "../schema";
+import type { DeliverableCreate } from "../models/deliverableDrafts";
+import { listOpportunityDeliverables } from "../models/deliverableDrafts";
 import {
+  deliverableArgs,
   expectApiError,
   seedCreatorId,
   seedGatedOpportunity,
+  seedOpportunity,
   seedOperator,
   seedUser,
   seedWrongOrgCaller,
@@ -19,8 +23,15 @@ const modules = import.meta.glob("../**/*.ts");
 const firstPage = { numItems: 10, cursor: null };
 
 /** Seeds an opportunity and a creator client that has applied to it. */
-async function seedApplication(t: TestConvex) {
-  const seeded = await seedGatedOpportunity(t);
+async function seedApplication(t: TestConvex, deliverables?: DeliverableCreate[]) {
+  const seeded =
+    deliverables === undefined
+      ? await seedGatedOpportunity(t)
+      : await seedOpportunity(
+          t,
+          { subject: "company_owner" },
+          { isGated: true, maxSlots: 10, deliverables },
+        );
   await seedCreatorId(t, "creator_a");
   const asCreator = t.withIdentity(workosIdentity({ subject: "creator_a" }));
   const applicationId = await asCreator.mutation(api.applications.create, {
@@ -302,8 +313,8 @@ describe("applications.reject", () => {
 });
 
 /** Seeds an application from `creator_a` that the company has offered. */
-async function seedOfferedApplication(t: TestConvex) {
-  const seeded = await seedApplication(t);
+async function seedOfferedApplication(t: TestConvex, deliverables?: DeliverableCreate[]) {
+  const seeded = await seedApplication(t, deliverables);
   await seeded.asCompany.mutation(api.applications.offer, {
     applicationId: seeded.applicationId,
   });
@@ -317,11 +328,51 @@ describe("applications.accept", () => {
 
     const accepted = await asCreator.mutation(api.applications.accept, {
       applicationId,
+      acceptedTerms: true,
     });
 
-    expect(accepted).toMatchObject({ _id: applicationId, status: "accepted" });
+    expect(accepted).toMatchObject({
+      application: { _id: applicationId, status: "accepted" },
+      assignmentId: expect.any(String),
+      deliverableCount: 1,
+    });
     expect(await asCompany.query(api.applications.get, { applicationId })).toMatchObject({
       status: "accepted",
+    });
+    expect(
+      await asCompany.query(api.assignments.get, { assignmentId: accepted.assignmentId }),
+    ).toMatchObject({ _id: accepted.assignmentId, status: "active" });
+  });
+
+  test("returns deliverableCount equal to the opportunity's deliverables", async () => {
+    const t = convexTest(schema, modules);
+    const { asCreator, applicationId, opportunityId } = await seedOfferedApplication(t, [
+      deliverableArgs(),
+      deliverableArgs({ title: "Follow-up video" }),
+      deliverableArgs({ title: "Story cut" }),
+    ]);
+
+    const accepted = await asCreator.mutation(api.applications.accept, {
+      applicationId,
+      acceptedTerms: true,
+    });
+
+    expect(accepted.deliverableCount).toBe(3);
+    const stored = await t.run((ctx) => listOpportunityDeliverables(ctx, opportunityId));
+    expect(accepted.deliverableCount).toBe(stored.length);
+  });
+
+  test("refuses an offer with a review policy unless acceptedTerms is true", async () => {
+    const t = convexTest(schema, modules);
+    const { asCompany, asCreator, applicationId } = await seedOfferedApplication(t);
+
+    await expectApiError(
+      () => asCreator.mutation(api.applications.accept, { applicationId }),
+      "invalid_state",
+      "terms_not_accepted",
+    );
+    expect(await asCompany.query(api.applications.get, { applicationId })).toMatchObject({
+      status: "offered",
     });
   });
 
@@ -676,6 +727,7 @@ describe("applications.getMineDetail", () => {
       offerExpiresAt: offered.offerExpiresAt,
       canAccept: true,
       canDecline: true,
+      termsRequired: true,
       opportunity: { _id: opportunityId, title: "Moisturizer launch video" },
     });
   });

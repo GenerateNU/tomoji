@@ -10,22 +10,31 @@ import { Section } from "./section";
 import { Tags } from "./tags";
 import { TextSection } from "./text-section";
 
-/** The body of the offer modal: the brief a creator reads before accepting. */
+/** The offer's description, pay and deadline: the top of both steps of the offer modal. */
+export function OfferSummary({ detail, now }: { detail: ApplicationDetail; now: number }) {
+  const { opportunity } = detail;
+  const acceptBy = acceptByLine(detail.status, detail.offerExpiresAt, now);
+
+  return (
+    <div className="flex flex-col gap-3">
+      <p className="text-body whitespace-pre-line text-gray-950">{opportunity.description}</p>
+      <p className="text-body font-medium text-gray-950">
+        {formatCompensation(opportunity, { showCap: false })}
+      </p>
+      {acceptBy && <p className="text-body-sm text-gray-500">{acceptBy}</p>}
+    </div>
+  );
+}
+
+/** The first step of the offer modal: the brief a creator reads before accepting. */
 export function OfferDetails({ detail, now }: { detail: ApplicationDetail; now: number }) {
   const { opportunity } = detail;
   const labels = useCatalogLabels();
-  const acceptBy = acceptByLine(detail.status, detail.offerExpiresAt, now);
   const hasCap = opportunity.cpmRateCents > 0 && opportunity.paymentCapCents > 0;
 
   return (
     <div className="flex flex-col gap-6">
-      <div className="flex flex-col gap-3">
-        <p className="text-body whitespace-pre-line text-gray-950">{opportunity.description}</p>
-        <p className="text-body font-medium text-gray-950">
-          {formatCompensation(opportunity, { showCap: false })}
-        </p>
-        {acceptBy && <p className="text-body-sm text-gray-500">{acceptBy}</p>}
-      </div>
+      <OfferSummary detail={detail} now={now} />
 
       <div className="grid gap-6 sm:grid-cols-2">
         <Section label="Skills">
@@ -47,7 +56,6 @@ export function OfferDetails({ detail, now }: { detail: ApplicationDetail; now: 
       </div>
 
       <TextSection label="Requirements" text={opportunity.contentRequirements} />
-      <TextSection label="Review policy" text={opportunity.reviewPolicy} />
     </div>
   );
 }

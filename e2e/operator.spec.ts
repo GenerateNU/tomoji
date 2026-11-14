@@ -18,7 +18,7 @@ test.afterAll(() => {
 });
 test.use({ timezoneId: "America/New_York" });
 
-type View = "users" | "companies" | "disputes";
+type View = "home" | "users" | "companies" | "disputes";
 
 /** Loads the real operator views against a local Convex double. */
 async function open(page: Page, view: View) {
@@ -35,6 +35,26 @@ async function open(page: Page, view: View) {
   });
   await page.goto(`http://operator.test/?view=${view}`);
 }
+
+test("home shows platform totals, the open dispute queue, and both trend widgets", async ({
+  page,
+}) => {
+  await open(page, "home");
+
+  await expect(page.getByText("Active creators")).toBeVisible();
+  const totals = page.getByRole("region", { name: "Platform totals" });
+  await expect(totals.getByText("Companies", { exact: true })).toBeVisible();
+  await expect(totals.getByText("14")).toBeVisible();
+
+  // Both unresolved disputes are listed, oldest first, and the resolved one is not.
+  const queue = page.getByRole("table", { name: "Unresolved disputes" });
+  await expect(queue.getByRole("row")).toHaveCount(3);
+  await expect(queue.getByText("Incorrect payout amount")).toBeVisible();
+  await expect(queue.getByText("Unfair submission review")).toBeHidden();
+
+  await expect(page.getByRole("heading", { name: "Signups over time" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Companies by activity" })).toBeVisible();
+});
 
 test("users tabs scope the directory and search matches names and emails", async ({ page }) => {
   await open(page, "users");

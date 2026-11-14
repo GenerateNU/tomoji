@@ -741,7 +741,11 @@ describe("assignments.acceptTerms", () => {
       const result = await asCreator.mutation(api.assignments.acceptTerms, { assignmentId });
 
       const stored = await t.run(async (ctx) => await ctx.db.get("assignments", assignmentId));
-      expect(stored).toStrictEqual({ ...before, status: "active" });
+      expect(stored).toStrictEqual({
+        ...before,
+        status: "active",
+      });
+      // toCreatorAssignment omits the audit actor.
       const creatorFields = { ...stored };
       delete creatorFields.productAccessDeliveredBy;
       expect(result).toStrictEqual(creatorFields);

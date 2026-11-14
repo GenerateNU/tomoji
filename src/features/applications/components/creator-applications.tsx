@@ -2,6 +2,7 @@
 
 import { api } from "@convex/_generated/api";
 import type { FunctionReturnType } from "convex/server";
+import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import type { Id } from "@convex/_generated/dataModel";
 import { ErrorBoundary } from "@/components/error-boundary";
@@ -22,6 +23,7 @@ import { ApplicationCardList, ApplicationSortSelect } from "./application-card-l
 import { usePrefetchedTabs } from "../hooks/use-prefetched-tabs";
 import { ApplicationFilters } from "./application-filters";
 import { ApplicationsEmptyState } from "./applications-empty-state";
+import { OfferAcceptedModal } from "./offer-accepted-modal";
 import { OfferModal } from "./offer-modal";
 import { ApplicationRow } from "./application-row";
 import { ApplicationsPagination } from "./applications-pagination";
@@ -124,6 +126,10 @@ function ApplicationsContent({ table }: { table: ApplicationsTable }) {
   const [openApplicationId, setOpenApplicationId] = useState<Id<"applications"> | null>(null);
   // Kept apart from the id so the modal's content doesn't change as it closes.
   const [modalOpen, setModalOpen] = useState(false);
+  // The success dialog's count is kept apart from `acceptedOpen` for the same reason.
+  const [accepted, setAccepted] = useState<{ deliverableCount: number } | null>(null);
+  const [acceptedOpen, setAcceptedOpen] = useState(false);
+  const router = useRouter();
   usePrefetchedTabs();
   // Keeps the current rows on screen while a new filter or page loads.
   const { data: latest, isStale } = useStableQuery(api.applications.searchMine, table.args);
@@ -260,6 +266,21 @@ function ApplicationsContent({ table }: { table: ApplicationsTable }) {
         applicationId={openApplicationId}
         open={modalOpen}
         onOpenChange={setModalOpen}
+        finalFocus={returnFocus}
+        onAccepted={({ deliverableCount }) => {
+          setModalOpen(false);
+          setAccepted({ deliverableCount });
+          setAcceptedOpen(true);
+        }}
+      />
+      <OfferAcceptedModal
+        open={acceptedOpen}
+        deliverableCount={accepted?.deliverableCount ?? 1}
+        onDismiss={() => setAcceptedOpen(false)}
+        onGoToAssignments={() => {
+          setAcceptedOpen(false);
+          router.push("/assignments");
+        }}
         finalFocus={returnFocus}
       />
     </>

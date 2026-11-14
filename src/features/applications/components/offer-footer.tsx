@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/spinner";
-import type { ApplicationDetail } from "@convex/models/applications";
+import type { AcceptedOffer, ApplicationDetail } from "@convex/models/applications";
+import { DeclineOfferModal } from "./decline-offer-modal";
 import { useOfferResponse } from "../hooks/use-offer-response";
 import { offerTiming } from "../lib/offer";
 
@@ -22,75 +23,85 @@ function ButtonSpinner() {
 /**
  * The offer modal's actions. The server's `canAccept` knows nothing about the
  * clock, so a live offer is one that is also still before its deadline here; the
- * server refuses a late accept either way. Declining asks first, inline, since
- * it can't be undone; accepting doesn't, since the creator has just read the terms.
+ * server refuses a late accept either way. Denying asks first, in a confirmation
+ * dialog, since it can't be undone; accepting doesn't, since the creator has just
+ * read the terms, and hands the result to `onAccepted`. The dialog stays mounted
+ * in every state so it can animate closed after the offer flips to declined.
+ * On an offer with terms, Accept in the "offer" view moves on to the "terms"
+ * view, where accepting the terms accepts the offer.
  */
-export function OfferFooter({ detail, now }: { detail: ApplicationDetail; now: number }) {
+export function OfferFooter({
+  detail,
+  now,
+  view,
+  onReviewTerms,
+  onAccepted,
+}: {
+  detail: ApplicationDetail;
+  now: number;
+  view: "offer" | "terms";
+  onReviewTerms: () => void;
+  onAccepted: (result: AcceptedOffer) => void;
+}) {
   const { pending, accept, decline } = useOfferResponse(detail.applicationId);
   const [confirming, setConfirming] = useState(false);
   const declineRef = useRef<HTMLButtonElement>(null);
-  const returnFocus = useRef(false);
   const timing = offerTiming(detail.status, detail.offerExpiresAt, now);
 
-  // Backing out of the confirmation puts focus back on the button that opened it.
-  useEffect(() => {
-    if (!confirming && returnFocus.current) {
-      returnFocus.current = false;
-      declineRef.current?.focus();
-    }
-  }, [confirming]);
+  async function acceptOffer(options?: { acceptedTerms?: boolean }) {
+    const result = await accept(options);
+    if (result) onAccepted(result);
+  }
 
+  let actions: ReactNode;
   if (timing === "expired") {
-    return (
+    actions = (
       <Button disabled className={buttonClass}>
         Offer expired
       </Button>
     );
-  }
-  if (timing === "declined") {
-    return (
-      <Button variant="secondary" disabled className={buttonClass}>
+  } else if (timing === "declined") {
+    actions = (
+      <Button variant="secondary-subtle" disabled className={buttonClass}>
         Offer declined
       </Button>
     );
-  }
-  if (timing === "accepted") {
-    return (
+  } else if (timing === "accepted") {
+    actions = (
       <Button disabled className={buttonClass}>
         Offer accepted
       </Button>
     );
-  }
-  if (timing === "none") return null;
-
-  if (confirming) {
-    return (
+  } else if (timing === "none") {
+    actions = null;
+  } else {
+    actions = (
       <>
-        <p role="alert" className="w-full text-body-sm text-gray-700 sm:text-right">
-          Decline this offer? The company will be told and you can&apos;t undo this.
-        </p>
+        {detail.acceptBlockedReason && (
+          <p className="w-full text-body-sm text-gray-500 sm:text-right">
+            {BLOCKED_MESSAGES[detail.acceptBlockedReason]}
+          </p>
+        )}
         <Button
+          ref={declineRef}
           variant="secondary-subtle"
-          autoFocus
-          disabled={pending !== null}
+          disabled={!detail.canDecline || pending !== null}
           className={buttonClass}
-          onClick={() => {
-            returnFocus.current = true;
-            setConfirming(false);
-          }}
+          onClick={() => setConfirming(true)}
         >
-          Keep offer
+          Deny
         </Button>
         <Button
-          variant="destructive-subtle"
-          disabled={pending !== null}
+          disabled={!detail.canAccept || pending !== null}
           className={buttonClass}
-          onClick={async () => {
-            if (!(await decline())) setConfirming(false);
+          onClick={() => {
+            if (view === "terms") void acceptOffer({ acceptedTerms: true });
+            else if (detail.termsRequired) onReviewTerms();
+            else void acceptOffer();
           }}
         >
-          {pending === "decline" && <ButtonSpinner />}
-          Decline offer
+          {pending === "accept" && <ButtonSpinner />}
+          {view === "terms" ? "Accept terms & conditions" : "Accept"}
         </Button>
       </>
     );
@@ -98,28 +109,17 @@ export function OfferFooter({ detail, now }: { detail: ApplicationDetail; now: n
 
   return (
     <>
-      {detail.acceptBlockedReason && (
-        <p className="w-full text-body-sm text-gray-500 sm:text-right">
-          {BLOCKED_MESSAGES[detail.acceptBlockedReason]}
-        </p>
-      )}
-      <Button
-        ref={declineRef}
-        variant="secondary"
-        disabled={!detail.canDecline || pending !== null}
-        className={buttonClass}
-        onClick={() => setConfirming(true)}
-      >
-        Decline
-      </Button>
-      <Button
-        disabled={!detail.canAccept || pending !== null}
-        className={buttonClass}
-        onClick={() => void accept()}
-      >
-        {pending === "accept" && <ButtonSpinner />}
-        Accept offer
-      </Button>
+      {actions}
+      <DeclineOfferModal
+        open={confirming}
+        companyName={detail.opportunity.companyName}
+        pending={pending === "decline"}
+        onCancel={() => setConfirming(false)}
+        onConfirm={async () => {
+          if (await decline()) setConfirming(false);
+        }}
+        finalFocus={declineRef}
+      />
     </>
   );
 }

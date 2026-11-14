@@ -12,6 +12,7 @@ import {
 } from "./lib/functions";
 import {
   acceptApplication,
+  acceptedOffer,
   createApplication,
   declineApplication,
   expireApplicationOffers,
@@ -165,19 +166,24 @@ export const reject = companyMutation({
 });
 
 /**
- * Accepts the caller's own unexpired offer: takes a slot and creates the
- * assignment, first come first serve. Works while the opportunity is paused.
+ * Accepts the caller's own unexpired offer: takes a slot and creates an active
+ * assignment, first come first serve. When the opportunity has a review
+ * policy, `acceptedTerms` must be true. Works while the opportunity is paused.
  *
  * @throws `not_found` if the application does not exist or is not the caller's.
  * @throws `invalid_state` if there is no offer, it has expired, the opportunity
- * is closed, or every slot is filled.
+ * is closed, every slot is filled, or the terms were required but not accepted
+ * (`terms_not_accepted`).
+ * @throws `conflict` if the caller already has an assignment on it.
  */
 export const accept = creatorMutation({
-  args: { applicationId: v.id("applications") },
-  returns: application,
+  args: { applicationId: v.id("applications"), acceptedTerms: v.optional(v.boolean()) },
+  returns: acceptedOffer,
   handler: async (ctx, args) => {
     const creatorId = await requireCallerCreatorId(ctx, ctx.user);
-    return await acceptApplication(ctx, creatorId, args.applicationId);
+    return await acceptApplication(ctx, creatorId, args.applicationId, {
+      acceptedTerms: args.acceptedTerms,
+    });
   },
 });
 

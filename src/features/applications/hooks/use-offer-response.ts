@@ -2,6 +2,7 @@
 
 import { api } from "@convex/_generated/api";
 import type { Id } from "@convex/_generated/dataModel";
+import type { AcceptedOffer } from "@convex/models/applications";
 import { useMutation } from "convex/react";
 import { useState } from "react";
 import { toast } from "sonner";
@@ -14,6 +15,7 @@ const REASON_MESSAGES: Record<string, string> = {
   opportunity_full: "All spots on this opportunity were just taken.",
   opportunity_closed: "This opportunity has closed.",
   application_not_offered: "This offer is no longer open.",
+  terms_not_accepted: "Please review and accept the terms and conditions first.",
 };
 
 function failureMessage(error: unknown): string {
@@ -26,22 +28,34 @@ function failureMessage(error: unknown): string {
 }
 
 /**
- * Accepting or declining one offer. Each returns whether it worked; the offer
- * updates by itself when the mutation lands, so callers only need `pending` to
- * block a second tap while one is in flight.
+ * Accepting or declining one offer. Accept returns the accepted offer, or null
+ * if it failed; decline returns whether it worked. Neither confirms success
+ * itself for accept, so the caller shows what happens next. The offer updates by
+ * itself when the mutation lands, so callers only need `pending` to block a
+ * second tap while one is in flight.
  */
 export function useOfferResponse(applicationId: Id<"applications">) {
   const acceptOffer = useMutation(api.applications.accept);
   const declineOffer = useMutation(api.applications.decline);
   const [pending, setPending] = useState<Response | null>(null);
 
-  async function respond(kind: Response): Promise<boolean> {
-    setPending(kind);
+  async function accept(options: { acceptedTerms?: boolean } = {}): Promise<AcceptedOffer | null> {
+    setPending("accept");
     try {
-      await (kind === "accept" ? acceptOffer : declineOffer)({ applicationId });
-      toast.success(
-        kind === "accept" ? "Offer accepted. You'll find it under Accepted." : "Offer declined.",
-      );
+      return await acceptOffer({ applicationId, ...options });
+    } catch (error) {
+      toast.error(failureMessage(error));
+      return null;
+    } finally {
+      setPending(null);
+    }
+  }
+
+  async function decline(): Promise<boolean> {
+    setPending("decline");
+    try {
+      await declineOffer({ applicationId });
+      toast.success("Offer declined.");
       return true;
     } catch (error) {
       toast.error(failureMessage(error));
@@ -51,9 +65,5 @@ export function useOfferResponse(applicationId: Id<"applications">) {
     }
   }
 
-  return {
-    pending,
-    accept: () => respond("accept"),
-    decline: () => respond("decline"),
-  };
+  return { pending, accept, decline };
 }

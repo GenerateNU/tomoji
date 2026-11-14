@@ -241,7 +241,11 @@ just seed-more 30 # optional: fill out the opportunity feed for pagination
 `just seed` populates every application table under the **[Demo] Northstar Studio launch**
 campaign. It includes an application offer, an assignment to start, a draft waiting for a
 company review, a change request, an approval waiting for a post, and a posted assignment
-with example earnings and a dispute. Run it on a fresh dev deployment if you want an empty
+with example earnings and a dispute. It also adds three more offers for trying the accept flow:
+one expiring in about 18 hours (shows the live countdown and a four-item terms and conditions
+step), one expiring in about three days with no review policy (accepts in one step), and one
+that has already expired. Countdowns are relative to the time you seed, so refresh them with
+`just seed-clear && just seed`. Run it on a fresh dev deployment if you want an empty
 starting point. Rerunning it reuses the demo campaign, preserves other data, and does not reset
 actions you took while testing. Run `just seed-clear` only when you want to delete the seeded
 campaigns and activity linked to them, then start over.

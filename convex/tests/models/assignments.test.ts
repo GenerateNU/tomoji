@@ -266,7 +266,7 @@ describe("claimAssignment", () => {
 
 describe("createAssignmentFromOffer", () => {
   test.each(["open", "paused"] as const)(
-    "creates a termsPending assignment on a gated %s opportunity",
+    "creates an active assignment on a gated %s opportunity",
     async (status) => {
       const t = convexTest(schema, modules);
       const owner = await seedOpportunityIn(t, { opportunity: status }, { isGated: true });
@@ -291,7 +291,7 @@ describe("createAssignmentFromOffer", () => {
           cpmRateCents: 500,
           paymentCapCents: 25_000,
           usesAiReview: true,
-          status: "termsPending",
+          status: "active",
         },
       ]);
       expect(opportunity?.numFilledSlots).toBe(1);
@@ -305,7 +305,10 @@ describe("createAssignmentFromOffer", () => {
 
     await t.run(
       async (ctx) =>
-        await createAssignmentFromOffer(ctx, { opportunityId: owner.opportunityId, creatorId }),
+        await createAssignmentFromOffer(ctx, {
+          opportunityId: owner.opportunityId,
+          creatorId,
+        }),
     );
 
     expect((await readSlots(t, owner.opportunityId)).assignments).toHaveLength(1);
@@ -320,7 +323,10 @@ describe("createAssignmentFromOffer", () => {
     await expect(
       t.run(
         async (ctx) =>
-          await createAssignmentFromOffer(ctx, { opportunityId: owner.opportunityId, creatorId }),
+          await createAssignmentFromOffer(ctx, {
+            opportunityId: owner.opportunityId,
+            creatorId,
+          }),
       ),
     ).rejects.toMatchObject({ data: { code: "invalid_state", reason: "opportunity_closed" } });
     expect(await readSlots(t, owner.opportunityId)).toEqual(before);
@@ -334,7 +340,10 @@ describe("createAssignmentFromOffer", () => {
     await expect(
       t.run(
         async (ctx) =>
-          await createAssignmentFromOffer(ctx, { opportunityId: owner.opportunityId, creatorId }),
+          await createAssignmentFromOffer(ctx, {
+            opportunityId: owner.opportunityId,
+            creatorId,
+          }),
       ),
     ).rejects.toMatchObject({ data: { code: "invalid_state", reason: "opportunity_not_gated" } });
   });
@@ -371,7 +380,10 @@ describe("createAssignmentFromOffer", () => {
 
     const assignmentId = await t.run(
       async (ctx) =>
-        await createAssignmentFromOffer(ctx, { opportunityId: owner.opportunityId, creatorId }),
+        await createAssignmentFromOffer(ctx, {
+          opportunityId: owner.opportunityId,
+          creatorId,
+        }),
     );
 
     const assignment = await t.run(async (ctx) => await ctx.db.get("assignments", assignmentId));

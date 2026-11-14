@@ -81,9 +81,10 @@ dates, future dates, and underage dates.
 
 `/settings` separates Payment and General. General displays the account email and
 uses the existing WorkOS server actions to request a password-reset email or sign
-out. The reset confirmation appears only after the request succeeds. Stripe
-onboarding is not wired on this branch, so its control is disabled with faded brand colors
-while retaining the normal card copy. In the Profile editor, Change photo validates
+out. The reset confirmation appears only after the request succeeds. Payment starts
+or resumes Stripe onboarding and displays the creator's connection status. See
+[Stripe payouts](STRIPE.md) for configuration and return-flow details.
+In the Profile editor, Change photo validates
 and previews an image locally; Save uploads it through the existing S3 media flow.
 Cancel before Save discards the selected image without uploading. Photo completion
 and profile-field updates are separate operations: if only the photo saves, the error

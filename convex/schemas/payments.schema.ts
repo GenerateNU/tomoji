@@ -25,6 +25,11 @@ export const paymentsTable = defineTable({
   attempt: v.number(),
   // The creator's account the charge is made on, where its fee is recorded.
   stripeAccountId: v.string(),
+  // The company card this attempt charges, saved when it starts. Resuming the
+  // attempt resends with this card, never one swapped in since, so its
+  // idempotency key always carries the same request. Absent on attempts that
+  // never reached Stripe, such as a payout blocked before charging.
+  paymentMethodId: v.optional(v.string()),
   // Absent until Stripe creates the charge. Webhooks find the attempt through
   // the charge's `metadata.paymentId`, since they can arrive before this is saved.
   stripePaymentIntentId: v.optional(v.string()),

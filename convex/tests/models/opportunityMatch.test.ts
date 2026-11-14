@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { followerRangeFit } from "../../models/followerRanges";
-import { scoreOpportunityMatch } from "../../models/opportunityMatch";
+import { describeMatch, scoreOpportunityMatch } from "../../models/opportunityMatch";
 
 describe("scoreOpportunityMatch", () => {
   test("scores the share of the opportunity's niches and skills the creator has", () => {
@@ -32,5 +32,39 @@ describe("followerRangeFit", () => {
     // ~2.2k typical vs a 5k minimum: about 2.3x short.
     expect(followerRangeFit("1k-5k", "5k-10k")).toBeCloseTo(0.64, 2);
     expect(followerRangeFit(undefined, "10k-50k")).toBe(0);
+  });
+});
+
+describe("describeMatch", () => {
+  test("lists what matches and what's missing, and stays eligible without the minimum's gaps", () => {
+    expect(
+      describeMatch(
+        { niches: ["llms"], skills: ["python"], followerRange: "10k-50k" },
+        { niches: ["llms", "databases"], skills: ["python", "go"], minFollowerRange: "5k-10k" },
+      ),
+    ).toEqual({
+      level: "good",
+      matchedSkills: ["python"],
+      missingSkills: ["go"],
+      matchedNiches: ["llms"],
+      meetsFollowerMinimum: true,
+      isEligible: false,
+    });
+  });
+
+  test("is a strong, eligible match when the creator has everything", () => {
+    const match = describeMatch(
+      { niches: ["llms"], skills: ["python"], followerRange: "50k-100k" },
+      { niches: ["llms"], skills: ["python"], minFollowerRange: "50k-100k" },
+    );
+    expect(match).toMatchObject({ level: "strong", isEligible: true, meetsFollowerMinimum: true });
+  });
+
+  test("has no level when the brief asks for nothing", () => {
+    expect(describeMatch({ niches: [], skills: [] }, { niches: [], skills: [] })).toMatchObject({
+      level: null,
+      meetsFollowerMinimum: null,
+      isEligible: true,
+    });
   });
 });

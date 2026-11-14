@@ -1,12 +1,10 @@
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx } from "../_generated/server";
-import { listCreatorNiches } from "./creatorNiches";
-import { listCreatorSkills } from "./creatorSkills";
 import { getVisibleOpportunityCompany } from "./opportunities";
 import { listOpportunityNiches } from "./opportunityNiches";
 import {
+  getCreatorSignals,
   scoreOpportunityMatch,
-  type CreatorSignals,
   type OpportunitySignals,
 } from "./opportunityMatch";
 import { listOpportunitySkills } from "./opportunitySkills";
@@ -18,17 +16,6 @@ import { listOpportunitySkills } from "./opportunitySkills";
 async function hasCreatorFeed(ctx: MutationCtx, creator: Doc<"creators">): Promise<boolean> {
   const user = await ctx.db.get("users", creator.userId);
   return user !== null && user.isActive && user.role === "creator";
-}
-
-async function getCreatorSignals(
-  ctx: MutationCtx,
-  creator: Doc<"creators">,
-): Promise<CreatorSignals> {
-  const [niches, skills] = await Promise.all([
-    listCreatorNiches(ctx, creator._id),
-    listCreatorSkills(ctx, creator._id),
-  ]);
-  return { niches, skills, followerRange: creator.followerRange };
 }
 
 async function getOpportunitySignals(

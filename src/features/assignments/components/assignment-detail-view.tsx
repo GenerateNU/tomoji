@@ -13,6 +13,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { AssignmentsView } from "./assignments-view";
+import { AssignmentExamples } from "./assignment-examples";
 import { AssignmentCompany } from "./assignment-company";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -135,7 +136,7 @@ function AssignmentWorkspace({ details }: { details: AssignmentDetails }) {
             <p className="text-sm text-muted-foreground">No deliverables yet.</p>
           )}
           <ul className="divide-y">
-            {deliverables.map(({ _id, title, description, latest }) => (
+            {deliverables.map(({ _id, title, description, latest, exampleMediaIds }) => (
               <li key={_id} className="py-3 first:pt-0 last:pb-0">
                 <div className="flex flex-wrap items-baseline justify-between gap-2">
                   <h3 className="font-medium break-words">{title}</h3>
@@ -144,6 +145,9 @@ function AssignmentWorkspace({ details }: { details: AssignmentDetails }) {
                 <p className="mt-1 text-sm break-words whitespace-pre-wrap text-muted-foreground">
                   {description}
                 </p>
+                {!!exampleMediaIds?.length && (
+                  <AssignmentExamples deliverableId={_id} mediaIds={exampleMediaIds} />
+                )}
               </li>
             ))}
           </ul>

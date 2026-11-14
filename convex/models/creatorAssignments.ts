@@ -61,7 +61,7 @@ export const creatorAssignmentDetails = v.object({
   deliverables: v.array(
     schema
       .doc("deliverables")
-      .pick("_id", "title", "description")
+      .pick("_id", "title", "description", "exampleMediaIds")
       .extend({
         latest: v.union(v.object({ _id: v.id("submissions"), status: submissionStatus }), v.null()),
       }),
@@ -236,12 +236,13 @@ export async function getCreatorAssignmentDetails(
       reviewPolicy: opportunity.reviewPolicy,
     },
     deliverables: await Promise.all(
-      deliverables.map(async ({ _id, title, description }) => {
+      deliverables.map(async ({ _id, title, description, exampleMediaIds }) => {
         const latest = await getLatestSubmission(ctx, assignmentId, _id);
         return {
           _id,
           title,
           description,
+          exampleMediaIds,
           latest: latest && { _id: latest._id, status: latest.status },
         };
       }),

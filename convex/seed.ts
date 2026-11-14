@@ -589,6 +589,13 @@ async function seedNotifications(
       isRead: true,
     },
     {
+      type: "payoutStripeSetupNeeded",
+      title: "A $250 payment is waiting for your Stripe setup",
+      body: "Finish setting up Stripe to get paid.",
+      target: assignment,
+      isRead: true,
+    },
+    {
       type: "applicationOpportunityFull",
       title: `${offer.title} has filled all its slots`,
       target: application,
@@ -656,6 +663,20 @@ async function seedNotifications(
       type: "submissionResubmitted",
       title: `${name} resubmitted a draft for ${revision.title}`,
       target: revision.target,
+      isRead: true,
+    },
+    {
+      type: "payoutPaymentFailed",
+      title: `Payment of $250 to ${name} failed`,
+      body: "The company card was declined (insufficient_funds). Update it in settings.",
+      target: assignment,
+      isRead: true,
+    },
+    // Operators get this one; the demo admin shows it so every type renders.
+    {
+      type: "payoutChargedTwice",
+      title: `A $250 payout to ${name} was charged twice`,
+      target: assignment,
       isRead: true,
     },
     {

@@ -2,7 +2,7 @@ import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { apiError } from "../lib/errors";
 import { hasOpenDispute } from "./disputes";
-import { creatorName, notifyCompanyUser, notifyCreator, notifyOperators } from "./notifications";
+import { createNotification, creatorName, notifyCreator, notifyOperators } from "./notifications";
 import { getStripeAccountByCreatorId, toStripeAccountStatus } from "./stripeAccounts";
 import { getStripeCustomerByCompanyId, isCardExpired } from "./stripeCustomers";
 
@@ -56,6 +56,8 @@ export async function startPayment(
     attempt: (latest?.attempt ?? 0) + 1,
     stripeAccountId,
     status: "processing",
+    // Recovery's clock starts with the attempt.
+    lastCheckedAt: Date.now(),
   });
   await ctx.db.patch("payouts", payoutId, { paymentStatus: "processing" });
   const payment = await ctx.db.get("payments", id);
@@ -86,8 +88,9 @@ export async function claimDuePayouts(ctx: MutationCtx, limit: number): Promise<
       q.eq("approvalStatus", "approved").eq("paymentStatus", "notStarted"),
     )
     .take(limit);
+  const now = Date.now();
   for (const payout of due) {
-    await ctx.db.patch("payouts", payout._id, { paymentStatus: "queued" });
+    await ctx.db.patch("payouts", payout._id, { paymentStatus: "queued", queuedAt: now });
   }
   return due.map((payout) => payout._id);
 }
@@ -398,6 +401,9 @@ function formatAmount(amount: number, currency: string): string {
  * the campaign about its card. Disputes already notify both sides, and a
  * creator without any account is a broken invariant, so neither notifies here.
  */
+// A company has a handful of members; this keeps the read bounded.
+const MAX_NOTIFIED_ADMINS = 100;
+
 async function notifyPaymentProblem(
   ctx: MutationCtx,
   payout: Doc<"payouts">,
@@ -415,17 +421,26 @@ async function notifyPaymentProblem(
     });
     return;
   }
-  const campaign = await ctx.db.get("campaigns", payout.campaignId);
-  if (campaign === null) return;
-  await notifyCompanyUser(ctx, campaign.createdBy, {
-    type: "payoutPaymentFailed",
+  // Only admins can change the card, so they hear about it, unlike most
+  // company notifications, which go to whoever created the campaign.
+  const content = {
+    type: "payoutPaymentFailed" as const,
     title: `Payment of ${amount} to ${await creatorName(ctx, payout.creatorId)} failed`,
     body:
       failureCode === "company_card_missing"
-        ? "Your company has no saved card. An admin needs to add one in settings."
-        : `The company card was declined (${failureCode}). An admin needs to update it in settings.`,
+        ? "Your company has no saved card. Add one in settings to pay creators."
+        : `The company card was declined (${failureCode}). Update it in settings.`,
     target,
-  });
+  };
+  const members = await ctx.db
+    .query("companyUsers")
+    .withIndex("by_companyId", (q) => q.eq("companyId", payout.companyId))
+    .take(MAX_NOTIFIED_ADMINS);
+  for (const member of members) {
+    if (member.isActive && member.role === "admin") {
+      await createNotification(ctx, member.userId, content);
+    }
+  }
 }
 
 /**
@@ -448,6 +463,24 @@ export async function retryPayout(ctx: MutationCtx, payoutId: Id<"payouts">): Pr
  * Whether any attempt charged the payout. A retry must never follow one, even
  * if the payout's status has not caught up yet.
  */
+/**
+ * Whether the company won a dispute on the assignment. Its payouts then stay
+ * `needsAttention`: whether the creator is still paid is an operator's call.
+ * A creator winning, such as over a missing payment, never holds a payout.
+ */
+async function companyWonDispute(ctx: QueryCtx, assignmentId: Id<"assignments">) {
+  const disputes = await ctx.db
+    .query("disputes")
+    .withIndex("by_assignmentId", (q) => q.eq("assignmentId", assignmentId))
+    .take(100);
+  return disputes.some(
+    (dispute) =>
+      dispute.status === "resolved" &&
+      dispute.openedByRole === "company" &&
+      dispute.outcome === "approved",
+  );
+}
+
 async function wasPaid(ctx: QueryCtx, payoutId: Id<"payouts">): Promise<boolean> {
   const attempts = await ctx.db
     .query("payments")
@@ -538,7 +571,11 @@ export async function requeueResolvedDisputes(
   for (const payout of page.page) {
     const latest = await latestAttempt(ctx, payout._id);
     if (blockedOn(latest?.failureCode) !== "dispute") continue;
-    if ((await hasOpenDispute(ctx, payout.assignmentId)) || (await wasPaid(ctx, payout._id))) {
+    if (
+      (await hasOpenDispute(ctx, payout.assignmentId)) ||
+      (await companyWonDispute(ctx, payout.assignmentId)) ||
+      (await wasPaid(ctx, payout._id))
+    ) {
       continue;
     }
     await ctx.db.patch("payouts", payout._id, { paymentStatus: "notStarted" });
@@ -548,31 +585,41 @@ export async function requeueResolvedDisputes(
 }
 
 /**
- * Payouts whose charging stalled before `cutoff` (Unix ms): still `queued` long
- * after approval, because their scheduled charge was lost, or `processing`
- * with an attempt that never settled. Charging them again is safe: it resumes
- * the same attempt and key, or asks Stripe for the outcome of an existing charge.
+ * Claims payouts whose charging stalled before `cutoff` (Unix ms): still
+ * `queued` long after charging claimed them, because their scheduled charge was
+ * lost, or `processing` with an attempt that hasn't settled since it was last
+ * checked. Charging them again is safe: it resumes the same attempt and key, or
+ * asks Stripe for the outcome of an existing charge. Claiming restarts each
+ * one's clock, so attempts that never settle take turns with newer stalls
+ * instead of filling every batch.
  */
-export async function findStalePayouts(
-  ctx: QueryCtx,
+export async function claimStalePayouts(
+  ctx: MutationCtx,
   cutoff: number,
   limit: number,
 ): Promise<Id<"payouts">[]> {
+  const now = Date.now();
   const queued = await ctx.db
     .query("payouts")
-    .withIndex("by_approvalStatus_and_paymentStatus_and_approvedAt", (q) =>
-      q.eq("approvalStatus", "approved").eq("paymentStatus", "queued").lt("approvedAt", cutoff),
+    .withIndex("by_paymentStatus_and_queuedAt", (q) =>
+      q.eq("paymentStatus", "queued").lt("queuedAt", cutoff),
     )
     .take(limit);
-  // Oldest attempts first, straight by age: payouts waiting legitimately on
-  // Stripe never fill the batch ahead of a newer one that stalled.
   const processing = await ctx.db
     .query("payments")
-    .withIndex("by_status", (q) => q.eq("status", "processing").lt("_creationTime", cutoff))
+    .withIndex("by_status_and_lastCheckedAt", (q) =>
+      q.eq("status", "processing").lt("lastCheckedAt", cutoff),
+    )
     .take(limit);
-  const stalled: Id<"payouts">[] = queued.map((payout) => payout._id);
-  for (const attempt of processing) {
-    if (!stalled.includes(attempt.payoutId)) stalled.push(attempt.payoutId);
+  const claimed: Id<"payouts">[] = [];
+  for (const payout of queued) {
+    claimed.push(payout._id);
+    await ctx.db.patch("payouts", payout._id, { queuedAt: now });
   }
-  return stalled.slice(0, limit);
+  for (const attempt of processing) {
+    if (claimed.length >= limit) break;
+    if (!claimed.includes(attempt.payoutId)) claimed.push(attempt.payoutId);
+    await ctx.db.patch("payments", attempt._id, { lastCheckedAt: now });
+  }
+  return claimed;
 }

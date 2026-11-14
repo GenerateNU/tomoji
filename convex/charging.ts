@@ -13,7 +13,7 @@ import {
 import {
   claimDuePayouts,
   failChargeAttempt,
-  findStalePayouts,
+  claimStalePayouts,
   getChargeAccountId,
   prepareCharge,
   requeueResolvedDisputes,
@@ -272,7 +272,7 @@ export const sweep = internalMutation({
       return null;
     }
     if (!env.STRIPE_SECRET_KEY) return null;
-    for (const payoutId of await findStalePayouts(
+    for (const payoutId of await claimStalePayouts(
       ctx,
       Date.now() - STALE_AFTER_MS,
       CHARGE_BATCH_SIZE,

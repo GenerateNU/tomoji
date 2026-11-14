@@ -445,7 +445,10 @@ describe("recovering stalled charges", () => {
   test("leaves charging that started recently alone", async () => {
     const { t, payoutId, payout } = await seedDuePayout();
     vi.setSystemTime(1_700_000_000_000 + 60_000);
-    await t.run((ctx) => ctx.db.patch("payouts", payoutId, { paymentStatus: "queued" }));
+    // Claimed for charging a minute ago, though approved long before.
+    await t.run((ctx) =>
+      ctx.db.patch("payouts", payoutId, { paymentStatus: "queued", queuedAt: Date.now() }),
+    );
 
     await t.mutation(internal.charging.sweep, {});
     await t.finishAllScheduledFunctions(() => vi.runAllTimers());

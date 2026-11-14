@@ -4,7 +4,8 @@ import { describe, expect, test, vi } from "vitest";
 import type { Id } from "../../_generated/dataModel";
 import {
   attachPaymentIntent,
-  findStalePayouts,
+  claimDuePayouts,
+  claimStalePayouts,
   prepareCharge,
   recordPaymentFailed,
   recordPaymentSucceeded,
@@ -20,6 +21,7 @@ import {
   expectApiError,
   seedAssignmentFixture,
   seedDispute,
+  seedMembership,
   seedOperator,
   seedPayout,
   type TestConvex,
@@ -96,21 +98,19 @@ async function declineWith(t: TestConvex, payoutId: Id<"payouts">, code: string)
 }
 
 describe("notifying about payouts that need attention", () => {
-  // The company fixes card problems, so it hears about them; an admin updates the card.
-  test("tells the campaign's creator on the company side when the card is declined", async () => {
+  // Only an admin can update the card, so every active admin hears about it.
+  test("tells the company's active admins when the card is declined", async () => {
     const { t, fixture, payoutId, notifications } = await seedQueued();
+    const { membership: admin } = await seedMembership(t, "card_admin", "org_fixture", "admin");
+    const { membership: former } = await seedMembership(t, "former_admin", "org_fixture", "admin");
+    await t.run((ctx) => ctx.db.patch("companyUsers", former._id, { isActive: false }));
 
     await declineWith(t, payoutId, "insufficient_funds");
 
-    const [notification] = await notifications();
-    const campaignCreator = await t.run(async (ctx) => {
-      const assignment = await ctx.db.get("assignments", fixture.assignmentId);
-      const campaign = assignment && (await ctx.db.get("campaigns", assignment.campaignId));
-      const member = campaign && (await ctx.db.get("companyUsers", campaign.createdBy));
-      return member?.userId;
-    });
+    const [notification, ...others] = await notifications();
+    expect(others).toEqual([]);
     expect(notification).toMatchObject({
-      userId: campaignCreator,
+      userId: admin.userId,
       type: "payoutPaymentFailed",
       target: { kind: "assignment", assignmentId: fixture.assignmentId },
     });
@@ -119,6 +119,7 @@ describe("notifying about payouts that need attention", () => {
 
   test("tells the company when it has no saved card", async () => {
     const { t, payoutId, notifications } = await seedQueued({ companyCard: false });
+    await seedMembership(t, "card_admin", "org_fixture", "admin");
 
     await t.run((ctx) => prepareCharge(ctx, payoutId, true));
 
@@ -143,6 +144,7 @@ describe("notifying about payouts that need attention", () => {
   // Stripe and the charging run can both report the same decline.
   test("notifies once when the same failure is recorded twice", async () => {
     const { t, payoutId, notifications } = await seedQueued();
+    await seedMembership(t, "card_admin", "org_fixture", "admin");
     await declineWith(t, payoutId, "card_declined");
     const [attempt] = await t.run((ctx) => ctx.db.query("payments").collect());
 
@@ -218,29 +220,107 @@ describe("requeueCreatorPayouts", () => {
 });
 
 describe("requeueResolvedDisputes", () => {
-  test("requeues a payout once its assignment's dispute is resolved", async () => {
-    const { t, fixture, payoutId, payout } = await seedQueued();
-    const disputeId = await seedDispute(t, fixture);
+  /** A payout blocked by an open dispute, and a way to close that dispute. */
+  async function seedHeldByDispute(openedByRole: "creator" | "company") {
+    const queued = await seedQueued();
+    const { t, fixture, payoutId } = queued;
+    const disputeId = await seedDispute(t, fixture, {
+      openedByRole,
+      ...(openedByRole === "company"
+        ? { openedBy: fixture.membership.userId, reason: "postRemoved" as const }
+        : {}),
+    });
     await t.run((ctx) => prepareCharge(ctx, payoutId, true));
+    const resolve = (outcome: "approved" | "denied" | "withdrawn") =>
+      t.run(async (ctx) => {
+        const dispute = await ctx.db.get("disputes", disputeId);
+        if (dispute === null) throw new Error("expected seeded dispute");
+        await ctx.db.replace("disputes", disputeId, {
+          ...dispute,
+          status: "resolved",
+          resolvedBy: fixture.membership.userId,
+          resolvedByRole: "operator",
+          resolvedAt: 1_700_000_500_000,
+          outcome,
+        });
+      });
+    const requeue = () => t.run((ctx) => requeueResolvedDisputes(ctx, null));
+    return { ...queued, resolve, requeue };
+  }
+
+  test("requeues a payout once its assignment's dispute is resolved", async () => {
+    const { payout, resolve, requeue } = await seedHeldByDispute("creator");
     expect((await payout())?.paymentStatus).toBe("needsAttention");
 
     // Still open: nothing changes.
-    expect(await t.run((ctx) => requeueResolvedDisputes(ctx, null))).toMatchObject({ requeued: 0 });
+    expect(await requeue()).toMatchObject({ requeued: 0 });
 
-    await t.run((ctx) => ctx.db.delete("disputes", disputeId));
-    expect(await t.run((ctx) => requeueResolvedDisputes(ctx, null))).toMatchObject({ requeued: 1 });
+    await resolve("denied");
+    expect(await requeue()).toMatchObject({ requeued: 1 });
+    expect((await payout())?.paymentStatus).toBe("notStarted");
+  });
+
+  // The company won, so whether the creator is still paid is an operator's call.
+  test("holds the payout when a company's dispute is upheld", async () => {
+    const { payout, resolve, requeue } = await seedHeldByDispute("company");
+
+    await resolve("approved");
+
+    expect(await requeue()).toMatchObject({ requeued: 0 });
+    expect((await payout())?.paymentStatus).toBe("needsAttention");
+  });
+
+  test.each(["denied", "withdrawn"] as const)(
+    "requeues when a company's dispute is %s",
+    async (outcome) => {
+      const { payout, resolve, requeue } = await seedHeldByDispute("company");
+
+      await resolve(outcome);
+
+      expect(await requeue()).toMatchObject({ requeued: 1 });
+      expect((await payout())?.paymentStatus).toBe("notStarted");
+    },
+  );
+
+  // A creator winning, e.g. over a missing payment, is a reason to pay them.
+  test("requeues when a creator's dispute is upheld", async () => {
+    const { payout, resolve, requeue } = await seedHeldByDispute("creator");
+
+    await resolve("approved");
+
+    expect(await requeue()).toMatchObject({ requeued: 1 });
     expect((await payout())?.paymentStatus).toBe("notStarted");
   });
 });
 
-describe("findStalePayouts", () => {
+describe("claimStalePayouts", () => {
   // The charging run claims payouts within a minute; one still queued long
-  // after approval lost its scheduled charge.
-  test("finds payouts queued long after approval", async () => {
+  // after that lost its scheduled charge.
+  test("finds payouts queued long ago", async () => {
     const { t, payoutId } = await seedQueued();
+    await t.run((ctx) => ctx.db.patch("payouts", payoutId, { queuedAt: 1_700_000_000_000 }));
 
-    expect(await t.run((ctx) => findStalePayouts(ctx, 1_700_000_000_001, 25))).toEqual([payoutId]);
-    expect(await t.run((ctx) => findStalePayouts(ctx, 1_699_999_999_999, 25))).toEqual([]);
+    expect(await t.run((ctx) => claimStalePayouts(ctx, 1_699_999_999_999, 25))).toEqual([]);
+    expect(await t.run((ctx) => claimStalePayouts(ctx, 1_700_000_000_001, 25))).toEqual([payoutId]);
+  });
+
+  // A retried payout keeps its old approval; its charge only just started.
+  test("measures from when the payout was queued, not approved", async () => {
+    const { t, payoutId } = await seedQueued();
+    await t.run((ctx) => ctx.db.patch("payouts", payoutId, { paymentStatus: "notStarted" }));
+    await t.run((ctx) => claimDuePayouts(ctx, 25));
+
+    expect(await t.run((ctx) => claimStalePayouts(ctx, Date.now() - 60_000, 25))).toEqual([]);
+  });
+
+  // Claiming restarts the clock, so the next sweep leaves the new charge alone.
+  test("claims each stale payout once per stale period", async () => {
+    const { t, payoutId } = await seedQueued();
+    await t.run((ctx) => ctx.db.patch("payouts", payoutId, { queuedAt: 1_700_000_000_000 }));
+
+    const cutoff = Date.now() - 60_000;
+    expect(await t.run((ctx) => claimStalePayouts(ctx, cutoff, 25))).toEqual([payoutId]);
+    expect(await t.run((ctx) => claimStalePayouts(ctx, cutoff, 25))).toEqual([]);
   });
 
   // A charge whose outcome never arrived, with or without Stripe's charge id.
@@ -250,8 +330,35 @@ describe("findStalePayouts", () => {
     if (plan.kind !== "charge") throw new Error("expected a charge");
     await t.run((ctx) => attachPaymentIntent(ctx, plan.payment._id, "pi_lost"));
 
-    expect(await t.run((ctx) => findStalePayouts(ctx, Date.now() + 1, 25))).toEqual([payoutId]);
-    expect(await t.run((ctx) => findStalePayouts(ctx, Date.now() - 60_000, 25))).toEqual([]);
+    expect(await t.run((ctx) => claimStalePayouts(ctx, Date.now() - 60_000, 25))).toEqual([]);
+    expect(await t.run((ctx) => claimStalePayouts(ctx, Date.now() + 1, 25))).toEqual([payoutId]);
+  });
+
+  // Attempts that never settle must not hold the batch forever.
+  test("checks the least recently checked attempts first", async () => {
+    const first = await seedQueued();
+    const { t } = first;
+    const fixture = first.fixture;
+    const second = await seedPayout(t, fixture.assignmentId, {
+      approvalStatus: "approved",
+      approvalSource: "automatic",
+      approvedAt: 1_700_000_000_000,
+      paymentStatus: "queued",
+    });
+    for (const payoutId of [first.payoutId, second]) {
+      const plan = await t.run((ctx) => prepareCharge(ctx, payoutId, true));
+      if (plan.kind !== "charge") throw new Error("expected a charge");
+    }
+
+    // The first was checked longer ago, so it goes first; checking it moves it last.
+    await t.run(async (ctx) => {
+      const [a, b] = await ctx.db.query("payments").collect();
+      await ctx.db.patch("payments", a._id, { lastCheckedAt: 1_000 });
+      await ctx.db.patch("payments", b._id, { lastCheckedAt: 2_000 });
+    });
+    const later = Date.now() + 1;
+    expect(await t.run((ctx) => claimStalePayouts(ctx, later, 1))).toEqual([first.payoutId]);
+    expect(await t.run((ctx) => claimStalePayouts(ctx, later, 1))).toEqual([second]);
   });
 
   // The sweep resumes the attempt through the normal charging path.
@@ -328,7 +435,7 @@ describe("a success reported after the attempt was marked failed", () => {
   });
 });
 
-describe("findStalePayouts ordering", () => {
+describe("claimStalePayouts ordering", () => {
   // Payouts legitimately waiting on Stripe must not fill the batch and hide a
   // newer payout whose charge stalled.
   test("finds a stalled attempt behind many recent ones", async () => {
@@ -351,7 +458,7 @@ describe("findStalePayouts ordering", () => {
       }
 
       const cutoff = 1_800_000_000_000 + 15 * 60_000;
-      expect(await t.run((ctx) => findStalePayouts(ctx, cutoff, 2))).toEqual([payoutId]);
+      expect(await t.run((ctx) => claimStalePayouts(ctx, cutoff, 2))).toEqual([payoutId]);
     } finally {
       vi.useRealTimers();
     }

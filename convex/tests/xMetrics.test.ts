@@ -35,7 +35,10 @@ async function seedSyncedPosts(t: TestConvex, count: number) {
   for (let i = 1; i <= count; i++) {
     const postId = await seedPost(t, assignmentId);
     const xPostId = `1900000000000000${String(i).padStart(3, "0")}`;
-    await t.run(async (ctx) => await ctx.db.patch("posts", postId, { xPostId }));
+    // `seedPost` doesn't record a first verification, which the sync window keys off.
+    await t.run(
+      async (ctx) => await ctx.db.patch("posts", postId, { xPostId, firstVerifiedAt: Date.now() }),
+    );
     posts.push({ postId, xPostId });
   }
   return posts;

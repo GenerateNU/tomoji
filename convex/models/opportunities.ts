@@ -489,9 +489,11 @@ export const opportunityList = schema
  * Discovery filters. Within niches or skills a brief needs any one of them;
  * across filters it needs all. `isGated` picks briefs that need an
  * application (true) or let creators claim a spot (false). `applied` keeps
- * only briefs the caller has applied to.
+ * only briefs the caller has applied to. `search` matches title words, best
+ * match first, instead of deadline order.
  */
 export const opportunityDiscover = opportunityList.pick("paginationOpts").extend({
+  search: v.optional(v.string()),
   niches: v.optional(v.array(v.string())),
   skills: v.optional(v.array(v.string())),
   isGated: v.optional(v.boolean()),
@@ -587,6 +589,38 @@ async function anyAsync<T>(items: T[], check: (item: T) => Promise<boolean>): Pr
   return false;
 }
 
+/** Search results read per query; enough for a feed, well under Convex's 1,024 cap. */
+const MAX_SEARCH_RESULTS = 200;
+
+/**
+ * Pages through the best title matches. Search results can't be streamed, so
+ * this reads the top matches, filters them, and pages by position: the cursor
+ * is how many filtered results earlier pages returned.
+ */
+async function searchOpportunities(
+  ctx: QueryCtx,
+  search: string,
+  options: Infer<typeof opportunityDiscover>,
+  filter: (opportunity: Doc<"opportunities">) => Promise<CreatorOpportunity | null>,
+): Promise<PaginationResult<CreatorOpportunity>> {
+  const matches = await ctx.db
+    .query("opportunities")
+    .withSearchIndex("search_title", (q) => q.search("title", search).eq("status", "open"))
+    .take(MAX_SEARCH_RESULTS);
+  const briefs = (await Promise.all(matches.map(filter))).filter((brief) => brief !== null);
+  const { cursor, numItems } = options.paginationOpts;
+  const start = cursor === null ? 0 : Number(cursor);
+  if (!Number.isSafeInteger(start) || start < 0) {
+    throw apiError("invalid_state", { reason: "invalid_cursor" });
+  }
+  const end = start + numItems;
+  return {
+    page: briefs.slice(start, end),
+    isDone: end >= briefs.length,
+    continueCursor: String(Math.min(end, briefs.length)),
+  };
+}
+
 /**
  * Discovers open briefs across active companies in deadline order, narrowed by
  * the discovery filters. `applied` needs the caller's creator ID.
@@ -597,6 +631,8 @@ export async function discoverOpportunities(
   creatorId?: Id<"creators">,
 ): Promise<PaginationResult<CreatorOpportunity>> {
   const filter = discoverFilter(ctx, options, creatorId);
+  const search = options.search?.trim() ?? "";
+  if (search !== "") return await searchOpportunities(ctx, search, options, filter);
   // Filter inside the stream so hidden or filtered-out opportunities don't
   // leave pages short or empty. Keep deadline ordering while checking indexed associations.
   return await stream(ctx.db, schema)

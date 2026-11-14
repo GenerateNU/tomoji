@@ -805,6 +805,33 @@ describe("opportunities.update", () => {
 });
 
 describe("opportunities.discover", () => {
+  test("searches titles and pages through the matches", async () => {
+    const t = convexTest(schema, modules);
+    const first = await seedOpportunity(
+      t,
+      { subject: "search_one" },
+      { title: "Agent launch video" },
+    );
+    const second = await seedOpportunity(t, { subject: "search_two" }, { title: "Agent demo" });
+    await seedOpportunity(t, { subject: "search_other" }, { title: "Database tutorial" });
+    const asCreator = await seedUser(t, { subject: "search_creator" });
+
+    const page = await asCreator.query(api.opportunities.discover, {
+      search: " agent ",
+      paginationOpts: { numItems: 1, cursor: null },
+    });
+    const next = await asCreator.query(api.opportunities.discover, {
+      search: " agent ",
+      paginationOpts: { numItems: 1, cursor: page.continueCursor },
+    });
+
+    expect([...page.page, ...next.page].map((brief) => brief._id).sort()).toEqual(
+      [first.opportunityId, second.opportunityId].sort(),
+    );
+    expect(page.isDone).toBe(false);
+    expect(next.isDone).toBe(true);
+  });
+
   test("narrows the feed by niches, skills, type, and the caller's applications", async () => {
     const t = convexTest(schema, modules);
     const llms = await seedOpportunity(t, { subject: "filter_llms" }, { niches: ["llms"] });

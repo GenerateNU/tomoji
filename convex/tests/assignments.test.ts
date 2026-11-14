@@ -767,7 +767,7 @@ describe("assignments.declineTerms", () => {
       const result = await asCreator.mutation(api.assignments.declineTerms, { assignmentId });
 
       const stored = await t.run(async (ctx) => await ctx.db.get("assignments", assignmentId));
-      expect(stored).toStrictEqual({ ...before, status: "cancelled" });
+      expect(stored).toStrictEqual({ ...before, status: "cancelled", cancelledAt: Date.now() });
       const creatorFields = { ...stored };
       delete creatorFields.productAccessDeliveredBy;
       expect(result).toStrictEqual(creatorFields);
@@ -797,7 +797,7 @@ describe("assignments.cancel", () => {
 
     const result = await owner.asCompany.mutation(api.assignments.cancel, { assignmentId });
 
-    expect(result).toStrictEqual({ ...before, status: "cancelled" });
+    expect(result).toStrictEqual({ ...before, status: "cancelled", cancelledAt: Date.now() });
     expect(result).toStrictEqual(
       await t.run(async (ctx) => await ctx.db.get("assignments", assignmentId)),
     );

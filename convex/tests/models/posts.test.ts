@@ -68,6 +68,7 @@ describe("createPost", () => {
         xPostId: POST_ID,
         isActive: true,
         isVerified: false,
+        earningsTrackingVersion: 1,
       },
     ]);
   });
@@ -667,6 +668,7 @@ describe("replacePost", () => {
       xPostId: "1843000000000000009",
       isActive: true,
       isVerified: false,
+      earningsTrackingVersion: 1,
     });
   });
 

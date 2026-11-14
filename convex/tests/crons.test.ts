@@ -1,6 +1,16 @@
 import { describe, expect, test } from "vitest";
 import crons from "../crons";
 
+describe("earnings creation cron", () => {
+  test("discovers due earnings every minute through the internal sweep", () => {
+    expect(crons.crons["create due earnings"]).toEqual({
+      name: "earningsSchedules:sweep",
+      args: [{}],
+      schedule: { type: "interval", minutes: 1 },
+    });
+  });
+});
+
 describe("payout approval cron", () => {
   test("checks for due payouts every minute through the internal mutation", () => {
     expect(crons.crons["approve due payouts"]).toEqual({

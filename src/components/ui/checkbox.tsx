@@ -22,7 +22,7 @@ function Checkbox({
       data-slot="checkbox"
       className={cn(
         boxBase,
-        "peer group/checkbox relative border-gray-400 bg-gray-0 text-gray-0 outline-none after:absolute after:-inset-x-3 after:-inset-y-2 focus-visible:ring-4 focus-visible:ring-blue-primary/25 disabled:cursor-not-allowed disabled:opacity-40 aria-invalid:border-red-600 data-checked:border-blue-primary data-checked:bg-blue-primary data-checked:hover:bg-[linear-gradient(rgba(0,0,0,0.12),rgba(0,0,0,0.12))] data-indeterminate:border-blue-primary data-indeterminate:bg-blue-primary data-indeterminate:hover:bg-[linear-gradient(rgba(0,0,0,0.12),rgba(0,0,0,0.12))]",
+        "peer group/checkbox relative border-gray-400 bg-gray-0 text-gray-0 cursor-pointer outline-none after:absolute after:-inset-x-3 after:-inset-y-2 focus-visible:ring-4 focus-visible:ring-blue-primary/25 data-disabled:cursor-not-allowed data-disabled:opacity-40 aria-invalid:border-red-600 data-checked:border-blue-primary data-checked:bg-blue-primary data-checked:hover:bg-[linear-gradient(rgba(0,0,0,0.12),rgba(0,0,0,0.12))] data-indeterminate:border-blue-primary data-indeterminate:bg-blue-primary data-indeterminate:hover:bg-[linear-gradient(rgba(0,0,0,0.12),rgba(0,0,0,0.12))]",
         previewOnHover
           ? "data-unchecked:not-data-indeterminate:group-hover:not-data-disabled:border-gray-200 data-unchecked:not-data-indeterminate:group-hover:not-data-disabled:bg-gray-200"
           : "not-data-disabled:data-unchecked:not-data-indeterminate:hover:border-gray-500 in-[label:hover]:not-data-disabled:data-unchecked:not-data-indeterminate:border-gray-500",

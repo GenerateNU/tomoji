@@ -3,7 +3,7 @@
 import { api } from "@convex/_generated/api";
 import type { Id } from "@convex/_generated/dataModel";
 import { RiExpandUpDownLine, RiGlobalLine, RiSearchLine } from "@remixicon/react";
-import { usePaginatedQuery, useQuery } from "convex/react";
+import { usePaginatedQuery, useQuery } from "convex-helpers/react/cache/hooks";
 import Link from "next/link";
 import { useEffect, useId, useState } from "react";
 import { Badge } from "@/components/ui/badge";
@@ -221,7 +221,7 @@ function AssignmentRows({
       phase: "current",
       queue,
     },
-    { initialNumItems: PAGE_SIZE },
+    { initialNumItems: PAGE_SIZE, customPagination: true },
   );
   const loadedPages = Math.max(1, Math.ceil(results.length / PAGE_SIZE));
   const currentPage = Math.min(page, loadedPages);

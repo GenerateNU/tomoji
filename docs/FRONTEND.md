@@ -49,6 +49,28 @@ does not run it.
 
 Our routes should describe the resource being accessed rather than the role of the person accessing it, so keep URLs independent of user roles. For example, `/opportunities` serves as the discovery feed for creators and the company's opportunity list for company users. The page determines which component to render based on the current user.
 
+### Creator profile and settings
+
+The creator account menu opens Profile in a dialog over the current page; `/profile`
+also provides a direct page entry. Profile owns the creator's editable personal
+details, content preferences, and portfolio links. Save uses `creators.update` for
+supported fields; Cancel discards the draft. The joined date, follower/post/like
+statistics, and content type currently use hardcoded frontend demo data
+to match the design. Content-type edits stay in the open profile session and
+reset when it is reopened or refreshed; they are never sent to Convex. A save
+that only changes preview data does not call a backend mutation. Country, language,
+niche, and skill options reuse the shared predefined catalogs bundled with the app.
+
+`/settings` separates Payment and General. General displays the account email and
+uses the existing WorkOS server actions to request a password-reset email or sign
+out. The reset confirmation appears only after the request succeeds. Stripe
+onboarding is not wired on this branch, so its control is disabled with faded brand colors
+while retaining the normal card copy. Profile photo uploads and X linking retain
+their existing disabled state; existing photos and saved links can still be displayed.
+
+Browser tests use isolated Convex and authentication fixtures. Their screenshots
+verify layout and interaction states, not live Stripe, WorkOS email, or S3 behavior.
+
 ## Component Design
 
 We want components to be reusable, consistent, and easy to maintain. These conventions should help us avoid unnecessary duplication while keeping the frontend flexible as designs evolve.

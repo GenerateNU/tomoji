@@ -2,12 +2,9 @@
 
 import { useQuery } from "convex/react";
 import { api } from "@convex/_generated/api";
-import { BasicDetailsSection } from "./basic-details-section";
-import { GithubLinkSection } from "./github-link-section";
-import { LinksSection } from "./links-section";
-import { PersonalDetailsSection } from "./personal-details-section";
-import { ProfilePictureSection } from "./profile-picture-section";
-import { XAccountSection } from "./x-account-section";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { GeneralSettingsSection } from "./general-settings-section";
+import { PaymentSettingsCard } from "./payment-settings-card";
 import { SettingsSkeleton } from "./settings-skeleton";
 
 export function CreatorSettings() {
@@ -15,21 +12,17 @@ export function CreatorSettings() {
   if (profile === undefined) return <SettingsSkeleton />;
 
   return (
-    <div className="space-y-6">
-      <BasicDetailsSection />
-      <PersonalDetailsSection
-        dateOfBirth={profile.dateOfBirth}
-        countryOfResidence={profile.countryOfResidence}
-      />
-      <ProfilePictureSection mediaId={profile.profilePictureMediaId} />
-      <LinksSection linkedinLink={profile.linkedinLink} additionalLinks={profile.additionalLinks} />
-      <section aria-label="Portfolio" className="space-y-6 rounded-2xl bg-card p-6 sm:p-8">
-        <h2 className="text-xl font-semibold tracking-tight">Portfolio</h2>
-        <div className="grid gap-6 md:grid-cols-2">
-          <XAccountSection />
-          <GithubLinkSection githubLink={profile.githubLink} />
-        </div>
-      </section>
-    </div>
+    <Tabs defaultValue="payment" className="gap-8 sm:gap-11">
+      <TabsList aria-label="Settings">
+        <TabsTrigger value="payment">Payment</TabsTrigger>
+        <TabsTrigger value="general">General</TabsTrigger>
+      </TabsList>
+      <TabsContent value="payment">
+        <PaymentSettingsCard />
+      </TabsContent>
+      <TabsContent value="general" keepMounted>
+        <GeneralSettingsSection key={profile.email} email={profile.email} />
+      </TabsContent>
+    </Tabs>
   );
 }

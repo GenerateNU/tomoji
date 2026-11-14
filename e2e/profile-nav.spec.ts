@@ -104,3 +104,20 @@ test("Profile navigation reacts to account states and recovers from query errors
   await expect(page.getByRole("link", { name: "Profile", exact: true })).toBeVisible();
   expect(await page.evaluate(() => window.navigationFixture.errors)).toEqual([]);
 });
+
+test("Team navigation keeps other links usable during an account-query error and recovers", async ({
+  page,
+}) => {
+  await openNavigation(page);
+  await page.evaluate(() => window.navigationFixture.setResult({ synced: true, role: "company" }));
+  await expect(page.getByRole("link", { name: "Workspace members" })).toBeVisible();
+
+  await page.evaluate(() => window.navigationFixture.failQuery());
+  await expect(page.getByRole("link", { name: "Home", exact: true })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Settings", exact: true })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Workspace members" })).toHaveCount(0);
+  expect(await page.evaluate(() => window.navigationFixture.errors)).toEqual([]);
+
+  await page.evaluate(() => window.navigationFixture.setResult({ synced: true, role: "company" }));
+  await expect(page.getByRole("link", { name: "Workspace members" })).toBeVisible();
+});

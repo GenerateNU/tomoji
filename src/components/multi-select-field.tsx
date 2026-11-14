@@ -27,6 +27,8 @@ type MultiSelectFieldProps = {
   options: SelectOption[];
   value?: string[];
   defaultValue?: string[];
+  /** Show this many selected tags, followed by a count of the remaining selections. */
+  maxVisibleTags?: number;
   onValueChange?: (value: string[]) => void;
   disabled?: boolean;
   className?: string;
@@ -50,6 +52,7 @@ export function MultiSelectField({
   options,
   value,
   defaultValue = noValues,
+  maxVisibleTags,
   onValueChange,
   disabled,
   className,
@@ -66,6 +69,8 @@ export function MultiSelectField({
   const focusAfterRemove = useRef<number | null>(null);
   const message = error ?? helper;
   const hasValues = selected.length > 0;
+  const selectedTags = selected.slice(0, maxVisibleTags ?? selected.length);
+  const hiddenTagCount = selected.length - selectedTags.length;
 
   function commit(next: string[]) {
     if (value === undefined) setInternal(next);
@@ -150,17 +155,37 @@ export function MultiSelectField({
           )}
         >
           {hasValues ? (
-            <span className="flex flex-1 flex-wrap gap-1.5">
-              {selected.map((item, index) => (
+            <span
+              className={cn(
+                "flex min-w-0 flex-1 gap-1.5",
+                maxVisibleTags === undefined ? "flex-wrap" : "items-center",
+              )}
+            >
+              {selectedTags.map((item, index) => (
                 <Badge
                   key={item}
                   size="md"
+                  className={
+                    maxVisibleTags === undefined ? undefined : "min-w-0 shrink [&_button]:shrink-0"
+                  }
                   removeLabel={`Remove ${labelOf(item)}`}
                   onRemove={disabled ? undefined : () => remove(item, index)}
                 >
-                  {labelOf(item)}
+                  {maxVisibleTags === undefined ? (
+                    labelOf(item)
+                  ) : (
+                    <span className="truncate">{labelOf(item)}</span>
+                  )}
                 </Badge>
               ))}
+              {hiddenTagCount > 0 && (
+                <span
+                  className="shrink-0 text-body-sm text-gray-500"
+                  aria-label={`${hiddenTagCount} more selected`}
+                >
+                  +{hiddenTagCount}
+                </span>
+              )}
             </span>
           ) : (
             <span className="flex-1 truncate text-body font-normal text-gray-400">

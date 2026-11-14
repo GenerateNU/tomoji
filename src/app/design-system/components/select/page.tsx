@@ -100,6 +100,12 @@ import { MultiSelectField } from "@/components/multi-select-field";`}
               description: "Initial values when uncontrolled.",
             },
             {
+              name: "maxVisibleTags",
+              type: "number",
+              description:
+                "Optional limit on visible selected tags; the rest appear as +N. All choices remain available in the dropdown.",
+            },
+            {
               name: "onValueChange",
               type: "(value: string[]) => void",
               description: "Called with the new values.",

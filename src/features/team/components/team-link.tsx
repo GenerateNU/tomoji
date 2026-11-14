@@ -1,12 +1,24 @@
 "use client";
 
 import Link from "next/link";
-import { useMe } from "@/features/users/hooks/use-me";
+import { useMemo } from "react";
+import { useConvexAuth, useQueries, type RequestForQueries } from "convex/react";
+import type { FunctionReturnType } from "convex/server";
+import { api } from "@convex/_generated/api";
 
 /** Shows company navigation only after the authoritative account has synced. */
 export function TeamLink() {
-  const me = useMe();
-  if (!me?.synced || me.role !== "company") return null;
+  const { isAuthenticated, isLoading } = useConvexAuth();
+  const queries = useMemo(
+    (): RequestForQueries =>
+      !isLoading && isAuthenticated ? { me: { query: api.users.me, args: {} } } : {},
+    [isLoading, isAuthenticated],
+  );
+  // Navigation is outside the page error boundary; a failed account query must
+  // not prevent signing out or reaching another page.
+  const { me }: { me?: FunctionReturnType<typeof api.users.me> | Error } = useQueries(queries);
+  if (isLoading || !isAuthenticated || me instanceof Error || !me?.synced || me.role !== "company")
+    return null;
   return (
     <Link
       href="/team"

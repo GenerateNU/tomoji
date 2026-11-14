@@ -9,7 +9,7 @@ let bundle: string;
 let css: string;
 
 test.beforeAll(() => {
-  fixtureDirectory = mkdtempSync(join(tmpdir(), "tomoji-settings-tests-"));
+  fixtureDirectory = mkdtempSync(join(tmpdir(), "tomoji-settings-hifis-"));
   execFileSync("bun", ["e2e/fixtures/settings-build.mjs", fixtureDirectory]);
   bundle = readFileSync(join(fixtureDirectory, "settings-entry.js"), "utf8");
   css = readFileSync(join(fixtureDirectory, "settings.css"), "utf8");
@@ -19,16 +19,11 @@ test.afterAll(() => {
   if (fixtureDirectory) rmSync(fixtureDirectory, { recursive: true, force: true });
 });
 
-// Browser-component tests: real Settings components, isolated service responses.
-// These deliberately do not authenticate or write to a development account.
 async function openSettings(page: Page, query = "") {
   await page.route("http://settings.test/**", async (route) => {
     const path = new URL(route.request().url()).pathname;
     if (path === "/settings.js") {
-      await route.fulfill({
-        contentType: "application/javascript",
-        body: bundle,
-      });
+      await route.fulfill({ contentType: "application/javascript", body: bundle });
     } else if (path === "/settings.css") {
       await route.fulfill({ contentType: "text/css", body: css });
     } else {
@@ -38,241 +33,188 @@ async function openSettings(page: Page, query = "") {
       });
     }
   });
-  await page.goto(`http://settings.test/${query}`);
+  await page.goto(`http://settings.test/settings${query}`);
   await expect(page.getByRole("heading", { name: "Settings", exact: true })).toBeVisible();
 }
 
-test("basic details are read-only identity fields from WorkOS", async ({ page }) => {
-  await openSettings(page);
-  const details = page.getByRole("region", { name: "Basic details" });
-  await expect(details.getByText("Zahra", { exact: true })).toBeVisible();
-  await expect(details.getByText("Wibisana", { exact: true })).toBeVisible();
-  await expect(details.getByText("zahra@example.test", { exact: true })).toBeVisible();
-  await expect(details.getByRole("textbox")).toHaveCount(0);
-  await expect(details.getByRole("button")).toHaveCount(0);
-  expect(await page.evaluate(() => window.settingsFixture.calls)).toEqual([]);
-});
+async function expectSelectedIndicator(page: Page) {
+  await page.evaluate(() => document.fonts.ready.then(() => undefined));
+  const selected = page.getByRole("tab", { selected: true });
+  const indicator = page.locator('[data-slot="tabs-list"] > span[aria-hidden="true"]');
+  await expect
+    .poll(async () => {
+      const tab = await selected.boundingBox();
+      const underline = await indicator.boundingBox();
+      return tab && underline
+        ? Math.max(Math.abs(tab.x - underline.x), Math.abs(tab.width - underline.width))
+        : Infinity;
+    })
+    .toBeLessThanOrEqual(1);
+}
 
-test("basic details fit on mobile with a long email address", async ({ page }, testInfo) => {
-  await page.setViewportSize({ width: 375, height: 812 });
-  await openSettings(page);
-  await page.evaluate(() =>
-    window.settingsFixture.setProfile({
-      email: "a-long-email-address-for-a-creator-with-several-names@example.test",
-    }),
-  );
-  const details = page.getByRole("region", { name: "Basic details" });
-  await expect(
-    details.getByText("a-long-email-address-for-a-creator-with-several-names@example.test", {
-      exact: true,
-    }),
-  ).toBeVisible();
-  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
-    true,
-  );
-  await page.screenshot({
-    path: testInfo.outputPath("basic-details-mobile.png"),
-    fullPage: true,
-  });
-});
-test("discarding GitHub edits restores the saved link without a mutation", async ({ page }) => {
-  await openSettings(page);
-  await page.getByRole("button", { name: "Edit GitHub profile" }).click();
-  await page.getByLabel("GitHub profile URL").fill("https://github.com/new-profile");
-  await page.getByRole("button", { name: "Discard GitHub changes" }).click();
-  await expect(page.getByRole("link", { name: /https:\/\/github.com\/zahra/ })).toBeVisible();
-  expect(await page.evaluate(() => window.settingsFixture.calls)).toEqual([]);
-});
-
-test("saving and clearing GitHub changes persist through the existing mutation", async ({
+test("Payment is the default tab and unavailable Stripe cannot pretend to connect", async ({
   page,
 }) => {
   await openSettings(page);
-  await page.getByRole("button", { name: "Edit GitHub profile" }).click();
-  await page.getByLabel("GitHub profile URL").fill("https://github.com/new-profile");
-  await page.getByRole("button", { name: "Save GitHub profile" }).click();
-  await expect(page.getByText("GitHub profile saved.", { exact: true })).toBeVisible();
-  await expect(page.getByRole("link", { name: /https:\/\/github.com\/new-profile/ })).toBeVisible();
+  await expect(page.getByRole("tab", { name: "Payment", exact: true })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await expect(page.getByRole("button", { name: /Continue with Stripe/i })).toBeDisabled();
+  await expect(page.getByText("Stripe connected", { exact: true })).toHaveCount(0);
+  await page.getByRole("tab", { name: "General", exact: true }).click();
+  await expect(page.getByText("zahra@example.test", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Reset password", exact: true })).toBeVisible();
+  expect(await page.evaluate(() => window.settingsFixture.calls)).toEqual([]);
+  expect(await page.evaluate(() => window.settingsAuthFixture.calls)).toEqual([]);
+});
 
-  await page.getByRole("button", { name: "Edit GitHub profile" }).click();
-  await page.getByLabel("GitHub profile URL").fill("");
-  await page.getByRole("button", { name: "Save GitHub profile" }).click();
-  await expect(page.getByText("No GitHub profile added yet.")).toBeVisible();
-  expect(await page.evaluate(() => window.settingsFixture.calls)).toEqual([
-    {
-      name: "creators:update",
-      args: { githubLink: "https://github.com/new-profile" },
-    },
-    { name: "creators:update", args: { githubLink: null } },
+test("password reset sends the current account email once and shows pending then confirmation", async ({
+  page,
+}) => {
+  await openSettings(page);
+  await page.getByRole("tab", { name: "General", exact: true }).click();
+  await page.evaluate(() => window.settingsAuthFixture.delayReset());
+  await page.getByRole("button", { name: "Reset password", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Sending link…", exact: true })).toBeDisabled();
+  expect(await page.evaluate(() => window.settingsAuthFixture.calls)).toEqual([
+    { name: "requestPasswordReset", email: "zahra@example.test" },
   ]);
-});
-
-test("a reactive profile update does not overwrite an unsaved GitHub draft", async ({ page }) => {
-  await openSettings(page);
-  await page.getByRole("button", { name: "Edit GitHub profile" }).click();
-  await page.getByLabel("GitHub profile URL").fill("https://github.com/my-draft");
-  await page.evaluate(() =>
-    window.settingsFixture.setGithubLink("https://github.com/updated-elsewhere"),
-  );
-  await expect(page.getByLabel("GitHub profile URL")).toHaveValue("https://github.com/my-draft");
-  await page.getByRole("button", { name: "Discard GitHub changes" }).click();
+  await page.evaluate(() => window.settingsAuthFixture.releaseReset());
+  await expect(page.getByRole("button", { name: "Reset link sent", exact: true })).toBeDisabled();
   await expect(
-    page.getByRole("link", { name: /https:\/\/github.com\/updated-elsewhere/ }),
+    page.getByText("Check zahra@example.test for a link to set a new password."),
   ).toBeVisible();
-  expect(await page.evaluate(() => window.settingsFixture.calls)).toEqual([]);
 });
 
-test("invalid GitHub input is rejected, and a failed save preserves the draft for retry", async ({
+test("a failed password reset stays retryable without claiming a link was sent", async ({
   page,
 }) => {
   await openSettings(page);
-  await page.getByRole("button", { name: "Edit GitHub profile" }).click();
-  const field = page.getByLabel("GitHub profile URL");
-  await field.fill("https://example.com/not-github");
-  await page.getByRole("button", { name: "Save GitHub profile" }).click();
-  await expect(field).toHaveAttribute("aria-invalid", "true");
-  await expect(field).toBeFocused();
-  expect(await page.evaluate(() => window.settingsFixture.calls)).toEqual([]);
+  await page.getByRole("tab", { name: "General", exact: true }).click();
+  await page.evaluate(() => window.settingsAuthFixture.failNextReset());
+  await page.getByRole("button", { name: "Reset password", exact: true }).click();
+  await expect(page.getByRole("alert")).toContainText("We couldn't send your reset link");
+  await expect(page.getByRole("button", { name: "Reset link sent", exact: true })).toHaveCount(0);
+  await page.getByRole("button", { name: "Reset password", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Reset link sent", exact: true })).toBeDisabled();
+  expect(await page.evaluate(() => window.settingsAuthFixture.calls)).toHaveLength(2);
+});
 
-  await field.fill("https://github.com/new-profile");
-  await page.evaluate(() => window.settingsFixture.failNext("creators:update"));
-  await page.getByRole("button", { name: "Save GitHub profile" }).click();
-  await expect(page.getByRole("alert")).toContainText("Something went wrong");
-  await expect(field).toHaveValue("https://github.com/new-profile");
-  await page.getByRole("button", { name: "Save GitHub profile" }).click();
-  await expect(page.getByText("GitHub profile saved.", { exact: true })).toBeVisible();
+test("switching tabs retains reset confirmation and changing accounts clears it", async ({
+  page,
+}) => {
+  await openSettings(page);
+  await page.getByRole("tab", { name: "General", exact: true }).click();
+  await page.getByRole("button", { name: "Reset password", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Reset link sent", exact: true })).toBeDisabled();
+  await page.getByRole("tab", { name: "Payment", exact: true }).click();
+  await page.getByRole("tab", { name: "General", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Reset link sent", exact: true })).toBeDisabled();
+  expect(await page.evaluate(() => window.settingsAuthFixture.calls)).toHaveLength(1);
+  await page.evaluate(() => window.settingsFixture.setProfile({ email: "alex@example.test" }));
+  await expect(page.getByText("alex@example.test", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Reset password", exact: true })).toBeEnabled();
+});
+
+test("logout invokes the existing session action", async ({ page }) => {
+  await openSettings(page);
+  await page.getByRole("tab", { name: "General", exact: true }).click();
+  await page.getByRole("button", { name: "Log out of account", exact: true }).click();
+  await expect
+    .poll(() => page.evaluate(() => window.settingsAuthFixture.calls))
+    .toEqual([{ name: "signOut" }]);
 });
 
 for (const role of ["company", "operator"]) {
-  test(`${role} accounts do not request creator data or show creator forms`, async ({ page }) => {
-    const errors: Error[] = [];
-    page.on("pageerror", (error) => errors.push(error));
+  test(`${role} accounts cannot access creator Settings`, async ({ page }) => {
     await openSettings(page, `?role=${role}`);
     await expect(
       page.getByText("Profile settings are currently available for creator accounts."),
     ).toBeVisible();
-    await expect(page.getByRole("region", { name: "Basic details" })).toHaveCount(0);
-    await expect(page.getByRole("button", { name: "Edit GitHub profile" })).toHaveCount(0);
-    expect(errors).toEqual([]);
+    await expect(page.getByRole("tab", { name: "Payment" })).toHaveCount(0);
+    expect(await page.evaluate(() => window.settingsFixture.queries)).toEqual([
+      { name: "users:me", args: {} },
+    ]);
+    expect(await page.evaluate(() => window.settingsAuthFixture.calls)).toEqual([]);
   });
 }
 
-const picture = {
-  name: "profile.png",
-  mimeType: "image/png",
-  buffer: Buffer.from(
-    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg==",
-    "base64",
-  ),
-};
-
-// Profile picture uploads are off for now; re-enable with UPLOADS_ENABLED in profile-picture-section.tsx.
-test.skip("choosing and discarding a picture only changes its local preview", async ({ page }) => {
-  await openSettings(page);
-  await page.getByLabel("Choose profile picture").setInputFiles(picture);
-  await expect(page.getByAltText("New profile picture preview")).toBeVisible();
-  expect(await page.evaluate(() => window.settingsFixture.calls)).toEqual([]);
-  await page
-    .getByRole("region", { name: "Profile picture" })
-    .getByRole("button", { name: "Discard changes" })
-    .click();
-  await expect(page.getByAltText("New profile picture preview")).toHaveCount(0);
-  expect(await page.evaluate(() => window.settingsFixture.calls)).toEqual([]);
-});
-
-// Profile picture uploads are off for now; re-enable with UPLOADS_ENABLED in profile-picture-section.tsx.
-test.skip("saving a picture posts its signed fields before completion; completion retries reuse that upload", async ({
-  page,
-}) => {
-  let postBody = "";
-  await page.route("https://uploads.example.test/photo", async (route) => {
-    expect(route.request().method()).toBe("POST");
-    postBody = route.request().postDataBuffer()!.toString();
-    await page.evaluate(() => window.settingsFixture.calls.push({ name: "s3:post", args: {} }));
-    await route.fulfill({
-      status: 204,
-      headers: { "Access-Control-Allow-Origin": "*" },
-    });
-  });
-  await openSettings(page);
-  await page.getByLabel("Choose profile picture").setInputFiles(picture);
-  await expect(page.getByAltText("New profile picture preview")).toBeVisible();
-  await page.evaluate(() => window.settingsFixture.failNext("media:completeUpload"));
-  await page.getByRole("button", { name: "Save picture", exact: true }).click();
-  await expect(page.getByRole("alert")).toContainText("We couldn't confirm the save");
-  await expect(page.getByAltText("New profile picture preview")).toBeVisible();
-  expect(postBody).toContain('name="key"');
-  expect(postBody).toContain("staging/test-photo");
-  expect(postBody).toContain('name="policy"');
-  expect(postBody).toContain('name="file"; filename="profile.png"');
-
-  await page.getByRole("button", { name: "Save picture", exact: true }).click();
-  await expect(page.getByText("Profile picture saved.", { exact: true })).toBeVisible();
-  await expect(page.getByAltText("Your profile picture")).toBeVisible();
-  expect(await page.evaluate(() => window.settingsFixture.calls.map((call) => call.name))).toEqual([
-    "media:requestUpload",
-    "s3:post",
-    "media:completeUpload",
-    "media:completeUpload",
-    "media:getProfilePicture",
+test("loading and unsynced accounts do not invoke creator services", async ({ page }) => {
+  await openSettings(page, "?account=loading");
+  await expect(page.getByText("Loading settings…", { exact: true })).toBeVisible();
+  expect(await page.evaluate(() => window.settingsFixture.queries)).toEqual([
+    { name: "users:me", args: {} },
   ]);
+  await page.evaluate(() =>
+    window.settingsFixture.setSession({ userLoading: false, synced: false }),
+  );
+  await expect(
+    page.getByText(
+      "We’re finishing setting up your account. Your settings will appear here shortly.",
+    ),
+  ).toBeVisible();
+  await page.evaluate(() => window.settingsFixture.setSession({ synced: true }));
+  await expect(page.getByRole("tab", { name: "Payment" })).toBeVisible();
 });
 
-test("picture uploads are marked as coming soon and cannot be chosen", async ({ page }) => {
-  await openSettings(page);
-  const section = page.getByRole("region", { name: "Profile picture" });
-  await expect(section.getByText("Profile picture uploads are coming soon.")).toBeVisible();
-  await expect(section.getByRole("button", { name: "Choose picture" })).toBeDisabled();
-  await expect(page.getByLabel("Choose profile picture")).toBeDisabled();
+test("signed-out Settings asks for sign-in without loading private data", async ({ page }) => {
+  await openSettings(page, "?auth=signed-out");
+  await expect(page.getByRole("link", { name: "sign in", exact: true })).toHaveAttribute(
+    "href",
+    "/login?next=%2Fsettings",
+  );
+  expect(await page.evaluate(() => window.settingsFixture.queries)).toEqual([]);
 });
 
-// Profile picture uploads are off for now; re-enable with UPLOADS_ENABLED in profile-picture-section.tsx.
-test.skip("unsupported and unreadable pictures are rejected without contacting S3", async ({
-  page,
-}) => {
-  await openSettings(page);
-  const fileInput = page.getByLabel("Choose profile picture");
-  await fileInput.setInputFiles({
-    name: "avatar.svg",
-    mimeType: "image/svg+xml",
-    buffer: Buffer.from("<svg/>"),
-  });
-  await expect(page.getByRole("alert")).toContainText("Choose a JPEG, PNG, or WebP image.");
-  await fileInput.setInputFiles({
-    name: "broken.png",
-    mimeType: "image/png",
-    buffer: Buffer.from("not an image"),
-  });
-  await expect(page.getByRole("alert")).toContainText("This image couldn't be opened");
-  expect(await page.evaluate(() => window.settingsFixture.calls)).toEqual([]);
-});
-
-test("settings forms fit a narrow viewport and remain keyboard accessible", async ({
+test("Settings tabs work by keyboard and Payment and General fit desktop and mobile", async ({
   page,
 }, testInfo) => {
-  await page.setViewportSize({ width: 375, height: 812 });
+  await page.setViewportSize({ width: 1512, height: 982 });
   await openSettings(page);
-  await page.getByRole("button", { name: "Edit GitHub profile" }).click();
-  await expect(page.getByLabel("GitHub profile URL")).toBeFocused();
-  await page.getByLabel("GitHub profile URL").fill("https://github.com/new-profile");
-  await page.keyboard.press("Tab");
-  await expect(page.getByRole("button", { name: "Discard GitHub changes" })).toBeFocused();
+  await expectSelectedIndicator(page);
+  await page.screenshot({
+    path: testInfo.outputPath("settings-payment-desktop.png"),
+    fullPage: true,
+    animations: "disabled",
+  });
+  await page.getByRole("tab", { name: "Payment", exact: true }).focus();
+  await page.keyboard.press("ArrowRight");
+  await page.keyboard.press("Enter");
+  await expect(page.getByRole("tab", { name: "General", exact: true })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await expectSelectedIndicator(page);
+  await page.screenshot({
+    path: testInfo.outputPath("settings-general-desktop.png"),
+    fullPage: true,
+    animations: "disabled",
+  });
+  await page.setViewportSize({ width: 375, height: 812 });
+  await page.evaluate(() =>
+    window.settingsFixture.setProfile({
+      email: "a-very-long-email-address-for-a-creator-with-several-names@example.test",
+    }),
+  );
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
+    true,
+  );
+  await expectSelectedIndicator(page);
+  await page.screenshot({
+    path: testInfo.outputPath("settings-general-mobile.png"),
+    fullPage: true,
+    animations: "disabled",
+  });
+  await page.getByRole("tab", { name: "Payment", exact: true }).click();
+  await expectSelectedIndicator(page);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
     true,
   );
   await page.screenshot({
-    path: testInfo.outputPath("settings-mobile.png"),
+    path: testInfo.outputPath("settings-payment-mobile.png"),
     fullPage: true,
-  });
-});
-
-test("profile and portfolio sections render together on desktop", async ({ page }, testInfo) => {
-  await openSettings(page);
-  await expect(page.getByRole("heading", { name: "Profile picture" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Portfolio" })).toBeVisible();
-  await page.screenshot({
-    path: testInfo.outputPath("settings-desktop.png"),
-    fullPage: true,
+    animations: "disabled",
   });
 });
 
@@ -280,144 +222,4 @@ test("signed-out visitors to the actual Settings route land on log in", async ({
   await page.goto("/settings");
   await expect(page).toHaveURL(/\/login\?next=%2Fsettings$/);
   await expect(page.getByRole("heading", { name: "Welcome back" })).toBeVisible();
-});
-
-test("saving personal details stores a birthdate and country the API accepts", async ({ page }) => {
-  await openSettings(page);
-  const details = page.getByRole("region", { name: "Personal details" });
-  await details.getByRole("button", { name: "Edit personal details" }).click();
-  await page.getByLabel("Date of birth").fill("1990-01-01");
-  await page.getByLabel("Country of residence").selectOption("JP");
-  await page.getByRole("button", { name: "Save personal details" }).click();
-
-  await expect(details.getByText("January 1, 1990", { exact: true })).toBeVisible();
-  await expect(details.getByText("Japan", { exact: true })).toBeVisible();
-  await expect(page.getByText("Personal details saved.", { exact: true })).toBeVisible();
-  expect(await page.evaluate(() => window.settingsFixture.calls)).toEqual([
-    {
-      name: "creators:update",
-      // Sent as UTC midnight, which is what the API stores.
-      args: { dateOfBirth: Date.UTC(1990, 0, 1), countryOfResidence: "JP" },
-    },
-  ]);
-});
-
-test("an under-18 birthdate is refused in the browser without reaching the API", async ({
-  page,
-}) => {
-  await openSettings(page);
-  await page.getByRole("button", { name: "Edit personal details" }).click();
-  const birthdate = page.getByLabel("Date of birth");
-  const tooYoung = new Date(Date.now() - 17 * 365 * 24 * 60 * 60 * 1000);
-  await birthdate.fill(tooYoung.toISOString().slice(0, 10));
-  await page.getByRole("button", { name: "Save personal details" }).click();
-
-  await expect(page.getByRole("alert")).toContainText("at least 18");
-  await expect(birthdate).toBeFocused();
-  await expect(birthdate).toHaveAttribute("aria-invalid", "true");
-  expect(await page.evaluate(() => window.settingsFixture.calls)).toEqual([]);
-});
-
-test("a saved birthdate can be corrected but not removed", async ({ page }) => {
-  await openSettings(page);
-  await page.evaluate(() =>
-    window.settingsFixture.setProfile({ dateOfBirth: Date.UTC(1990, 0, 1) }),
-  );
-  await page.getByRole("button", { name: "Edit personal details" }).click();
-  await page.getByLabel("Date of birth").fill("");
-  await page.getByRole("button", { name: "Save personal details" }).click();
-
-  await expect(page.getByRole("alert")).toContainText("can't be removed");
-  expect(await page.evaluate(() => window.settingsFixture.calls)).toEqual([]);
-
-  await page.getByLabel("Date of birth").fill("1991-02-03");
-  await page.getByRole("button", { name: "Save personal details" }).click();
-  await expect(page.getByText("February 3, 1991", { exact: true })).toBeVisible();
-});
-
-test("saving links normalizes LinkedIn and keeps the other links in order", async ({ page }) => {
-  await openSettings(page);
-  const links = page.getByRole("region", { name: "Links" });
-  await links.getByRole("button", { name: "Edit links" }).click();
-  await page.getByLabel("LinkedIn profile URL").fill("  linkedin.com/in/zahra  ");
-  await page.getByRole("button", { name: "Add another link" }).click();
-  await page.getByLabel("Link 1", { exact: true }).fill("https://zahra.example.test/work");
-  await page.getByRole("button", { name: "Add another link" }).click();
-  await page.getByLabel("Link 2", { exact: true }).fill("https://notes.example.test");
-  await page.getByRole("button", { name: "Save links" }).click();
-
-  await expect(page.getByText("Links saved.", { exact: true })).toBeVisible();
-  expect(await page.evaluate(() => window.settingsFixture.calls)).toEqual([
-    {
-      name: "creators:update",
-      args: {
-        linkedinLink: "https://linkedin.com/in/zahra",
-        additionalLinks: ["https://zahra.example.test/work", "https://notes.example.test/"],
-      },
-    },
-  ]);
-  await expect(links.getByRole("link", { name: /zahra\.example\.test\/work/ })).toBeVisible();
-});
-
-test("an invalid other link marks its own row and blocks the save", async ({ page }) => {
-  await openSettings(page);
-  await page.getByRole("button", { name: "Edit links" }).click();
-  await page.getByRole("button", { name: "Add another link" }).click();
-  await page.getByLabel("Link 1", { exact: true }).fill("https://fine.example.test");
-  await page.getByRole("button", { name: "Add another link" }).click();
-  await page.getByLabel("Link 2", { exact: true }).fill("http://insecure.example.test");
-  await page.getByRole("button", { name: "Save links" }).click();
-
-  await expect(page.getByRole("alert")).toContainText("secure URL");
-  await expect(page.getByLabel("Link 2", { exact: true })).toBeFocused();
-  await expect(page.getByLabel("Link 1", { exact: true })).toHaveAttribute("aria-invalid", "false");
-  expect(await page.evaluate(() => window.settingsFixture.calls)).toEqual([]);
-});
-
-test("the other-links list stops at the limit the API enforces", async ({ page }) => {
-  await openSettings(page);
-  await page.getByRole("button", { name: "Edit links" }).click();
-  const add = page.getByRole("button", { name: "Add another link" });
-  for (let index = 0; index < 3; index += 1) await add.click();
-
-  await expect(page.getByRole("group")).toContainText("3 of 3");
-  await expect(add).toHaveCount(0);
-
-  await page.getByRole("button", { name: "Remove link 2" }).click();
-  await expect(page.getByRole("group")).toContainText("2 of 3");
-  await expect(add).toBeVisible();
-});
-
-test("unsafe saved links are never rendered as clickable links", async ({ page }) => {
-  await openSettings(page);
-  for (const linkedinLink of ["javascript:alert(1)", "https://linkedin.com.evil.test/in/zahra"]) {
-    await page.evaluate(
-      (link) => window.settingsFixture.setProfile({ linkedinLink: link }),
-      linkedinLink,
-    );
-    await expect(
-      page.getByText("Your saved link needs updating. Edit it to add a valid LinkedIn URL."),
-    ).toBeVisible();
-    await expect(page.getByRole("link").filter({ hasText: linkedinLink })).toHaveCount(0);
-  }
-  await page.evaluate(() =>
-    window.settingsFixture.setProfile({ additionalLinks: ["javascript:alert(1)"] }),
-  );
-  await expect(page.getByText("No other links added yet.")).toBeVisible();
-});
-
-test("captures the responsive creator detail forms", async ({ page }, testInfo) => {
-  await openSettings(page);
-  await page.getByRole("button", { name: "Edit personal details" }).click();
-  await page.getByRole("button", { name: "Edit links" }).click();
-  await page.getByRole("button", { name: "Add another link" }).click();
-  await page.getByLabel("Link 1", { exact: true }).fill("https://zahra.example.test/work");
-
-  await page.screenshot({ path: testInfo.outputPath("creator-forms-desktop.png"), fullPage: true });
-
-  await page.setViewportSize({ width: 375, height: 812 });
-  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
-    true,
-  );
-  await page.screenshot({ path: testInfo.outputPath("creator-forms-mobile.png"), fullPage: true });
 });

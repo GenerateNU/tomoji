@@ -20,12 +20,6 @@ let profile: Profile = {
   skills: [],
   languages: [],
 };
-// A small stand-in for the real ISO list; the picker only needs a few rows.
-const COUNTRIES = [
-  { code: "ID", name: "Indonesia" },
-  { code: "JP", name: "Japan" },
-  { code: "US", name: "United States of America" },
-];
 const calls: Call[] = [];
 const queries: Call[] = [];
 const failures = new Map<string, Error[]>();
@@ -126,8 +120,10 @@ function queryResult(reference: FunctionReference<"query">, args: unknown) {
       synced: session.synced,
       role: session.role,
       userId: "test-user",
-      firstName: "Zahra",
-      lastName: "Wibisana",
+      firstName: profile.firstName,
+      lastName: profile.lastName,
+      email: profile.email,
+      profilePictureMediaId: profile.profilePictureMediaId,
     };
   }
   if (name === "creators:me") {
@@ -135,9 +131,6 @@ function queryResult(reference: FunctionReference<"query">, args: unknown) {
       throw new Error("Only a synced creator must request creators.me");
     }
     return session.profileLoading ? undefined : profile;
-  }
-  if (name === "countries:list") {
-    return COUNTRIES;
   }
   throw new Error(`Unexpected query: ${name}`);
 }
@@ -165,6 +158,9 @@ function operation(reference: FunctionReference<"mutation" | "action">) {
             ? { additionalLinks: args.additionalLinks as string[] }
             : {}),
           ...(args.dateOfBirth !== undefined ? { dateOfBirth: args.dateOfBirth as number } : {}),
+          ...(args.languages !== undefined ? { languages: args.languages as string[] } : {}),
+          ...(args.niches !== undefined ? { niches: args.niches as string[] } : {}),
+          ...(args.skills !== undefined ? { skills: args.skills as string[] } : {}),
           ...("countryOfResidence" in args
             ? { countryOfResidence: (args.countryOfResidence as string | null) ?? undefined }
             : {}),

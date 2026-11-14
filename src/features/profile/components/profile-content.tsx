@@ -2,7 +2,11 @@ import { RequireAccount } from "@/features/users/components/require-account";
 import { CreatorProfile } from "./creator-profile";
 import { ProfileSkeleton } from "./profile-skeleton";
 
-export function ProfileContent() {
+export function ProfileContent({
+  onPendingChange,
+}: {
+  onPendingChange?: (pending: boolean) => void;
+}) {
   return (
     <RequireAccount
       role="creator"
@@ -11,7 +15,7 @@ export function ProfileContent() {
       fallback={<ProfileSkeleton />}
       unsynced="We’re finishing setting up your account. Your profile will appear here shortly."
     >
-      <CreatorProfile />
+      <CreatorProfile onPendingChange={onPendingChange} />
     </RequireAccount>
   );
 }

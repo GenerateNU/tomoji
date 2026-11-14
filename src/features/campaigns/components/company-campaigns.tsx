@@ -4,6 +4,7 @@ import { api } from "@convex/_generated/api";
 import { RiAddLine, RiLayoutGridLine, RiListUnordered } from "@remixicon/react";
 import { usePaginatedQuery } from "convex/react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { EmptyState } from "@/components/empty-state";
 import { Button } from "@/components/ui/button";
@@ -19,7 +20,10 @@ import {
 } from "@/components/ui/table";
 import { useMe } from "@/features/users/hooks/use-me";
 import { formatMoney } from "@/lib/money";
+import { focusRing } from "@/lib/styles";
+import { cn } from "@/lib/utils";
 import { CAMPAIGN_TABS, campaignTiming, type CampaignTab } from "../lib/campaign-status";
+import { CampaignActions } from "./campaign-actions";
 import { PerformanceCard } from "./performance-card";
 
 const PAGE_SIZE = 12;
@@ -28,6 +32,7 @@ const date = new Intl.DateTimeFormat("en-US", { dateStyle: "medium" });
 /** The company's campaigns by status, as cards or a table. `RequireAccount` has proven the role. */
 export function CompanyCampaigns() {
   const me = useMe();
+  const router = useRouter();
   const [tab, setTab] = useState<CampaignTab>("open");
   const [view, setView] = useState<"grid" | "list">("grid");
   // Read once so every card's "began N days ago" agrees.
@@ -94,6 +99,8 @@ export function CompanyCampaigns() {
               id={campaign._id}
               title={campaign.title}
               subtitle={campaignTiming(campaign, now)}
+              onOpen={() => router.push(`/campaigns/${campaign._id}`)}
+              menu={<CampaignActions campaign={campaign} isAdmin={isAdmin} />}
             />
           ))}
         </div>
@@ -109,7 +116,12 @@ export function CompanyCampaigns() {
             {results.map((campaign) => (
               <TableRow key={campaign._id}>
                 <TableCell secondary={campaignTiming(campaign, now)} avatar={null}>
-                  {campaign.title}
+                  <Link
+                    href={`/campaigns/${campaign._id}`}
+                    className={cn("rounded-xs hover:underline", focusRing)}
+                  >
+                    {campaign.title}
+                  </Link>
                 </TableCell>
                 <TableCell>{date.format(campaign.startsAt)}</TableCell>
                 <TableCell>

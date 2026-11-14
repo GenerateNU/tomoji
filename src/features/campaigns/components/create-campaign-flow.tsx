@@ -121,9 +121,13 @@ export function CreateCampaignFlow() {
             <RiCheckLine size={16} aria-hidden />
           </span>
           <h1 className="text-heading-sm text-gray-950">{input.title} is live!</h1>
-          <p className="text-body-sm text-gray-500">Click continue to view your campaigns</p>
+          <p className="text-body-sm text-gray-500">Click continue to view your campaign</p>
         </CenteredStatus>
-        <Button className="self-end" render={<Link href="/campaigns" />} nativeButton={false}>
+        <Button
+          className="self-end"
+          render={<Link href={`/campaigns/${launched}`} />}
+          nativeButton={false}
+        >
           Continue
         </Button>
       </div>

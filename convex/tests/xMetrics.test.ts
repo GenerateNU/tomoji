@@ -224,6 +224,109 @@ describe("xMetrics.sync", () => {
   });
 });
 
+describe("xMetrics.collect", () => {
+  test("reads and saves the given posts now", async () => {
+    enableSync();
+    const t = convexTest(schema, modules);
+    const [post] = await seedSyncedPosts(t, 2);
+    const fetch = stubXByPage();
+
+    await t.action(internal.xMetrics.collect, { postIds: [post!.postId] });
+
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(await storedPost(t, post!.postId)).toMatchObject({ views: 100 });
+  });
+
+  test("does nothing while the sync is switched off", async () => {
+    const t = convexTest(schema, modules);
+    const [post] = await seedSyncedPosts(t, 1);
+    const fetch = stubXByPage();
+
+    await t.action(internal.xMetrics.collect, { postIds: [post!.postId] });
+
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  test("skips replaced posts and posts on cancelled assignments", async () => {
+    enableSync();
+    const t = convexTest(schema, modules);
+    const [replaced, cancelled] = await seedSyncedPosts(t, 2);
+    const fetch = stubXByPage();
+    await t.run(async (ctx) => {
+      await ctx.db.patch("posts", replaced!.postId, { isActive: false });
+      const post = await ctx.db.get("posts", cancelled!.postId);
+      const submission = await ctx.db.get("submissions", post!.submissionId);
+      await ctx.db.patch("assignments", submission!.assignmentId, { status: "cancelled" });
+    });
+
+    await t.action(internal.xMetrics.collect, {
+      postIds: [replaced!.postId, cancelled!.postId],
+    });
+
+    expect(fetch).not.toHaveBeenCalled();
+  });
+});
+
+describe("xMetrics.collectForCutoff", () => {
+  const minute = 60_000;
+
+  test("reads a post just before its cutoff", async () => {
+    enableSync();
+    const t = convexTest(schema, modules);
+    const [post] = await seedSyncedPosts(t, 1);
+    stubXByPage();
+
+    await t.action(internal.xMetrics.collectForCutoff, {
+      postId: post!.postId,
+      cutoffAt: Date.now() + 3 * minute,
+    });
+
+    expect(await storedPost(t, post!.postId)).toMatchObject({ views: 100 });
+  });
+
+  test("skips the retry when a reading already lands in the 5 minutes before the cutoff", async () => {
+    enableSync();
+    const t = convexTest(schema, modules);
+    const [post] = await seedSyncedPosts(t, 1);
+    const fetch = stubXByPage();
+    const cutoffAt = Date.now() + 3 * minute;
+    await t.action(internal.xMetrics.collectForCutoff, { postId: post!.postId, cutoffAt });
+    vi.setSystemTime(cutoffAt - minute);
+
+    await t.action(internal.xMetrics.collectForCutoff, { postId: post!.postId, cutoffAt });
+
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  test("retries when the earlier reading is older than 5 minutes before the cutoff", async () => {
+    enableSync();
+    const t = convexTest(schema, modules);
+    const [post] = await seedSyncedPosts(t, 1);
+    const fetch = stubXByPage();
+    const cutoffAt = Date.now() + 10 * minute;
+    await t.action(internal.xMetrics.collect, { postIds: [post!.postId] });
+    vi.setSystemTime(cutoffAt - minute);
+
+    await t.action(internal.xMetrics.collectForCutoff, { postId: post!.postId, cutoffAt });
+
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  test("does nothing once the cutoff has passed", async () => {
+    enableSync();
+    const t = convexTest(schema, modules);
+    const [post] = await seedSyncedPosts(t, 1);
+    const fetch = stubXByPage();
+
+    await t.action(internal.xMetrics.collectForCutoff, {
+      postId: post!.postId,
+      cutoffAt: Date.now(),
+    });
+
+    expect(fetch).not.toHaveBeenCalled();
+  });
+});
+
 describe("xMetrics.saveCounts", () => {
   test("skips a post replaced since it was listed", async () => {
     const t = convexTest(schema, modules);

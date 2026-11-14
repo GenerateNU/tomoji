@@ -4,8 +4,9 @@ import {
   type PaginationResult,
 } from "convex/server";
 import { v, type Infer } from "convex/values";
+import { internal } from "../_generated/api";
 import type { Doc, Id } from "../_generated/dataModel";
-import type { MutationCtx, QueryCtx } from "../_generated/server";
+import { env, type MutationCtx, type QueryCtx } from "../_generated/server";
 import { apiError } from "../lib/errors";
 import { EARNING_WINDOW_MS } from "../lib/earningsCalculator";
 import { DAY_MS } from "../lib/time";
@@ -348,7 +349,39 @@ export async function verifyPost(
     ...(firstVerifiedAt === undefined ? { earningsTimingUnknown: true } : { firstVerifiedAt }),
   };
   await ctx.db.patch("posts", postId, patch);
+  // Re-verification keeps the original clock, so its reads are already scheduled.
+  if (post.firstVerifiedAt === undefined && firstVerifiedAt !== undefined) {
+    await scheduleEarningsReads(ctx, postId, firstVerifiedAt);
+  }
   return { ...post, ...patch };
+}
+
+/** Earnings settle the final period from a reading in the 5 minutes before the cutoff. */
+export const CUTOFF_READ_WINDOW_MS = 5 * 60 * 1000;
+// Read 3 minutes before the cutoff, leaving room for X's response, and again 1 minute
+// before in case the first read failed.
+const CUTOFF_READ_OFFSETS_MS = [3 * 60 * 1000, 60 * 1000];
+
+/**
+ * Schedules the X reads earnings need beyond the daily sync: one now, for the
+ * views at verification, and two just before the earnings window ends. Only when
+ * the sync is switched on; this checks the flag alone so X configuration can
+ * never fail a verification (the reads validate it when they run).
+ */
+async function scheduleEarningsReads(
+  ctx: MutationCtx,
+  postId: Id<"posts">,
+  firstVerifiedAt: number,
+): Promise<void> {
+  if (env.X_METRICS_SYNC_ENABLED !== "true") return;
+  await ctx.scheduler.runAfter(0, internal.xMetrics.collect, { postIds: [postId] });
+  const cutoffAt = firstVerifiedAt + EARNING_WINDOW_MS;
+  for (const offset of CUTOFF_READ_OFFSETS_MS) {
+    await ctx.scheduler.runAt(cutoffAt - offset, internal.xMetrics.collectForCutoff, {
+      postId,
+      cutoffAt,
+    });
+  }
 }
 
 /**
@@ -648,23 +681,69 @@ export async function listEarningPosts(
         .gte("firstVerifiedAt", now - SYNC_WINDOW_MS),
     )
     .paginate(paginationOpts);
-  // A page's posts often share an assignment, so each one is read once.
   const cancelled = new Map<Id<"assignments">, boolean>();
   const page: EarningPost[] = [];
   for (const post of result.page) {
     // A removed post is gone from X, so a lookup would only spend credits.
     if (post.removedAt !== undefined) continue;
-    const submission = await ctx.db.get("submissions", post.submissionId);
-    if (submission === null) continue;
-    let isCancelled = cancelled.get(submission.assignmentId);
-    if (isCancelled === undefined) {
-      const assignment = await ctx.db.get("assignments", submission.assignmentId);
-      isCancelled = assignment === null || assignment.status === "cancelled";
-      cancelled.set(submission.assignmentId, isCancelled);
+    if (!(await isOnCancelledAssignment(ctx, post, cancelled))) {
+      page.push({ postId: post._id, xPostId: post.xPostId });
     }
-    if (!isCancelled) page.push({ postId: post._id, xPostId: post.xPostId });
   }
   return { ...result, page };
+}
+
+/**
+ * Whether the post's assignment is cancelled; a missing submission or assignment
+ * counts as cancelled. Posts often share an assignment, so `cache` reads each once.
+ */
+async function isOnCancelledAssignment(
+  ctx: QueryCtx,
+  post: Doc<"posts">,
+  cache: Map<Id<"assignments">, boolean>,
+): Promise<boolean> {
+  const submission = await ctx.db.get("submissions", post.submissionId);
+  if (submission === null) return true;
+  let cancelled = cache.get(submission.assignmentId);
+  if (cancelled === undefined) {
+    const assignment = await ctx.db.get("assignments", submission.assignmentId);
+    cancelled = assignment === null || assignment.status === "cancelled";
+    cache.set(submission.assignmentId, cancelled);
+  }
+  return cancelled;
+}
+
+/**
+ * The verified, active posts among `postIds` the X collector should read now,
+ * skipping cancelled assignments and, with `readSince`, posts that already have a
+ * view reading at or after that time.
+ *
+ * @throws `invalid_state` for more than 100 posts, X's limit for one lookup.
+ */
+export async function listCollectionTargets(
+  ctx: QueryCtx,
+  postIds: Id<"posts">[],
+  readSince?: number,
+): Promise<EarningPost[]> {
+  if (postIds.length > 100) throw apiError("invalid_state", { reason: "too_many_posts" });
+  const cancelled = new Map<Id<"assignments">, boolean>();
+  const targets: EarningPost[] = [];
+  for (const postId of postIds) {
+    const post = await ctx.db.get("posts", postId);
+    if (post === null || !post.isActive || !post.isVerified) continue;
+    if (await isOnCancelledAssignment(ctx, post, cancelled)) continue;
+    if (readSince !== undefined) {
+      const recent = await ctx.db
+        .query("postViewSnapshots")
+        .withIndex("by_postId_and_observedAt", (q) =>
+          q.eq("postId", postId).gte("observedAt", readSince),
+        )
+        .first();
+      if (recent !== null) continue;
+    }
+    targets.push({ postId, xPostId: post.xPostId });
+  }
+  return targets;
 }
 
 /** One post's counts from the daily X sync. */

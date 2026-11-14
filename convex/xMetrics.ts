@@ -1,8 +1,21 @@
 import { ConvexError, v } from "convex/values";
 import { internal } from "./_generated/api";
-import { env, internalAction, internalMutation, type ActionCtx } from "./_generated/server";
+import {
+  env,
+  internalAction,
+  internalMutation,
+  internalQuery,
+  type ActionCtx,
+} from "./_generated/server";
 import { getXPostMetrics, readXMetricsConfig, type XMissingPost } from "./lib/xApi";
-import { saveSyncedCounts, syncedCounts, type EarningPost } from "./models/posts";
+import {
+  CUTOFF_READ_WINDOW_MS,
+  earningPost,
+  listCollectionTargets,
+  saveSyncedCounts,
+  syncedCounts,
+  type EarningPost,
+} from "./models/posts";
 
 // X's limit for one post lookup.
 const PAGE_SIZE = 100;
@@ -43,6 +56,50 @@ export const sync = internalAction({
     }
     return null;
   },
+});
+
+/**
+ * Reads the given posts now. Scheduled on a post's first verification, so
+ * earnings have a reading close to the start of the window.
+ */
+export const collect = internalAction({
+  args: { postIds: v.array(v.id("posts")) },
+  returns: v.null(),
+  handler: async (ctx, { postIds }): Promise<null> => {
+    const config = readXMetricsConfig(env);
+    if (!config.enabled) return null;
+    const posts = await ctx.runQuery(internal.xMetrics.collectionTargets, { postIds });
+    if (posts.length > 0) await syncPage(ctx, config.bearerToken, posts);
+    return null;
+  },
+});
+
+/**
+ * Reads a post just before its earnings cutoff. Settlement uses the latest reading
+ * in the 5 minutes before the cutoff, so if one already exists this is the unneeded
+ * retry and does nothing. Nothing runs once the cutoff has passed.
+ */
+export const collectForCutoff = internalAction({
+  args: { postId: v.id("posts"), cutoffAt: v.number() },
+  returns: v.null(),
+  handler: async (ctx, { postId, cutoffAt }): Promise<null> => {
+    const config = readXMetricsConfig(env);
+    if (!config.enabled || Date.now() >= cutoffAt) return null;
+    const posts = await ctx.runQuery(internal.xMetrics.collectionTargets, {
+      postIds: [postId],
+      readSince: cutoffAt - CUTOFF_READ_WINDOW_MS,
+    });
+    if (posts.length > 0) await syncPage(ctx, config.bearerToken, posts);
+    return null;
+  },
+});
+
+/** Which of these posts the collector should read now (see `listCollectionTargets`). */
+export const collectionTargets = internalQuery({
+  args: { postIds: v.array(v.id("posts")), readSince: v.optional(v.number()) },
+  returns: v.array(earningPost),
+  handler: async (ctx, { postIds, readSince }) =>
+    await listCollectionTargets(ctx, postIds, readSince),
 });
 
 /**

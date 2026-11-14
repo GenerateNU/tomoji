@@ -42,7 +42,10 @@ beforeEach(() => {
   vi.setSystemTime(new Date("2026-10-07T12:00:00Z"));
 });
 
-afterEach(() => vi.useRealTimers());
+afterEach(() => {
+  vi.useRealTimers();
+  vi.unstubAllEnvs();
+});
 
 /** Reads every post so rejections can assert nothing was written. */
 async function storedPosts(t: TestConvex) {
@@ -780,6 +783,61 @@ describe("replacePost", () => {
 });
 
 describe("verifyPost", () => {
+  /** The X reads scheduled so far, by function, time, and arguments. */
+  async function scheduledReads(t: TestConvex) {
+    const jobs = await t.run(
+      async (ctx) => await ctx.db.system.query("_scheduled_functions").take(20),
+    );
+    return jobs
+      .filter((job) => job.name.startsWith("xMetrics:"))
+      .map(({ name, scheduledTime, args }) => ({ name, scheduledTime, args }));
+  }
+
+  test("first verification schedules an X read now and two just before earnings end", async () => {
+    vi.stubEnv("X_METRICS_SYNC_ENABLED", "true");
+    const t = convexTest(schema, modules);
+    const { postId } = await seedFixturePost(t);
+
+    await t.run(async (ctx) => await verifyPost(ctx, postId, { postedAt: POSTED_AT }));
+
+    const post = await t.run(async (ctx) => await ctx.db.get("posts", postId));
+    const cutoffAt = post!.firstVerifiedAt! + 30 * 24 * 60 * 60 * 1000;
+    expect(await scheduledReads(t)).toEqual([
+      { name: "xMetrics:collect", scheduledTime: Date.now(), args: [{ postIds: [postId] }] },
+      {
+        name: "xMetrics:collectForCutoff",
+        scheduledTime: cutoffAt - 3 * 60_000,
+        args: [{ postId, cutoffAt }],
+      },
+      {
+        name: "xMetrics:collectForCutoff",
+        scheduledTime: cutoffAt - 60_000,
+        args: [{ postId, cutoffAt }],
+      },
+    ]);
+  });
+
+  test("re-verifying a post schedules no new reads", async () => {
+    vi.stubEnv("X_METRICS_SYNC_ENABLED", "true");
+    const t = convexTest(schema, modules);
+    const { postId } = await seedFixturePost(t);
+    await t.run(async (ctx) => await verifyPost(ctx, postId, { postedAt: POSTED_AT }));
+    await t.run(async (ctx) => await unverifyPost(ctx, postId));
+
+    await t.run(async (ctx) => await verifyPost(ctx, postId, { postedAt: POSTED_AT }));
+
+    expect(await scheduledReads(t)).toHaveLength(3);
+  });
+
+  test("schedules no X reads while the sync is switched off", async () => {
+    const t = convexTest(schema, modules);
+    const { postId } = await seedFixturePost(t);
+
+    await t.run(async (ctx) => await verifyPost(ctx, postId, { postedAt: POSTED_AT }));
+
+    expect(await scheduledReads(t)).toEqual([]);
+  });
+
   test("marks an unverified post verified with when it went live on X", async () => {
     const t = convexTest(schema, modules);
     const { postId } = await seedFixturePost(t);

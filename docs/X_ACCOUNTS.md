@@ -178,11 +178,25 @@ that run fails, the post keeps the previous day's total. Posts with no recorded 
 verification (legacy `earningsTimingUnknown` posts) are skipped. `posts.listEarning`
 (internal) returns the posts a page at a time.
 
-The daily sync keeps `posts` current for analytics. Earnings settle from view snapshots
-at each post's exact verification and period-boundary times (`postViewSnapshots`), which
-the daily readings don't line up with. Each daily views save is still recorded as a
-snapshot (`updatePostViews`), and a count lower than an earlier one in the earnings
-window holds that post's variable earnings for reconciliation.
+The daily sync keeps `posts` current for analytics, and every views save is also recorded
+as an earnings snapshot (`updatePostViews` → `postViewSnapshots`). A count lower than an
+earlier one in the earnings window holds that post's variable earnings for reconciliation.
+
+Earnings also need readings near the start and end of each window, so a post's first
+verification schedules extra reads through the same helper, but only while
+`X_METRICS_SYNC_ENABLED` is `"true"`:
+
+| Read                          | When                          | Function                                            |
+| ----------------------------- | ----------------------------- | --------------------------------------------------- |
+| Views at verification         | Immediately                   | `xMetrics.collect`                                  |
+| Views before the final cutoff | 3 and 1 minutes before day 30 | `xMetrics.collectForCutoff` (the second is a retry) |
+
+Settlement takes the final period's views from the latest reading in the 5 minutes before
+the cutoff; without one, the remaining earnings stay pending for admin review. The retry
+is skipped when the first read already landed in that window, and neither runs after the
+cutoff. Re-verification keeps the original clock, so it schedules nothing new. Weekly
+boundaries and early cutoffs (cancellation or removal) use the last daily reading before
+them. How settlement picks readings is defined in [Earnings rules](EARNINGS.md).
 The analytics sync skips posts on cancelled assignments and posts with a recorded removal
 (`removedAt`), since X no longer has them; posts with an open dispute stay in. Payouts decide eligibility separately: a cancellation stops accrual at its cutoff,
 and any readings earnings need around that cutoff come from the earnings flow, not this

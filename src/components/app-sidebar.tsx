@@ -87,13 +87,6 @@ export const creatorNavItems = [
   { id: "posts", label: "Posts", icon: RiPlayLargeLine, activeIcon: RiPlayLargeFill },
   { id: "earnings", label: "Earnings", icon: RiWallet3Line, activeIcon: RiWallet3Fill },
   {
-    id: "companies",
-    label: "Companies",
-    icon: RiBuilding2Line,
-    activeIcon: RiBuilding2Fill,
-    href: "/companies",
-  },
-  {
     id: "disputes",
     label: "Disputes",
     icon: RiAuctionLine,
@@ -126,6 +119,13 @@ export const operatorNavItems = [
     icon: RiGroupLine,
     activeIcon: RiGroupFill,
     href: "/users",
+  },
+  {
+    id: "companies",
+    label: "Companies",
+    icon: RiBuilding2Line,
+    activeIcon: RiBuilding2Fill,
+    href: "/companies",
   },
   {
     id: "disputes",

@@ -172,10 +172,12 @@ and period/cutoff timestamps, and retain delayed evidence needed to settle earli
 earnings. See [Earnings rules](EARNINGS.md) for the calculation and evidence contract.
 
 `X_POST_EARNING_DAYS` (30) is a placeholder for how long a post keeps earning after it
-goes live, pending product confirmation. Payouts run Monday 00:00 UTC for the week just
-ended, and a post is paid through the end of the week its last earning day falls in, so
-the sync reads posts that went live within the last `X_POST_EARNING_DAYS` + 7 days.
-`posts.listEarning` (internal) returns those verified, active posts a page at a time.
+goes live, pending product confirmation. The sync runs daily at 00:00 UTC and reads
+posts that went live within the last `X_POST_EARNING_DAYS` + 1 day. The extra day keeps a
+post in the first run after its last earning day, which stores its final total, so
+payouts cover the post through day 30. If that run fails, the post keeps the previous
+day's total. `posts.listEarning` (internal) returns those verified, active posts a page
+at a time.
 
 `getXPostMetrics` looks up at most 100 post IDs per call through `GET /2/tweets` with
 `tweet.fields=public_metrics`. Each post's counts come back in two parts, stored

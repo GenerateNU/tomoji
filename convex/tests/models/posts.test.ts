@@ -1055,7 +1055,7 @@ describe("listEarningPosts", () => {
     return { postId, xPostId: post!.xPostId };
   }
 
-  test("returns verified, active posts that went live in the last 37 days", async () => {
+  test("returns verified, active posts that went live in the last 31 days", async () => {
     const t = convexTest(schema, modules);
     const { fixture, postId: recent } = await seedFixturePost(t);
     const atCutoff = await addPost(t, fixture, "cutoff_creator");
@@ -1064,8 +1064,8 @@ describe("listEarningPosts", () => {
     await addPost(t, fixture, "unverified_post");
     const now = Date.now();
     await verifyAt(t, recent, now - 10 * day);
-    await verifyAt(t, atCutoff, now - 37 * day);
-    await verifyAt(t, tooOld, now - 37 * day - 1);
+    await verifyAt(t, atCutoff, now - 31 * day);
+    await verifyAt(t, tooOld, now - 31 * day - 1);
     await verifyAt(t, inactive, now - 5 * day);
     // Flows only replace unverified posts; patch directly so only `isActive` differs.
     await t.run(async (ctx) => await ctx.db.patch("posts", inactive, { isActive: false }));
@@ -1085,7 +1085,7 @@ describe("listEarningPosts", () => {
     await verifyAt(t, postId, now - 10 * day);
 
     const later = await t.run(
-      async (ctx) => await listEarningPosts(ctx, now + 28 * day, { numItems: 10, cursor: null }),
+      async (ctx) => await listEarningPosts(ctx, now + 22 * day, { numItems: 10, cursor: null }),
     );
 
     expect(later.page).toEqual([]);

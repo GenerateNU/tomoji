@@ -618,9 +618,11 @@ export async function finishCreatorCaptionCheck(
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-// Payouts run Monday 00:00 UTC for the week just ended, so a post stays in the
-// sync one week past its last earning day to be paid through that week.
-const SYNC_WINDOW_MS = (X_POST_EARNING_DAYS + 7) * DAY_MS;
+// The sync runs daily at 00:00 UTC, so the first run after a post's last earning
+// day is at most a day later. One day of margin keeps the post in that run, which
+// stores its final total.
+const SYNC_MARGIN_DAYS = 1;
+const SYNC_WINDOW_MS = (X_POST_EARNING_DAYS + SYNC_MARGIN_DAYS) * DAY_MS;
 
 /** What the weekly X sync needs to fetch a post's counts and store them. */
 export const earningPost = v.object({ postId: v.id("posts"), xPostId: v.string() });

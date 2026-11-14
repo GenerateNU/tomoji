@@ -7,11 +7,17 @@ import { apiError } from "../lib/errors";
 import { canViewResource, type ResourceViewer } from "../lib/authz";
 import { APPLICATION_SWEEP_BATCH } from "../lib/pagination";
 import { HALF_HOUR_MS, isHalfHourTimestamp } from "../lib/validation";
-import type { applicationStatus } from "../schemas/applications.schema";
+import { followerRange } from "../schemas/creators.schema";
+import { applicationStatus } from "../schemas/applications.schema";
 
 import { assignmentTarget, createAssignmentFromOffer } from "./assignments";
 import { creatorName, notifyCompanyUser, notifyCreator } from "./notifications";
-import { getVisibleOpportunityCompany } from "./opportunities";
+import {
+  getOpportunityView,
+  getVisibleOpportunityCompany,
+  toCreatorOpportunity,
+  creatorOpportunity,
+} from "./opportunities";
 import { listStarredOpportunityIds } from "./opportunityStars";
 
 export { APPLICATION_SWEEP_BATCH };
@@ -68,7 +74,10 @@ export async function createApplication(
   await notifyCompanyUser(ctx, opportunity.createdBy, {
     type: "applicationReceived",
     title: `${await creatorName(ctx, creatorId)} applied to ${opportunity.title}`,
-    target: applicationTarget({ _id: applicationId, opportunityId: opportunity._id }),
+    target: applicationTarget({
+      _id: applicationId,
+      opportunityId: opportunity._id,
+    }),
   });
   return applicationId;
 }
@@ -149,10 +158,17 @@ const applicationRowStatus = v.union(
   v.literal("pending"),
   v.literal("rejected"),
   v.literal("opportunityFull"),
+  v.literal("offered"),
+  v.literal("offerExpired"),
+  v.literal("declined"),
 );
 
+/** The tabs a creator can request rows for. Accepted has no rows yet. */
+export const applicationTab = v.union(v.literal("applications"), v.literal("offers"));
+export type ApplicationTab = Infer<typeof applicationTab>;
+
 export const applicationSearch = v.object({
-  tab: v.literal("applications"),
+  tab: applicationTab,
   search: v.optional(v.string()),
   starred: v.optional(v.boolean()),
   hideRejected: v.optional(v.boolean()),
@@ -164,6 +180,7 @@ export const applicationSearch = v.object({
         v.literal("status"),
         v.literal("submitted"),
         v.literal("compensation"),
+        v.literal("expires"),
       ),
       direction: v.union(v.literal("ascending"), v.literal("descending")),
     }),
@@ -180,6 +197,7 @@ export const applicationRow = v.object({
   opportunityId: v.id("opportunities"),
   status: applicationRowStatus,
   submittedAt: v.number(),
+  offerExpiresAt: v.optional(v.number()),
   title: v.string(),
   companyName: v.string(),
   companyLogoMediaId: v.optional(v.id("mediaUploads")),
@@ -192,12 +210,17 @@ export const applicationRow = v.object({
 export type ApplicationRow = Infer<typeof applicationRow>;
 
 export const applicationSearchResult = v.object({
+  tab: applicationTab,
   rows: v.array(applicationRow),
   page: v.number(),
   pageSize: v.number(),
   totalCount: v.number(),
   pageCount: v.number(),
-  counts: v.object({ applications: tabCount, offers: tabCount, accepted: tabCount }),
+  counts: v.object({
+    applications: tabCount,
+    offers: tabCount,
+    accepted: tabCount,
+  }),
 });
 
 /**
@@ -227,10 +250,19 @@ async function readTabApplications(
   return { applications, isCapped: applications.length >= limit };
 }
 
+// Ranks only compare rows within one tab, so the two tabs can reuse 0 to 2.
 const STATUS_RANK: Record<Infer<typeof applicationRowStatus>, number> = {
   pending: 0,
   opportunityFull: 1,
   rejected: 2,
+  offered: 0,
+  offerExpired: 1,
+  declined: 2,
+};
+
+const DEFAULT_SORT_BY_TAB: Record<ApplicationTab, NonNullable<ApplicationSearch["sort"]>> = {
+  applications: { key: "submitted", direction: "descending" },
+  offers: { key: "expires", direction: "ascending" },
 };
 
 function compareRows(
@@ -238,6 +270,19 @@ function compareRows(
   b: ApplicationRow,
   sort: NonNullable<ApplicationSearch["sort"]>,
 ): number {
+  if (sort.key === "expires") {
+    // Groups keep a fixed order whatever the direction: live offers, then expired, then declined.
+    const group = STATUS_RANK[a.status] - STATUS_RANK[b.status];
+    if (group !== 0) return group;
+    // An offer without an expiry sorts last within its group in both directions.
+    if (a.offerExpiresAt !== b.offerExpiresAt) {
+      if (a.offerExpiresAt === undefined) return 1;
+      if (b.offerExpiresAt === undefined) return -1;
+      const byExpiry = a.offerExpiresAt - b.offerExpiresAt;
+      return sort.direction === "ascending" ? byExpiry : -byExpiry;
+    }
+    return b.submittedAt - a.submittedAt || a.applicationId.localeCompare(b.applicationId);
+  }
   const primary = {
     name: () => a.title.localeCompare(b.title),
     company: () => a.companyName.localeCompare(b.companyName),
@@ -251,12 +296,16 @@ function compareRows(
 }
 
 /**
- * Returns one page of the creator's applications for the table, with search,
- * filters, sorting and a count for each tab.
+ * Returns one page of the requested tab of the creator's applications, with
+ * search, filters, sorting and a count for each tab. Offers sort by expiry
+ * soonest first unless told otherwise; Applications by newest submitted.
+ * `hideRejected` does nothing on Offers. The result echoes `tab`.
  *
  * Reads at most `MAX_APPLICATIONS_READ` applications per count (shared across a
  * tab's statuses, newest first) and filters, sorts and pages them in memory, so
- * a tab holding more reports `isCapped`. Counts ignore the search and filters.
+ * a tab holding more reports `isCapped`. Counts ignore the search and filters;
+ * the requested tab's count is its joined rows (deleted opportunities skipped),
+ * the other tabs' counts are the raw rows read.
  * Rows keep their opportunity and company details after the opportunity closes;
  * `canStar` says whether starring is still possible. Applications whose
  * opportunity no longer exists are skipped.
@@ -283,11 +332,18 @@ export async function listApplicationRows(
     throw apiError("invalid_state", { reason: "search_too_long" });
   }
 
-  const [tab, offers, accepted] = await Promise.all([
+  const [applicationsRead, offersRead, acceptedRead] = await Promise.all([
     readTabApplications(ctx, creatorId, APPLICATION_TAB_STATUSES.applications, limit),
     readTabApplications(ctx, creatorId, APPLICATION_TAB_STATUSES.offers, limit),
     readTabApplications(ctx, creatorId, APPLICATION_TAB_STATUSES.accepted, limit),
   ]);
+
+  const reads = {
+    applications: applicationsRead,
+    offers: offersRead,
+    accepted: acceptedRead,
+  };
+  const tab = reads[args.tab];
 
   const companies = new Map<Id<"companies">, Doc<"companies"> | null>();
   const joined: ApplicationRow[] = [];
@@ -302,8 +358,12 @@ export async function listApplicationRows(
     joined.push({
       applicationId: application._id,
       opportunityId: opportunity._id,
+      // The tab's statuses are all row statuses; the index read cannot say so.
       status: application.status as Infer<typeof applicationRowStatus>,
       submittedAt: application._creationTime,
+      ...(application.offerExpiresAt === undefined
+        ? {}
+        : { offerExpiresAt: application.offerExpiresAt }),
       title: opportunity.title,
       companyName: company?.name ?? "",
       ...(company?.profilePictureMediaId === undefined
@@ -335,7 +395,7 @@ export async function listApplicationRows(
   }
   if (args.hideRejected) rows = rows.filter((row) => row.status !== "rejected");
 
-  const sort = args.sort ?? { key: "submitted", direction: "descending" };
+  const sort = args.sort ?? DEFAULT_SORT_BY_TAB[args.tab];
   rows.sort((a, b) => compareRows(a, b, sort));
 
   const totalCount = rows.length;
@@ -357,7 +417,12 @@ export async function listApplicationRows(
     }),
   );
 
+  const rawCount = (read: { applications: unknown[]; isCapped: boolean }) => ({
+    count: read.applications.length,
+    isCapped: read.isCapped,
+  });
   return {
+    tab: args.tab,
     rows: pageRows.map((row, i) => ({
       ...row,
       isStarred: starredIds.has(row.opportunityId),
@@ -368,10 +433,96 @@ export async function listApplicationRows(
     totalCount,
     pageCount,
     counts: {
-      applications: { count: joined.length, isCapped: tab.isCapped },
-      offers: { count: offers.applications.length, isCapped: offers.isCapped },
-      accepted: { count: accepted.applications.length, isCapped: accepted.isCapped },
+      applications:
+        args.tab === "applications"
+          ? { count: joined.length, isCapped: tab.isCapped }
+          : rawCount(applicationsRead),
+      offers:
+        args.tab === "offers"
+          ? { count: joined.length, isCapped: tab.isCapped }
+          : rawCount(offersRead),
+      accepted: rawCount(acceptedRead),
     },
+  };
+}
+
+export const applicationDetail = v.object({
+  applicationId: v.id("applications"),
+  status: applicationStatus,
+  submittedAt: v.number(),
+  offerExpiresAt: v.optional(v.number()),
+  offerAcceptedAt: v.optional(v.number()),
+  opportunity: creatorOpportunity,
+  companyLogoMediaId: v.optional(v.id("mediaUploads")),
+  minFollowerRange: v.optional(followerRange),
+  canAccept: v.boolean(),
+  canDecline: v.boolean(),
+  acceptBlockedReason: v.optional(
+    v.union(v.literal("opportunity_closed"), v.literal("opportunity_full")),
+  ),
+});
+export type ApplicationDetail = Infer<typeof applicationDetail>;
+
+/**
+ * Why accepting an offer on this opportunity would be refused, or null. Keep in
+ * sync with the checks in `createAssignmentFromOffer`, which stays the authority.
+ */
+function offerAcceptBlockedReason(
+  opportunity: Pick<Doc<"opportunities">, "status" | "numFilledSlots" | "maxSlots">,
+): "opportunity_closed" | "opportunity_full" | null {
+  if (opportunity.status !== "open" && opportunity.status !== "paused") {
+    return "opportunity_closed";
+  }
+  if (opportunity.numFilledSlots >= opportunity.maxSlots) return "opportunity_full";
+  return null;
+}
+
+/**
+ * Returns one of the creator's applications with its opportunity brief, for the
+ * offer details. Works for any status, and for closed, paused or inactive-company
+ * opportunities, because the creator already holds the application.
+ *
+ * `canAccept` and `canDecline` leave the clock out on purpose: queries must not
+ * read `Date.now()`, so the client compares `offerExpiresAt` to its own time and
+ * `acceptApplication` refuses an expired offer regardless.
+ *
+ * @throws `not_found` if the application does not exist, is not the creator's,
+ * or its opportunity was deleted.
+ */
+export async function requireApplicationDetail(
+  ctx: QueryCtx,
+  creatorId: Id<"creators">,
+  applicationId: Id<"applications">,
+): Promise<ApplicationDetail> {
+  const application = await requireApplication(ctx, { role: "creator", creatorId }, applicationId);
+  const opportunity = await ctx.db.get("opportunities", application.opportunityId);
+  if (opportunity === null) {
+    throw apiError("not_found", { resource: "application" });
+  }
+  const company = await ctx.db.get("companies", opportunity.companyId);
+  const view = await getOpportunityView(ctx, opportunity);
+  const blockedReason = offerAcceptBlockedReason(opportunity);
+  const isOffered = application.status === "offered";
+  return {
+    applicationId: application._id,
+    status: application.status,
+    submittedAt: application._creationTime,
+    ...(application.offerExpiresAt === undefined
+      ? {}
+      : { offerExpiresAt: application.offerExpiresAt }),
+    ...(application.offerAcceptedAt === undefined
+      ? {}
+      : { offerAcceptedAt: application.offerAcceptedAt }),
+    opportunity: toCreatorOpportunity(opportunity, company ?? { name: "" }, view),
+    ...(company?.profilePictureMediaId === undefined
+      ? {}
+      : { companyLogoMediaId: company.profilePictureMediaId }),
+    ...(opportunity.minFollowerRange === undefined
+      ? {}
+      : { minFollowerRange: opportunity.minFollowerRange }),
+    canAccept: isOffered && blockedReason === null,
+    canDecline: isOffered,
+    ...(isOffered && blockedReason !== null ? { acceptBlockedReason: blockedReason } : {}),
   };
 }
 
@@ -441,7 +592,11 @@ export async function offerApplication(
     throw apiError("invalid_state", { reason: "invalid_offer_expiry" });
   }
 
-  const patch = { status: "offered" as const, statusLastUpdatedAt: now, offerExpiresAt };
+  const patch = {
+    status: "offered" as const,
+    statusLastUpdatedAt: now,
+    offerExpiresAt,
+  };
   await ctx.db.patch("applications", application._id, patch);
   const opportunity = await ctx.db.get("opportunities", application.opportunityId);
   if (opportunity !== null) {
@@ -468,7 +623,10 @@ export async function rejectApplication(
   applicationId: Id<"applications">,
 ): Promise<Doc<"applications">> {
   const application = await requirePendingForReview(ctx, companyId, applicationId);
-  const patch = { status: "rejected" as const, statusLastUpdatedAt: Date.now() };
+  const patch = {
+    status: "rejected" as const,
+    statusLastUpdatedAt: Date.now(),
+  };
   await ctx.db.patch("applications", application._id, patch);
   const opportunity = await ctx.db.get("opportunities", application.opportunityId);
   if (opportunity !== null) {
@@ -538,7 +696,11 @@ export async function acceptApplication(
     opportunityId: opportunity._id,
     creatorId,
   });
-  const patch = { status: "accepted" as const, offerAcceptedAt: now, statusLastUpdatedAt: now };
+  const patch = {
+    status: "accepted" as const,
+    offerAcceptedAt: now,
+    statusLastUpdatedAt: now,
+  };
   await ctx.db.patch("applications", application._id, patch);
   await notifyCompanyUser(ctx, opportunity.createdBy, {
     type: "applicationAccepted",
@@ -567,7 +729,10 @@ export async function declineApplication(
   applicationId: Id<"applications">,
 ): Promise<Doc<"applications">> {
   const application = await requireOfferedApplication(ctx, creatorId, applicationId);
-  const patch = { status: "declined" as const, statusLastUpdatedAt: Date.now() };
+  const patch = {
+    status: "declined" as const,
+    statusLastUpdatedAt: Date.now(),
+  };
   await ctx.db.patch("applications", application._id, patch);
   const opportunity = await ctx.db.get("opportunities", application.opportunityId);
   if (opportunity !== null) {

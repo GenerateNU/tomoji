@@ -1096,6 +1096,7 @@ describe("listApplicationRows", () => {
     cpmRateCents?: number;
     paymentCapCents?: number;
     offerExpiresAt?: number;
+    offerAcceptedAt?: number;
   };
 
   beforeEach(() => {
@@ -1113,7 +1114,7 @@ describe("listApplicationRows", () => {
    */
   async function seedRow(t: TestConvex, creatorId: Id<"creators">, seed: RowSeed = {}) {
     sequence += 1;
-    const { title, companyName, status, offerExpiresAt, ...terms } = seed;
+    const { title, companyName, status, offerExpiresAt, offerAcceptedAt, ...terms } = seed;
     const seeded = await seedGatedOpportunity(t, {
       subject: `row_owner_${sequence}`,
       orgId: `org_row_${sequence}`,
@@ -1130,6 +1131,7 @@ describe("listApplicationRows", () => {
         companyId: seeded.companyId,
         status: status ?? "pending",
         ...(offerExpiresAt === undefined ? {} : { offerExpiresAt }),
+        ...(offerAcceptedAt === undefined ? {} : { offerAcceptedAt }),
       }),
     );
     return { ...seeded, applicationId };
@@ -2066,7 +2068,7 @@ describe("listApplicationRows", () => {
       expect(result.counts.offers.count).toBe(1);
     });
 
-    test.each(["applications", "offers"] as const)(
+    test.each(["applications", "offers", "accepted"] as const)(
       "echoes the %s tab it was asked for",
       async (tab) => {
         const t = convexTest(schema, modules);
@@ -2077,6 +2079,339 @@ describe("listApplicationRows", () => {
         expect(result.tab).toBe(tab);
       },
     );
+  });
+
+  describe("accepted tab", () => {
+    const BASE = Date.parse("2026-10-13T12:00:00Z");
+    const accepted = { tab: "accepted" } as const;
+
+    test("lists only the accepted applications, with the same counts as on any other tab", async () => {
+      const t = convexTest(schema, modules);
+      const creatorId = await seedCreatorId(t, "creator_a");
+      const statuses: Status[] = [
+        "pending",
+        "rejected",
+        "opportunityFull",
+        "offered",
+        "offerExpired",
+        "declined",
+        "accepted",
+      ];
+      for (const status of statuses) await seedRow(t, creatorId, { status, title: status });
+
+      const result = await listRows(t, creatorId, accepted);
+      const onApplications = await listRows(t, creatorId, { tab: "applications" });
+
+      expect(result.tab).toBe("accepted");
+      expect(titles(result)).toEqual(["accepted"]);
+      expect(result.rows[0].status).toBe("accepted");
+      expect(result.totalCount).toBe(1);
+      expect(result.counts).toEqual({
+        applications: { count: 3, isCapped: false },
+        offers: { count: 3, isCapped: false },
+        accepted: { count: 1, isCapped: false },
+      });
+      expect(result.counts).toEqual(onApplications.counts);
+    });
+
+    test("only the calling creator's accepted applications are listed", async () => {
+      const t = convexTest(schema, modules);
+      const creatorId = await seedCreatorId(t, "creator_a");
+      const otherId = await seedCreatorId(t, "creator_b");
+      await seedRow(t, creatorId, { title: "Mine", status: "accepted" });
+      await seedRow(t, otherId, { title: "Theirs", status: "accepted" });
+
+      const result = await listRows(t, creatorId, accepted);
+
+      expect(titles(result)).toEqual(["Mine"]);
+      expect(result.counts.accepted.count).toBe(1);
+    });
+
+    test("a row carries offerAcceptedAt when it is set", async () => {
+      const t = convexTest(schema, modules);
+      const creatorId = await seedCreatorId(t, "creator_a");
+      await seedRow(t, creatorId, {
+        status: "accepted",
+        offerAcceptedAt: BASE - DAY,
+      });
+
+      const result = await listRows(t, creatorId, accepted);
+
+      expect(result.rows[0].offerAcceptedAt).toBe(BASE - DAY);
+    });
+
+    test("a row has no offerAcceptedAt key when it is unset", async () => {
+      const t = convexTest(schema, modules);
+      const creatorId = await seedCreatorId(t, "creator_a");
+      await seedRow(t, creatorId, { status: "accepted" });
+
+      const result = await listRows(t, creatorId, accepted);
+
+      expect(result.rows[0]).not.toHaveProperty("offerAcceptedAt");
+    });
+
+    test("sorts newest accepted first by default", async () => {
+      const t = convexTest(schema, modules);
+      const creatorId = await seedCreatorId(t, "creator_a");
+      await seedRow(t, creatorId, {
+        title: "Accepted -2d",
+        status: "accepted",
+        offerAcceptedAt: BASE - 2 * DAY,
+      });
+      await seedRow(t, creatorId, {
+        title: "Accepted -1h",
+        status: "accepted",
+        offerAcceptedAt: BASE - 60 * 60 * 1000,
+      });
+      await seedRow(t, creatorId, {
+        title: "Accepted -5d",
+        status: "accepted",
+        offerAcceptedAt: BASE - 5 * DAY,
+      });
+
+      const result = await listRows(t, creatorId, accepted);
+
+      expect(titles(result)).toEqual(["Accepted -1h", "Accepted -2d", "Accepted -5d"]);
+    });
+
+    describe("accepted sort", () => {
+      /** Seeded out of order, so only the sort can produce the expected order. */
+      async function seedAcceptedRows(t: TestConvex, creatorId: Id<"creators">) {
+        const rows: RowSeed[] = [
+          { title: "Accepted -2d", offerAcceptedAt: BASE - 2 * DAY },
+          { title: "Accepted none" },
+          { title: "Accepted -1d", offerAcceptedAt: BASE - DAY },
+          { title: "Accepted -3d", offerAcceptedAt: BASE - 3 * DAY },
+        ];
+        for (const row of rows) await seedRow(t, creatorId, { ...row, status: "accepted" });
+      }
+
+      test("ascending puts the oldest first and a missing time last", async () => {
+        const t = convexTest(schema, modules);
+        const creatorId = await seedCreatorId(t, "creator_a");
+        await seedAcceptedRows(t, creatorId);
+
+        const result = await listRows(t, creatorId, {
+          ...accepted,
+          sort: { key: "accepted", direction: "ascending" },
+        });
+
+        expect(titles(result)).toEqual([
+          "Accepted -3d",
+          "Accepted -2d",
+          "Accepted -1d",
+          "Accepted none",
+        ]);
+      });
+
+      test("descending puts the newest first and a missing time still last", async () => {
+        const t = convexTest(schema, modules);
+        const creatorId = await seedCreatorId(t, "creator_a");
+        await seedAcceptedRows(t, creatorId);
+
+        const result = await listRows(t, creatorId, {
+          ...accepted,
+          sort: { key: "accepted", direction: "descending" },
+        });
+
+        expect(titles(result)).toEqual([
+          "Accepted -1d",
+          "Accepted -2d",
+          "Accepted -3d",
+          "Accepted none",
+        ]);
+      });
+
+      test.each(["ascending", "descending"] as const)(
+        "ties on the accepted time fall back to newest submitted first when %s",
+        async (direction) => {
+          const t = convexTest(schema, modules);
+          const creatorId = await seedCreatorId(t, "creator_a");
+          for (const title of ["Tie first", "Tie second", "Tie third"]) {
+            await seedRow(t, creatorId, {
+              title,
+              status: "accepted",
+              offerAcceptedAt: BASE - DAY,
+            });
+          }
+
+          const result = await listRows(t, creatorId, {
+            ...accepted,
+            sort: { key: "accepted", direction },
+          });
+
+          expect(titles(result)).toEqual(["Tie third", "Tie second", "Tie first"]);
+        },
+      );
+
+      test("rows missing the accepted time are ordered newest submitted first", async () => {
+        const t = convexTest(schema, modules);
+        const creatorId = await seedCreatorId(t, "creator_a");
+        for (const title of ["None first", "None second"]) {
+          await seedRow(t, creatorId, { title, status: "accepted" });
+        }
+
+        const result = await listRows(t, creatorId, {
+          ...accepted,
+          sort: { key: "accepted", direction: "ascending" },
+        });
+
+        expect(titles(result)).toEqual(["None second", "None first"]);
+      });
+    });
+
+    describe("other sorts", () => {
+      async function seedSortRows(t: TestConvex, creatorId: Id<"creators">) {
+        const rows: RowSeed[] = [
+          { title: "Bravo", companyName: "Zeta Co", fixedFeeCents: 20_000, cpmRateCents: 100 },
+          { title: "Charlie", companyName: "Alpha Co", fixedFeeCents: 5_000, cpmRateCents: 400 },
+          { title: "Alpha", companyName: "Mid Co", fixedFeeCents: 20_000, cpmRateCents: 300 },
+        ];
+        for (const row of rows) {
+          await seedRow(t, creatorId, {
+            ...row,
+            status: "accepted",
+            offerAcceptedAt: BASE - DAY,
+          });
+        }
+      }
+
+      test.each([
+        {
+          key: "name",
+          direction: "ascending",
+          expected: ["Alpha", "Bravo", "Charlie"],
+        },
+        {
+          key: "name",
+          direction: "descending",
+          expected: ["Charlie", "Bravo", "Alpha"],
+        },
+        {
+          key: "company",
+          direction: "ascending",
+          expected: ["Charlie", "Alpha", "Bravo"],
+        },
+        {
+          key: "company",
+          direction: "descending",
+          expected: ["Bravo", "Alpha", "Charlie"],
+        },
+        {
+          key: "compensation",
+          direction: "ascending",
+          expected: ["Charlie", "Bravo", "Alpha"],
+        },
+        {
+          key: "compensation",
+          direction: "descending",
+          expected: ["Alpha", "Bravo", "Charlie"],
+        },
+      ] as const)("sorts by $key $direction", async ({ key, direction, expected }) => {
+        const t = convexTest(schema, modules);
+        const creatorId = await seedCreatorId(t, "creator_a");
+        await seedSortRows(t, creatorId);
+
+        const result = await listRows(t, creatorId, {
+          ...accepted,
+          sort: { key, direction },
+        });
+
+        expect(titles(result)).toEqual(expected);
+      });
+    });
+
+    describe("search and filters", () => {
+      test.each([
+        { name: "title", search: "serum" },
+        { name: "company name", search: "glow" },
+      ])("search matches on $name", async ({ search }) => {
+        const t = convexTest(schema, modules);
+        const creatorId = await seedCreatorId(t, "creator_a");
+        await seedRow(t, creatorId, {
+          title: "Serum launch",
+          companyName: "Glow Labs",
+          status: "accepted",
+        });
+        await seedRow(t, creatorId, {
+          title: "Sneakers",
+          companyName: "Stride",
+          status: "accepted",
+        });
+        await seedRow(t, creatorId, {
+          title: "Serum pending",
+          companyName: "Glow Labs",
+        });
+
+        const result = await listRows(t, creatorId, { ...accepted, search });
+
+        expect(titles(result)).toEqual(["Serum launch"]);
+        expect(result.totalCount).toBe(1);
+      });
+
+      test("the starred filter keeps only starred accepted rows", async () => {
+        const t = convexTest(schema, modules);
+        const creatorId = await seedCreatorId(t, "creator_a");
+        const starred = await seedRow(t, creatorId, {
+          title: "Starred",
+          status: "accepted",
+        });
+        await seedRow(t, creatorId, { title: "Plain", status: "accepted" });
+        await t.run((ctx) =>
+          ctx.db.insert("opportunityStars", {
+            creatorId,
+            opportunityId: starred.opportunityId,
+          }),
+        );
+
+        const result = await listRows(t, creatorId, { ...accepted, starred: true });
+
+        expect(result.rows).toMatchObject([{ title: "Starred", isStarred: true }]);
+      });
+
+      test("hideRejected does nothing", async () => {
+        const t = convexTest(schema, modules);
+        const creatorId = await seedCreatorId(t, "creator_a");
+        await seedRow(t, creatorId, { title: "One", status: "accepted" });
+        await seedRow(t, creatorId, { title: "Two", status: "accepted" });
+
+        const result = await listRows(t, creatorId, { ...accepted, hideRejected: true });
+
+        expect(result.totalCount).toBe(2);
+      });
+    });
+
+    test("an accepted application whose opportunity was deleted is skipped and not counted", async () => {
+      const t = convexTest(schema, modules);
+      const creatorId = await seedCreatorId(t, "creator_a");
+      await seedRow(t, creatorId, { title: "Kept", status: "accepted" });
+      const gone = await seedRow(t, creatorId, { title: "Gone", status: "accepted" });
+      await t.run((ctx) => ctx.db.delete("opportunities", gone.opportunityId));
+
+      const result = await listRows(t, creatorId, accepted);
+
+      expect(titles(result)).toEqual(["Kept"]);
+      expect(result.totalCount).toBe(1);
+      expect(result.counts.accepted).toEqual({ count: 1, isCapped: false });
+    });
+
+    test("reads at most the limit, newest first, and reports the cap", async () => {
+      const t = convexTest(schema, modules);
+      const creatorId = await seedCreatorId(t, "creator_a");
+      for (let i = 1; i <= 5; i++) {
+        await seedRow(t, creatorId, {
+          title: `Accepted ${i}`,
+          status: "accepted",
+          offerAcceptedAt: BASE + i * DAY,
+        });
+      }
+
+      const result = await listRows(t, creatorId, accepted, { limit: 3 });
+
+      expect(titles(result)).toEqual(["Accepted 5", "Accepted 4", "Accepted 3"]);
+      expect(result.totalCount).toBe(3);
+      expect(result.counts.accepted).toEqual({ count: 3, isCapped: true });
+    });
   });
 
   describe("read bound", () => {

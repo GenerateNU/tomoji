@@ -161,10 +161,15 @@ const applicationRowStatus = v.union(
   v.literal("offered"),
   v.literal("offerExpired"),
   v.literal("declined"),
+  v.literal("accepted"),
 );
 
-/** The tabs a creator can request rows for. Accepted has no rows yet. */
-export const applicationTab = v.union(v.literal("applications"), v.literal("offers"));
+/** The tabs a creator can request rows for. */
+export const applicationTab = v.union(
+  v.literal("applications"),
+  v.literal("offers"),
+  v.literal("accepted"),
+);
 export type ApplicationTab = Infer<typeof applicationTab>;
 
 export const applicationSearch = v.object({
@@ -181,6 +186,7 @@ export const applicationSearch = v.object({
         v.literal("submitted"),
         v.literal("compensation"),
         v.literal("expires"),
+        v.literal("accepted"),
       ),
       direction: v.union(v.literal("ascending"), v.literal("descending")),
     }),
@@ -198,6 +204,7 @@ export const applicationRow = v.object({
   status: applicationRowStatus,
   submittedAt: v.number(),
   offerExpiresAt: v.optional(v.number()),
+  offerAcceptedAt: v.optional(v.number()),
   title: v.string(),
   companyName: v.string(),
   companyLogoMediaId: v.optional(v.id("mediaUploads")),
@@ -250,7 +257,7 @@ async function readTabApplications(
   return { applications, isCapped: applications.length >= limit };
 }
 
-// Ranks only compare rows within one tab, so the two tabs can reuse 0 to 2.
+// Ranks only compare rows within one tab, so the tabs can reuse 0 to 2.
 const STATUS_RANK: Record<Infer<typeof applicationRowStatus>, number> = {
   pending: 0,
   opportunityFull: 1,
@@ -258,12 +265,29 @@ const STATUS_RANK: Record<Infer<typeof applicationRowStatus>, number> = {
   offered: 0,
   offerExpired: 1,
   declined: 2,
+  accepted: 0,
 };
 
 const DEFAULT_SORT_BY_TAB: Record<ApplicationTab, NonNullable<ApplicationSearch["sort"]>> = {
   applications: { key: "submitted", direction: "descending" },
   offers: { key: "expires", direction: "ascending" },
+  accepted: { key: "accepted", direction: "descending" },
 };
+
+/**
+ * Compares two optional timestamps in the requested direction, with a missing
+ * one last in both directions. Returns 0 when equal, so callers can tie-break.
+ */
+function compareMissingLast(
+  a: number | undefined,
+  b: number | undefined,
+  direction: "ascending" | "descending",
+): number {
+  if (a === b) return 0;
+  if (a === undefined) return 1;
+  if (b === undefined) return -1;
+  return direction === "ascending" ? a - b : b - a;
+}
 
 function compareRows(
   a: ApplicationRow,
@@ -275,12 +299,13 @@ function compareRows(
     const group = STATUS_RANK[a.status] - STATUS_RANK[b.status];
     if (group !== 0) return group;
     // An offer without an expiry sorts last within its group in both directions.
-    if (a.offerExpiresAt !== b.offerExpiresAt) {
-      if (a.offerExpiresAt === undefined) return 1;
-      if (b.offerExpiresAt === undefined) return -1;
-      const byExpiry = a.offerExpiresAt - b.offerExpiresAt;
-      return sort.direction === "ascending" ? byExpiry : -byExpiry;
-    }
+    const byExpiry = compareMissingLast(a.offerExpiresAt, b.offerExpiresAt, sort.direction);
+    if (byExpiry !== 0) return byExpiry;
+    return b.submittedAt - a.submittedAt || a.applicationId.localeCompare(b.applicationId);
+  }
+  if (sort.key === "accepted") {
+    const byAccepted = compareMissingLast(a.offerAcceptedAt, b.offerAcceptedAt, sort.direction);
+    if (byAccepted !== 0) return byAccepted;
     return b.submittedAt - a.submittedAt || a.applicationId.localeCompare(b.applicationId);
   }
   const primary = {
@@ -298,8 +323,9 @@ function compareRows(
 /**
  * Returns one page of the requested tab of the creator's applications, with
  * search, filters, sorting and a count for each tab. Offers sort by expiry
- * soonest first unless told otherwise; Applications by newest submitted.
- * `hideRejected` does nothing on Offers. The result echoes `tab`.
+ * soonest first unless told otherwise; Applications by newest submitted;
+ * Accepted by most recently accepted, rows without `offerAcceptedAt` last.
+ * `hideRejected` does nothing on Offers or Accepted. The result echoes `tab`.
  *
  * Reads at most `MAX_APPLICATIONS_READ` applications per count (shared across a
  * tab's statuses, newest first) and filters, sorts and pages them in memory, so
@@ -364,6 +390,9 @@ export async function listApplicationRows(
       ...(application.offerExpiresAt === undefined
         ? {}
         : { offerExpiresAt: application.offerExpiresAt }),
+      ...(application.offerAcceptedAt === undefined
+        ? {}
+        : { offerAcceptedAt: application.offerAcceptedAt }),
       title: opportunity.title,
       companyName: company?.name ?? "",
       ...(company?.profilePictureMediaId === undefined
@@ -441,7 +470,10 @@ export async function listApplicationRows(
         args.tab === "offers"
           ? { count: joined.length, isCapped: tab.isCapped }
           : rawCount(offersRead),
-      accepted: rawCount(acceptedRead),
+      accepted:
+        args.tab === "accepted"
+          ? { count: joined.length, isCapped: tab.isCapped }
+          : rawCount(acceptedRead),
     },
   };
 }

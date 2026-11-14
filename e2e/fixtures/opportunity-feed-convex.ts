@@ -119,8 +119,11 @@ export function usePaginatedQuery(reference: FunctionReference<"query">, args: u
   return { results, status: "Exhausted", loadMore() {} };
 }
 
-export function useQuery(reference: FunctionReference<"query">) {
+export function useQuery(reference: FunctionReference<"query">, args?: unknown) {
   switch (getFunctionName(reference)) {
+    case "opportunities:get":
+      if (args === "skip") return undefined;
+      return FEED.find((o) => o._id === (args as { opportunityId: string }).opportunityId);
     case "niches:list":
       return [
         { name: "generative-ai-llms", label: "Generative AI & LLMs" },

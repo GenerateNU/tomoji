@@ -1,12 +1,12 @@
 import type { Metadata } from "next";
-import { Welcome } from "@/features/users/components/welcome";
+import { HomeView } from "@/features/users/components/home-view";
 
 export const metadata: Metadata = { title: "Home · Tomoji" };
 
 export default function HomePage() {
   return (
-    <div className="mx-auto w-full max-w-3xl px-6 py-12">
-      <Welcome />
+    <div className="mx-auto w-full max-w-6xl px-4 py-10 sm:px-10">
+      <HomeView />
     </div>
   );
 }

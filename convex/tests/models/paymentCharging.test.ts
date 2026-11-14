@@ -160,13 +160,17 @@ describe("prepareCharge", () => {
   });
 
   // The charge exists; its outcome arrives from Stripe.
-  test("does nothing while Stripe settles a created charge", async () => {
+  // The charge exists, so it is never made again; Stripe is asked for its outcome.
+  test("checks a created charge with Stripe instead of charging again", async () => {
     const { t, payoutId } = await seedChargeable({}, { paymentStatus: "queued" });
     const first = await prepare(t, payoutId);
     if (first.kind !== "charge") throw new Error("expected a charge");
     await t.run((ctx) => attachPaymentIntent(ctx, first.payment._id, "pi_test"));
 
-    expect(await prepare(t, payoutId)).toEqual({ kind: "settled" });
+    expect(await prepare(t, payoutId)).toMatchObject({
+      kind: "check",
+      payment: { stripePaymentIntentId: "pi_test" },
+    });
   });
 
   test("does nothing for a payout that is already paid", async () => {

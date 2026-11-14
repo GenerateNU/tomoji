@@ -8,8 +8,8 @@ now.
 Companies pay with a card they save once through Stripe Checkout. It is stored on a Stripe
 customer on Tomoji's own account and copied to a creator's account for each charge.
 
-This covers creator onboarding, saving company cards, and charging approved payouts. Recovering
-failed charges, and refunds and disputes, come in later PRs.
+This covers creator onboarding, saving company cards, charging approved payouts, and recovering
+failed charges. Refunds and disputes come in a later PR.
 
 ## Setup on your dev deployment
 
@@ -339,9 +339,10 @@ first request may have succeeded with its reply lost, and Stripe forgets idempot
 about a day, so resending blindly could charge twice. Only when Stripe confirms there is no
 charge does the retry charge again, with the attempt's card, or fail the attempt if the company
 has removed its card by then. An idempotency error counts as unknown, not as a refusal: Stripe
-saw a request with that key, so the first may have charged. Stripe's search can lag by up to a minute; retries come later than that. Payouts that
-need attention, and attempts still unresolved after the retries, are left for recovery (next
-PR); the charging run never retries them itself, so they can't hold up other payouts.
+saw a request with that key, so the first may have charged. Stripe's search can lag by up to a
+minute; retries come later than that. Payouts that need attention, and attempts still unresolved
+after the retries, are handled by recovery (below); the charging run never retries them itself,
+so they can't hold up other payouts.
 
 Creators absorb Stripe's processing fees on these charges, since the charges are made on their
 Standard accounts.
@@ -358,3 +359,42 @@ sandbox:
 - a US$5.00 payout to a Canadian test account → `transferred`, fee CA$0.70, net CA$6.44;
 - Stripe's always-declining test card → `needsAttention`, `generic_decline`;
 - a company with no saved card → `needsAttention`, `company_card_missing`, no charge made.
+
+## Recovering payouts that need attention
+
+A payout in `needsAttention` keeps its failed attempts; each retry is a **new attempt** with a
+new charge. What retries it depends on who can fix the problem, read from the latest attempt's
+`failureCode`:
+
+| Blocked on                   | Failure codes                                                                                                                                            | Retried when                                                 | Notification                                                 |
+| ---------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ | ------------------------------------------------------------ |
+| The company's card           | `company_card_missing`, `company_card_expired`, and every decline Stripe reports (`generic_decline`, `insufficient_funds`, `authentication_required`, …) | The company saves a card (the platform webhook's `saveCard`) | `payoutPaymentFailed` to the member who created the campaign |
+| The creator's Stripe account | `creator_not_ready`                                                                                                                                      | Their account becomes `ready` (any account update)           | `payoutStripeSetupNeeded` to the creator                     |
+| A dispute                    | `payout_disputed`                                                                                                                                        | The sweep finds the dispute closed                           | None (disputes notify on their own)                          |
+
+Retrying sets the payout back to `notStarted`, and the next charging run (within a minute)
+claims it. A company admin can also retry one of their payouts with
+`payments.retry({ payoutId })` (`not_found` for another company's payout,
+`invalid_state` / `payout_not_retryable` unless it needs attention and no attempt has charged
+it). Requeues likewise skip any payout an attempt has charged. Notifications open the
+payout's assignment, since payouts have no page of their own, and are sent once per failed
+attempt, not again when Stripe repeats the same event.
+
+A cron (`recover payout charges`, every 15 minutes) runs `internal.charging.sweep`. It:
+
+- requeues payouts held by a dispute that has since closed, a page at a time;
+- charges payouts still `queued` 15 minutes after approval (their scheduled charge was lost);
+- for attempts still `processing` after 15 minutes, oldest first, asks Stripe for the outcome
+  of the charge if its id was saved (for example after a lost webhook), or resumes the attempt,
+  which first searches Stripe for a charge it made (see "Charging approved payouts"). Stale
+  attempts are found directly by age (`payments.by_status`), so payouts waiting legitimately on
+  Stripe can't crowd newer stalled ones out of the batch.
+
+**A success always counts.** If Stripe reports success for an attempt already marked failed,
+the payout is marked paid anyway, since the money moved. If another attempt had already paid it,
+the company was charged twice: operators get `payoutChargedTwice` to refund one charge. Checking
+Stripe before failing or resending an attempt makes this very unlikely; this is the backstop.
+
+Verified in the sandbox: a payout declined twice (`needsAttention`, company notified, then a
+manual retry that declined again) was requeued the moment the company saved a working card and
+charged on its third attempt, with the fee recorded.

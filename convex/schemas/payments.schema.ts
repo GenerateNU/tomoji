@@ -44,4 +44,11 @@ export const paymentsTable = defineTable({
   // The creator account's currency, such as `usd` or `cad`. A creator outside
   // the US is paid in their own currency after Stripe converts the USD charge.
   settlementCurrency: v.optional(v.string()),
-}).index("by_payoutId_and_attempt", ["payoutId", "attempt"]);
+  // When recovery last asked about this attempt, or when it started. Absent on
+  // attempts recorded before recovery tracked it, which are checked first.
+  lastCheckedAt: v.optional(v.number()),
+})
+  .index("by_payoutId_and_attempt", ["payoutId", "attempt"])
+  // Recovery checks attempts left `processing`, least recently checked first,
+  // so ones that never settle can't keep newer stalls from being checked.
+  .index("by_status_and_lastCheckedAt", ["status", "lastCheckedAt"]);

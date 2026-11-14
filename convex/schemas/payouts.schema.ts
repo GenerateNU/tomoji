@@ -36,6 +36,9 @@ export const payoutsTable = defineTable({
   approvalSource: v.optional(payoutApprovalSource),
   approvedBy: v.optional(v.id("users")),
   paymentStatus: payoutPaymentStatus,
+  // When charging last claimed it. A retried payout keeps its old approval, so
+  // recovery measures a stalled charge from here instead.
+  queuedAt: v.optional(v.number()),
   // Transfer to the creator's provider balance, not confirmation of a bank payout.
   transferredAt: v.optional(v.number()),
 })
@@ -68,6 +71,12 @@ export const payoutsTable = defineTable({
   .index("by_assignmentId_and_sourceKey", ["assignmentId", "sourceKey"])
   .index("by_assignmentId_and_deliverableId", ["assignmentId", "deliverableId"])
   .index("by_approvalStatus_and_approvalDueAt", ["approvalStatus", "approvalDueAt"])
+  // Recovery finds a company's or creator's payouts needing attention once the
+  // company saves a card or the creator's Stripe account is ready again.
+  .index("by_companyId_and_paymentStatus", ["companyId", "paymentStatus"])
+  .index("by_creatorId_and_paymentStatus", ["creatorId", "paymentStatus"])
+  // Recovery finds payouts claimed for charging that never started.
+  .index("by_paymentStatus_and_queuedAt", ["paymentStatus", "queuedAt"])
   // Collection finds approved payouts not yet charged, oldest approval first.
   .index("by_approvalStatus_and_paymentStatus_and_approvedAt", [
     "approvalStatus",

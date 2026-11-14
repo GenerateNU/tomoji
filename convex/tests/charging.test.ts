@@ -398,3 +398,62 @@ describe("charging approved payouts", () => {
     expect(stripe.createIntent).not.toHaveBeenCalled();
   });
 });
+
+describe("recovering stalled charges", () => {
+  const FIFTEEN_MINUTES = 15 * 60_000;
+
+  // The scheduled charge was lost, leaving the payout queued after approval.
+  test("charges a payout left queued", async () => {
+    const { t, payoutId, payout } = await seedDuePayout();
+    await t.run((ctx) => ctx.db.patch("payouts", payoutId, { paymentStatus: "queued" }));
+    vi.setSystemTime(1_700_000_000_000 + FIFTEEN_MINUTES + 1);
+
+    await t.mutation(internal.charging.sweep, {});
+    await t.finishAllScheduledFunctions(() => vi.runAllTimers());
+
+    expect((await payout())?.paymentStatus).toBe("transferred");
+    expect(stripe.createIntent).toHaveBeenCalledTimes(1);
+  });
+
+  // The charge succeeded but neither its response nor its webhook arrived.
+  test("asks Stripe for the outcome of a charge whose result never arrived", async () => {
+    const { t, payout, attempts, run } = await seedDuePayout();
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    // The request reached Stripe, but every reply was lost.
+    stripe.createIntent.mockRejectedValue(
+      new Stripe.errors.StripeConnectionError({ message: "lost" }),
+    );
+    await run();
+    const [attempt] = await attempts();
+    await t.run((ctx) =>
+      ctx.db.patch("payments", attempt._id, { stripePaymentIntentId: "pi_lost" }),
+    );
+    const retrieveIntent = vi
+      .spyOn(paymentIntents, "retrieve")
+      .mockResolvedValue({ id: "pi_lost", status: "succeeded" } as never);
+    vi.setSystemTime(Date.now() + FIFTEEN_MINUTES + 1);
+
+    await t.mutation(internal.charging.sweep, {});
+    await t.finishAllScheduledFunctions(() => vi.runAllTimers());
+
+    expect(retrieveIntent).toHaveBeenCalledWith("pi_lost", {}, { stripeAccount: CREATOR_ACCOUNT });
+    expect((await payout())?.paymentStatus).toBe("transferred");
+    expect(await attempts()).toMatchObject([{ status: "succeeded" }]);
+  });
+
+  // A recent charge may still be in flight; the sweep must not race it.
+  test("leaves charging that started recently alone", async () => {
+    const { t, payoutId, payout } = await seedDuePayout();
+    vi.setSystemTime(1_700_000_000_000 + 60_000);
+    // Claimed for charging a minute ago, though approved long before.
+    await t.run((ctx) =>
+      ctx.db.patch("payouts", payoutId, { paymentStatus: "queued", queuedAt: Date.now() }),
+    );
+
+    await t.mutation(internal.charging.sweep, {});
+    await t.finishAllScheduledFunctions(() => vi.runAllTimers());
+
+    expect((await payout())?.paymentStatus).toBe("queued");
+    expect(stripe.createIntent).not.toHaveBeenCalled();
+  });
+});

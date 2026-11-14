@@ -247,21 +247,38 @@ describe("xMetrics.collect", () => {
     expect(fetch).not.toHaveBeenCalled();
   });
 
-  test("skips replaced posts and posts on cancelled assignments", async () => {
+  // Seeded posts share one assignment, so each skip reason gets its own test.
+  test("skips replaced and removed posts", async () => {
     enableSync();
     const t = convexTest(schema, modules);
-    const [replaced, cancelled] = await seedSyncedPosts(t, 2);
+    const [replaced, removed, kept] = await seedSyncedPosts(t, 3);
     const fetch = stubXByPage();
     await t.run(async (ctx) => {
       await ctx.db.patch("posts", replaced!.postId, { isActive: false });
-      const post = await ctx.db.get("posts", cancelled!.postId);
-      const submission = await ctx.db.get("submissions", post!.submissionId);
-      await ctx.db.patch("assignments", submission!.assignmentId, { status: "cancelled" });
+      // A recorded removal means X no longer has the post.
+      await ctx.db.patch("posts", removed!.postId, { removedAt: Date.now() });
     });
 
     await t.action(internal.xMetrics.collect, {
-      postIds: [replaced!.postId, cancelled!.postId],
+      postIds: [replaced!.postId, removed!.postId, kept!.postId],
     });
+
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(fetch.mock.calls[0]![0]).toContain(`ids=${kept!.xPostId}&`);
+  });
+
+  test("skips posts on cancelled assignments", async () => {
+    enableSync();
+    const t = convexTest(schema, modules);
+    const [post] = await seedSyncedPosts(t, 1);
+    const fetch = stubXByPage();
+    await t.run(async (ctx) => {
+      const stored = await ctx.db.get("posts", post!.postId);
+      const submission = await ctx.db.get("submissions", stored!.submissionId);
+      await ctx.db.patch("assignments", submission!.assignmentId, { status: "cancelled" });
+    });
+
+    await t.action(internal.xMetrics.collect, { postIds: [post!.postId] });
 
     expect(fetch).not.toHaveBeenCalled();
   });

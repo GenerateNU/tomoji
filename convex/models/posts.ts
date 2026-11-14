@@ -715,7 +715,7 @@ async function isOnCancelledAssignment(
 
 /**
  * The verified, active posts among `postIds` the X collector should read now,
- * skipping cancelled assignments and, with `readSince`, posts that already have a
+ * skipping removed posts, cancelled assignments, and, with `readSince`, posts that already have a
  * view reading at or after that time.
  *
  * @throws `invalid_state` for more than 100 posts, X's limit for one lookup.
@@ -731,6 +731,8 @@ export async function listCollectionTargets(
   for (const postId of postIds) {
     const post = await ctx.db.get("posts", postId);
     if (post === null || !post.isActive || !post.isVerified) continue;
+    // A removed post is gone from X, so a lookup would only spend credits.
+    if (post.removedAt !== undefined) continue;
     if (await isOnCancelledAssignment(ctx, post, cancelled)) continue;
     if (readSince !== undefined) {
       const recent = await ctx.db

@@ -152,7 +152,7 @@ function AssignmentWorkspace({
   return (
     <>
       <p className="mt-4 text-body-sm text-gray-500">Assigned {assignedOn}</p>
-      {assignment.status !== "active" && (
+      {(assignment.status === "completed" || assignment.status === "cancelled") && (
         <Badge className="mt-2">{assignmentStatusLabel[assignment.status]}</Badge>
       )}
       <div className="mt-6 space-y-6">

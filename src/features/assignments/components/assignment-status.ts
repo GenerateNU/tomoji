@@ -13,11 +13,9 @@ export const aiReviewStatusLabel = {
 } satisfies Record<AiReview["status"], string>;
 
 export const assignmentStatusLabel = {
-  termsPending: "Terms pending",
-  active: "Active",
   completed: "Completed",
   cancelled: "Cancelled",
-} satisfies Record<Doc<"assignments">["status"], string>;
+};
 
 export const submissionStatusLabel = {
   pending: "In review",

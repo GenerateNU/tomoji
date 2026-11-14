@@ -236,6 +236,60 @@ describe("companies.list", () => {
     expect(result.page.map((c) => c.name)).toEqual(["Active"]);
   });
 
+  test("matches a search term against the company name", async () => {
+    const t = convexTest(schema, modules);
+    const asOperator = await seedOperator(t, "l9");
+    await seedUser(t, {
+      subject: "l10",
+      org: { id: "org_northstar", name: "Northstar Studio", role: "admin" },
+    });
+    await seedUser(t, {
+      subject: "l11",
+      org: { id: "org_lumen", name: "Lumen Labs", role: "admin" },
+    });
+
+    const matched = await asOperator.query(api.companies.list, {
+      ...firstPage,
+      search: "northstar",
+    });
+    expect(matched.page.map((c) => c.name)).toEqual(["Northstar Studio"]);
+
+    const trimmedAndCased = await asOperator.query(api.companies.list, {
+      ...firstPage,
+      search: "  LUMEN  ",
+    });
+    expect(trimmedAndCased.page.map((c) => c.name)).toEqual(["Lumen Labs"]);
+
+    const noMatch = await asOperator.query(api.companies.list, {
+      ...firstPage,
+      search: "parallel",
+    });
+    expect(noMatch.page).toEqual([]);
+  });
+
+  test("keeps the isActive filter while searching", async () => {
+    const t = convexTest(schema, modules);
+    const asOperator = await seedOperator(t, "l12");
+    await seedUser(t, {
+      subject: "l13",
+      org: { id: "org_acme_live", name: "Acme Live", role: "admin" },
+    });
+    await seedUser(t, {
+      subject: "l14",
+      org: { id: "org_acme_dead", name: "Acme Dormant", role: "admin" },
+    });
+    const { _id: dormantId } = await companyFor(t, "org_acme_dead");
+    await t.run(async (ctx) => await ctx.db.patch(dormantId, { isActive: false }));
+
+    const result = await asOperator.query(api.companies.list, {
+      ...firstPage,
+      isActive: true,
+      search: "acme",
+    });
+
+    expect(result.page.map((c) => c.name)).toEqual(["Acme Live"]);
+  });
+
   test("rejects a creator", async () => {
     const t = convexTest(schema, modules);
     const asCreator = await seedUser(t, { subject: "l4" });

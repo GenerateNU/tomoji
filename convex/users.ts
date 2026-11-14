@@ -73,14 +73,26 @@ export const me = query({
   },
 });
 
-/** Lists active users for operators, with optional role and inactive-account inclusion. */
+/** A directory row. Company users carry the company they belong to. */
+const userDirectoryRow = schema.doc("users").extend({
+  company: v.optional(
+    v.object({ companyId: v.id("companies"), name: v.string(), role: companyRole }),
+  ),
+});
+
+/**
+ * Lists users for operators, newest first. `role` picks one account type,
+ * `search` matches a name or email, and inactive accounts are left out unless
+ * `includeInactive` is set.
+ */
 export const list = operatorQuery({
   args: {
     role: v.optional(userRole),
     includeInactive: v.optional(v.boolean()),
+    search: v.optional(v.string()),
     paginationOpts: paginationOptsValidator,
   },
-  returns: paginationResultValidator(schema.doc("users")),
+  returns: paginationResultValidator(userDirectoryRow),
   handler: async (ctx, args) => {
     return await listUsers(ctx, args);
   },

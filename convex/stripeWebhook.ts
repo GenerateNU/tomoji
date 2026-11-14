@@ -91,6 +91,78 @@ export const stripeWebhook = httpAction(async (ctx, request) => {
       });
     }
   }
+
+  // Payout charges are made on the creator's account, so their events come here.
+  // Each carries the `paymentId` Tomoji tagged it with; untagged charges are not ours.
+  if (
+    (event.type === "payment_intent.succeeded" || event.type === "payment_intent.payment_failed") &&
+    event.account !== undefined
+  ) {
+    const intent = event.data.object;
+    const paymentId = intent.metadata?.paymentId;
+    if (paymentId === undefined) return webhookOk();
+    const result =
+      event.type === "payment_intent.succeeded"
+        ? await ctx.runMutation(internal.payments.recordSucceeded, {
+            paymentId,
+            stripeAccountId: event.account,
+            stripePaymentIntentId: intent.id,
+            succeededAt: event.created * 1000,
+          })
+        : await ctx.runMutation(internal.payments.recordFailed, {
+            paymentId,
+            stripeAccountId: event.account,
+            stripePaymentIntentId: intent.id,
+            // The issuer's reason, such as `insufficient_funds`, when it gave one.
+            failureCode:
+              intent.last_payment_error?.decline_code ??
+              intent.last_payment_error?.code ??
+              "unknown",
+          });
+    if (result !== "unknown") {
+      console.log("Payout charge settled", {
+        eventId: event.id,
+        type: event.type,
+        result,
+      });
+    }
+  }
+
+  // Stripe attaches the fee a few seconds after the charge succeeds and
+  // announces it as a charge update; other charge updates carry no new fee.
+  if (event.type === "charge.updated" && event.account !== undefined) {
+    const charge = event.data.object;
+    const paymentId = charge.metadata?.paymentId;
+    const feeArrived =
+      event.data.previous_attributes !== undefined &&
+      "balance_transaction" in event.data.previous_attributes;
+    if (paymentId === undefined || !feeArrived || typeof charge.balance_transaction !== "string") {
+      return webhookOk();
+    }
+    let transaction: Stripe.BalanceTransaction;
+    try {
+      transaction = await stripeClient().balanceTransactions.retrieve(
+        charge.balance_transaction,
+        {},
+        { stripeAccount: event.account },
+      );
+    } catch (error) {
+      console.error("Stripe refused the balance transaction", stripeErrorDetails(error));
+      return new Response("Could not fetch the fee", { status: 500 });
+    }
+    // In the creator account's currency: Stripe converts a USD charge for
+    // accounts outside the US, and its fee includes the conversion.
+    const result = await ctx.runMutation(internal.payments.recordFee, {
+      paymentId,
+      stripeAccountId: event.account,
+      stripeFee: transaction.fee,
+      creatorNet: transaction.net,
+      settlementCurrency: transaction.currency,
+    });
+    if (result !== "unknown") {
+      console.log("Payout charge fee recorded", { eventId: event.id, result });
+    }
+  }
   return webhookOk();
 });
 

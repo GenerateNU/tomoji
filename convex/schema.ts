@@ -19,6 +19,7 @@ import { opportunityLanguagesTable } from "./schemas/opportunityLanguages.schema
 import { opportunityNichesTable } from "./schemas/opportunityNiches.schema";
 import { opportunitySkillsTable } from "./schemas/opportunitySkills.schema";
 import { postsTable } from "./schemas/posts.schema";
+import { paymentsTable } from "./schemas/payments.schema";
 import { payoutsTable } from "./schemas/payouts.schema";
 import { stripeAccountCreationsTable, stripeAccountsTable } from "./schemas/stripeAccounts.schema";
 import { stripeCustomersTable } from "./schemas/stripeCustomers.schema";
@@ -61,6 +62,7 @@ export default defineSchema({
   aiReviewAttempts: aiReviewAttemptsTable,
   posts: postsTable,
   payouts: payoutsTable,
+  payments: paymentsTable,
   disputes: disputesTable,
   mediaUploads: mediaUploadsTable,
   xAccounts: xAccountsTable,

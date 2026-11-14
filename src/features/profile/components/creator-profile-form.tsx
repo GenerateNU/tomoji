@@ -21,6 +21,7 @@ import { parseGithubLink } from "../lib/github-link";
 import { parseAdditionalLinks, parseLinkedinLink } from "../lib/links";
 import { PREVIEW_CONTENT_TYPES } from "../lib/profile-preview";
 import { CreatorProfileHeader } from "./creator-profile-header";
+import { BirthdateField } from "./birthdate-field";
 
 function sameValues(left: string[], right: string[]) {
   return left.length === right.length && left.every((value, index) => value === right[index]);
@@ -54,7 +55,6 @@ export function CreatorProfileForm({
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [saveError, setSaveError] = useState("");
   const [pending, setPending] = useState(false);
-  const [today] = useState(() => toDateInputValue(Date.now()));
   const submitting = useRef(false);
   const formRef = useRef<HTMLFormElement>(null);
   const focusInvalidField = useRef(false);
@@ -149,39 +149,23 @@ export function CreatorProfileForm({
       className="flex max-h-[calc(100dvh-4rem)] min-h-0 flex-col sm:max-h-[min(38rem,calc(100dvh-4rem))]"
     >
       <CreatorProfileHeader profile={initial} editing />
-      <div className="min-h-0 space-y-8 overflow-y-auto px-6 py-6 sm:px-8">
+      <div className="min-h-0 space-y-8 overflow-y-auto px-6 pb-6 sm:px-8">
         <section aria-labelledby={`${id}-basic`} className="space-y-4">
           <h3 id={`${id}-basic`} className="font-heading text-body-lg font-medium">
             Basic info
           </h3>
           <div className="grid gap-5 sm:grid-cols-2">
-            <div className="group space-y-2">
-              <Label htmlFor={`${id}-birthdate`}>Date of birth</Label>
-              <Input
-                id={`${id}-birthdate`}
-                name="dateOfBirth"
-                type="date"
-                value={birthdate}
-                max={today}
-                autoFocus
-                disabled={pending}
-                aria-invalid={!!errors.dateOfBirth}
-                aria-describedby={errors.dateOfBirth ? `${id}-birthdate-message` : undefined}
-                onChange={(event) => {
-                  setBirthdate(event.target.value);
-                  clearError("dateOfBirth");
-                }}
-              />
-              {errors.dateOfBirth && (
-                <p
-                  id={`${id}-birthdate-message`}
-                  role="alert"
-                  className="text-body-sm text-red-700"
-                >
-                  {errors.dateOfBirth}
-                </p>
-              )}
-            </div>
+            <BirthdateField
+              id={`${id}-birthdate`}
+              value={birthdate}
+              autoFocus
+              disabled={pending}
+              error={errors.dateOfBirth}
+              onValueChange={(value) => {
+                setBirthdate(value);
+                clearError("dateOfBirth");
+              }}
+            />
             <SelectField
               label="Country of residence"
               value={country}

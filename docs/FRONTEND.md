@@ -60,6 +60,13 @@ to match the design. Content-type edits stay in the open profile session and
 reset when it is reopened or refreshed; they are never sent to Convex. A save
 that only changes preview data does not call a backend mutation. Country, language,
 niche, and skill options reuse the shared predefined catalogs bundled with the app.
+The profile editor keeps space below its fixed header while fields scroll. Date of
+birth uses separate month, day, and year inputs with fixed slash separators and
+text-sized widths, including placeholders. A calendar control on the left offers
+native date selection and stays in sync with manual entry. Two
+digits advance to the next segment; clicking or tabbing away preserves incomplete
+segments without adding leading zeroes. Save rejects incomplete formats, impossible
+dates, future dates, and underage dates.
 
 `/settings` separates Payment and General. General displays the account email and
 uses the existing WorkOS server actions to request a password-reset email or sign

@@ -5,6 +5,7 @@ import type { api } from "@convex/_generated/api";
 import { RiImageLine } from "@remixicon/react";
 import { Avatar, getInitials } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 import { useProfilePicture } from "../hooks/use-profile-picture";
 import { profileDisplayName } from "../lib/profile-display";
 import { PROFILE_PREVIEW } from "../lib/profile-preview";
@@ -19,7 +20,12 @@ export function CreatorProfileHeader({
   const name = profileDisplayName(profile);
   const picture = useProfilePicture(profile.profilePictureMediaId);
   return (
-    <header className="shrink-0 space-y-3 px-6 pt-6 pr-12 sm:px-8 sm:pt-8 sm:pr-14">
+    <header
+      className={cn(
+        "shrink-0 space-y-3 px-6 pt-6 pr-12 sm:px-8 sm:pt-8 sm:pr-14",
+        editing && "pb-6",
+      )}
+    >
       <div className="flex items-center gap-4">
         <Avatar
           size={64}

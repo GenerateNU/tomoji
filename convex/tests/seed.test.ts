@@ -37,6 +37,7 @@ test("seeds demo tables without earnings evidence and preserves existing data on
   expect(tables.filter((_, index) => counts[index] === 0).sort()).toEqual([
     "deliverableEarnings",
     "earningCalculations",
+    "earningsSchedules",
     "postViewSnapshots",
   ]);
   expect(first.created).toBe(true);

@@ -141,11 +141,11 @@ Post metrics come from X's public post lookup, which accepts the app-only bearer
 token, so the sync never decrypts creator credentials. Every read is billed against
 the team's X credits.
 
-Nothing calls the lookup yet: no cron runs and no post's counts are updated. The weekly
-fetch will run inside the payout cron, before payouts are calculated. The X field names
-below come from X's documentation and haven't been checked against a live response.
-Before enabling the sync anywhere, make one lookup for a post you own (about $0.005)
-and confirm `public_metrics` includes `impression_count`:
+Nothing calls the lookup yet: no cron runs and no post's counts are updated. A daily
+analytics sync will call it, and earnings will request their own boundary readings. The
+X field names below come from X's documentation and haven't been checked against a live
+response. Before enabling the sync anywhere, make one lookup for a post you own (about
+$0.005) and confirm `public_metrics` includes `impression_count`:
 
 ```bash
 curl -s -H "Authorization: Bearer $X_BEARER_TOKEN" "https://api.x.com/2/tweets?ids=<post_id>&tweet.fields=public_metrics"
@@ -181,8 +181,10 @@ returns those verified, active posts a page at a time.
 The daily sync's counts keep `posts` current for analytics; payouts don't settle from them.
 Earnings settle from view snapshots taken at each post's verification and period
 boundaries (`postViewSnapshots`), recorded through the earnings flow rather than this sync.
-Posts on disputed or cancelled assignments stay in the sync. Payouts decide eligibility:
-a cancellation stops accrual at its cutoff, but views before it can still be earned.
+The analytics sync skips posts on cancelled assignments; posts with an open dispute stay
+in. Payouts decide eligibility separately: a cancellation stops accrual at its cutoff,
+and any readings earnings need around that cutoff come from the earnings flow, not this
+sync.
 
 `getXPostMetrics` looks up at most 100 post IDs per call through `GET /2/tweets` with
 `tweet.fields=public_metrics`. Each post's counts come back in two parts, stored

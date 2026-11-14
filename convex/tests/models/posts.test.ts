@@ -21,6 +21,7 @@ import {
   seedCampaign,
   seedCreatorId,
   seedDeliverable,
+  seedDispute,
   seedMembership,
   seedOneSubmission,
   seedOpportunity,
@@ -1076,6 +1077,32 @@ describe("listEarningPosts", () => {
 
     expect(result.isDone).toBe(true);
     expect(result.page).toEqual([await earning(t, atCutoff), await earning(t, recent)]);
+  });
+
+  test("skips posts on cancelled assignments but keeps completed and disputed ones", async () => {
+    const t = convexTest(schema, modules);
+    const { fixture, postId: disputed } = await seedFixturePost(t);
+    const cancelled = await addPost(t, fixture, "cancelled_post");
+    const completed = await addPost(t, fixture, "completed_post");
+    const now = Date.now();
+    for (const id of [disputed, cancelled, completed]) await verifyAt(t, id, now - day);
+    await seedDispute(t, fixture);
+    await t.run(async (ctx) => {
+      for (const [postId, status] of [
+        [cancelled, "cancelled"],
+        [completed, "completed"],
+      ] as const) {
+        const post = await ctx.db.get("posts", postId);
+        const submission = await ctx.db.get("submissions", post!.submissionId);
+        await ctx.db.patch("assignments", submission!.assignmentId, { status });
+      }
+    });
+
+    const result = await t.run(
+      async (ctx) => await listEarningPosts(ctx, now, { numItems: 10, cursor: null }),
+    );
+
+    expect(result.page.map((post) => post.postId).sort()).toEqual([disputed, completed].sort());
   });
 
   test("the window moves with `now`", async () => {

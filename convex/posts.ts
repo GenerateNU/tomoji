@@ -250,7 +250,7 @@ export const checkMyCaption = action({
   },
 });
 
-/** Internal: posts for the weekly X metrics sync, across every company. */
+/** Internal: posts for the daily X metrics sync, across every company. */
 export const listEarning = internalQuery({
   args: { now: v.number(), paginationOpts: paginationOptsValidator },
   returns: paginationResultValidator(earningPost),

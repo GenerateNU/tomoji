@@ -624,11 +624,16 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 const SYNC_MARGIN_DAYS = 1;
 const SYNC_WINDOW_MS = (X_POST_EARNING_DAYS + SYNC_MARGIN_DAYS) * DAY_MS;
 
-/** What the weekly X sync needs to fetch a post's counts and store them. */
+/** What the daily X sync needs to fetch a post's counts and store them. */
 export const earningPost = v.object({ postId: v.id("posts"), xPostId: v.string() });
 export type EarningPost = Infer<typeof earningPost>;
 
-/** One page of posts the weekly X sync fetches at `now`: verified, active, and within the sync window. */
+/**
+ * One page of posts the daily X sync fetches at `now`: verified, active, within the
+ * sync window, and not on a cancelled assignment. Posts with an open dispute stay in.
+ * Skipped posts make a page shorter than requested; `continueCursor` still moves past
+ * them, so paging covers every eligible post once.
+ */
 export async function listEarningPosts(
   ctx: QueryCtx,
   now: number,
@@ -643,8 +648,19 @@ export async function listEarningPosts(
         .gte("postedAt", now - SYNC_WINDOW_MS),
     )
     .paginate(paginationOpts);
-  return {
-    ...result,
-    page: result.page.map((post) => ({ postId: post._id, xPostId: post.xPostId })),
-  };
+  // A page's posts often share an assignment, so each one is read once.
+  const cancelled = new Map<Id<"assignments">, boolean>();
+  const page: EarningPost[] = [];
+  for (const post of result.page) {
+    const submission = await ctx.db.get("submissions", post.submissionId);
+    if (submission === null) continue;
+    let isCancelled = cancelled.get(submission.assignmentId);
+    if (isCancelled === undefined) {
+      const assignment = await ctx.db.get("assignments", submission.assignmentId);
+      isCancelled = assignment === null || assignment.status === "cancelled";
+      cancelled.set(submission.assignmentId, isCancelled);
+    }
+    if (!isCancelled) page.push({ postId: post._id, xPostId: post.xPostId });
+  }
+  return { ...result, page };
 }

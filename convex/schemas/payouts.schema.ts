@@ -68,6 +68,10 @@ export const payoutsTable = defineTable({
   .index("by_assignmentId_and_sourceKey", ["assignmentId", "sourceKey"])
   .index("by_assignmentId_and_deliverableId", ["assignmentId", "deliverableId"])
   .index("by_approvalStatus_and_approvalDueAt", ["approvalStatus", "approvalDueAt"])
+  // Recovery finds a company's or creator's payouts needing attention once the
+  // company saves a card or the creator's Stripe account is ready again.
+  .index("by_companyId_and_paymentStatus", ["companyId", "paymentStatus"])
+  .index("by_creatorId_and_paymentStatus", ["creatorId", "paymentStatus"])
   // Collection finds approved payouts not yet charged, oldest approval first.
   .index("by_approvalStatus_and_paymentStatus_and_approvedAt", [
     "approvalStatus",

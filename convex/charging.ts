@@ -13,8 +13,10 @@ import {
 import {
   claimDuePayouts,
   failChargeAttempt,
+  findStalePayouts,
   getChargeAccountId,
   prepareCharge,
+  requeueResolvedDisputes,
 } from "./models/payments";
 import schema from "./schema";
 
@@ -35,6 +37,10 @@ const CHARGE_BATCH_SIZE = 25;
 // with the same attempt and idempotency key, so it can never charge twice.
 const CHARGE_RETRY_DELAY_MS = 60_000;
 const CHARGE_RETRIES = 3;
+
+// Charging that has not settled this long after it began is picked up by the
+// sweep. Well past the retries above, so the sweep never races a live charge.
+const STALE_AFTER_MS = 15 * 60_000;
 
 const chargeBlock = v.union(
   v.literal("company_card_missing"),
@@ -112,6 +118,39 @@ export const collect = internalAction({
     });
     if (plan.kind === "blocked") {
       console.log("Payout cannot be charged now", { payoutId: args.payoutId, reason: plan.reason });
+    }
+    if (plan.kind === "check") {
+      // A charge whose outcome never arrived, such as a lost webhook: ask Stripe.
+      let intent;
+      try {
+        intent = await stripe.paymentIntents.retrieve(
+          plan.payment.stripePaymentIntentId ?? "",
+          {},
+          { stripeAccount: plan.payment.stripeAccountId },
+        );
+      } catch (error) {
+        return await retryLater("status check", error);
+      }
+      const outcome = {
+        paymentId: plan.payment._id,
+        stripeAccountId: plan.payment.stripeAccountId,
+        stripePaymentIntentId: intent.id,
+      };
+      if (intent.status === "succeeded") {
+        await ctx.runMutation(internal.payments.recordSucceeded, {
+          ...outcome,
+          succeededAt: Date.now(),
+        });
+      } else if (intent.status === "requires_payment_method" || intent.status === "canceled") {
+        await ctx.runMutation(internal.payments.recordFailed, {
+          ...outcome,
+          failureCode:
+            intent.last_payment_error?.decline_code ??
+            intent.last_payment_error?.code ??
+            intent.status,
+        });
+      }
+      return null;
     }
     if (plan.kind !== "charge") return null;
 
@@ -200,6 +239,7 @@ export const prepare = internalMutation({
       currency: v.string(),
     }),
     v.object({ kind: v.literal("blocked"), reason: chargeBlock }),
+    v.object({ kind: v.literal("check"), payment: schema.doc("payments") }),
     v.object({ kind: v.literal("settled") }),
   ),
   handler: async (ctx, args) => await prepareCharge(ctx, args.payoutId, args.chargesEnabled),
@@ -211,6 +251,39 @@ export const fail = internalMutation({
   returns: v.null(),
   handler: async (ctx, args) => {
     await failChargeAttempt(ctx, args.paymentId, args.failureCode);
+    return null;
+  },
+});
+
+/**
+ * Recovers charging that stalled, every 15 minutes: payouts held by a dispute
+ * that has since closed go back to the queue, and payouts whose charge never
+ * settled are charged again, which resumes the same attempt and key or asks
+ * Stripe for the outcome of an existing charge. Each page of resolved disputes
+ * continues in a new run.
+ */
+export const sweep = internalMutation({
+  args: { disputeCursor: v.optional(v.union(v.string(), v.null())) },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const disputes = await requeueResolvedDisputes(ctx, args.disputeCursor ?? null);
+    if (disputes.continueCursor !== null) {
+      await ctx.scheduler.runAfter(0, internal.charging.sweep, {
+        disputeCursor: disputes.continueCursor,
+      });
+      return null;
+    }
+    if (!env.STRIPE_SECRET_KEY) return null;
+    for (const payoutId of await findStalePayouts(
+      ctx,
+      Date.now() - STALE_AFTER_MS,
+      CHARGE_BATCH_SIZE,
+    )) {
+      await ctx.scheduler.runAfter(0, internal.charging.collect, {
+        payoutId,
+        retriesLeft: CHARGE_RETRIES,
+      });
+    }
     return null;
   },
 });

@@ -1,10 +1,12 @@
 import { v } from "convex/values";
 import { internalMutation } from "./_generated/server";
+import { companyAdminMutation } from "./lib/functions";
 import {
   attachPaymentIntent,
   recordPaymentFailed,
   recordPaymentFee,
   recordPaymentSucceeded,
+  retryCompanyPayout,
   startPayment,
 } from "./models/payments";
 import schema from "./schema";
@@ -17,6 +19,24 @@ import schema from "./schema";
  */
 
 const outcome = v.union(v.literal("updated"), v.literal("unchanged"), v.literal("unknown"));
+
+/**
+ * Sends one of the company's payouts that needs attention back to be charged,
+ * for an admin who has fixed the problem, for example with their bank. The
+ * next charging run makes a new attempt.
+ *
+ * @throws `forbidden` with reason `company_admin_required` for a member.
+ * @throws `not_found` if the payout is missing or another company's.
+ * @throws `invalid_state` with reason `payout_not_retryable` unless it needs attention.
+ */
+export const retry = companyAdminMutation({
+  args: { payoutId: v.id("payouts") },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    await retryCompanyPayout(ctx, ctx.membership.companyId, args.payoutId);
+    return null;
+  },
+});
 
 /** Starts the next attempt for an approved payout. See `startPayment`. */
 export const start = internalMutation({

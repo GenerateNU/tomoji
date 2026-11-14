@@ -2,6 +2,7 @@ import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { apiError } from "../lib/errors";
 import { hasOpenDispute } from "./disputes";
+import { creatorName, notifyCompanyUser, notifyCreator } from "./notifications";
 import { getStripeAccountByCreatorId, toStripeAccountStatus } from "./stripeAccounts";
 import { getStripeCustomerByCompanyId, isCardExpired } from "./stripeCustomers";
 
@@ -131,6 +132,7 @@ export type ChargePlan =
       currency: string;
     }
   | { kind: "blocked"; reason: ChargeBlock }
+  | { kind: "check"; payment: Doc<"payments"> }
   | { kind: "settled" };
 
 /**
@@ -160,13 +162,9 @@ export async function prepareCharge(
   const card = customer?.card;
 
   if (payout.paymentStatus === "processing") {
-    if (
-      latest === null ||
-      latest.status !== "processing" ||
-      latest.stripePaymentIntentId !== undefined
-    ) {
-      return { kind: "settled" };
-    }
+    if (latest === null || latest.status !== "processing") return { kind: "settled" };
+    // The charge exists, so it is never made again; Stripe is asked for its outcome.
+    if (latest.stripePaymentIntentId !== undefined) return { kind: "check", payment: latest };
     // Resent with the attempt's own card, so the same key carries the same
     // request. Not resent at all once the company has removed its card.
     const usable = customer !== null && card !== undefined && latest.paymentMethodId !== undefined;
@@ -236,6 +234,7 @@ async function blockPayout(
     failureCode: reason,
   });
   await ctx.db.patch("payouts", payout._id, { paymentStatus: "needsAttention" });
+  await notifyPaymentProblem(ctx, payout, reason);
   return { kind: "blocked", reason };
 }
 
@@ -253,6 +252,8 @@ export async function failChargeAttempt(
   if (payment === null || payment.status !== "processing") return;
   await ctx.db.patch("payments", payment._id, { status: "failed", failureCode });
   await ctx.db.patch("payouts", payment.payoutId, { paymentStatus: "needsAttention" });
+  const payout = await ctx.db.get("payouts", payment.payoutId);
+  if (payout !== null) await notifyPaymentProblem(ctx, payout, failureCode);
 }
 
 /** Saves the id of the charge Stripe created for an attempt. */
@@ -328,6 +329,8 @@ export async function recordPaymentFailed(
   await ctx.db.patch("payouts", payment.payoutId, {
     paymentStatus: "needsAttention",
   });
+  const payout = await ctx.db.get("payouts", payment.payoutId);
+  if (payout !== null) await notifyPaymentProblem(ctx, payout, outcome.failureCode);
   return "updated";
 }
 
@@ -353,4 +356,198 @@ export async function recordPaymentFee(
     settlementCurrency: outcome.settlementCurrency,
   });
   return "updated";
+}
+
+/**
+ * Who can fix a failed or blocked attempt, by its `failureCode`: the creator
+ * (their Stripe account), resolving a dispute, or the company (its card, for
+ * every decline Stripe reports and a missing card).
+ */
+function blockedOn(failureCode: string | undefined): "creator" | "dispute" | "company" {
+  if (failureCode === "creator_not_ready" || failureCode === "creator_account_missing") {
+    return "creator";
+  }
+  if (failureCode === "payout_disputed") return "dispute";
+  return "company";
+}
+
+function formatAmount(amount: number, currency: string): string {
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: currency.toUpperCase(),
+  }).format(amount / 100);
+}
+
+/**
+ * Tells whoever can fix a payout that needs attention, once per failed attempt:
+ * the creator to finish their Stripe setup, or the company member who created
+ * the campaign about its card. Disputes already notify both sides, and a
+ * creator without any account is a broken invariant, so neither notifies here.
+ */
+async function notifyPaymentProblem(
+  ctx: MutationCtx,
+  payout: Doc<"payouts">,
+  failureCode: string,
+): Promise<void> {
+  if (failureCode === "payout_disputed" || failureCode === "creator_account_missing") return;
+  const amount = formatAmount(payout.amount, payout.currency);
+  const target = { kind: "assignment" as const, assignmentId: payout.assignmentId };
+  if (blockedOn(failureCode) === "creator") {
+    await notifyCreator(ctx, payout.creatorId, {
+      type: "payoutStripeSetupNeeded",
+      title: `A ${amount} payment is waiting for your Stripe setup`,
+      body: "Finish setting up Stripe to get paid.",
+      target,
+    });
+    return;
+  }
+  const campaign = await ctx.db.get("campaigns", payout.campaignId);
+  if (campaign === null) return;
+  await notifyCompanyUser(ctx, campaign.createdBy, {
+    type: "payoutPaymentFailed",
+    title: `Payment of ${amount} to ${await creatorName(ctx, payout.creatorId)} failed`,
+    body:
+      failureCode === "company_card_missing"
+        ? "Your company has no saved card. An admin needs to add one in settings."
+        : `The company card was declined (${failureCode}). An admin needs to update it in settings.`,
+    target,
+  });
+}
+
+/**
+ * Returns a payout that needs attention to the charging queue; the next run
+ * charges it as a new attempt.
+ *
+ * @throws `not_found` if the payout does not exist.
+ * @throws `invalid_state` with reason `payout_not_retryable` unless it needs attention.
+ */
+export async function retryPayout(ctx: MutationCtx, payoutId: Id<"payouts">): Promise<void> {
+  const payout = await ctx.db.get("payouts", payoutId);
+  if (payout === null) throw apiError("not_found", { resource: "payout" });
+  if (payout.paymentStatus !== "needsAttention") {
+    throw apiError("invalid_state", { reason: "payout_not_retryable" });
+  }
+  await ctx.db.patch("payouts", payoutId, { paymentStatus: "notStarted" });
+}
+
+/**
+ * `retryPayout` for a company admin: only their own company's payouts.
+ *
+ * @throws `not_found` if the payout is missing or another company's.
+ */
+export async function retryCompanyPayout(
+  ctx: MutationCtx,
+  companyId: Id<"companies">,
+  payoutId: Id<"payouts">,
+): Promise<void> {
+  const payout = await ctx.db.get("payouts", payoutId);
+  if (payout === null || payout.companyId !== companyId) {
+    throw apiError("not_found", { resource: "payout" });
+  }
+  await retryPayout(ctx, payoutId);
+}
+
+// A company or creator rarely has this many payouts needing attention at once;
+// any beyond it are requeued by the next save, the sweep, or a manual retry.
+const REQUEUE_LIMIT = 100;
+
+/** Requeues the company's payouts that failed on its card, after it saves one. Returns how many. */
+export async function requeueCompanyPayouts(
+  ctx: MutationCtx,
+  companyId: Id<"companies">,
+): Promise<number> {
+  const waiting = await ctx.db
+    .query("payouts")
+    .withIndex("by_companyId_and_paymentStatus", (q) =>
+      q.eq("companyId", companyId).eq("paymentStatus", "needsAttention"),
+    )
+    .take(REQUEUE_LIMIT);
+  return await requeueBlockedOn(ctx, waiting, "company");
+}
+
+/** Requeues the creator's payouts that waited on their Stripe account, once it is ready. */
+export async function requeueCreatorPayouts(
+  ctx: MutationCtx,
+  creatorId: Id<"creators">,
+): Promise<number> {
+  const waiting = await ctx.db
+    .query("payouts")
+    .withIndex("by_creatorId_and_paymentStatus", (q) =>
+      q.eq("creatorId", creatorId).eq("paymentStatus", "needsAttention"),
+    )
+    .take(REQUEUE_LIMIT);
+  return await requeueBlockedOn(ctx, waiting, "creator");
+}
+
+async function requeueBlockedOn(
+  ctx: MutationCtx,
+  payouts: Doc<"payouts">[],
+  party: "creator" | "company",
+): Promise<number> {
+  let requeued = 0;
+  for (const payout of payouts) {
+    const latest = await latestAttempt(ctx, payout._id);
+    if (blockedOn(latest?.failureCode) !== party) continue;
+    await ctx.db.patch("payouts", payout._id, { paymentStatus: "notStarted" });
+    requeued += 1;
+  }
+  return requeued;
+}
+
+/**
+ * Requeues payouts held by a dispute that has since closed, a page at a time.
+ * Returns the cursor to continue with, or null when done.
+ */
+export async function requeueResolvedDisputes(
+  ctx: MutationCtx,
+  cursor: string | null,
+): Promise<{ requeued: number; continueCursor: string | null }> {
+  const page = await ctx.db
+    .query("payouts")
+    .withIndex("by_approvalStatus_and_paymentStatus_and_approvedAt", (q) =>
+      q.eq("approvalStatus", "approved").eq("paymentStatus", "needsAttention"),
+    )
+    .paginate({ cursor, numItems: 50 });
+  let requeued = 0;
+  for (const payout of page.page) {
+    const latest = await latestAttempt(ctx, payout._id);
+    if (blockedOn(latest?.failureCode) !== "dispute") continue;
+    if (await hasOpenDispute(ctx, payout.assignmentId)) continue;
+    await ctx.db.patch("payouts", payout._id, { paymentStatus: "notStarted" });
+    requeued += 1;
+  }
+  return { requeued, continueCursor: page.isDone ? null : page.continueCursor };
+}
+
+/**
+ * Payouts whose charging stalled before `cutoff` (Unix ms): still `queued` long
+ * after approval, because their scheduled charge was lost, or `processing`
+ * with an attempt that never settled. Charging them again is safe: it resumes
+ * the same attempt and key, or asks Stripe for the outcome of an existing charge.
+ */
+export async function findStalePayouts(
+  ctx: QueryCtx,
+  cutoff: number,
+  limit: number,
+): Promise<Id<"payouts">[]> {
+  const queued = await ctx.db
+    .query("payouts")
+    .withIndex("by_approvalStatus_and_paymentStatus_and_approvedAt", (q) =>
+      q.eq("approvalStatus", "approved").eq("paymentStatus", "queued").lt("approvedAt", cutoff),
+    )
+    .take(limit);
+  const processing = await ctx.db
+    .query("payouts")
+    .withIndex("by_approvalStatus_and_paymentStatus_and_approvedAt", (q) =>
+      q.eq("approvalStatus", "approved").eq("paymentStatus", "processing"),
+    )
+    .take(limit);
+  const stalled: Id<"payouts">[] = queued.map((payout) => payout._id);
+  for (const payout of processing) {
+    const latest = await latestAttempt(ctx, payout._id);
+    if (latest !== null && latest.status === "processing" && latest._creationTime < cutoff) {
+      stalled.push(payout._id);
+    }
+  }
+  return stalled.slice(0, limit);
 }

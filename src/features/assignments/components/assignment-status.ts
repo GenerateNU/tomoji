@@ -12,11 +12,6 @@ export const aiReviewStatusLabel = {
   completed: "AI review complete",
 } satisfies Record<AiReview["status"], string>;
 
-export const assignmentStatusLabel = {
-  completed: "Completed",
-  cancelled: "Cancelled",
-};
-
 export const submissionStatusLabel = {
   pending: "In review",
   approved: "Approved",

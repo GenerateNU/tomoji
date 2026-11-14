@@ -104,6 +104,14 @@ seed-clear:
 seed-more COUNT="30":
     @bunx convex run seed:more {{quote('{"count": ' + COUNT + '}')}}
 
+# Fill a company's submission review queue, uploading VIDEOS as the submitted content
+seed-review EMAIL *VIDEOS:
+    @bunx convex run seed:seedReviewQueue "$(bun scripts/seed-review-queue.ts {{quote(EMAIL)}} {{VIDEOS}})"
+
+# Delete that company's review-queue campaigns so it can be rebuilt
+seed-review-clear EMAIL:
+    @bunx convex run seed:clearReviewQueue {{quote('{"companyAdminEmail": "' + EMAIL + '"}')}}
+
 # Print the webhook URL to send a TL, who creates your WorkOS webhook
 webhook-url:
     @echo "$(bunx convex env get CONVEX_SITE_URL)/workos/webhook"

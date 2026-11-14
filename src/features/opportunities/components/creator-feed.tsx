@@ -35,7 +35,7 @@ export function CreatorFeed() {
   // Read once per render so every row's "posted N days ago" agrees.
   const [now] = useState(() => Date.now());
 
-  const search = useDebouncedValue(filters.search);
+  const search = useDebouncedValue(filters.search, 300);
   const feed = useOpportunityFeed({ ...filters, search });
   const loading = feed.status === "LoadingFirstPage";
   const filtered =

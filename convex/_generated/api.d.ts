@@ -82,6 +82,7 @@ import type * as models_payouts from "../models/payouts.js";
 import type * as models_posts from "../models/posts.js";
 import type * as models_skills from "../models/skills.js";
 import type * as models_submissions from "../models/submissions.js";
+import type * as models_supportingMedia from "../models/supportingMedia.js";
 import type * as models_users from "../models/users.js";
 import type * as models_xAccountLookup from "../models/xAccountLookup.js";
 import type * as models_xAccounts from "../models/xAccounts.js";
@@ -181,6 +182,7 @@ declare const fullApi: ApiFromModules<{
   "models/posts": typeof models_posts;
   "models/skills": typeof models_skills;
   "models/submissions": typeof models_submissions;
+  "models/supportingMedia": typeof models_supportingMedia;
   "models/users": typeof models_users;
   "models/xAccountLookup": typeof models_xAccountLookup;
   "models/xAccounts": typeof models_xAccounts;

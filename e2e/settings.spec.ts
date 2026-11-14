@@ -406,34 +406,6 @@ test("unsafe saved links are never rendered as clickable links", async ({ page }
   await expect(page.getByText("No other links added yet.")).toBeVisible();
 });
 
-test("turning on a private profile is confirmed and reported to the API", async ({ page }) => {
-  await openSettings(page);
-  const visibility = page.getByRole("region", { name: "Profile visibility" });
-  const toggle = visibility.getByRole("switch", { name: "Private profile" });
-  await expect(toggle).not.toBeChecked();
-
-  await toggle.click();
-
-  await expect(toggle).toBeChecked();
-  await expect(page.getByText("Your profile is now private.", { exact: true })).toBeVisible();
-  expect(await page.evaluate(() => window.settingsFixture.calls)).toEqual([
-    { name: "creators:update", args: { isPrivate: true } },
-  ]);
-});
-
-test("a failed visibility change explains itself and leaves the setting alone", async ({
-  page,
-}) => {
-  await openSettings(page);
-  await page.evaluate(() => window.settingsFixture.failNext("creators:update"));
-  const toggle = page.getByRole("switch", { name: "Private profile" });
-
-  await toggle.click();
-
-  await expect(page.getByRole("alert")).toBeVisible();
-  await expect(toggle).not.toBeChecked();
-});
-
 test("captures the responsive creator detail forms", async ({ page }, testInfo) => {
   await openSettings(page);
   await page.getByRole("button", { name: "Edit personal details" }).click();

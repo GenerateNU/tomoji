@@ -8,6 +8,8 @@ import {
   RiCheckboxMultipleLine,
   RiFolderFill,
   RiFolderLine,
+  RiGroupFill,
+  RiGroupLine,
   RiHome4Fill,
   RiHome4Line,
   RiInboxFill,
@@ -109,6 +111,13 @@ export const companyNavItems = [
 
 export const operatorNavItems = [
   { id: "home", label: "Home", icon: RiHome4Line, activeIcon: RiHome4Fill, href: "/" },
+  {
+    id: "users",
+    label: "Users",
+    icon: RiGroupLine,
+    activeIcon: RiGroupFill,
+    href: "/users",
+  },
   {
     id: "disputes",
     label: "Disputes",

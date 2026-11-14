@@ -30,11 +30,11 @@ export function NavAuth() {
           Notifications
         </Link>
         <TeamLink />
-        <span className="hidden text-sm text-zinc-600 sm:inline dark:text-zinc-400">
+        <span className="hidden text-sm text-gray-600 sm:inline dark:text-gray-400">
           {user.email}
         </span>
         <form action={signOutAction}>
-          <Button type="submit" variant="secondary" className="h-10 rounded-full px-4">
+          <Button type="submit" variant="secondary-subtle" className="h-10 rounded-full px-4">
             Sign out
           </Button>
         </form>

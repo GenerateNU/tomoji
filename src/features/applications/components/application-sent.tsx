@@ -8,7 +8,7 @@ export function ApplicationSent() {
     <div className="flex flex-col items-center gap-4 text-center">
       <DialogTitle className="text-2xl font-semibold">Application sent</DialogTitle>
       <DialogDescription>We&apos;ll notify you when the company responds.</DialogDescription>
-      <DialogClose render={<Button size="lg" className="px-12" />}>Done</DialogClose>
+      <DialogClose render={<Button className="px-12" />}>Done</DialogClose>
     </div>
   );
 }

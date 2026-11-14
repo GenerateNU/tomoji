@@ -35,7 +35,7 @@ function TabsTrigger({ className, ...props }: TabsPrimitive.Tab.Props) {
     <TabsPrimitive.Tab
       data-slot="tabs-trigger"
       className={cn(
-        "relative inline-flex items-center gap-2 rounded-sm px-0.5 pb-2.5 text-body whitespace-nowrap text-neutral-600 transition-colors outline-none hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50 aria-disabled:pointer-events-none aria-disabled:opacity-50 data-active:font-medium data-active:text-foreground [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
+        "relative inline-flex items-center gap-2 rounded-sm px-0.5 pb-2.5 text-body whitespace-nowrap text-gray-600 transition-colors outline-none hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50 aria-disabled:pointer-events-none aria-disabled:opacity-50 data-active:font-medium data-active:text-foreground [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
         "after:absolute after:inset-x-0 after:-bottom-px after:h-0.5 after:rounded-[1px] after:bg-foreground after:opacity-0 after:transition-opacity data-active:after:opacity-100 group-data-vertical/tabs:pb-0 group-data-vertical/tabs:after:hidden",
         className,
       )}
@@ -49,7 +49,7 @@ function TabsCount({ className, ...props }: React.ComponentProps<"span">) {
   return (
     <span
       data-slot="tabs-count"
-      className={cn("font-normal text-neutral-600", className)}
+      className={cn("font-normal text-gray-600", className)}
       {...props}
     />
   );

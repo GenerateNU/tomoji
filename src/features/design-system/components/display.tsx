@@ -66,7 +66,7 @@ export function TagPreview() {
               Applied
             </Toggle>
             <Toggle variant="chip">
-              Offers <span className="font-normal text-neutral-400">12</span>
+              Offers <span className="font-normal text-gray-400">12</span>
             </Toggle>
             <Toggle variant="chip">Unread</Toggle>
           </div>
@@ -214,7 +214,7 @@ export function ProgressPreview() {
             description="Go to the assignment and upload your video for review"
             timestamp="Oct 26 at 6:20pm"
             actions={
-              <Button variant="ghost" size="icon-sm" aria-label="Notification options">
+              <Button variant="secondary-ghost" size="icon-sm" aria-label="Notification options">
                 <EllipsisIcon />
               </Button>
             }

@@ -4,9 +4,10 @@ import { Switch as SwitchPrimitive } from "@base-ui/react/switch";
 import { cva, type VariantProps } from "class-variance-authority";
 import { cn } from "@/lib/utils";
 
-// Figma "Switch" is the default size: a 48×28 track with a 24px thumb.
+// Figma "Switch" is the default size: a 48×28 track with a 24px thumb, gray
+// when off and blue when on. Hover darkens the track.
 const switchVariants = cva(
-  "peer group/switch relative inline-flex shrink-0 items-center rounded-full p-0.5 transition-colors outline-none group-has-[:focus-visible]/field-label:ring-0 after:absolute after:-inset-x-3 after:-inset-y-2 focus-visible:ring-3 focus-visible:ring-ring/50 aria-invalid:ring-3 aria-invalid:ring-destructive/20 data-checked:bg-primary data-unchecked:bg-input data-disabled:cursor-not-allowed data-disabled:opacity-50",
+  "peer group/switch relative inline-flex shrink-0 items-center rounded-full p-0.5 transition-colors outline-none group-has-[:focus-visible]/field-label:ring-0 after:absolute after:-inset-x-3 after:-inset-y-2 focus-visible:ring-4 focus-visible:ring-ring/25 aria-invalid:ring-4 aria-invalid:ring-destructive/20 data-checked:bg-primary data-checked:hover:bg-[color-mix(in_srgb,var(--primary),black_12%)] data-unchecked:bg-gray-300 data-unchecked:hover:bg-gray-400 data-disabled:cursor-not-allowed data-disabled:opacity-40",
   {
     variants: {
       size: {

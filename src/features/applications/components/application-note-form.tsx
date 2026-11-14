@@ -72,12 +72,7 @@ export function ApplicationNoteForm({
         </span>
       </div>
       {error && <p className="text-destructive">{error}</p>}
-      <Button
-        type="submit"
-        size="lg"
-        className="w-full"
-        disabled={submitting || note.trim() === ""}
-      >
+      <Button type="submit" className="w-full" disabled={submitting || note.trim() === ""}>
         {submitting ? "Applying…" : "Apply"}
       </Button>
       <Button type="button" variant="link" onClick={onBack} disabled={submitting}>

@@ -28,7 +28,7 @@ export function GithubLinkSection({ githubLink }: { githubLink?: string }) {
         {!editing && (
           <Button
             ref={editButton}
-            variant="secondary"
+            variant="secondary-subtle"
             className="min-h-11"
             onClick={() => {
               setSuccess("");

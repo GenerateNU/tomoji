@@ -43,7 +43,7 @@ export function ApplicationsPagination({
     <nav aria-label="Pagination" className="flex items-center justify-end gap-4">
       <div className="flex items-center gap-1">
         <Button
-          variant="ghost"
+          variant="secondary-ghost"
           size="icon-sm"
           aria-label="Previous page"
           disabled={!hasPrevious}
@@ -59,7 +59,7 @@ export function ApplicationsPagination({
           {page}
         </span>
         <Button
-          variant="ghost"
+          variant="secondary-ghost"
           size="icon-sm"
           aria-label="Next page"
           disabled={!hasNext}

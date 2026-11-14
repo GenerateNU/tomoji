@@ -36,7 +36,7 @@ export function LinksSection({
         {!editing && (
           <Button
             ref={editButton}
-            variant="secondary"
+            variant="secondary-subtle"
             className="min-h-11"
             onClick={() => {
               setSuccess("");

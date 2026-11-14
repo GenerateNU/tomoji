@@ -23,9 +23,9 @@ export function Stepper({ steps, current, className, ...props }: StepperProps) {
           >
             <span
               aria-hidden
-              className="h-1.5 rounded-full bg-primary group-data-[state=upcoming]/step:bg-neutral-200"
+              className="h-1.5 rounded-full bg-primary group-data-[state=upcoming]/step:bg-gray-200"
             />
-            <span className="truncate text-body-xs text-foreground group-data-[state=current]/step:font-medium group-data-[state=upcoming]/step:text-neutral-400">
+            <span className="truncate text-body-xs text-foreground group-data-[state=current]/step:font-medium group-data-[state=upcoming]/step:text-gray-400">
               {label}
               {state === "complete" && <span className="sr-only"> (complete)</span>}
             </span>

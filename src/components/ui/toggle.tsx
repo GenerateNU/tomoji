@@ -15,7 +15,7 @@ const toggleVariants = cva(
           "rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground data-pressed:bg-muted data-pressed:text-foreground [&_svg:not([class*='size-'])]:size-4",
         chip: "rounded-full border border-input bg-background text-foreground hover:bg-muted data-pressed:border-primary data-pressed:bg-primary data-pressed:text-primary-foreground [&_svg:not([class*='size-'])]:size-3.5",
         segment:
-          "rounded-md border border-transparent text-neutral-600 hover:text-foreground data-pressed:bg-primary data-pressed:text-primary-foreground [&_svg:not([class*='size-'])]:size-4",
+          "rounded-md border border-transparent text-gray-600 hover:text-foreground data-pressed:bg-primary data-pressed:text-primary-foreground [&_svg:not([class*='size-'])]:size-4",
       },
       size: {
         default: "",

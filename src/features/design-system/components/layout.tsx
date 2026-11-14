@@ -116,7 +116,7 @@ function Account({ name }: { name: string }) {
 function CollapseButton({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => void }) {
   return (
     <Button
-      variant="ghost"
+      variant="secondary-ghost"
       size="icon-sm"
       className="-m-2"
       aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
@@ -137,12 +137,12 @@ export function SidebarPreview() {
       title="Sidebar"
       description="App navigation. Creators and companies each get a sidebar that collapses to an icon rail. Inside a campaign, the company rail sits beside a campaign panel."
     >
-      <div className="flex h-[560px] gap-6 overflow-x-auto rounded-lg border border-border bg-neutral-50 p-4">
+      <div className="flex h-[560px] gap-6 overflow-x-auto rounded-lg border border-border bg-gray-50 p-4">
         <Sidebar collapsed={creatorCollapsed} className="rounded-md border">
           <SidebarContent>
             <SidebarHeader>
               {!creatorCollapsed && (
-                <span className="text-body-lg font-medium text-neutral-900">ohani</span>
+                <span className="text-body-lg font-medium text-gray-900">ohani</span>
               )}
               <CollapseButton
                 collapsed={creatorCollapsed}

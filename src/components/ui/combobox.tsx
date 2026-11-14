@@ -37,7 +37,7 @@ function ComboboxClear({ className, ...props }: ComboboxPrimitive.Clear.Props) {
   return (
     <ComboboxPrimitive.Clear
       data-slot="combobox-clear"
-      render={<InputGroupButton variant="ghost" size="icon-xs" />}
+      render={<InputGroupButton variant="secondary-ghost" size="icon-xs" />}
       className={cn(className)}
       {...props}
     >
@@ -64,7 +64,7 @@ function ComboboxInput({
         {showTrigger && (
           <InputGroupButton
             size="icon-xs"
-            variant="ghost"
+            variant="secondary-ghost"
             render={<ComboboxTrigger />}
             data-slot="input-group-button"
             className="group-has-data-[slot=combobox-clear]/input-group:hidden data-pressed:bg-transparent"
@@ -150,7 +150,7 @@ function ComboboxItem({
       {indicator === "checkbox" && (
         <span
           aria-hidden
-          className="flex size-4 shrink-0 items-center justify-center rounded-sm border border-neutral-400 bg-background text-primary-foreground group-data-selected/combobox-item:border-primary group-data-selected/combobox-item:bg-primary"
+          className="flex size-4 shrink-0 items-center justify-center rounded-sm border border-gray-400 bg-background text-primary-foreground group-data-selected/combobox-item:border-primary group-data-selected/combobox-item:bg-primary"
         >
           <CheckIcon className="hidden size-3! group-data-selected/combobox-item:block" />
         </span>
@@ -220,7 +220,7 @@ function ComboboxChips({
     <ComboboxPrimitive.Chips
       data-slot="combobox-chips"
       className={cn(
-        "flex min-h-11 flex-wrap items-center gap-1.5 rounded-lg border border-input bg-background bg-clip-padding px-3 py-2 text-body transition-colors focus-within:border-foreground focus-within:inset-ring-1 focus-within:inset-ring-foreground has-aria-invalid:border-destructive has-aria-invalid:inset-ring-1 has-aria-invalid:inset-ring-destructive",
+        "flex min-h-11.75 flex-wrap items-center gap-1.5 rounded-sm border border-input bg-background bg-clip-padding px-3 py-2 text-body transition-[color,border-color,box-shadow] hover:border-primary hover:inset-ring-1 hover:inset-ring-primary focus-within:border-primary focus-within:inset-ring-1 focus-within:inset-ring-primary has-aria-invalid:border-red-600 has-aria-invalid:bg-red-50 has-aria-invalid:inset-ring-1 has-aria-invalid:inset-ring-red-600",
         className,
       )}
       {...props}
@@ -240,7 +240,7 @@ function ComboboxChip({
     <ComboboxPrimitive.Chip
       data-slot="combobox-chip"
       className={cn(
-        "flex w-fit items-center justify-center gap-1 rounded-full bg-muted px-2.5 py-1 text-body-sm whitespace-nowrap text-neutral-600 has-disabled:pointer-events-none has-disabled:cursor-not-allowed has-disabled:opacity-50",
+        "flex w-fit items-center justify-center gap-1 rounded-sm bg-gray-50 px-2 py-1.5 text-body-sm font-medium whitespace-nowrap text-gray-700 has-disabled:pointer-events-none has-disabled:cursor-not-allowed has-disabled:opacity-40",
         className,
       )}
       {...props}
@@ -249,7 +249,7 @@ function ComboboxChip({
       {showRemove && (
         <ComboboxPrimitive.ChipRemove
           aria-label="Remove"
-          className="rounded-full outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50 [&_svg]:size-3.5"
+          className="rounded-xs outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/25 [&_svg]:size-3.5"
           data-slot="combobox-chip-remove"
         >
           <XIcon className="pointer-events-none" />
@@ -264,7 +264,7 @@ function ComboboxChipsInput({ className, ...props }: ComboboxPrimitive.Input.Pro
     <ComboboxPrimitive.Input
       data-slot="combobox-chip-input"
       className={cn(
-        "min-w-16 flex-1 bg-transparent outline-none placeholder:text-neutral-400",
+        "min-w-16 flex-1 bg-transparent outline-none placeholder:text-gray-400",
         className,
       )}
       {...props}

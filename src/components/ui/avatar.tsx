@@ -15,8 +15,8 @@ const avatarVariants = cva("group/avatar relative flex shrink-0 overflow-hidden 
       lg: "size-10",
     },
     shape: {
-      circle: "rounded-full bg-neutral-200",
-      square: "bg-neutral-300",
+      circle: "rounded-full bg-gray-200",
+      square: "bg-gray-300",
     },
   },
   compoundVariants: [
@@ -62,7 +62,7 @@ function AvatarFallback({ className, ...props }: AvatarPrimitive.Fallback.Props)
     <AvatarPrimitive.Fallback
       data-slot="avatar-fallback"
       className={cn(
-        "flex size-full items-center justify-center text-body-sm font-medium text-neutral-600 group-data-[size=sm]/avatar:text-[0.625rem]",
+        "flex size-full items-center justify-center text-body-sm font-medium text-gray-600 group-data-[size=sm]/avatar:text-[0.625rem]",
         className,
       )}
       {...props}

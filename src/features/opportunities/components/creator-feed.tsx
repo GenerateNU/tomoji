@@ -159,7 +159,7 @@ export function CreatorFeed() {
 
         {(feed.status === "CanLoadMore" || feed.status === "LoadingMore") && (
           <Button
-            variant="secondary"
+            variant="secondary-subtle"
             className="self-center"
             disabled={feed.status === "LoadingMore"}
             onClick={feed.loadMore}

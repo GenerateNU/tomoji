@@ -24,7 +24,13 @@ import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { PreviewSection } from "./preview-section";
 
-const VARIANTS = ["default", "secondary", "ghost"] as const;
+// Figma order: each color comes filled, subtle, then ghost.
+const VARIANT_ROWS = [
+  ["special"],
+  ["primary", "primary-subtle", "primary-ghost"],
+  ["secondary", "secondary-subtle", "secondary-ghost"],
+  ["destructive-subtle", "destructive-ghost"],
+] as const;
 
 const NICHES = [
   { value: "frontend", label: "Frontend Development" },
@@ -54,38 +60,31 @@ export function ButtonPreview() {
     <PreviewSection
       id="button"
       title="Button"
-      description="Primary for the main action, secondary for the rest, ghost for low-emphasis actions. Destructive tone for anything that deletes or cancels."
+      description="Special (mint) for the one standout action, primary (blue) for main actions, secondary (black) for the rest. Subtle and ghost lower the emphasis; destructive is for anything that deletes or cancels."
     >
-      <div className="grid gap-6 sm:grid-cols-3">
-        {VARIANTS.map((variant) => (
-          <div key={variant} className="space-y-4">
-            <Example label={`variant="${variant}"`}>
-              <div className="flex flex-wrap gap-3">
-                <Button variant={variant}>Button</Button>
-                <Button variant={variant} disabled>
-                  Disabled
-                </Button>
-              </div>
-            </Example>
-            <Example label={`variant="${variant}" tone="destructive"`}>
-              <div className="flex flex-wrap gap-3">
-                <Button variant={variant} tone="destructive">
-                  Delete
-                </Button>
-                <Button variant={variant} tone="destructive" disabled>
-                  Delete
-                </Button>
-              </div>
-            </Example>
+      <div className="space-y-5">
+        {VARIANT_ROWS.map((row) => (
+          <div key={row[0]} className="grid gap-6 sm:grid-cols-3">
+            {row.map((variant) => (
+              <Example key={variant} label={`variant="${variant}"`}>
+                <div className="flex flex-wrap gap-3">
+                  <Button variant={variant}>
+                    {variant.startsWith("destructive") ? "Delete" : "Button"}
+                  </Button>
+                  <Button variant={variant} disabled>
+                    Disabled
+                  </Button>
+                </div>
+              </Example>
+            ))}
           </div>
         ))}
       </div>
       <div className="flex flex-wrap items-end gap-6">
-        <Example label='size="sm" | "default" | "lg"'>
+        <Example label='size="sm" | "default"'>
           <div className="flex items-center gap-3">
             <Button size="sm">Apply</Button>
             <Button>Apply</Button>
-            <Button size="lg">Apply</Button>
           </div>
         </Example>
         <Example label="with an icon">
@@ -96,10 +95,10 @@ export function ButtonPreview() {
         </Example>
         <Example label='size="icon"'>
           <div className="flex items-center gap-3">
-            <Button variant="secondary" size="icon" aria-label="More actions">
+            <Button variant="secondary-subtle" size="icon" aria-label="More actions">
               <EllipsisIcon />
             </Button>
-            <Button variant="ghost" size="icon" aria-label="More actions">
+            <Button variant="secondary-ghost" size="icon" aria-label="More actions">
               <EllipsisIcon />
             </Button>
           </div>
@@ -264,6 +263,10 @@ export function ChoicePreview() {
     >
       <div className="grid gap-6 sm:grid-cols-2">
         <div className="space-y-3">
+          <Field orientation="horizontal">
+            <Checkbox id="ds-all" indeterminate />
+            <FieldLabel htmlFor="ds-all">Development (some selected)</FieldLabel>
+          </Field>
           <Field orientation="horizontal">
             <Checkbox id="ds-terms" defaultChecked />
             <FieldLabel htmlFor="ds-terms">Frontend Development</FieldLabel>

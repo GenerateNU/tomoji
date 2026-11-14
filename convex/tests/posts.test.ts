@@ -449,6 +449,7 @@ describe("posts.checkCaption", () => {
 
 describe("posts.checkMyCaption", () => {
   afterEach(() => {
+    vi.useRealTimers();
     vi.unstubAllGlobals();
     vi.unstubAllEnvs();
   });
@@ -571,6 +572,40 @@ describe("posts.checkMyCaption", () => {
       reposts: 7,
       quotes: 1,
     });
+  });
+
+  // With the sync on, verification also schedules an immediate X read. Runs just that
+  // read, not the cutoff reads 30 days out.
+  async function runVerificationRead(t: TestConvex) {
+    vi.advanceTimersToNextTimer();
+    await t.finishInProgressScheduledFunctions();
+  }
+
+  test("with the sync on, counts from the caption check stand in for the verification read", async () => {
+    vi.useFakeTimers();
+    vi.stubEnv("X_METRICS_SYNC_ENABLED", "true");
+    const t = convexTest(schema, modules);
+    const { fixture, postId } = await seedCaptionPost(t, false);
+    const lookup = stubLookup({ public_metrics: publicMetrics });
+
+    await fixture.asCreator.action(api.posts.checkMyCaption, { postId });
+    await runVerificationRead(t);
+
+    expect(lookup).toHaveBeenCalledTimes(1);
+  });
+
+  test("with the sync on, the verification read still runs when the caption check had no counts", async () => {
+    vi.useFakeTimers();
+    vi.stubEnv("X_METRICS_SYNC_ENABLED", "true");
+    const t = convexTest(schema, modules);
+    const { fixture, postId } = await seedCaptionPost(t, false);
+    const lookup = stubLookup({ public_metrics: { ...publicMetrics, impression_count: -1 } });
+
+    await fixture.asCreator.action(api.posts.checkMyCaption, { postId });
+    await runVerificationRead(t);
+
+    expect(lookup).toHaveBeenCalledTimes(2);
+    expect(String(lookup.mock.calls[1]![0])).toContain("tweets?ids=");
   });
 
   test("stores no counts when a match leaves the post unverified", async () => {

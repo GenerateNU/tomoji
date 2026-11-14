@@ -375,10 +375,17 @@ function earningsReadsEnabled(): boolean {
   return env.X_METRICS_SYNC_ENABLED === "true";
 }
 
-/** Schedules one X read of the post right away. */
+/**
+ * Schedules one X read of the post right away. It's skipped if the post gets a
+ * reading after this point anyway, as when the caption check that verified it
+ * also stored its counts.
+ */
 async function scheduleReadNow(ctx: MutationCtx, postId: Id<"posts">): Promise<void> {
   if (!earningsReadsEnabled()) return;
-  await ctx.scheduler.runAfter(0, internal.xMetrics.collect, { postIds: [postId] });
+  await ctx.scheduler.runAfter(0, internal.xMetrics.collect, {
+    postIds: [postId],
+    readSince: Date.now(),
+  });
 }
 
 /**

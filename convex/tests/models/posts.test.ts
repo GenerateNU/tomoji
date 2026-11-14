@@ -803,7 +803,11 @@ describe("verifyPost", () => {
     const post = await t.run(async (ctx) => await ctx.db.get("posts", postId));
     const cutoffAt = post!.firstVerifiedAt! + 30 * 24 * 60 * 60 * 1000;
     expect(await scheduledReads(t)).toEqual([
-      { name: "xMetrics:collect", scheduledTime: Date.now(), args: [{ postIds: [postId] }] },
+      {
+        name: "xMetrics:collect",
+        scheduledTime: Date.now(),
+        args: [{ postIds: [postId], readSince: Date.now() }],
+      },
       {
         name: "xMetrics:collectForCutoff",
         scheduledTime: cutoffAt - 4 * 60_000,
@@ -845,7 +849,11 @@ describe("verifyPost", () => {
       JSON.stringify(read.args).includes(replacementId),
     );
     expect(reads).toEqual([
-      { name: "xMetrics:collect", scheduledTime: Date.now(), args: [{ postIds: [replacementId] }] },
+      {
+        name: "xMetrics:collect",
+        scheduledTime: Date.now(),
+        args: [{ postIds: [replacementId], readSince: Date.now() }],
+      },
     ]);
   });
 

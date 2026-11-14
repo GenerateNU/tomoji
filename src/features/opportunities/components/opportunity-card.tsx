@@ -1,8 +1,12 @@
+"use client";
+
 import type { Id } from "@convex/_generated/dataModel";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { formatCompensation, formatDeadline } from "../lib/format";
+import { useCompanyMedia } from "../hooks/use-company-media";
+import { feedAction, feedTags } from "../lib/feed-status";
+import { formatDeadline, formatPay } from "../lib/format";
 import type { FeedOpportunity } from "../lib/types";
-import { AvailabilityPill } from "./availability-pill";
 import { CompanyAvatar } from "./company-avatar";
 import { StarButton } from "./star-button";
 
@@ -14,49 +18,53 @@ export function OpportunityCard({
   opportunity: FeedOpportunity;
   onOpen: (opportunityId: Id<"opportunities">) => void;
 }) {
+  const banner = useCompanyMedia(opportunity.companyBannerMediaId);
+  const action = feedAction(opportunity);
+  const primary = action.kind === "apply" || action.kind === "claim";
   return (
-    <article className="flex flex-col gap-[22px] rounded-2xl bg-muted/60 p-[22px]">
-      <div className="flex flex-col gap-4">
-        <div className="flex items-center gap-4">
-          <CompanyAvatar name={opportunity.companyName} size="sm" />
-          <p className="font-medium">{opportunity.companyName}</p>
-        </div>
-        <div className="flex flex-col items-start gap-2">
-          <div className="flex items-center gap-2">
-            <h3 className="text-2xl font-medium">{opportunity.title}</h3>
-            <StarButton
-              opportunityId={opportunity._id}
-              title={opportunity.title}
-              isStarred={opportunity.isStarred}
-            />
-          </div>
-          <AvailabilityPill opportunity={opportunity} />
-          <p className="line-clamp-2 text-sm">{opportunity.description}</p>
-        </div>
-        <dl className="flex flex-col gap-2 text-sm font-medium text-muted-foreground">
-          <div className="flex items-center gap-1">
-            {/* eslint-disable-next-line @next/next/no-img-element -- fixed-size design icon */}
-            <img src="/icons/opportunities/time.svg" alt="" width={18} height={18} />
-            <dt>Apply by</dt>
-            <dd className="font-semibold text-foreground">
-              {formatDeadline(opportunity.deadline)}
-            </dd>
-          </div>
-          <div className="flex items-center gap-1">
-            {/* eslint-disable-next-line @next/next/no-img-element -- fixed-size design icon */}
-            <img src="/icons/opportunities/cash.svg" alt="" width={18} height={18} />
-            <dt className="sr-only">Compensation</dt>
-            <dd>{formatCompensation(opportunity)}</dd>
-          </div>
-        </dl>
+    <article className="flex flex-col overflow-hidden rounded-lg bg-gray-0 shadow-card">
+      <div className="aspect-[386/118] w-full bg-gray-100">
+        {banner && (
+          // eslint-disable-next-line @next/next/no-img-element -- blob URL from a private upload
+          <img src={banner} alt="" className="size-full object-cover" />
+        )}
       </div>
-      <Button
-        type="button"
-        className="mt-auto h-[41px] w-full rounded-[10px]"
-        onClick={() => onOpen(opportunity._id)}
-      >
-        {opportunity.isGated ? "Apply" : "View opportunity"}
-      </Button>
+      <div className="flex flex-1 flex-col gap-4 p-6">
+        <div className="flex items-center gap-2">
+          <CompanyAvatar name={opportunity.companyName} size="xs" />
+          <p className="truncate text-body text-gray-950">{opportunity.companyName}</p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {feedTags(opportunity).map((tag) => (
+            <Badge key={tag.label} tone={tag.tone}>
+              {tag.label}
+            </Badge>
+          ))}
+        </div>
+        <div className="flex min-w-0 items-center gap-2">
+          <h3 className="truncate text-heading-sm text-gray-950">{opportunity.title}</h3>
+          <StarButton
+            opportunityId={opportunity._id}
+            title={opportunity.title}
+            isStarred={opportunity.isStarred}
+          />
+        </div>
+        <div className="flex flex-col gap-0.5">
+          <p className="text-body-lg text-gray-950">{formatPay(opportunity)}</p>
+          <p className="text-body-sm text-gray-500">
+            Apply by {formatDeadline(opportunity.deadline)}
+          </p>
+        </div>
+        <Button
+          type="button"
+          variant={primary ? "primary" : "primary-subtle"}
+          className="mt-auto w-full"
+          aria-label={`${action.label}: ${opportunity.title}`}
+          onClick={() => onOpen(opportunity._id)}
+        >
+          {action.label}
+        </Button>
+      </div>
     </article>
   );
 }

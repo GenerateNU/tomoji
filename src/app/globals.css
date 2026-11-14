@@ -14,6 +14,7 @@
   /* Figma hi-fi palette. The grays replace Tailwind's gray scale and carry a
      slight cool tint; reds are Tailwind's own. */
   --color-gray-0: #ffffff;
+  --color-gray-10: #fcfcfd;
   --color-gray-25: #f8f8f9;
   --color-gray-50: #f2f2f3;
   --color-gray-100: #e5e5e6;
@@ -78,6 +79,12 @@
   --shadow-card: 0 0 25px -5px rgb(0 0 0 / 0.1);
   /* Figma tiles and option cards that sit on a page. */
   --shadow-raised: 0 0 12.5px rgb(0 0 0 / 0.05);
+  --shadow-tile: 0 0 25px -5px rgb(0 0 0 / 0.05);
+  --shadow-tile-hover: 0 8px 30px -12px rgb(0 0 0 / 0.12);
+  /* Page surface that sits beside the sidebar. */
+  --shadow-page: 0 0 20px rgb(0 0 0 / 0.05);
+  --shadow-thumb: 0 0 10px rgb(5 5 5 / 0.1);
+  --shadow-segment: 0 0 8px rgb(0 0 0 / 0.08);
 
   /* Figma text styles, set in Host Grotesk; 1.3125 is its "normal" line
      height, so heights match the designs. Headings are medium weight. Each body size comes as
@@ -106,12 +113,18 @@
   --text-body-sm--line-height: 1.3125;
   --text-body-xs: 0.75rem;
   --text-body-xs--line-height: 1.3125;
+  /* Monospaced code samples in the design-system docs. */
+  --text-code: 0.78125rem;
+  --text-code--line-height: 1.6;
+  --text-code-lg: 0.8125rem;
+  --text-code-lg--line-height: 1.4;
 }
 
 /* Light values follow the Figma hi-fi color roles: blue primary, black
    secondary, mint special, gray-950 text, gray-500 secondary text, gray-300
    input borders, gray-100 hairlines, gray-50 surfaces, red-600 destructive. */
 :root {
+  color-scheme: light;
   --background: var(--color-gray-0);
   --foreground: var(--color-gray-950);
   --card: var(--color-gray-0);
@@ -198,5 +211,107 @@
   button:not(:disabled),
   [role="button"]:not(:disabled) {
     cursor: pointer;
+  }
+}
+
+/* Sidebar logo: the brackets slide in and the letters type out one by one.
+   The linear() easings step the brackets across each letter's width. */
+.spell-logo {
+  --spell-type: linear(
+    0,
+    0.291 8%,
+    0.291 25%,
+    0.591 33%,
+    0.591 50%,
+    0.883 58%,
+    0.883 75%,
+    1 83%,
+    1
+  );
+  --spell-erase: linear(
+    0,
+    0.118 8%,
+    0.118 25%,
+    0.409 33%,
+    0.409 50%,
+    0.709 58%,
+    0.709 75%,
+    1 83%,
+    1
+  );
+}
+.spell-logo [data-letter] {
+  opacity: 1;
+  transition: opacity 40ms linear calc(var(--i) * 50ms);
+}
+.spell-logo [data-bracket] {
+  transition: translate 0.2s var(--spell-type);
+  translate: 0;
+}
+.spell-logo[data-collapsed] [data-letter] {
+  opacity: 0;
+  transition-delay: calc((3 - var(--i)) * 50ms);
+}
+.spell-logo[data-collapsed] [data-bracket] {
+  transition-timing-function: var(--spell-erase);
+  translate: -235.99px;
+}
+[data-sidebar][data-peek]:hover .spell-logo[data-collapsed] [data-letter],
+[data-sidebar]:has(:focus-visible) .spell-logo[data-collapsed] [data-letter],
+[data-sidebar]:has(:popover-open) .spell-logo[data-collapsed] [data-letter],
+[data-sidebar]:has([data-popup-open]) .spell-logo[data-collapsed] [data-letter] {
+  opacity: 1;
+  transition-delay: calc(var(--i) * 50ms);
+}
+[data-sidebar][data-peek]:hover .spell-logo[data-collapsed] [data-letter] {
+  transition-delay: calc(0.1s + var(--i) * 50ms);
+}
+[data-sidebar][data-peek]:hover .spell-logo[data-collapsed] [data-bracket],
+[data-sidebar]:has(:focus-visible) .spell-logo[data-collapsed] [data-bracket],
+[data-sidebar]:has(:popover-open) .spell-logo[data-collapsed] [data-bracket],
+[data-sidebar]:has([data-popup-open]) .spell-logo[data-collapsed] [data-bracket] {
+  transition-timing-function: var(--spell-type);
+  translate: 0;
+}
+[data-sidebar][data-peek]:hover .spell-logo[data-collapsed] [data-bracket] {
+  transition-delay: 0.1s;
+}
+@media (prefers-reduced-motion: reduce) {
+  .spell-logo [data-letter],
+  .spell-logo [data-bracket] {
+    transition: none;
+  }
+}
+
+@keyframes spinner-turn {
+  0% {
+    rotate: none;
+  }
+  40%,
+  50% {
+    rotate: 180deg;
+  }
+  90%,
+  to {
+    rotate: 360deg;
+  }
+}
+@keyframes spinner-pulse {
+  0%,
+  to {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.4;
+  }
+}
+.spinner-brackets {
+  transform-box: fill-box;
+  transform-origin: 50%;
+  animation: 1.6s cubic-bezier(0.65, 0, 0.35, 1) infinite spinner-turn;
+}
+@media (prefers-reduced-motion: reduce) {
+  .spinner-brackets {
+    animation: 1.6s ease-in-out infinite spinner-pulse;
   }
 }

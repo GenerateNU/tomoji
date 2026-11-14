@@ -15,7 +15,7 @@ export function FilterSelect({
 }) {
   const id = useId();
   return (
-    <div className="flex min-w-[155px] flex-col gap-3">
+    <div className="group flex min-w-[155px] flex-col gap-3">
       <Label htmlFor={id} className="text-lg">
         {label}
       </Label>

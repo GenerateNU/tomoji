@@ -1,63 +1,77 @@
 import type { ReactNode } from "react";
 import { mergeProps } from "@base-ui/react/merge-props";
 import { useRender } from "@base-ui/react/use-render";
-import { CircleAlertIcon, CircleCheckIcon, CircleIcon } from "lucide-react";
+import { RiCheckboxCircleFill, RiCircleLine, RiErrorWarningFill } from "@remixicon/react";
 import { Badge } from "@/components/ui/badge";
+import { iconProps } from "@/lib/icons";
+import { focusRing } from "@/lib/styles";
 import { cn } from "@/lib/utils";
 
 type AssignmentStatus = "todo" | "submitted" | "overdue";
 
 const STATUS = {
-  todo: { icon: <CircleIcon className="text-gray-500" />, tone: "neutral", name: "To do" },
+  todo: { Icon: RiCircleLine, color: "text-gray-500", tone: "neutral", name: "To do" },
   submitted: {
-    icon: <CircleCheckIcon className="fill-primary text-white" />,
+    Icon: RiCheckboxCircleFill,
+    color: "text-blue-primary",
     tone: "primary",
     name: "Submitted",
   },
   overdue: {
-    icon: <CircleAlertIcon className="fill-red-600 text-white" />,
+    Icon: RiErrorWarningFill,
+    color: "text-red-600",
     tone: "destructive",
     name: "Overdue",
   },
 } as const;
 
-type AssignmentRowProps = useRender.ComponentProps<"a"> & {
-  status: AssignmentStatus;
+type AssignmentRowProps = Omit<useRender.ComponentProps<"button">, "title"> & {
+  /** Sets the icon and the tag's tone. */
+  status?: AssignmentStatus;
   title: ReactNode;
   /** The tag text, e.g. "Due in 1 day" or "2 days overdue". */
   due: ReactNode;
+  /** Renders a link to this address instead of a button. */
+  href?: string;
 };
 
 /**
  * Figma "Assignment Row": one assignment in a creator's to-do list. The status
  * sets the icon and the tag's tone; the title truncates to one line. Renders a
- * link by default; pass `render={<Link href="..." />}` for client navigation.
+ * button, or a link when `href` is set; pass `render={<Link href="..." />}` for
+ * client navigation.
  */
 export function AssignmentRow({
-  status,
+  status = "todo",
   title,
   due,
   className,
   render,
+  href,
   ...props
 }: AssignmentRowProps) {
-  const { icon, tone, name } = STATUS[status];
+  const { Icon, color, tone, name } = STATUS[status];
+  const isLink = href !== undefined;
   return useRender({
-    defaultTagName: "a",
-    props: mergeProps<"a">(
+    defaultTagName: isLink ? "a" : "button",
+    props: mergeProps<"button">(
       {
+        ...(isLink ? { href } : render ? {} : { type: "button" as const }),
         className: cn(
-          "flex items-center gap-4 rounded-sm bg-background px-4 py-3 transition-colors outline-none hover:bg-gray-25 focus-visible:ring-4 focus-visible:ring-ring/25",
+          "flex w-full cursor-pointer items-center gap-4 rounded bg-gray-0 px-4 py-3 text-left transition-colors hover:bg-gray-25",
+          focusRing,
           className,
         ),
         children: (
           <>
-            <span className="flex min-w-0 flex-1 items-center gap-2 [&>svg]:size-5 [&>svg]:shrink-0">
-              {icon}
+            <span className="flex min-w-0 flex-1 items-center gap-2">
+              <Icon {...iconProps} size={20} className={cn("shrink-0", color)} />
               <span className="sr-only">{name}:</span>
-              <span className="truncate text-body-sm font-medium text-foreground">{title}</span>
+              <span className="truncate text-body-sm font-medium text-gray-950">{title}</span>
             </span>
-            <Badge tone={tone}>{due}</Badge>
+            <Badge tone={tone} size="sm">
+              {due}
+            </Badge>
           </>
         ),
       },

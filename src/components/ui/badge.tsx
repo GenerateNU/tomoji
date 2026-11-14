@@ -1,6 +1,8 @@
 import { mergeProps } from "@base-ui/react/merge-props";
 import { useRender } from "@base-ui/react/use-render";
 import { cva, type VariantProps } from "class-variance-authority";
+import { RiCloseLine } from "@remixicon/react";
+import { iconProps, type IconComponent } from "@/lib/icons";
 import { cn } from "@/lib/utils";
 
 // Figma "Tag": a compact, non-interactive label for status or metadata. Tone
@@ -32,8 +34,45 @@ function Badge({
   size = "sm",
   tone = "neutral",
   render,
+  icon: Icon,
+  onRemove,
+  removeLabel,
   ...props
-}: useRender.ComponentProps<"span"> & VariantProps<typeof badgeVariants>) {
+}: useRender.ComponentProps<"span"> &
+  VariantProps<typeof badgeVariants> & {
+    icon?: IconComponent;
+    onRemove?: () => void;
+    removeLabel?: string;
+  }) {
+  const label =
+    removeLabel ?? `Remove ${typeof props.children === "string" ? props.children : "tag"}`;
+  const iconSize = size === "md" ? 14 : 12;
+  const withExtras =
+    Icon || onRemove
+      ? {
+          children: (
+            <>
+              {Icon ? <Icon {...iconProps} size={iconSize} /> : null}
+              {props.children}
+              {onRemove ? (
+                <button
+                  type="button"
+                  aria-label={label}
+                  onClick={(event) => {
+                    // Stops the click opening a parent Select.
+                    event.stopPropagation();
+                    onRemove();
+                  }}
+                  onKeyDown={(event) => event.stopPropagation()}
+                  className="-m-0.5 cursor-pointer rounded-full p-0.5 transition-opacity outline-none hover:opacity-70 focus-visible:ring-2 focus-visible:ring-blue-primary/25"
+                >
+                  <RiCloseLine {...iconProps} size={iconSize} />
+                </button>
+              ) : null}
+            </>
+          ),
+        }
+      : null;
   return useRender({
     defaultTagName: "span",
     props: mergeProps<"span">(
@@ -41,6 +80,7 @@ function Badge({
         className: cn(badgeVariants({ size, tone }), className),
       },
       props,
+      withExtras ?? {},
     ),
     render,
     state: {
@@ -51,4 +91,4 @@ function Badge({
   });
 }
 
-export { Badge, badgeVariants };
+export { Badge, Badge as Tag, badgeVariants };

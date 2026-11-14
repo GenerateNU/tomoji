@@ -3,7 +3,7 @@
 import * as React from "react";
 import { Avatar as AvatarPrimitive } from "@base-ui/react/avatar";
 import { cva, type VariantProps } from "class-variance-authority";
-import { Building2Icon, UserRoundIcon } from "lucide-react";
+import { RiBuilding2Fill, RiUser3Fill } from "@remixicon/react";
 import { cn } from "@/lib/utils";
 
 // Figma "Avatar" (people, round) and "Company Avatar" (rounded square), at
@@ -29,7 +29,7 @@ const avatarVariants = cva("group/avatar relative flex shrink-0 overflow-hidden 
   },
 });
 
-function Avatar({
+function AvatarRoot({
   className,
   size = "default",
   shape = "circle",
@@ -44,6 +44,110 @@ function Avatar({
       {...props}
     />
   );
+}
+
+type AvatarSize = 24 | 32 | 40 | 48;
+
+const boxSize: Record<AvatarSize, string> = {
+  24: "size-6",
+  32: "size-8",
+  40: "size-10",
+  48: "size-12",
+};
+const initialsText: Record<AvatarSize, string> = {
+  24: "text-body-xs font-medium",
+  32: "text-body-sm font-medium",
+  40: "text-body font-medium",
+  48: "text-body-lg font-medium",
+};
+const placeholderSize: Record<AvatarSize, number> = { 24: 14, 32: 18, 40: 24, 48: 28 };
+const companyRadius: Record<AvatarSize, string> = {
+  24: "rounded-xs",
+  32: "rounded",
+  40: "rounded",
+  48: "rounded",
+};
+
+type AvatarProps = {
+  size?: AvatarSize;
+  initials?: string;
+  src?: string;
+  alt?: string;
+  className?: string;
+};
+
+function AvatarBase({
+  size = 24,
+  initials,
+  src,
+  alt = "",
+  className,
+  shape,
+  initialsClass,
+  Placeholder,
+}: AvatarProps & {
+  shape: string;
+  initialsClass: string;
+  Placeholder: typeof RiUser3Fill;
+}) {
+  return (
+    <AvatarPrimitive.Root
+      data-slot="avatar"
+      className={cn(
+        "inline-flex shrink-0 items-center justify-center overflow-hidden bg-gray-50",
+        boxSize[size],
+        shape,
+        className,
+      )}
+    >
+      {src ? (
+        <AvatarPrimitive.Image src={src} alt={alt} className="size-full object-cover" />
+      ) : null}
+      <AvatarPrimitive.Fallback
+        className={cn(
+          "flex size-full items-center justify-center",
+          initials ? initialsClass : "bg-gray-50 text-gray-400",
+        )}
+      >
+        {initials ? (
+          <span className={initialsText[size]}>{initials}</span>
+        ) : (
+          <Placeholder size={placeholderSize[size]} aria-hidden />
+        )}
+      </AvatarPrimitive.Fallback>
+    </AvatarPrimitive.Root>
+  );
+}
+
+function Avatar(props: AvatarProps) {
+  return (
+    <AvatarBase
+      {...props}
+      shape="rounded-full"
+      initialsClass="bg-blue-subtle text-blue-primary"
+      Placeholder={RiUser3Fill}
+    />
+  );
+}
+
+function CompanyAvatar(props: AvatarProps) {
+  return (
+    <AvatarBase
+      {...props}
+      shape={companyRadius[props.size ?? 24]}
+      initialsClass="bg-gray-50 text-gray-700"
+      Placeholder={RiBuilding2Fill}
+    />
+  );
+}
+
+function getInitials(name: string) {
+  return name
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((word) => word[0].toUpperCase())
+    .join("");
 }
 
 function AvatarImage({ className, ...props }: AvatarPrimitive.Image.Props) {
@@ -72,8 +176,8 @@ function AvatarFallback({ className, children, ...props }: AvatarPrimitive.Fallb
     >
       {empty ? (
         <>
-          <UserRoundIcon aria-hidden className="group-data-[shape=square]/avatar:hidden" />
-          <Building2Icon aria-hidden className="hidden group-data-[shape=square]/avatar:block" />
+          <RiUser3Fill aria-hidden className="group-data-[shape=square]/avatar:hidden" />
+          <RiBuilding2Fill aria-hidden className="hidden group-data-[shape=square]/avatar:block" />
         </>
       ) : (
         children
@@ -126,4 +230,14 @@ function AvatarGroupCount({ className, ...props }: React.ComponentProps<"div">) 
   );
 }
 
-export { Avatar, AvatarImage, AvatarFallback, AvatarGroup, AvatarGroupCount, AvatarBadge };
+export {
+  Avatar,
+  AvatarRoot,
+  CompanyAvatar,
+  getInitials,
+  AvatarImage,
+  AvatarFallback,
+  AvatarGroup,
+  AvatarGroupCount,
+  AvatarBadge,
+};

@@ -1,5 +1,6 @@
 import type { ComponentProps } from "react";
-import { CircleCheckIcon } from "lucide-react";
+import { RiCheckboxCircleLine } from "@remixicon/react";
+import { iconProps } from "@/lib/icons";
 import { cn } from "@/lib/utils";
 
 type StepperProps = ComponentProps<"ol"> & {
@@ -9,7 +10,10 @@ type StepperProps = ComponentProps<"ol"> & {
   current: number;
 };
 
-/** Figma "Progress Bar (Stepper)": one blue bar per step, filled through the current one. */
+/**
+ * Figma "Progress Bar (Stepper)": one bar per step, filled blue through the current
+ * one. Moving to a step fills its bar left to right over 300ms.
+ */
 export function Stepper({ steps, current, className, ...props }: StepperProps) {
   return (
     <ol className={cn("flex w-full gap-1.5", className)} {...props}>
@@ -22,13 +26,14 @@ export function Stepper({ steps, current, className, ...props }: StepperProps) {
             aria-current={state === "current" ? "step" : undefined}
             className="group/step flex min-w-0 flex-1 flex-col gap-2"
           >
-            <span
-              aria-hidden
-              className="h-1.5 rounded-[1px] bg-primary group-data-[state=upcoming]/step:bg-gray-100"
-            />
-            <span className="flex min-w-0 items-center gap-1 text-body-xs text-gray-700 group-data-[state=current]/step:font-medium group-data-[state=current]/step:text-foreground group-data-[state=upcoming]/step:text-gray-400">
+            {/* A gray track with a blue fill that grows left to right as the step is
+                reached (and shrinks back when stepping back). */}
+            <span aria-hidden className="h-1.5 overflow-hidden rounded-xs bg-gray-100">
+              <span className="block h-full origin-left scale-x-100 bg-blue-primary transition-transform duration-300 ease-out group-data-[state=upcoming]/step:scale-x-0 motion-reduce:transition-none" />
+            </span>
+            <span className="flex min-w-0 items-center gap-1 text-body-xs font-normal text-gray-700 group-data-[state=current]/step:font-medium group-data-[state=current]/step:text-gray-950 group-data-[state=upcoming]/step:text-gray-400">
               {state === "complete" && (
-                <CircleCheckIcon aria-hidden className="size-3.5 shrink-0" />
+                <RiCheckboxCircleLine {...iconProps} size={14} className="shrink-0" />
               )}
               <span className="truncate">{label}</span>
               {state === "complete" && <span className="sr-only"> (complete)</span>}

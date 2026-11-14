@@ -1,147 +1,187 @@
 "use client";
 
-import { useState, type KeyboardEvent } from "react";
+import { useState, type ComponentProps, type KeyboardEvent } from "react";
 import { cn } from "@/lib/utils";
-import { ChartTooltip, ChartTooltipRow } from "./chart-tooltip";
-import { heatStep } from "./paths";
+import { ChartTooltip, defaultFormat, tooltipAlign } from "./chart-tooltip";
+import { heatStep, positiveMax } from "./paths";
 
 // Step 0 is empty; 1–3 are blue at 15, 35 and 60%; 4 is full blue.
-const STEP_CLASS = ["bg-gray-50", "bg-primary/15", "bg-primary/35", "bg-primary/60", "bg-primary"];
+const SCALE = [
+  "bg-gray-50",
+  "bg-blue-primary/15",
+  "bg-blue-primary/35",
+  "bg-blue-primary/60",
+  "bg-blue-primary",
+];
 
-type HeatmapProps = {
-  /** Row labels, e.g. days of the week. */
+type HeatmapProps = Omit<ComponentProps<"figure">, "children"> & {
+  /** Row labels top to bottom. */
   rows: string[];
-  /** Column names for the tooltip, e.g. "7 PM"; one per column. */
+  /** Column labels; "" leaves one blank. */
   columns: string[];
-  /** The few column labels shown under the grid, by column index. */
-  columnTicks: { index: number; label: string }[];
   /** values[row][column]. */
   values: number[][];
-  /** What the values count, e.g. "Engagements". */
-  valueLabel: string;
-  formatValue: (value: number) => string;
-  title: string;
-  className?: string;
+  /** Full column names for the tooltip and table. */
+  columnNames?: string[];
+  /** Measure name in the tooltip and table. */
+  seriesLabel?: string;
+  /** Formats values in the tooltip and table. */
+  format?: (value: number) => string;
+  /** Domain top. Defaults to the largest value. */
+  max?: number;
+};
+
+const MOVES: Record<string, [number, number]> = {
+  ArrowUp: [-1, 0],
+  ArrowDown: [1, 0],
+  ArrowLeft: [0, -1],
+  ArrowRight: [0, 1],
 };
 
 /**
  * Figma "Heatmap": a grid of cells on one blue scale, darker meaning more, with
- * a Less → More key. Hovering a cell, or moving with arrow keys once the grid
- * has focus, outlines it and shows its value.
+ * a Less → More key. Hovering a cell, or moving with the arrow keys once the
+ * grid has focus, outlines it and shows its value.
  */
 export function Heatmap({
   rows,
   columns,
-  columnTicks,
   values,
-  valueLabel,
-  formatValue,
-  title,
+  columnNames,
+  seriesLabel = "Value",
+  format = defaultFormat,
+  max,
   className,
+  "aria-label": ariaLabel,
+  ...props
 }: HeatmapProps) {
-  const [active, setActive] = useState<{ row: number; column: number } | null>(null);
-  const max = Math.max(...values.flat(), 0);
-
-  const moveWithKeys = (event: KeyboardEvent<HTMLDivElement>) => {
-    const moves: Record<string, [number, number]> = {
-      ArrowUp: [-1, 0],
-      ArrowDown: [1, 0],
-      ArrowLeft: [0, -1],
-      ArrowRight: [0, 1],
-    };
-    const move = moves[event.key];
-    if (!move) return;
-    event.preventDefault();
-    setActive((current) => {
-      const from = current ?? { row: 0, column: 0 };
-      return {
-        row: Math.min(rows.length - 1, Math.max(0, from.row + move[0])),
-        column: Math.min(columns.length - 1, Math.max(0, from.column + move[1])),
-      };
-    });
+  const top = max ?? positiveMax(values.flat());
+  const [active, setActive] = useState<[number, number] | null>(null);
+  const cellAt = (row: number, column: number): number | undefined => values[row]?.[column];
+  const isEmpty = rows.length === 0 || columns.length === 0 || values.length === 0;
+  const columnName = (index: number) => columnNames?.[index] || columns[index] || `#${index + 1}`;
+  const axisText = "text-body-xs font-normal text-gray-400";
+  const template = {
+    gridTemplateColumns: `repeat(${columns.length}, minmax(0, 1fr))`,
   };
 
-  const activeValue = active ? values[active.row][active.column] : null;
-  const activeTitle = active ? `${rows[active.row]}, ${columns[active.column]}` : "";
+  const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (isEmpty) return;
+    const move = MOVES[event.key];
+    if (move) {
+      setActive((current) => {
+        const [row, column] = current ?? [0, 0];
+        return [
+          Math.min(Math.max(row + move[0], 0), Math.min(rows.length, values.length) - 1),
+          Math.min(Math.max(column + move[1], 0), columns.length - 1),
+        ];
+      });
+    } else if (event.key === "Escape") {
+      setActive(null);
+    } else {
+      return;
+    }
+    event.preventDefault();
+  };
 
   return (
     <figure
-      className={cn(
-        "flex w-fit flex-col gap-3 rounded-sm bg-card px-5 pt-5 pb-4 shadow-card",
-        className,
-      )}
+      aria-label={ariaLabel}
+      className={cn("flex flex-col gap-3 rounded bg-gray-0 px-5 pt-5 pb-4 shadow-tile", className)}
+      {...props}
     >
-      <div className="flex gap-3">
-        <div aria-hidden className="flex flex-col gap-0.5 text-right text-body-xs text-gray-400">
+      <div className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-2">
+        <div aria-hidden className={cn(axisText, "flex flex-col gap-0.5")}>
           {rows.map((row) => (
-            <span key={row} className="h-4 leading-4">
+            <span key={row} className="flex flex-1 items-center justify-end">
               {row}
             </span>
           ))}
         </div>
-        <div className="flex flex-col gap-3">
-          <div
-            role="img"
-            aria-label={title}
-            tabIndex={0}
-            onKeyDown={moveWithKeys}
-            onFocus={() => setActive((current) => current ?? { row: 0, column: 0 })}
-            onBlur={() => setActive(null)}
-            onPointerLeave={() => setActive(null)}
-            className="relative grid w-fit gap-0.5 rounded-xs outline-none focus-visible:ring-4 focus-visible:ring-ring/25"
-            style={{ gridTemplateColumns: `repeat(${columns.length}, 1rem)` }}
-          >
-            {values.map((row, rowIndex) =>
-              row.map((value, columnIndex) => {
-                const isActive = active?.row === rowIndex && active.column === columnIndex;
-                return (
-                  <span
-                    key={`${rowIndex}-${columnIndex}`}
-                    aria-hidden
-                    onPointerEnter={() => setActive({ row: rowIndex, column: columnIndex })}
-                    className={cn(
-                      "relative size-4 rounded-xs",
-                      STEP_CLASS[heatStep(value, max)],
-                      isActive && "inset-ring-2 inset-ring-foreground",
-                    )}
-                  >
-                    {isActive && (
-                      <ChartTooltip
-                        title={activeTitle}
-                        className="absolute bottom-full left-1/2 z-10 mb-2 -translate-x-1/2"
-                      >
-                        <ChartTooltipRow value={formatValue(value)} label={valueLabel} />
-                      </ChartTooltip>
-                    )}
-                  </span>
-                );
-              }),
-            )}
-          </div>
-          {/* Cells are 16px with a 2px gap, so column n starts at n × 18px. */}
-          <div aria-hidden className="relative h-4 text-body-xs text-gray-400">
-            {columnTicks.map((tick) => (
+        <div
+          role="group"
+          tabIndex={0}
+          aria-label={`${ariaLabel ?? "Heatmap"}. Use the arrow keys to read values.`}
+          onKeyDown={onKeyDown}
+          onFocus={() => {
+            if (!isEmpty) setActive((current) => current ?? [0, 0]);
+          }}
+          onBlur={() => setActive(null)}
+          onPointerLeave={() => setActive(null)}
+          className="relative grid gap-0.5 rounded-xs outline-none focus-visible:ring-4 focus-visible:ring-blue-primary/25"
+          style={template}
+        >
+          {values.map((row, rowIndex) =>
+            row.map((value, columnIndex) => (
               <span
-                key={tick.label}
-                className="absolute"
-                style={{ left: `${tick.index * 1.125}rem` }}
-              >
-                {tick.label}
-              </span>
-            ))}
-          </div>
+                key={`${rowIndex}-${columnIndex}`}
+                onPointerEnter={() => setActive([rowIndex, columnIndex])}
+                className={cn(
+                  "aspect-square rounded-xs outline-2 outline-offset-1 transition-[outline-color]",
+                  SCALE[heatStep(value, top)],
+                  active?.[0] === rowIndex && active[1] === columnIndex
+                    ? "outline-gray-950"
+                    : "outline-transparent",
+                )}
+              />
+            )),
+          )}
+          {active && cellAt(active[0], active[1]) !== undefined && (
+            <ChartTooltip
+              title={`${rows[active[0]]}, ${columnName(active[1])}`}
+              rows={[
+                {
+                  label: seriesLabel,
+                  value: format(cellAt(active[0], active[1]) as number),
+                },
+              ]}
+              left={`${((active[1] + 0.5) / columns.length) * 100}%`}
+              top={`${(active[0] / rows.length) * 100}%`}
+              align={tooltipAlign((active[1] + 0.5) / columns.length)}
+            />
+          )}
+        </div>
+        <span />
+        <div aria-hidden className={cn(axisText, "grid gap-0.5")} style={template}>
+          {columns.map((column, index) => (
+            <span key={index} className="whitespace-nowrap">
+              {column}
+            </span>
+          ))}
         </div>
       </div>
-      <div aria-hidden className="flex items-center justify-end gap-1 text-body-xs text-gray-400">
-        Less
-        {STEP_CLASS.map((step) => (
-          <span key={step} className={cn("size-2.5 rounded-xs", step)} />
-        ))}
-        More
+      <div className="flex justify-end">
+        <div aria-hidden className={cn(axisText, "flex items-center gap-1")}>
+          Less
+          {SCALE.map((step) => (
+            <span key={step} className={cn("size-2.5 rounded-xs", step)} />
+          ))}
+          More
+        </div>
       </div>
-      <p className="sr-only" aria-live="polite">
-        {activeValue !== null && `${activeTitle}: ${formatValue(activeValue)} ${valueLabel}`}
-      </p>
+      <table className="sr-only">
+        <caption>{ariaLabel}</caption>
+        <thead>
+          <tr>
+            <th scope="col" />
+            {columns.map((_, index) => (
+              <th key={index} scope="col">
+                {columnName(index)}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {values.map((row, rowIndex) => (
+            <tr key={rowIndex}>
+              <th scope="row">{rows[rowIndex]}</th>
+              {row.map((value, columnIndex) => (
+                <td key={columnIndex}>{format(value)}</td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </figure>
   );
 }

@@ -1,8 +1,9 @@
-import type { ComponentProps } from "react";
+import type { ComponentProps, CSSProperties } from "react";
 import { cn } from "@/lib/utils";
 
 // Figma "Logo" (vector), drawn at 128px and scaled by height. The paths use
-// currentColor, so set the color with a text class.
+// currentColor, so set the color with a text class. Path order in the
+// wordmark: o, h, a, n, i, left bracket, right bracket.
 const WORDMARK_PATHS = [
   "M70.7576 96.978C64.5812 96.978 58.989 95.6425 53.9811 92.9717C49.0567 90.2173 45.1338 86.3779 42.2125 81.4535C39.3747 76.529 37.9558 70.8534 37.9558 64.4266C37.9558 57.9163 39.4164 52.2407 42.3377 47.3997C45.259 42.4753 49.1819 38.6776 54.1063 36.0067C59.1142 33.2524 64.6646 31.8752 70.7576 31.8752C77.0175 31.8752 82.6096 33.2524 87.5341 36.0067C92.4585 38.6776 96.3396 42.4753 99.1774 47.3997C102.099 52.2407 103.559 57.9163 103.559 64.4266C103.559 70.8534 102.099 76.529 99.1774 81.4535C96.2562 86.3779 92.3333 90.2173 87.4089 92.9717C82.4844 95.6425 76.934 96.978 70.7576 96.978ZM70.7576 84.5834C74.0127 84.5834 76.9757 83.8322 79.6466 82.3299C82.401 80.8275 84.571 78.5739 86.1569 75.5692C87.8262 72.5645 88.6608 68.8503 88.6608 64.4266C88.6608 59.9195 87.8262 56.2053 86.1569 53.284C84.571 50.2793 82.401 48.0257 79.6466 46.5233C76.9757 45.021 74.0544 44.2698 70.8828 44.2698C67.6276 44.2698 64.6229 45.021 61.8685 46.5233C59.1142 48.0257 56.9024 50.2793 55.2331 53.284C53.6472 56.2053 52.8543 59.9195 52.8543 64.4266C52.8543 68.8503 53.6472 72.5645 55.2331 75.5692C56.9024 78.5739 59.0725 80.8275 61.7433 82.3299C64.4977 83.8322 67.5024 84.5834 70.7576 84.5834Z",
   "M109.841 95.4756V5.33333H124.239V43.143C126.325 39.7209 129.205 37.0083 132.877 35.0052C136.55 32.9185 140.681 31.8752 145.272 31.8752C152.7 31.8752 158.543 34.254 162.799 39.0115C167.056 43.769 169.185 50.7801 169.185 60.0447V95.4756H154.912V61.4219C154.912 55.7462 153.785 51.4478 151.532 48.5265C149.278 45.6052 145.731 44.1446 140.89 44.1446C136.132 44.1446 132.168 45.8139 128.996 49.1525C125.824 52.4911 124.239 57.2486 124.239 63.425V95.4756H109.841Z",
@@ -18,26 +19,81 @@ const MARK_PATHS = [
   "M112.478 32.4131H121.863V95.5374H112.478V108.57H136.392V19.4297H112.478V32.4131Z",
 ];
 
-type LogoProps = Omit<ComponentProps<"svg">, "children"> & {
-  /** `expanded` is the [ohani] wordmark; `collapsed` is the [o] mark for rails. */
-  type?: "expanded" | "collapsed";
+const EXPANDED_WIDTH = 377.715;
+const COLLAPSED_WIDTH = 141.725;
+
+/** The [o] mark's parts, for the Spinner, which turns the brackets around the o. */
+export const collapsedMark = {
+  width: COLLAPSED_WIDTH,
+  o: MARK_PATHS[0],
+  brackets: [MARK_PATHS[1], MARK_PATHS[2]],
 };
 
-/** The ohani logo. Size it with a height class such as `h-4`; the width follows. */
-export function Logo({ type = "expanded", className, ...props }: LogoProps) {
+type LogoProps = Omit<ComponentProps<"svg">, "children" | "width" | "height"> & {
+  /** `expanded` is the [ohani] wordmark; `collapsed` is the [o] mark for rails. */
+  type?: "expanded" | "collapsed";
+  /** Height in px; the width follows. */
+  size?: 16 | 20 | 24 | 32 | 40 | 48 | 64 | 96 | 128;
+};
+
+/** The ohani logo. Pick a size rather than stretching it; recolor it with a text class. */
+export function Logo({ type = "expanded", size = 24, className, ...props }: LogoProps) {
   const expanded = type === "expanded";
+  const width = expanded ? EXPANDED_WIDTH : COLLAPSED_WIDTH;
   return (
     <svg
       role="img"
       aria-label="ohani"
-      viewBox={expanded ? "0 0 377.715 128" : "0 0 141.725 128"}
+      width={(size * width) / 128}
+      height={size}
+      viewBox={`0 0 ${width} 128`}
       fill="currentColor"
-      className={cn("h-4 w-auto shrink-0 text-foreground", className)}
+      className={cn("shrink-0 text-gray-950", className)}
       {...props}
     >
       {(expanded ? WORDMARK_PATHS : MARK_PATHS).map((d) => (
         <path key={d} d={d} />
       ))}
+    </svg>
+  );
+}
+
+/**
+ * The wordmark that types itself in and out as `collapsed` changes: the right
+ * bracket slides across while h, a, n, i fade one by one ([ohani] <-> [o]). The
+ * motion is CSS in globals.css (.spell-logo); the sidebar's peek state also
+ * drives it, so render it inside a Sidebar.
+ */
+export function SpellingLogo({
+  collapsed,
+  size = 24,
+  className,
+  ...props
+}: Omit<ComponentProps<"svg">, "children" | "width" | "height"> & {
+  collapsed?: boolean;
+  size?: number;
+}) {
+  const [o, ...rest] = WORDMARK_PATHS;
+  const letters = rest.slice(0, 4);
+  const [leftBracket, rightBracket] = rest.slice(4);
+  return (
+    <svg
+      role="img"
+      aria-label="ohani"
+      data-collapsed={collapsed || undefined}
+      width={(size * EXPANDED_WIDTH) / 128}
+      height={size}
+      viewBox={`0 0 ${EXPANDED_WIDTH} 128`}
+      fill="currentColor"
+      className={cn("spell-logo shrink-0 overflow-visible text-gray-950", className)}
+      {...props}
+    >
+      <path d={o} />
+      <path d={leftBracket} />
+      {letters.map((d, index) => (
+        <path key={d} d={d} data-letter="" style={{ "--i": index } as CSSProperties} />
+      ))}
+      <path d={rightBracket} data-bracket="" />
     </svg>
   );
 }

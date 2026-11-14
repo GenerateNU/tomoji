@@ -48,7 +48,7 @@ export function ApplicationNoteForm({
   }
 
   return (
-    <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+    <form onSubmit={handleSubmit} className="group flex flex-col gap-4">
       <DialogTitle>
         <Label htmlFor="application-note" className="gap-0 text-base">
           Note<span className="text-destructive">*</span>

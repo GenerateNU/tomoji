@@ -76,7 +76,7 @@ export function PersonalDetailsForm({
   return (
     <form onSubmit={save} noValidate className="space-y-4">
       <div className="grid gap-6 sm:grid-cols-2">
-        <div className="space-y-2">
+        <div className="group space-y-2">
           <Label htmlFor={`${id}-birthdate`}>Date of birth</Label>
           <Input
             ref={birthdateRef}
@@ -105,7 +105,7 @@ export function PersonalDetailsForm({
             </p>
           )}
         </div>
-        <div className="space-y-2">
+        <div className="group space-y-2">
           <Label htmlFor={`${id}-country`}>Country of residence</Label>
           <select
             id={`${id}-country`}

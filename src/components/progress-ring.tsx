@@ -19,7 +19,7 @@ type ProgressRingProps = ComponentProps<"div"> & {
 /** Figma "Progress Ring": a blue arc on a gray track, filling clockwise from 12 o'clock. */
 export function ProgressRing({
   value,
-  size = "md",
+  size = "sm",
   showLabel = true,
   label,
   className,
@@ -29,13 +29,14 @@ export function ProgressRing({
   const percent = Math.min(100, Math.max(0, value));
   const radius = (box - stroke) / 2;
   const circumference = 2 * Math.PI * radius;
+  const rounded = Math.round(percent);
   return (
     <div
       role="progressbar"
       aria-label={label}
       aria-valuemin={0}
       aria-valuemax={100}
-      aria-valuenow={percent}
+      aria-valuenow={rounded}
       className={cn("relative inline-flex shrink-0 items-center justify-center", className)}
       style={{ width: box, height: box }}
       {...props}
@@ -49,20 +50,21 @@ export function ProgressRing({
           strokeWidth={stroke}
           className="stroke-gray-100"
         />
-        <circle
-          cx={box / 2}
-          cy={box / 2}
-          r={radius}
-          fill="none"
-          strokeWidth={stroke}
-          strokeDasharray={circumference}
-          strokeDashoffset={circumference * (1 - percent / 100)}
-          className="stroke-primary transition-[stroke-dashoffset] duration-300"
-        />
+        {percent > 0 && (
+          <circle
+            cx={box / 2}
+            cy={box / 2}
+            r={radius}
+            fill="none"
+            strokeWidth={stroke}
+            strokeDasharray={`${(percent / 100) * circumference} ${circumference}`}
+            className="stroke-blue-primary transition-[stroke-dasharray] duration-300 motion-reduce:transition-none"
+          />
+        )}
       </svg>
       {showLabel && (
-        <span aria-hidden className={cn("relative font-semibold text-foreground", labelSize)}>
-          {Math.round(percent)}%
+        <span aria-hidden className={cn("relative font-semibold text-gray-950", labelSize)}>
+          {rounded}%
         </span>
       )}
     </div>

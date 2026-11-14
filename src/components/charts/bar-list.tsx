@@ -1,54 +1,122 @@
-import { cn } from "@/lib/utils";
+"use client";
 
-type BarListProps = {
-  /** Largest first. */
+import { useState, type ComponentProps } from "react";
+import { cn } from "@/lib/utils";
+import { ChartTooltip, defaultFormat } from "./chart-tooltip";
+import { positiveMax } from "./paths";
+
+type BarListProps = Omit<ComponentProps<"figure">, "children"> & {
+  /** Rows top to bottom, largest first. */
   items: { label: string; value: number }[];
-  /** The label of the row the story is about; the others turn gray. */
+  /** Label of the emphasized row; the others turn gray. */
   highlight?: string;
-  formatValue: (value: number) => string;
-  className?: string;
+  /** Domain top. Defaults to the largest value. */
+  max?: number;
+  /** Measure name in the tooltip and table. */
+  seriesLabel?: string;
+  /** Formats values at the tips, in the tooltip and table. */
+  format?: (value: number) => string;
 };
 
 /**
  * Figma "Bar List": ranked horizontal bars in a card, each with its value at
- * the tip. Hovering a row also shows its share of the total.
+ * the tip. Hovering or focusing a row shows its share of the total and dims
+ * the other bars.
  */
-export function BarList({ items, highlight, formatValue, className }: BarListProps) {
-  const max = Math.max(...items.map((item) => item.value), 1);
-  const total = items.reduce((sum, item) => sum + item.value, 0);
+export function BarList({
+  items,
+  highlight,
+  max,
+  seriesLabel = "Value",
+  format = defaultFormat,
+  className,
+  "aria-label": ariaLabel,
+  ...props
+}: BarListProps) {
+  const [active, setActive] = useState<number | null>(null);
+  const top = max ?? positiveMax(items.map((item) => item.value));
+  const total = items.reduce((sum, item) => sum + item.value, 0) || 1;
 
   return (
-    <ul className={cn("rounded-sm bg-card px-5 py-4 shadow-card", className)}>
-      {items.map((item) => {
-        const emphasis =
-          highlight === undefined ? "default" : item.label === highlight ? "highlighted" : "muted";
-        const share = total === 0 ? 0 : Math.round((item.value / total) * 100);
-        return (
-          <li
-            key={item.label}
-            data-emphasis={emphasis}
-            className="group/bar-row flex h-8 items-center gap-3"
-          >
-            <span className="w-36 shrink-0 truncate text-body-sm text-gray-700 group-data-[emphasis=highlighted]/bar-row:font-medium group-data-[emphasis=highlighted]/bar-row:text-foreground">
-              {item.label}
-            </span>
-            <span className="flex min-w-0 flex-1 items-center gap-2 pr-2">
+    <figure
+      aria-label={ariaLabel}
+      className={cn("rounded bg-gray-0 px-5 py-4 shadow-tile", className)}
+      {...props}
+    >
+      <ul className="flex flex-col" onPointerLeave={() => setActive(null)}>
+        {items.map((item, index) => {
+          const percent = (item.value / top) * 100;
+          const emphasized = highlight === undefined || highlight === item.label;
+          return (
+            <li
+              key={item.label}
+              tabIndex={0}
+              aria-label={`${item.label}: ${format(item.value)}`}
+              onPointerEnter={() => setActive(index)}
+              onFocus={() => setActive(index)}
+              onBlur={() => setActive(null)}
+              className="relative grid cursor-default grid-cols-[9rem_1fr] items-center gap-3 rounded-xs py-1.5 outline-none focus-visible:ring-4 focus-visible:ring-blue-primary/25"
+            >
               <span
-                aria-hidden
-                className="h-5 rounded-r-sm bg-primary group-data-[emphasis=muted]/bar-row:bg-gray-50"
-                style={{ width: `calc(${(item.value / max) * 100}% - 4rem)` }}
-              />
-              <span className="shrink-0 text-body-sm font-medium whitespace-nowrap text-foreground">
-                {formatValue(item.value)}
-                <span className="font-normal text-muted-foreground opacity-0 transition-opacity group-hover/bar-row:opacity-100">
-                  {" "}
-                  · {share}%
+                className={cn(
+                  "truncate text-body-sm",
+                  highlight === item.label
+                    ? "font-medium text-gray-950"
+                    : "font-normal text-gray-700",
+                )}
+              >
+                {item.label}
+              </span>
+              <span className="flex min-w-0 items-center gap-2">
+                <span
+                  className={cn(
+                    "h-5 shrink-0 rounded-r transition-opacity",
+                    emphasized ? "bg-blue-primary" : "bg-gray-50",
+                    active !== null && active !== index && "opacity-60",
+                  )}
+                  style={{
+                    width: `calc(${percent}% - ${(percent / 100) * 64}px)`,
+                  }}
+                />
+                <span className="shrink-0 text-body-sm font-medium text-gray-950 tabular-nums">
+                  {format(item.value)}
                 </span>
               </span>
-            </span>
-          </li>
-        );
-      })}
-    </ul>
+              {active === index && (
+                <ChartTooltip
+                  title={item.label}
+                  rows={[
+                    { label: seriesLabel, value: format(item.value) },
+                    {
+                      label: "of total",
+                      value: `${Math.round((item.value / total) * 100)}%`,
+                    },
+                  ]}
+                  left={`calc(9rem + 12px + (100% - 9rem - 12px - 64px) * ${percent / 100})`}
+                  top="6px"
+                />
+              )}
+            </li>
+          );
+        })}
+      </ul>
+      <table className="sr-only">
+        <caption>{ariaLabel}</caption>
+        <thead>
+          <tr>
+            <th scope="col">Item</th>
+            <th scope="col">{seriesLabel}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {items.map((item) => (
+            <tr key={item.label}>
+              <th scope="row">{item.label}</th>
+              <td>{format(item.value)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </figure>
   );
 }

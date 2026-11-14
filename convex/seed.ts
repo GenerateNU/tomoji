@@ -471,6 +471,33 @@ async function seedScenario(
       amount: compensation.fixedFeeCents,
       currency: "usd",
     });
+    // An earlier week's views, approved and paid before the dispute opened.
+    // The charge is synthetic; no Stripe object has these ids.
+    const paid = await createPayout(ctx, {
+      assignmentId,
+      postId,
+      sourceKey: "demo-views-week-1",
+      amount: 5_000,
+      currency: "usd",
+      earningPeriod: { startsAt: now - 10 * dayMs, endsAt: now - 3 * dayMs },
+    });
+    await ctx.db.patch("payouts", paid._id, {
+      approvalStatus: "approved",
+      approvalSource: "automatic",
+      approvedAt: now,
+      paymentStatus: "transferred",
+      transferredAt: now,
+    });
+    await ctx.db.insert("payments", {
+      payoutId: paid._id,
+      attempt: 1,
+      stripeAccountId: "acct_tomoji_seed",
+      stripePaymentIntentId: `pi_tomoji_seed_${paid._id}`,
+      status: "succeeded",
+      stripeFee: 175,
+      creatorNet: 4_825,
+      settlementCurrency: "usd",
+    });
     await ctx.db.insert("disputes", {
       ...scope,
       assignmentId,
@@ -985,13 +1012,20 @@ export const clearDemo = internalMutation({
           .collect();
         for (const row of disputes) removed.disputes.add(row._id);
         await drop("disputes", disputes);
-        await drop(
-          "payouts",
-          await ctx.db
-            .query("payouts")
-            .withIndex("by_assignmentId_and_sourceKey", (q) => q.eq("assignmentId", assignmentId))
-            .collect(),
-        );
+        const payouts = await ctx.db
+          .query("payouts")
+          .withIndex("by_assignmentId_and_sourceKey", (q) => q.eq("assignmentId", assignmentId))
+          .collect();
+        for (const { _id: payoutId } of payouts) {
+          await drop(
+            "payments",
+            await ctx.db
+              .query("payments")
+              .withIndex("by_payoutId_and_attempt", (q) => q.eq("payoutId", payoutId))
+              .collect(),
+          );
+        }
+        await drop("payouts", payouts);
       }
       await drop("assignments", assignments);
       await drop("opportunities", opportunities);

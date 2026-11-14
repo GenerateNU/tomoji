@@ -103,7 +103,9 @@ Only the `POST /stripe/webhook` endpoint changes a creator's Stripe details. It:
 - on `account.updated`, reads the account from Stripe as it is now rather than trusting the
   event's copy, because two events in the same second can arrive in either order. Each save is
   stamped with when that read finished, and a read older than the saved one is skipped, so two
-  deliveries saving in reverse order can't restore an earlier state. If Stripe can't be reached
+  deliveries saving in reverse order can't restore an earlier state. About five seconds after
+  each save it reads the account once more, so even reads whose stamps tie, or come from servers
+  with slightly different clocks, settle on Stripe's real state. If Stripe can't be reached
   it answers 500 so Stripe redelivers; if Tomoji has lost access (the creator disconnected) it
   answers 200;
 - on `account.application.deauthorized`, marks the account `disconnected`. Later updates never
@@ -120,8 +122,10 @@ A creator never ends up with two accounts:
   back. The key includes a fingerprint of the request, because Stripe refuses a reused key with
   different parameters for 24 hours. A click that starts after another has already saved the
   account gets that account instead of a new attempt.
-- An unsupported-country refusal deletes only its own attempt, so a slow refusal can't remove
-  a newer attempt the creator started after changing country.
+- When Stripe rejects the request as invalid (an unsupported country or anything else), it made
+  no account, so the attempt is dropped and a retry starts fresh instead of Stripe replaying the
+  refusal under the old key for 24 hours. A network error keeps the attempt, since Stripe may
+  have made the account. Dropping deletes only that attempt, never a newer one.
 - Stripe forgets idempotency keys after 24 hours, so a retry first lists accounts created
   around the attempt's start and reuses the one tagged with `metadata.creatorId`.
 - The account is saved before the onboarding link is requested, so a failed link reuses it.

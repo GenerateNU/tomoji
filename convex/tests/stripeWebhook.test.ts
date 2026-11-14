@@ -297,3 +297,69 @@ describe("POST /stripe/webhook", () => {
     expect(await account()).toMatchObject(stored);
   });
 });
+
+// Two deliveries can read the account and save in either order, and their stamps
+// can tie or come from servers whose clocks differ slightly. A second read a few
+// seconds later, after any overlapping delivery has saved, settles the account
+// on Stripe's real state.
+describe("POST /stripe/webhook re-check", () => {
+  test("re-reads the account shortly after saving and keeps Stripe's latest state", async () => {
+    vi.useFakeTimers();
+    try {
+      const { t, account } = await seedStoredAccount("webhook_recheck");
+      // The delivery's read is overtaken: by the re-check, Stripe has paused payouts.
+      retrieveAccount
+        .mockResolvedValueOnce(currentAccount() as never)
+        .mockResolvedValue(currentAccount({ payouts_enabled: false }) as never);
+
+      await deliver(t, accountUpdated({}));
+      expect(await account()).toMatchObject({ payoutsEnabled: true });
+
+      await t.finishAllScheduledFunctions(() => vi.runAllTimers());
+
+      expect(retrieveAccount).toHaveBeenCalledTimes(2);
+      expect(await account()).toMatchObject({ payoutsEnabled: false });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("does not schedule a re-check for an account this deployment does not have", async () => {
+    vi.useFakeTimers();
+    try {
+      const t = convexTest(schema, modules);
+      const foreign = { id: "acct_elsewhere", metadata: { creatorId: "k57notours" } };
+      retrieveAccount.mockResolvedValue(currentAccount(foreign) as never);
+
+      await deliver(t, accountUpdated(foreign));
+      await t.finishAllScheduledFunctions(() => vi.runAllTimers());
+
+      expect(retrieveAccount).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  // The account may be disconnected by then; that is recorded separately.
+  test("leaves the account alone when the re-check can no longer read it", async () => {
+    vi.useFakeTimers();
+    try {
+      const { t, account } = await seedStoredAccount("webhook_recheck_gone");
+      vi.spyOn(console, "log").mockImplementation(() => {});
+      retrieveAccount.mockResolvedValueOnce(currentAccount() as never).mockRejectedValue(
+        new Stripe.errors.StripePermissionError({
+          type: "invalid_request_error",
+          code: "account_invalid",
+          message: "The provided key does not have access to account",
+        }),
+      );
+
+      await deliver(t, accountUpdated({}));
+      await t.finishAllScheduledFunctions(() => vi.runAllTimers());
+
+      expect(await account()).toMatchObject({ payoutsEnabled: true });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});

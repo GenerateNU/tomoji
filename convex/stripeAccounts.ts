@@ -1,12 +1,12 @@
 import { v } from "convex/values";
 import Stripe from "stripe";
 import { internal } from "./_generated/api";
-import type { Doc, Id } from "./_generated/dataModel";
-import { internalMutation, internalQuery, type ActionCtx } from "./_generated/server";
+import { internalAction, internalMutation, internalQuery } from "./_generated/server";
 import { apiError } from "./lib/errors";
 import { creatorAction, creatorQuery } from "./lib/functions";
 import {
-  fingerprint,
+  createConnectAccount,
+  findCreatedConnectAccount,
   siteUrl,
   stripeClient,
   stripeErrorDetails,
@@ -43,10 +43,6 @@ import schema from "./schema";
 const RETURN_PATH = "/profile?stripe=return";
 const REFRESH_PATH = "/profile?stripe=refresh";
 
-// How far around an attempt's start to look for an account Stripe already made.
-// Stripe creates it within seconds of the request; the margin covers clock skew.
-const RECOVERY_WINDOW_SECONDS = 10 * 60;
-
 /**
  * What the creator has to do about payouts: `notStarted`, `actionRequired`,
  * `inReview`, `ready`, or `disconnected`.
@@ -56,7 +52,9 @@ export const me = creatorQuery({
   returns: v.object({ status: stripeAccountStatus }),
   handler: async (ctx) => {
     const creatorId = await requireCallerCreatorId(ctx, ctx.user);
-    return { status: toStripeAccountStatus(await getStripeAccountByCreatorId(ctx, creatorId)) };
+    return {
+      status: toStripeAccountStatus(await getStripeAccountByCreatorId(ctx, creatorId)),
+    };
   },
 });
 
@@ -87,7 +85,39 @@ export const onboardingLink = creatorAction({
       creatorId: ctx.creatorId,
     });
     if (account === null || account.disconnectedAt !== undefined) {
-      account = await createAccount(ctx, stripe, ctx.creatorId);
+      // Recorded before Stripe is called, so a retry after any failure repeats
+      // the same request instead of creating a second account.
+      const begun = await ctx.runMutation(internal.stripeAccounts.beginCreation, {
+        creatorId: ctx.creatorId,
+      });
+      if ("account" in begun) {
+        // A concurrent request saved the account after this one looked.
+        account = begun.account;
+      } else {
+        const { attempt, retry } = begun;
+        const created =
+          (retry ? await findCreatedConnectAccount(stripe, attempt) : null) ??
+          (await createConnectAccount(stripe, attempt));
+        if (created === "country_unsupported" || created === "rejected") {
+          // Stripe refused the request, so no account exists. A retry starts a
+          // fresh attempt, letting the creator change country or a fix take effect,
+          // instead of Stripe replaying the refusal under the old key for 24 hours.
+          await ctx.runMutation(internal.stripeAccounts.abandonCreation, {
+            attemptId: attempt._id,
+          });
+          throw created === "country_unsupported"
+            ? apiError("invalid_state", {
+                reason: "stripe_country_unsupported",
+              })
+            : apiError("upstream_failure", { reason: "stripe_account_failed" });
+        }
+        // Saved before requesting the link, so a failed link never orphans the
+        // account. Stamped with when it arrived, on the clock the webhook uses.
+        account = await ctx.runMutation(internal.stripeAccounts.create, {
+          creatorId: ctx.creatorId,
+          state: toStripeAccountState(created, Date.now()),
+        });
+      }
     }
 
     try {
@@ -105,94 +135,6 @@ export const onboardingLink = creatorAction({
   },
 });
 
-/**
- * Creates the creator's Stripe account and saves it. The attempt is recorded
- * first, so a retry after any failure repeats the same request, and checks
- * whether Stripe already made the account before asking again.
- */
-async function createAccount(
-  ctx: ActionCtx,
-  stripe: Stripe,
-  creatorId: Id<"creators">,
-): Promise<Doc<"stripeAccounts">> {
-  const begun = await ctx.runMutation(internal.stripeAccounts.beginCreation, { creatorId });
-  // A concurrent request saved the account after this one looked.
-  if ("account" in begun) return begun.account;
-  const { attempt, retry } = begun;
-  // Stripe forgets idempotency keys after 24 hours, so a late retry must look
-  // for the account the earlier attempt made instead of relying on the key.
-  let created = retry ? await findCreatedAccount(stripe, attempt) : null;
-  if (created === null) {
-    const params: Stripe.AccountCreateParams = {
-      country: attempt.country,
-      // Stripe's replacement for `type: "standard"`, chosen over Express to avoid its
-      // per-account costs: the creator uses the full Stripe Dashboard, pays Stripe's
-      // fees, and Stripe covers negative balances and collects requirements.
-      controller: {
-        stripe_dashboard: { type: "full" },
-        fees: { payer: "account" },
-        losses: { payments: "stripe" },
-        requirement_collection: "stripe",
-      },
-      // No `capabilities`: Stripe chooses them by country for Standard accounts and
-      // rejects a request for `transfers` alone. No email either: Stripe asks for it,
-      // and nothing here may change between an attempt and its retry.
-      metadata: { creatorId },
-    };
-    try {
-      created = await stripe.accounts.create(params, {
-        // One key per attempt: concurrent clicks and retries share it and get one
-        // account back, while reconnecting starts a new attempt and a new account.
-        // The fingerprint changes only if a deploy changes the request, which
-        // Stripe would otherwise refuse under the same key.
-        idempotencyKey: `stripe-account:${creatorId}:${attempt._id}:${await fingerprint(params)}`,
-      });
-    } catch (error) {
-      console.error("Stripe refused to create the account", stripeErrorDetails(error));
-      if (
-        error instanceof Stripe.errors.StripeInvalidRequestError &&
-        error.code === "country_unsupported"
-      ) {
-        // Refused outright, so no account exists; the creator may change country.
-        await ctx.runMutation(internal.stripeAccounts.abandonCreation, {
-          attemptId: attempt._id,
-        });
-        throw apiError("invalid_state", { reason: "stripe_country_unsupported" });
-      }
-      throw apiError("upstream_failure", { reason: "stripe_account_failed" });
-    }
-  }
-  // Saved before requesting the link, so a failed link never orphans the account.
-  // Stamped with when it arrived, on the same clock the webhook's reads use.
-  return await ctx.runMutation(internal.stripeAccounts.create, {
-    creatorId,
-    state: toStripeAccountState(created, Date.now()),
-  });
-}
-
-/** The account an earlier attempt made, found by the creator tag near its start. */
-async function findCreatedAccount(
-  stripe: Stripe,
-  attempt: Doc<"stripeAccountCreations">,
-): Promise<Stripe.Account | null> {
-  const startedAt = Math.floor(attempt.startedAt / 1000);
-  try {
-    for await (const account of stripe.accounts.list({
-      created: {
-        gte: startedAt - RECOVERY_WINDOW_SECONDS,
-        lte: startedAt + RECOVERY_WINDOW_SECONDS,
-      },
-      limit: 100,
-    })) {
-      if (account.metadata?.creatorId === attempt.creatorId) return account;
-    }
-  } catch (error) {
-    // Creating again is safe within 24 hours, when the idempotency key still holds.
-    console.error("Stripe refused to list accounts", stripeErrorDetails(error));
-  }
-  return null;
-}
-
 export const getForCreator = internalQuery({
   args: { creatorId: v.id("creators") },
   returns: v.union(schema.doc("stripeAccounts"), v.null()),
@@ -207,7 +149,10 @@ export const beginCreation = internalMutation({
   args: { creatorId: v.id("creators") },
   returns: v.union(
     v.object({ account: schema.doc("stripeAccounts") }),
-    v.object({ attempt: schema.doc("stripeAccountCreations"), retry: v.boolean() }),
+    v.object({
+      attempt: schema.doc("stripeAccountCreations"),
+      retry: v.boolean(),
+    }),
   ),
   handler: async (ctx, args) => {
     const creator = await ctx.db.get("creators", args.creatorId);
@@ -250,4 +195,33 @@ export const disconnect = internalMutation({
   returns: v.union(v.literal("disconnected"), v.literal("unknown")),
   handler: async (ctx, args) =>
     await disconnectStripeAccount(ctx, args.stripeAccountId, args.disconnectedAt),
+});
+
+/**
+ * Reads the account from Stripe again and saves it, a few seconds after the
+ * webhook saved it. Overlapping deliveries can save in either order, and
+ * their stamps can tie or come from servers whose clocks differ slightly;
+ * this later read settles the account on Stripe's real state. Best effort:
+ * the next `account.updated` corrects anything it misses.
+ */
+export const recheck = internalAction({
+  args: { stripeAccountId: v.string() },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    let account: Stripe.Account;
+    try {
+      account = await stripeClient().accounts.retrieve(args.stripeAccountId);
+    } catch (error) {
+      // A disconnect since the save is recorded by `account.application.deauthorized`.
+      if (!(error instanceof Stripe.errors.StripePermissionError)) {
+        console.error("Stripe refused the account re-check", stripeErrorDetails(error));
+      }
+      return null;
+    }
+    await ctx.runMutation(internal.stripeAccounts.update, {
+      state: toStripeAccountState(account, Date.now()),
+      taggedCreatorId: account.metadata?.creatorId,
+    });
+    return null;
+  },
 });

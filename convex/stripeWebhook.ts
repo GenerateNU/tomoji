@@ -12,6 +12,10 @@ import { stripeClient, stripeErrorDetails, toStripeAccountState } from "./lib/st
  * days. A 500 is reserved for failures worth retrying, such as a missing
  * secret or Stripe being unreachable, so Stripe keeps the events until fixed.
  */
+// How long after saving an account to read it from Stripe again. Long enough for
+// overlapping deliveries of the same change to have saved.
+const ACCOUNT_RECHECK_DELAY_MS = 5_000;
+
 export const stripeWebhook = httpAction(async (ctx, request) => {
   const secret = env.STRIPE_WEBHOOK_SECRET;
   if (!secret) {
@@ -61,6 +65,9 @@ export const stripeWebhook = httpAction(async (ctx, request) => {
       taggedCreatorId: account.metadata?.creatorId,
     });
     if (result !== "unknown") {
+      await ctx.scheduler.runAfter(ACCOUNT_RECHECK_DELAY_MS, internal.stripeAccounts.recheck, {
+        stripeAccountId: account.id,
+      });
       console.log("Stripe account updated", {
         eventId: event.id,
         stripeAccountId: account.id,

@@ -342,6 +342,54 @@ describe("onboardingLink", () => {
     );
   });
 
+  // Any invalid-request refusal proves Stripe made no account, so the retry may
+  // start a fresh attempt. Reusing the key would replay the same refusal for 24 hours.
+  test("starts a fresh attempt after Stripe rejects the request", async () => {
+    const t = convexTest(schema, modules);
+    const { asCreator } = await seedCreator(t, "stripe_onboard_rejected");
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    stripe.createAccount.mockRejectedValueOnce(
+      new Stripe.errors.StripeInvalidRequestError({
+        type: "invalid_request_error",
+        code: "parameter_invalid_empty",
+        message: "You passed an empty string for 'controller'.",
+      }),
+    );
+
+    await expectApiError(
+      () => asCreator.action(api.stripeAccounts.onboardingLink, {}),
+      "upstream_failure",
+      "stripe_account_failed",
+    );
+    await asCreator.action(api.stripeAccounts.onboardingLink, {});
+
+    const [first, second] = idempotencyKeys();
+    expect(second).not.toBe(first);
+    // A fresh attempt has nothing earlier to recover.
+    expect(stripe.listAccounts).not.toHaveBeenCalled();
+  });
+
+  // A network error leaves it unknown whether Stripe made the account, so the
+  // retry must repeat the same attempt and key.
+  test("keeps the attempt after an error that may have created the account", async () => {
+    const t = convexTest(schema, modules);
+    const { asCreator } = await seedCreator(t, "stripe_onboard_ambiguous");
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    stripe.createAccount.mockRejectedValueOnce(
+      new Stripe.errors.StripeConnectionError({ message: "socket hang up" }),
+    );
+
+    await expectApiError(
+      () => asCreator.action(api.stripeAccounts.onboardingLink, {}),
+      "upstream_failure",
+      "stripe_account_failed",
+    );
+    await asCreator.action(api.stripeAccounts.onboardingLink, {});
+
+    const [first, second] = idempotencyKeys();
+    expect(second).toBe(first);
+  });
+
   // The old account is gone for good; reconnecting means a new one.
   test("creates a new account for a creator who disconnected Tomoji", async () => {
     const t = convexTest(schema, modules);

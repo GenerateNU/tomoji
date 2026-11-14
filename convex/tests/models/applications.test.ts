@@ -1,7 +1,7 @@
 /// <reference types="vite/client" />
 import { convexTest } from "convex-test";
 import type { WithoutSystemFields } from "convex/server";
-import { describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import type { Doc, Id } from "../../_generated/dataModel";
 import type { MutationCtx } from "../../_generated/server";
 import {
@@ -11,7 +11,7 @@ import {
   declineApplication,
   expireApplicationOffers,
   DEFAULT_OFFER_DURATION_MS,
-  listApplications,
+  listApplicationRows,
   listApplicationsByOpportunityId,
   markApplicationsFullBatch,
   offerApplication,
@@ -76,7 +76,10 @@ describe("createApplication", () => {
 
     const id = await t.run(
       async (ctx) =>
-        await createApplication(ctx, creatorId, { opportunityId, note: "  I film daily.  " }),
+        await createApplication(ctx, creatorId, {
+          opportunityId,
+          note: "  I film daily.  ",
+        }),
     );
     const stored = await t.run(async (ctx) => await ctx.db.get("applications", id));
 
@@ -160,7 +163,10 @@ describe("createApplication", () => {
   test("allows the same creator to apply to a different opportunity", async () => {
     const t = convexTest(schema, modules);
     const first = await seedGatedOpportunity(t);
-    const second = await seedGatedOpportunity(t, { subject: "company_other", orgId: "org_other" });
+    const second = await seedGatedOpportunity(t, {
+      subject: "company_other",
+      orgId: "org_other",
+    });
     const creatorId = await seedCreatorId(t, "creator_a");
 
     await applyAs(t, creatorId, first.opportunityId);
@@ -271,7 +277,9 @@ describe("createApplication", () => {
 
   test("accepts applications past the slot count, since gated briefs are not capped", async () => {
     const t = convexTest(schema, modules);
-    const { opportunityId } = await seedGatedOpportunity(t, { opportunity: { maxSlots: 1 } });
+    const { opportunityId } = await seedGatedOpportunity(t, {
+      opportunity: { maxSlots: 1 },
+    });
 
     for (const subject of ["creator_a", "creator_b", "creator_c"]) {
       await applyAs(t, await seedCreatorId(t, subject), opportunityId);
@@ -304,7 +312,11 @@ describe("requireApplication", () => {
       async (ctx) => await requireApplication(ctx, { role: "creator", creatorId }, applicationId),
     );
 
-    expect(application).toMatchObject({ _id: applicationId, creatorId, status: "pending" });
+    expect(application).toMatchObject({
+      _id: applicationId,
+      creatorId,
+      status: "pending",
+    });
   });
 
   test("returns the application to the company that owns the opportunity", async () => {
@@ -351,7 +363,10 @@ describe("requireApplication", () => {
   test("hides another company's application as not found", async () => {
     const t = convexTest(schema, modules);
     const { applicationId } = await seedApplication(t);
-    const other = await seedGatedOpportunity(t, { subject: "other_owner", orgId: "org_other" });
+    const other = await seedGatedOpportunity(t, {
+      subject: "other_owner",
+      orgId: "org_other",
+    });
 
     await expectApiError(
       () =>
@@ -377,70 +392,6 @@ describe("requireApplication", () => {
         t.run(async (ctx) => await requireApplication(ctx, { role: "operator" }, applicationId)),
       "not_found",
     );
-  });
-});
-
-describe("listApplications", () => {
-  const firstPage = { numItems: 10, cursor: null };
-
-  test("returns only the creator's applications", async () => {
-    const t = convexTest(schema, modules);
-    const first = await seedGatedOpportunity(t);
-    const second = await seedGatedOpportunity(t, { subject: "other_owner", orgId: "org_other" });
-    const creatorId = await seedCreatorId(t, "creator_a");
-    const olderId = await applyAs(t, creatorId, first.opportunityId);
-    const newerId = await applyAs(t, creatorId, second.opportunityId);
-    await applyAs(t, await seedCreatorId(t, "creator_b"), first.opportunityId);
-
-    const result = await t.run(
-      async (ctx) => await listApplications(ctx, { creatorId, paginationOpts: firstPage }),
-    );
-
-    expect(result.page.map((application) => application._id)).toEqual([newerId, olderId]);
-    expect(result.isDone).toBe(true);
-  });
-
-  test("filters by status", async () => {
-    const t = convexTest(schema, modules);
-    const first = await seedGatedOpportunity(t);
-    const second = await seedGatedOpportunity(t, { subject: "other_owner", orgId: "org_other" });
-    const creatorId = await seedCreatorId(t, "creator_a");
-    const rejectedId = await applyAs(t, creatorId, first.opportunityId);
-    await applyAs(t, creatorId, second.opportunityId);
-    await t.run(
-      async (ctx) => await ctx.db.patch("applications", rejectedId, { status: "rejected" }),
-    );
-
-    const result = await t.run(
-      async (ctx) =>
-        await listApplications(ctx, { creatorId, status: "rejected", paginationOpts: firstPage }),
-    );
-
-    expect(result.page.map((application) => application._id)).toEqual([rejectedId]);
-  });
-
-  test("paginates with a cursor", async () => {
-    const t = convexTest(schema, modules);
-    const first = await seedGatedOpportunity(t);
-    const second = await seedGatedOpportunity(t, { subject: "other_owner", orgId: "org_other" });
-    const creatorId = await seedCreatorId(t, "creator_a");
-    const olderId = await applyAs(t, creatorId, first.opportunityId);
-    const newerId = await applyAs(t, creatorId, second.opportunityId);
-
-    const page1 = await t.run(
-      async (ctx) =>
-        await listApplications(ctx, { creatorId, paginationOpts: { numItems: 1, cursor: null } }),
-    );
-    const page2 = await t.run(
-      async (ctx) =>
-        await listApplications(ctx, {
-          creatorId,
-          paginationOpts: { numItems: 1, cursor: page1.continueCursor },
-        }),
-    );
-
-    expect(page1.page.map((application) => application._id)).toEqual([newerId]);
-    expect(page2.page.map((application) => application._id)).toEqual([olderId]);
   });
 });
 
@@ -481,7 +432,10 @@ describe("listApplicationsByOpportunityId", () => {
   test("hides another company's opportunity as not found", async () => {
     const t = convexTest(schema, modules);
     const { opportunityId } = await seedGatedOpportunity(t);
-    const other = await seedGatedOpportunity(t, { subject: "other_owner", orgId: "org_other" });
+    const other = await seedGatedOpportunity(t, {
+      subject: "other_owner",
+      orgId: "org_other",
+    });
 
     await expectApiError(
       () =>
@@ -552,8 +506,14 @@ describe("offerApplication", () => {
   });
 
   test.each([
-    { name: "in the past", expiresAt: () => nextHalfHour(Date.now()) - HALF_HOUR },
-    { name: "off :00/:30", expiresAt: () => nextHalfHour(Date.now() + DAY) + 60_000 },
+    {
+      name: "in the past",
+      expiresAt: () => nextHalfHour(Date.now()) - HALF_HOUR,
+    },
+    {
+      name: "off :00/:30",
+      expiresAt: () => nextHalfHour(Date.now() + DAY) + 60_000,
+    },
   ])("rejects an expiry $name", async ({ expiresAt }) => {
     const t = convexTest(schema, modules);
     const { companyId, applicationId } = await seedPending(t);
@@ -581,7 +541,10 @@ describe("offerApplication", () => {
   test("hides another company's application as not found", async () => {
     const t = convexTest(schema, modules);
     const { applicationId } = await seedPending(t);
-    const other = await seedGatedOpportunity(t, { subject: "other_owner", orgId: "org_other" });
+    const other = await seedGatedOpportunity(t, {
+      subject: "other_owner",
+      orgId: "org_other",
+    });
 
     await expectApiError(
       () => t.run(async (ctx) => await offerApplication(ctx, other.companyId, applicationId)),
@@ -642,7 +605,10 @@ describe("rejectApplication", () => {
   test("hides another company's application as not found", async () => {
     const t = convexTest(schema, modules);
     const { applicationId } = await seedPending(t);
-    const other = await seedGatedOpportunity(t, { subject: "other_owner", orgId: "org_other" });
+    const other = await seedGatedOpportunity(t, {
+      subject: "other_owner",
+      orgId: "org_other",
+    });
 
     await expectApiError(
       () => t.run(async (ctx) => await rejectApplication(ctx, other.companyId, applicationId)),
@@ -671,7 +637,9 @@ async function seedOffered(t: TestConvex, opts: Parameters<typeof seedGatedOppor
   await t.run(async (ctx) => {
     await offerApplication(ctx, seeded.companyId, applicationId);
     // Backdate the offer so tests can tell whether a later action set the timestamp.
-    await ctx.db.patch("applications", applicationId, { statusLastUpdatedAt: 0 });
+    await ctx.db.patch("applications", applicationId, {
+      statusLastUpdatedAt: 0,
+    });
   });
   return { ...seeded, creatorId, applicationId };
 }
@@ -716,7 +684,9 @@ describe("acceptApplication", () => {
       const { campaignId, opportunityId, creatorId, applicationId } = await seedOffered(t);
       await t.run(async (ctx) => {
         await ctx.db.patch("campaigns", campaignId, { status });
-        await ctx.db.patch("opportunities", opportunityId, { status: "paused" });
+        await ctx.db.patch("opportunities", opportunityId, {
+          status: "paused",
+        });
       });
 
       const accepted = await t.run(
@@ -731,7 +701,10 @@ describe("acceptApplication", () => {
     const t = convexTest(schema, modules);
     const { opportunityId, creatorId, applicationId } = await seedOffered(t);
     await t.run(
-      async (ctx) => await ctx.db.patch("opportunities", opportunityId, { status: "closed" }),
+      async (ctx) =>
+        await ctx.db.patch("opportunities", opportunityId, {
+          status: "closed",
+        }),
     );
 
     await expectApiError(
@@ -746,7 +719,9 @@ describe("acceptApplication", () => {
     const { creatorId, applicationId } = await seedOffered(t);
     await t.run(
       async (ctx) =>
-        await ctx.db.patch("applications", applicationId, { offerExpiresAt: Date.now() - 1 }),
+        await ctx.db.patch("applications", applicationId, {
+          offerExpiresAt: Date.now() - 1,
+        }),
     );
 
     await expectApiError(
@@ -786,7 +761,10 @@ describe("acceptApplication", () => {
       opportunity: { maxSlots: 1 },
     });
     await t.run(
-      async (ctx) => await ctx.db.patch("opportunities", opportunityId, { numFilledSlots: 1 }),
+      async (ctx) =>
+        await ctx.db.patch("opportunities", opportunityId, {
+          numFilledSlots: 1,
+        }),
     );
 
     await expectApiError(
@@ -905,7 +883,9 @@ describe("expireApplicationOffers", () => {
     const pendingId = await applyAs(t, await seedCreatorId(t, "creator_c"), opportunityId);
     await t.run(
       async (ctx) =>
-        await ctx.db.patch("applications", expiredId, { offerExpiresAt: Date.now() - 1 }),
+        await ctx.db.patch("applications", expiredId, {
+          offerExpiresAt: Date.now() - 1,
+        }),
     );
 
     const beforeExpire = Date.now();
@@ -930,7 +910,9 @@ describe("expireApplicationOffers", () => {
     await t.run(async (ctx) => await acceptApplication(ctx, creatorId, applicationId));
     await t.run(
       async (ctx) =>
-        await ctx.db.patch("applications", applicationId, { offerExpiresAt: Date.now() - 1 }),
+        await ctx.db.patch("applications", applicationId, {
+          offerExpiresAt: Date.now() - 1,
+        }),
     );
 
     await t.run(async (ctx) => await expireApplicationOffers(ctx));
@@ -1065,7 +1047,9 @@ describe("notifications", () => {
     const { membership, creatorId, applicationId, opportunityId } = await seedOffered(t);
     await t.run(
       async (ctx) =>
-        await ctx.db.patch("applications", applicationId, { offerExpiresAt: Date.now() - 1 }),
+        await ctx.db.patch("applications", applicationId, {
+          offerExpiresAt: Date.now() - 1,
+        }),
     );
 
     await t.run(async (ctx) => await expireApplicationOffers(ctx));
@@ -1094,5 +1078,694 @@ describe("notifications", () => {
       null,
     );
     expect(await memberNotifications(t, membership)).toEqual([]);
+  });
+});
+
+describe("listApplicationRows", () => {
+  type SearchArgs = Parameters<typeof listApplicationRows>[2];
+  type Status = Doc<"applications">["status"];
+  type RowSeed = {
+    title?: string;
+    companyName?: string;
+    status?: Status;
+    fixedFeeCents?: number;
+    cpmRateCents?: number;
+    paymentCapCents?: number;
+  };
+
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-10-13T12:00:00Z"));
+  });
+
+  afterEach(() => vi.useRealTimers());
+
+  let sequence = 0;
+
+  /**
+   * Seeds an opportunity at its own company and applies to it with a raw
+   * insert, a second after the previous row, so `_creationTime` orders rows.
+   */
+  async function seedRow(t: TestConvex, creatorId: Id<"creators">, seed: RowSeed = {}) {
+    sequence += 1;
+    const { title, companyName, status, ...terms } = seed;
+    const seeded = await seedGatedOpportunity(t, {
+      subject: `row_owner_${sequence}`,
+      orgId: `org_row_${sequence}`,
+      opportunity: { ...(title === undefined ? {} : { title }), ...terms },
+    });
+    if (companyName !== undefined) {
+      await t.run((ctx) => ctx.db.patch("companies", seeded.companyId, { name: companyName }));
+    }
+    vi.setSystemTime(Date.now() + 1000);
+    const applicationId = await t.run((ctx) =>
+      ctx.db.insert("applications", {
+        opportunityId: seeded.opportunityId,
+        creatorId,
+        companyId: seeded.companyId,
+        status: status ?? "pending",
+      }),
+    );
+    return { ...seeded, applicationId };
+  }
+
+  async function listRows(
+    t: TestConvex,
+    creatorId: Id<"creators">,
+    overrides: Partial<SearchArgs> = {},
+    options?: { limit: number },
+  ) {
+    const args: SearchArgs = {
+      tab: "applications",
+      page: 1,
+      pageSize: 10,
+      ...overrides,
+    };
+    return await t.run((ctx) => listApplicationRows(ctx, creatorId, args, options));
+  }
+
+  const titles = (result: { rows: { title: string }[] }) => result.rows.map((row) => row.title);
+
+  test("only the applications, rejected and full statuses are rows, with counts for each tab", async () => {
+    const t = convexTest(schema, modules);
+    const creatorId = await seedCreatorId(t, "creator_a");
+    const statuses: Status[] = [
+      "pending",
+      "rejected",
+      "opportunityFull",
+      "offered",
+      "offerExpired",
+      "declined",
+      "accepted",
+    ];
+    for (const status of statuses) await seedRow(t, creatorId, { status, title: status });
+
+    const result = await listRows(t, creatorId, {
+      sort: { key: "name", direction: "ascending" },
+    });
+
+    expect(titles(result)).toEqual(["opportunityFull", "pending", "rejected"]);
+    expect(result.rows.map((row) => row.status).sort()).toEqual([
+      "opportunityFull",
+      "pending",
+      "rejected",
+    ]);
+    expect(result.totalCount).toBe(3);
+    expect(result.counts).toEqual({
+      applications: { count: 3, isCapped: false },
+      offers: { count: 3, isCapped: false },
+      accepted: { count: 1, isCapped: false },
+    });
+  });
+
+  test("only the calling creator's applications are listed or counted", async () => {
+    const t = convexTest(schema, modules);
+    const creatorId = await seedCreatorId(t, "creator_a");
+    const otherId = await seedCreatorId(t, "creator_b");
+    await seedRow(t, creatorId, { title: "Mine" });
+    await seedRow(t, otherId, { title: "Theirs" });
+    await seedRow(t, otherId, { title: "Theirs offered", status: "offered" });
+
+    const result = await listRows(t, creatorId);
+
+    expect(titles(result)).toEqual(["Mine"]);
+    expect(result.counts.applications.count).toBe(1);
+    expect(result.counts.offers.count).toBe(0);
+  });
+
+  test("a row carries the application, opportunity and company details", async () => {
+    const t = convexTest(schema, modules);
+    const creatorId = await seedCreatorId(t, "creator_a");
+    const { applicationId, opportunityId, companyId } = await seedRow(t, creatorId, {
+      title: "Spring serum launch",
+      companyName: "Glow Labs",
+      fixedFeeCents: 35_000,
+      cpmRateCents: 275,
+      paymentCapCents: 90_000,
+    });
+    const logoId = await t.run(async (ctx) => {
+      const company = await ctx.db.get("companies", companyId);
+      const member = await ctx.db
+        .query("companyUsers")
+        .withIndex("by_companyId", (q) => q.eq("companyId", companyId))
+        .first();
+      if (company === null || member === null) throw new Error("expected seeded company");
+      const mediaId = await ctx.db.insert("mediaUploads", {
+        ownerUserId: member.userId,
+        companyId,
+        kind: "company-profile-picture",
+        status: "complete",
+        contentType: "image/png",
+        stagingKey: "staging/company-profile-picture/test",
+        permanentKey: "media/company-profile-picture/test",
+        sizeBytes: 1024,
+        grantExpiresAt: Date.now() + 60_000,
+      });
+      await ctx.db.patch("companies", companyId, {
+        profilePictureMediaId: mediaId,
+      });
+      return mediaId;
+    });
+    const application = await t.run((ctx) => ctx.db.get("applications", applicationId));
+
+    const result = await listRows(t, creatorId);
+
+    expect(result.rows).toEqual([
+      {
+        applicationId,
+        opportunityId,
+        status: "pending",
+        submittedAt: application?._creationTime,
+        title: "Spring serum launch",
+        companyName: "Glow Labs",
+        companyLogoMediaId: logoId,
+        fixedFeeCents: 35_000,
+        cpmRateCents: 275,
+        paymentCapCents: 90_000,
+        isStarred: false,
+        canStar: true,
+      },
+    ]);
+  });
+
+  test("a company without a logo has no companyLogoMediaId", async () => {
+    const t = convexTest(schema, modules);
+    const creatorId = await seedCreatorId(t, "creator_a");
+    await seedRow(t, creatorId);
+
+    const result = await listRows(t, creatorId);
+
+    expect(result.rows[0]).not.toHaveProperty("companyLogoMediaId");
+  });
+
+  test("an application whose opportunity was deleted is skipped", async () => {
+    const t = convexTest(schema, modules);
+    const creatorId = await seedCreatorId(t, "creator_a");
+    await seedRow(t, creatorId, { title: "Kept" });
+    const gone = await seedRow(t, creatorId, { title: "Gone" });
+    await t.run((ctx) => ctx.db.delete("opportunities", gone.opportunityId));
+
+    const result = await listRows(t, creatorId);
+
+    expect(titles(result)).toEqual(["Kept"]);
+    expect(result.totalCount).toBe(1);
+  });
+
+  test("an application whose company was deleted shows an empty company name", async () => {
+    const t = convexTest(schema, modules);
+    const creatorId = await seedCreatorId(t, "creator_a");
+    const { companyId } = await seedRow(t, creatorId, { title: "Orphaned" });
+    await t.run((ctx) => ctx.db.delete("companies", companyId));
+
+    const result = await listRows(t, creatorId);
+
+    expect(result.rows).toMatchObject([{ title: "Orphaned", companyName: "", canStar: false }]);
+  });
+
+  describe("search", () => {
+    test.each([
+      { name: "title", search: "serum" },
+      { name: "company name", search: "glow" },
+      { name: "a differently cased query", search: "SERUM" },
+      { name: "a query with surrounding whitespace", search: "  serum  " },
+    ])("matches on $name", async ({ search }) => {
+      const t = convexTest(schema, modules);
+      const creatorId = await seedCreatorId(t, "creator_a");
+      await seedRow(t, creatorId, {
+        title: "Spring Serum launch",
+        companyName: "Glow Labs",
+      });
+      await seedRow(t, creatorId, {
+        title: "Sneaker drop",
+        companyName: "Stride",
+      });
+
+      const result = await listRows(t, creatorId, { search });
+
+      expect(result.rows.length).toBe(1);
+      expect(result.rows[0].title).toBe("Spring Serum launch");
+    });
+
+    test("a query matching nothing returns no rows and a zero total", async () => {
+      const t = convexTest(schema, modules);
+      const creatorId = await seedCreatorId(t, "creator_a");
+      await seedRow(t, creatorId);
+
+      const result = await listRows(t, creatorId, {
+        search: "nothing like this",
+      });
+
+      expect(result).toMatchObject({ rows: [], totalCount: 0, page: 1 });
+      expect(result.counts.applications.count).toBe(1);
+    });
+
+    test("a blank query applies no filter", async () => {
+      const t = convexTest(schema, modules);
+      const creatorId = await seedCreatorId(t, "creator_a");
+      await seedRow(t, creatorId);
+
+      const result = await listRows(t, creatorId, { search: "   " });
+
+      expect(result.totalCount).toBe(1);
+    });
+
+    test("a query of exactly 100 characters is accepted", async () => {
+      const t = convexTest(schema, modules);
+      const creatorId = await seedCreatorId(t, "creator_a");
+
+      const result = await listRows(t, creatorId, { search: "a".repeat(100) });
+
+      expect(result.totalCount).toBe(0);
+    });
+
+    test("a query over 100 characters is refused", async () => {
+      const t = convexTest(schema, modules);
+      const creatorId = await seedCreatorId(t, "creator_a");
+
+      await expectApiError(
+        () => listRows(t, creatorId, { search: "a".repeat(101) }),
+        "invalid_state",
+        "search_too_long",
+      );
+    });
+
+    test("whitespace around a 100-character query is not counted", async () => {
+      const t = convexTest(schema, modules);
+      const creatorId = await seedCreatorId(t, "creator_a");
+
+      const result = await listRows(t, creatorId, {
+        search: ` ${"a".repeat(100)} `,
+      });
+
+      expect(result.totalCount).toBe(0);
+    });
+  });
+
+  describe("filters", () => {
+    test("starred keeps only the creator's starred opportunities", async () => {
+      const t = convexTest(schema, modules);
+      const creatorId = await seedCreatorId(t, "creator_a");
+      const otherId = await seedCreatorId(t, "creator_b");
+      const starred = await seedRow(t, creatorId, { title: "Starred" });
+      const byOther = await seedRow(t, creatorId, {
+        title: "Starred by someone else",
+      });
+      await seedRow(t, creatorId, { title: "Plain" });
+      await t.run(async (ctx) => {
+        await ctx.db.insert("opportunityStars", {
+          creatorId,
+          opportunityId: starred.opportunityId,
+        });
+        await ctx.db.insert("opportunityStars", {
+          creatorId: otherId,
+          opportunityId: byOther.opportunityId,
+        });
+      });
+
+      const all = await listRows(t, creatorId, {
+        sort: { key: "name", direction: "ascending" },
+      });
+      const onlyStarred = await listRows(t, creatorId, { starred: true });
+
+      expect(all.rows.map((row) => [row.title, row.isStarred])).toEqual([
+        ["Plain", false],
+        ["Starred", true],
+        ["Starred by someone else", false],
+      ]);
+      expect(titles(onlyStarred)).toEqual(["Starred"]);
+      expect(onlyStarred.totalCount).toBe(1);
+    });
+
+    test("hide rejected removes rejected applications but keeps opportunityFull", async () => {
+      const t = convexTest(schema, modules);
+      const creatorId = await seedCreatorId(t, "creator_a");
+      await seedRow(t, creatorId, { title: "Waiting" });
+      await seedRow(t, creatorId, { title: "Turned down", status: "rejected" });
+      await seedRow(t, creatorId, {
+        title: "Filled up",
+        status: "opportunityFull",
+      });
+
+      const result = await listRows(t, creatorId, {
+        hideRejected: true,
+        sort: { key: "name", direction: "ascending" },
+      });
+
+      expect(titles(result)).toEqual(["Filled up", "Waiting"]);
+      expect(result.totalCount).toBe(2);
+      expect(result.counts.applications.count).toBe(3);
+    });
+
+    test("search, starred and hide rejected combine", async () => {
+      const t = convexTest(schema, modules);
+      const creatorId = await seedCreatorId(t, "creator_a");
+      const match = await seedRow(t, creatorId, { title: "Serum video" });
+      const rejected = await seedRow(t, creatorId, {
+        title: "Serum rejected",
+        status: "rejected",
+      });
+      const unmatched = await seedRow(t, creatorId, { title: "Sneakers" });
+      await t.run(async (ctx) => {
+        for (const row of [match, rejected, unmatched]) {
+          await ctx.db.insert("opportunityStars", {
+            creatorId,
+            opportunityId: row.opportunityId,
+          });
+        }
+      });
+
+      const result = await listRows(t, creatorId, {
+        search: "serum",
+        starred: true,
+        hideRejected: true,
+      });
+
+      expect(titles(result)).toEqual(["Serum video"]);
+    });
+  });
+
+  describe("sorting", () => {
+    // Created in this order, so submitted ascending is r1, r2, r3.
+    async function seedSortRows(t: TestConvex, creatorId: Id<"creators">) {
+      await seedRow(t, creatorId, {
+        title: "Charlie",
+        companyName: "Acme",
+        status: "rejected",
+        fixedFeeCents: 100,
+        cpmRateCents: 500,
+      });
+      await seedRow(t, creatorId, {
+        title: "Alpha",
+        companyName: "Zeta",
+        status: "pending",
+        fixedFeeCents: 50,
+        cpmRateCents: 900,
+      });
+      await seedRow(t, creatorId, {
+        title: "Bravo",
+        companyName: "Mid",
+        status: "opportunityFull",
+        fixedFeeCents: 100,
+        cpmRateCents: 100,
+      });
+    }
+
+    test.each([
+      { key: "name", ascending: ["Alpha", "Bravo", "Charlie"] },
+      { key: "company", ascending: ["Charlie", "Bravo", "Alpha"] },
+      // Waiting first, then closed by fill, then rejected.
+      { key: "status", ascending: ["Alpha", "Bravo", "Charlie"] },
+      { key: "submitted", ascending: ["Charlie", "Alpha", "Bravo"] },
+      // Fixed fee first, then CPM rate.
+      { key: "compensation", ascending: ["Alpha", "Bravo", "Charlie"] },
+    ] as const)("sorts by $key in both directions", async ({ key, ascending }) => {
+      const t = convexTest(schema, modules);
+      const creatorId = await seedCreatorId(t, "creator_a");
+      await seedSortRows(t, creatorId);
+
+      const up = await listRows(t, creatorId, {
+        sort: { key, direction: "ascending" },
+      });
+      const down = await listRows(t, creatorId, {
+        sort: { key, direction: "descending" },
+      });
+
+      expect(titles(up)).toEqual(ascending);
+      expect(titles(down)).toEqual([...ascending].reverse());
+    });
+
+    test("defaults to newest submitted first", async () => {
+      const t = convexTest(schema, modules);
+      const creatorId = await seedCreatorId(t, "creator_a");
+      await seedSortRows(t, creatorId);
+
+      const result = await listRows(t, creatorId);
+
+      expect(titles(result)).toEqual(["Bravo", "Alpha", "Charlie"]);
+    });
+
+    test("ties are broken by newest submitted first, in either direction", async () => {
+      const t = convexTest(schema, modules);
+      const creatorId = await seedCreatorId(t, "creator_a");
+      await seedRow(t, creatorId, { title: "Same", companyName: "Older" });
+      await seedRow(t, creatorId, { title: "Same", companyName: "Newer" });
+      await seedRow(t, creatorId, { title: "Alpha", companyName: "Other" });
+      const companies = (result: Awaited<ReturnType<typeof listRows>>) =>
+        result.rows.map((row) => row.companyName);
+
+      const up = await listRows(t, creatorId, {
+        sort: { key: "name", direction: "ascending" },
+      });
+      const down = await listRows(t, creatorId, {
+        sort: { key: "name", direction: "descending" },
+      });
+
+      expect(companies(up)).toEqual(["Other", "Newer", "Older"]);
+      expect(companies(down)).toEqual(["Newer", "Older", "Other"]);
+    });
+  });
+
+  describe("pagination", () => {
+    async function seedSeven(t: TestConvex) {
+      const creatorId = await seedCreatorId(t, "creator_a");
+      for (let i = 1; i <= 7; i++) await seedRow(t, creatorId, { title: `Row ${i}` });
+      return creatorId;
+    }
+
+    test("the last page holds the remainder, with totals", async () => {
+      const t = convexTest(schema, modules);
+      const creatorId = await seedSeven(t);
+
+      const result = await listRows(t, creatorId, { page: 3, pageSize: 3 });
+
+      expect(titles(result)).toEqual(["Row 1"]);
+      expect(result).toMatchObject({
+        page: 3,
+        pageSize: 3,
+        totalCount: 7,
+        pageCount: 3,
+      });
+    });
+
+    test("a middle page holds a full page of the newest-first order", async () => {
+      const t = convexTest(schema, modules);
+      const creatorId = await seedSeven(t);
+
+      const result = await listRows(t, creatorId, { page: 2, pageSize: 3 });
+
+      expect(titles(result)).toEqual(["Row 4", "Row 3", "Row 2"]);
+    });
+
+    test("a page past the end clamps to the last page", async () => {
+      const t = convexTest(schema, modules);
+      const creatorId = await seedSeven(t);
+
+      const result = await listRows(t, creatorId, { page: 9, pageSize: 3 });
+
+      expect(result).toMatchObject({ page: 3, pageCount: 3 });
+      expect(titles(result)).toEqual(["Row 1"]);
+    });
+
+    test("no rows gives page 1 of 0 pages", async () => {
+      const t = convexTest(schema, modules);
+      const creatorId = await seedCreatorId(t, "creator_a");
+
+      const result = await listRows(t, creatorId, { page: 4 });
+
+      expect(result).toMatchObject({
+        rows: [],
+        page: 1,
+        totalCount: 0,
+        pageCount: 0,
+      });
+    });
+
+    test("filters change the total and page count", async () => {
+      const t = convexTest(schema, modules);
+      const creatorId = await seedSeven(t);
+
+      const result = await listRows(t, creatorId, {
+        pageSize: 3,
+        search: "Row 1",
+      });
+
+      expect(result).toMatchObject({ totalCount: 1, pageCount: 1 });
+    });
+
+    test("pageSize may be exactly 50", async () => {
+      const t = convexTest(schema, modules);
+      const creatorId = await seedCreatorId(t, "creator_a");
+
+      const result = await listRows(t, creatorId, { pageSize: 50 });
+
+      expect(result.pageSize).toBe(50);
+    });
+
+    test.each([
+      { name: "page 0", args: { page: 0 }, reason: "invalid_page" },
+      { name: "a negative page", args: { page: -1 }, reason: "invalid_page" },
+      {
+        name: "a fractional page",
+        args: { page: 1.5 },
+        reason: "invalid_page",
+      },
+      {
+        name: "an infinite page",
+        args: { page: Infinity },
+        reason: "invalid_page",
+      },
+      {
+        name: "page size 0",
+        args: { pageSize: 0 },
+        reason: "invalid_page_size",
+      },
+      {
+        name: "page size 51",
+        args: { pageSize: 51 },
+        reason: "invalid_page_size",
+      },
+      {
+        name: "a fractional page size",
+        args: { pageSize: 2.5 },
+        reason: "invalid_page_size",
+      },
+    ])("refuses $name", async ({ args, reason }) => {
+      const t = convexTest(schema, modules);
+      const creatorId = await seedCreatorId(t, "creator_a");
+
+      await expectApiError(() => listRows(t, creatorId, args), "invalid_state", reason);
+    });
+  });
+
+  describe("opportunities creators can no longer see", () => {
+    test.each<{
+      name: string;
+      hide: (ctx: MutationCtx, seeded: Awaited<ReturnType<typeof seedRow>>) => Promise<unknown>;
+    }>([
+      {
+        name: "the opportunity is closed",
+        hide: (ctx, s) => ctx.db.patch("opportunities", s.opportunityId, { status: "closed" }),
+      },
+      {
+        name: "the opportunity is paused",
+        hide: (ctx, s) => ctx.db.patch("opportunities", s.opportunityId, { status: "paused" }),
+      },
+      {
+        name: "the campaign is closed",
+        hide: (ctx, s) => ctx.db.patch("campaigns", s.campaignId, { status: "closed" }),
+      },
+      {
+        name: "the company is inactive",
+        hide: (ctx, s) => ctx.db.patch("companies", s.companyId, { isActive: false }),
+      },
+    ])("the row keeps its details but can't be starred when $name", async ({ hide }) => {
+      const t = convexTest(schema, modules);
+      const creatorId = await seedCreatorId(t, "creator_a");
+      const seeded = await seedRow(t, creatorId, {
+        title: "Gone dark",
+        companyName: "Glow Labs",
+        fixedFeeCents: 12_000,
+        cpmRateCents: 300,
+        paymentCapCents: 40_000,
+      });
+      await t.run((ctx) => hide(ctx, seeded));
+
+      const result = await listRows(t, creatorId);
+
+      expect(result.rows).toMatchObject([
+        {
+          title: "Gone dark",
+          companyName: "Glow Labs",
+          fixedFeeCents: 12_000,
+          cpmRateCents: 300,
+          paymentCapCents: 40_000,
+          canStar: false,
+        },
+      ]);
+    });
+
+    test("an open opportunity can be starred", async () => {
+      const t = convexTest(schema, modules);
+      const creatorId = await seedCreatorId(t, "creator_a");
+      await seedRow(t, creatorId);
+
+      const result = await listRows(t, creatorId);
+
+      expect(result.rows[0].canStar).toBe(true);
+    });
+
+    test("a starred opportunity stays starred after it closes", async () => {
+      const t = convexTest(schema, modules);
+      const creatorId = await seedCreatorId(t, "creator_a");
+      const { opportunityId } = await seedRow(t, creatorId);
+      await t.run(async (ctx) => {
+        await ctx.db.insert("opportunityStars", { creatorId, opportunityId });
+        await ctx.db.patch("opportunities", opportunityId, {
+          status: "closed",
+        });
+      });
+
+      const result = await listRows(t, creatorId, { starred: true });
+
+      expect(result.rows).toMatchObject([{ isStarred: true, canStar: false }]);
+    });
+  });
+
+  describe("read bound", () => {
+    test("reads at most the limit, newest first, and reports the cap", async () => {
+      const t = convexTest(schema, modules);
+      const creatorId = await seedCreatorId(t, "creator_a");
+      for (let i = 1; i <= 5; i++) await seedRow(t, creatorId, { title: `Row ${i}` });
+
+      const result = await listRows(t, creatorId, {}, { limit: 3 });
+
+      expect(titles(result)).toEqual(["Row 5", "Row 4", "Row 3"]);
+      expect(result.totalCount).toBe(3);
+      expect(result.counts.applications).toEqual({ count: 3, isCapped: true });
+    });
+
+    test("the limit is shared across the tab's statuses", async () => {
+      const t = convexTest(schema, modules);
+      const creatorId = await seedCreatorId(t, "creator_a");
+      await seedRow(t, creatorId, { title: "Pending 1" });
+      await seedRow(t, creatorId, { title: "Pending 2" });
+      await seedRow(t, creatorId, { title: "Rejected 1", status: "rejected" });
+      await seedRow(t, creatorId, { title: "Rejected 2", status: "rejected" });
+
+      const result = await listRows(
+        t,
+        creatorId,
+        { sort: { key: "name", direction: "ascending" } },
+        { limit: 3 },
+      );
+
+      expect(titles(result)).toEqual(["Pending 1", "Pending 2", "Rejected 2"]);
+      expect(result.counts.applications).toEqual({ count: 3, isCapped: true });
+    });
+
+    test("under the limit nothing is reported capped", async () => {
+      const t = convexTest(schema, modules);
+      const creatorId = await seedCreatorId(t, "creator_a");
+      await seedRow(t, creatorId);
+      await seedRow(t, creatorId);
+
+      const result = await listRows(t, creatorId, {}, { limit: 3 });
+
+      expect(result.counts.applications).toEqual({ count: 2, isCapped: false });
+    });
+
+    test("the offers and accepted counts are capped too", async () => {
+      const t = convexTest(schema, modules);
+      const creatorId = await seedCreatorId(t, "creator_a");
+      for (const status of ["offered", "offerExpired", "declined"] as const) {
+        await seedRow(t, creatorId, { status });
+      }
+      await seedRow(t, creatorId, { status: "accepted" });
+
+      const result = await listRows(t, creatorId, {}, { limit: 2 });
+
+      expect(result.counts.offers).toEqual({ count: 2, isCapped: true });
+      expect(result.counts.accepted).toEqual({ count: 1, isCapped: false });
+    });
   });
 });

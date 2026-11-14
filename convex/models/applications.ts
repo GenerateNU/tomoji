@@ -1,17 +1,20 @@
 import type { PaginationOptions, PaginationResult } from "convex/server";
-import type { Infer } from "convex/values";
+import { v, type Infer } from "convex/values";
 import { internal } from "../_generated/api";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { apiError } from "../lib/errors";
 import { canViewResource, type ResourceViewer } from "../lib/authz";
+import { APPLICATION_SWEEP_BATCH } from "../lib/pagination";
 import { HALF_HOUR_MS, isHalfHourTimestamp } from "../lib/validation";
 import type { applicationStatus } from "../schemas/applications.schema";
 
-/** Applications one status sweep patches per transaction before rescheduling itself. */
-export const APPLICATION_SWEEP_BATCH = 50;
 import { assignmentTarget, createAssignmentFromOffer } from "./assignments";
 import { creatorName, notifyCompanyUser, notifyCreator } from "./notifications";
+import { getVisibleOpportunityCompany } from "./opportunities";
+import { listStarredOpportunityIds } from "./opportunityStars";
+
+export { APPLICATION_SWEEP_BATCH };
 
 /**
  * Creates a pending application from a creator to an open, gated opportunity.
@@ -127,27 +130,249 @@ export async function requireApplication(
 }
 
 /**
- * Returns one page of a creator's applications, optionally filtered by status.
- * Results are ordered by status, then newest first within each status.
+ * Which application statuses each tab of the creator's applications table
+ * lists. Every status belongs to exactly one tab.
  */
-export async function listApplications(
+export const APPLICATION_TAB_STATUSES = {
+  applications: ["pending", "rejected", "opportunityFull"],
+  offers: ["offered", "offerExpired", "declined"],
+  accepted: ["accepted"],
+} as const satisfies Record<string, readonly Infer<typeof applicationStatus>[]>;
+
+/** Most applications read for the table in one query, shared across a tab's statuses. */
+export const MAX_APPLICATIONS_READ = 300;
+
+const MAX_SEARCH_LENGTH = 100;
+const MAX_PAGE_SIZE = 50;
+
+const applicationRowStatus = v.union(
+  v.literal("pending"),
+  v.literal("rejected"),
+  v.literal("opportunityFull"),
+);
+
+export const applicationSearch = v.object({
+  tab: v.literal("applications"),
+  search: v.optional(v.string()),
+  starred: v.optional(v.boolean()),
+  hideRejected: v.optional(v.boolean()),
+  sort: v.optional(
+    v.object({
+      key: v.union(
+        v.literal("name"),
+        v.literal("company"),
+        v.literal("status"),
+        v.literal("submitted"),
+        v.literal("compensation"),
+      ),
+      direction: v.union(v.literal("ascending"), v.literal("descending")),
+    }),
+  ),
+  page: v.number(),
+  pageSize: v.number(),
+});
+export type ApplicationSearch = Infer<typeof applicationSearch>;
+
+const tabCount = v.object({ count: v.number(), isCapped: v.boolean() });
+
+export const applicationRow = v.object({
+  applicationId: v.id("applications"),
+  opportunityId: v.id("opportunities"),
+  status: applicationRowStatus,
+  submittedAt: v.number(),
+  title: v.string(),
+  companyName: v.string(),
+  companyLogoMediaId: v.optional(v.id("mediaUploads")),
+  fixedFeeCents: v.number(),
+  cpmRateCents: v.number(),
+  paymentCapCents: v.number(),
+  isStarred: v.boolean(),
+  canStar: v.boolean(),
+});
+export type ApplicationRow = Infer<typeof applicationRow>;
+
+export const applicationSearchResult = v.object({
+  rows: v.array(applicationRow),
+  page: v.number(),
+  pageSize: v.number(),
+  totalCount: v.number(),
+  pageCount: v.number(),
+  counts: v.object({ applications: tabCount, offers: tabCount, accepted: tabCount }),
+});
+
+/**
+ * Reads a tab's applications newest first within each status, stopping at the
+ * limit. Reaching the limit means more may exist, so the tab reports as capped.
+ */
+async function readTabApplications(
   ctx: QueryCtx,
-  options: {
-    creatorId: Id<"creators">;
-    status?: Infer<typeof applicationStatus>;
-    paginationOpts: PaginationOptions;
-  },
-): Promise<PaginationResult<Doc<"applications">>> {
-  const { creatorId, status } = options;
-  return await ctx.db
-    .query("applications")
-    .withIndex("by_creatorId_and_status", (q) =>
-      status === undefined
-        ? q.eq("creatorId", creatorId)
-        : q.eq("creatorId", creatorId).eq("status", status),
-    )
-    .order("desc")
-    .paginate(options.paginationOpts);
+  creatorId: Id<"creators">,
+  statuses: readonly Infer<typeof applicationStatus>[],
+  limit: number,
+): Promise<{ applications: Doc<"applications">[]; isCapped: boolean }> {
+  const applications: Doc<"applications">[] = [];
+  for (const status of statuses) {
+    const remaining = limit - applications.length;
+    if (remaining <= 0) break;
+    applications.push(
+      ...(await ctx.db
+        .query("applications")
+        .withIndex("by_creatorId_and_status", (q) =>
+          q.eq("creatorId", creatorId).eq("status", status),
+        )
+        .order("desc")
+        .take(remaining)),
+    );
+  }
+  return { applications, isCapped: applications.length >= limit };
+}
+
+const STATUS_RANK: Record<Infer<typeof applicationRowStatus>, number> = {
+  pending: 0,
+  opportunityFull: 1,
+  rejected: 2,
+};
+
+function compareRows(
+  a: ApplicationRow,
+  b: ApplicationRow,
+  sort: NonNullable<ApplicationSearch["sort"]>,
+): number {
+  const primary = {
+    name: () => a.title.localeCompare(b.title),
+    company: () => a.companyName.localeCompare(b.companyName),
+    status: () => STATUS_RANK[a.status] - STATUS_RANK[b.status],
+    submitted: () => a.submittedAt - b.submittedAt,
+    compensation: () => a.fixedFeeCents - b.fixedFeeCents || a.cpmRateCents - b.cpmRateCents,
+  }[sort.key]();
+  if (primary !== 0) return sort.direction === "ascending" ? primary : -primary;
+  // Ties fall back to newest first in either direction, so the order is stable.
+  return b.submittedAt - a.submittedAt || a.applicationId.localeCompare(b.applicationId);
+}
+
+/**
+ * Returns one page of the creator's applications for the table, with search,
+ * filters, sorting and a count for each tab.
+ *
+ * Reads at most `MAX_APPLICATIONS_READ` applications per count (shared across a
+ * tab's statuses, newest first) and filters, sorts and pages them in memory, so
+ * a tab holding more reports `isCapped`. Counts ignore the search and filters.
+ * Rows keep their opportunity and company details after the opportunity closes;
+ * `canStar` says whether starring is still possible. Applications whose
+ * opportunity no longer exists are skipped.
+ *
+ * @param options.limit overrides `MAX_APPLICATIONS_READ`, for tests.
+ * @throws `invalid_state` with `invalid_page`, `invalid_page_size` or
+ * `search_too_long` for arguments outside their bounds.
+ */
+export async function listApplicationRows(
+  ctx: QueryCtx,
+  creatorId: Id<"creators">,
+  args: ApplicationSearch,
+  options: { limit?: number } = {},
+): Promise<Infer<typeof applicationSearchResult>> {
+  const limit = options.limit ?? MAX_APPLICATIONS_READ;
+  const search = (args.search ?? "").trim();
+  if (!Number.isInteger(args.page) || args.page < 1) {
+    throw apiError("invalid_state", { reason: "invalid_page" });
+  }
+  if (!Number.isInteger(args.pageSize) || args.pageSize < 1 || args.pageSize > MAX_PAGE_SIZE) {
+    throw apiError("invalid_state", { reason: "invalid_page_size" });
+  }
+  if (search.length > MAX_SEARCH_LENGTH) {
+    throw apiError("invalid_state", { reason: "search_too_long" });
+  }
+
+  const [tab, offers, accepted] = await Promise.all([
+    readTabApplications(ctx, creatorId, APPLICATION_TAB_STATUSES.applications, limit),
+    readTabApplications(ctx, creatorId, APPLICATION_TAB_STATUSES.offers, limit),
+    readTabApplications(ctx, creatorId, APPLICATION_TAB_STATUSES.accepted, limit),
+  ]);
+
+  const companies = new Map<Id<"companies">, Doc<"companies"> | null>();
+  const joined: ApplicationRow[] = [];
+  for (const application of tab.applications) {
+    const opportunity = await ctx.db.get("opportunities", application.opportunityId);
+    // The opportunity was deleted, so there is nothing to show for this application.
+    if (opportunity === null) continue;
+    if (!companies.has(opportunity.companyId)) {
+      companies.set(opportunity.companyId, await ctx.db.get("companies", opportunity.companyId));
+    }
+    const company = companies.get(opportunity.companyId) ?? null;
+    joined.push({
+      applicationId: application._id,
+      opportunityId: opportunity._id,
+      status: application.status as Infer<typeof applicationRowStatus>,
+      submittedAt: application._creationTime,
+      title: opportunity.title,
+      companyName: company?.name ?? "",
+      ...(company?.profilePictureMediaId === undefined
+        ? {}
+        : { companyLogoMediaId: company.profilePictureMediaId }),
+      fixedFeeCents: opportunity.fixedFeeCents,
+      cpmRateCents: opportunity.cpmRateCents,
+      paymentCapCents: opportunity.paymentCapCents,
+      isStarred: false,
+      canStar: false,
+    });
+  }
+
+  const needle = search.toLowerCase();
+  let rows = joined.filter(
+    (row) =>
+      needle === "" ||
+      row.title.toLowerCase().includes(needle) ||
+      row.companyName.toLowerCase().includes(needle),
+  );
+  let starredIds: Set<Id<"opportunities">> | null = null;
+  if (args.starred) {
+    starredIds = await listStarredOpportunityIds(
+      ctx,
+      creatorId,
+      rows.map((row) => row.opportunityId),
+    );
+    rows = rows.filter((row) => starredIds!.has(row.opportunityId));
+  }
+  if (args.hideRejected) rows = rows.filter((row) => row.status !== "rejected");
+
+  const sort = args.sort ?? { key: "submitted", direction: "descending" };
+  rows.sort((a, b) => compareRows(a, b, sort));
+
+  const totalCount = rows.length;
+  const pageCount = Math.ceil(totalCount / args.pageSize);
+  const page = Math.min(args.page, Math.max(pageCount, 1));
+  const pageRows = rows.slice((page - 1) * args.pageSize, page * args.pageSize);
+
+  starredIds ??= await listStarredOpportunityIds(
+    ctx,
+    creatorId,
+    pageRows.map((row) => row.opportunityId),
+  );
+  const visible = await Promise.all(
+    pageRows.map(async (row) => {
+      const opportunity = await ctx.db.get("opportunities", row.opportunityId);
+      return (
+        opportunity !== null && (await getVisibleOpportunityCompany(ctx, opportunity)) !== null
+      );
+    }),
+  );
+
+  return {
+    rows: pageRows.map((row, i) => ({
+      ...row,
+      isStarred: starredIds.has(row.opportunityId),
+      canStar: visible[i],
+    })),
+    page,
+    pageSize: args.pageSize,
+    totalCount,
+    pageCount,
+    counts: {
+      applications: { count: joined.length, isCapped: tab.isCapped },
+      offers: { count: offers.applications.length, isCapped: offers.isCapped },
+      accepted: { count: accepted.applications.length, isCapped: accepted.isCapped },
+    },
+  };
 }
 
 /**

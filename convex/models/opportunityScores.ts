@@ -1,9 +1,8 @@
 import type { Doc, Id } from "../_generated/dataModel";
-import type { MutationCtx } from "../_generated/server";
+import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { listCreatorNiches } from "./creatorNiches";
 import { listCreatorSkills } from "./creatorSkills";
 import { followerRangeFit, type FollowerRange } from "./followerRanges";
-import { getVisibleOpportunityCompany } from "./opportunities";
 import { listOpportunityNiches } from "./opportunityNiches";
 import { listOpportunitySkills } from "./opportunitySkills";
 
@@ -106,6 +105,18 @@ async function getOpportunityScore(
     .unique();
 }
 
+/** Whether any creator has a score for this opportunity. */
+export async function hasOpportunityScores(
+  ctx: QueryCtx,
+  opportunityId: Id<"opportunities">,
+): Promise<boolean> {
+  const score = await ctx.db
+    .query("opportunityScores")
+    .withIndex("by_opportunityId", (q) => q.eq("opportunityId", opportunityId))
+    .first();
+  return score !== null;
+}
+
 /**
  * Stores a score, writing only when it changed so feeds don't re-render for
  * nothing. A score of 0 is stored as no row, so the table only holds real matches.
@@ -124,6 +135,15 @@ async function saveOpportunityScore(
   } else if (existing.score !== score) {
     await ctx.db.patch("opportunityScores", existing._id, { score });
   }
+}
+
+/**
+ * Open and paused briefs keep their scores; discovery hides paused ones, and
+ * those under a paused campaign or inactive company, when it reads them. That
+ * way pausing and resuming needn't rescore. Drafts and closed briefs have none.
+ */
+function isScored(opportunity: Doc<"opportunities"> | null): opportunity is Doc<"opportunities"> {
+  return opportunity !== null && (opportunity.status === "open" || opportunity.status === "paused");
 }
 
 const ROWS_PER_BATCH = 100;
@@ -172,8 +192,8 @@ const FINISHED_PAGE = { isDone: true, continueCursor: "" };
  * edit may have dropped them; each selection stage reads the creators who
  * picked that niche or skill, so the work grows with real matches rather than
  * with every creator. An opportunity that only sets a follower minimum has no
- * selections to look creators up by, so it isn't scored. If creators can no
- * longer see the opportunity, its scores are removed instead.
+ * selections to look creators up by, so it isn't scored. Once the opportunity
+ * is closed or removed, its scores are removed instead.
  */
 export async function scoreOpportunityForCreators(
   ctx: MutationCtx,
@@ -182,7 +202,7 @@ export async function scoreOpportunityForCreators(
   cursor: string | null,
 ): Promise<ScoringProgress> {
   const opportunity = await ctx.db.get("opportunities", opportunityId);
-  if (opportunity === null || (await getVisibleOpportunityCompany(ctx, opportunity)) === null) {
+  if (!isScored(opportunity)) {
     const scores = await ctx.db
       .query("opportunityScores")
       .withIndex("by_opportunityId", (q) => q.eq("opportunityId", opportunityId))
@@ -235,7 +255,7 @@ export async function scoreOpportunityForCreators(
  * "existing" stage rescores the opportunities they already have a score for,
  * dropping ones that closed or stopped matching; each selection stage reads the
  * opportunities that picked one of the creator's niches or skills, skipping
- * ones creators can't see. If the creator no longer has a feed, their scores
+ * drafts and closed ones. If the creator no longer has a feed, their scores
  * are removed.
  */
 export async function scoreCreatorOpportunities(
@@ -260,10 +280,9 @@ export async function scoreCreatorOpportunities(
   const stages = selectionStages(signals);
   const rescore = async (opportunityId: Id<"opportunities">) => {
     const opportunity = await ctx.db.get("opportunities", opportunityId);
-    const score =
-      opportunity !== null && (await getVisibleOpportunityCompany(ctx, opportunity)) !== null
-        ? scoreOpportunityMatch(signals, await getOpportunitySignals(ctx, opportunity))
-        : 0;
+    const score = isScored(opportunity)
+      ? scoreOpportunityMatch(signals, await getOpportunitySignals(ctx, opportunity))
+      : 0;
     await saveOpportunityScore(ctx, creatorId, opportunityId, score);
   };
 

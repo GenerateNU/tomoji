@@ -50,6 +50,7 @@ import type * as lib_xTokenEncryption from "../lib/xTokenEncryption.js";
 import type * as media from "../media.js";
 import type * as mediaInternal from "../mediaInternal.js";
 import type * as migrations_2026_10_07_remove_user_profile_pictures from "../migrations/2026_10_07_remove_user_profile_pictures.js";
+import type * as migrations_2026_11_14_score_open_opportunities from "../migrations/2026_11_14_score_open_opportunities.js";
 import type * as migrations_runner from "../migrations/runner.js";
 import type * as models_aiReviewAttempts from "../models/aiReviewAttempts.js";
 import type * as models_applications from "../models/applications.js";
@@ -151,6 +152,7 @@ declare const fullApi: ApiFromModules<{
   media: typeof media;
   mediaInternal: typeof mediaInternal;
   "migrations/2026_10_07_remove_user_profile_pictures": typeof migrations_2026_10_07_remove_user_profile_pictures;
+  "migrations/2026_11_14_score_open_opportunities": typeof migrations_2026_11_14_score_open_opportunities;
   "migrations/runner": typeof migrations_runner;
   "models/aiReviewAttempts": typeof models_aiReviewAttempts;
   "models/applications": typeof models_applications;

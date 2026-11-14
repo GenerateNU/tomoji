@@ -9,4 +9,5 @@ export const run = migrations.runner();
 // Append new migrations in execution order; deploying alone does not run them.
 export const runAll = migrations.runner([
   internal.migrations["2026_10_07_remove_user_profile_pictures"].removeUserProfilePictures,
+  internal.migrations["2026_11_14_score_open_opportunities"].scoreOpenOpportunities,
 ]);

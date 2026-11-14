@@ -21,6 +21,7 @@ import { errorMessage } from "@/lib/errors";
 import { createMediaUpload, type MediaUploadPhase } from "@/lib/media-upload";
 import { aiReviewStatusLabel } from "./assignment-status";
 import { SubmissionPreview } from "./submission-preview";
+import { SubmittedVideo } from "./submitted-video";
 
 const VIDEO_TYPES = ["video/mp4", "video/quicktime", "video/webm"];
 const MAX_VIDEO_BYTES = 250 * 1024 * 1024;
@@ -160,13 +161,18 @@ export function DraftComposer({
 
   const preview = (
     <SubmissionPreview caption={caption} placeholder={!reviewId}>
-      {previewUrl && <VideoPreview url={previewUrl} label="Draft video preview" />}
+      {previewUrl ? (
+        <VideoPreview url={previewUrl} label="Draft video preview" />
+      ) : (
+        keepPreviousVideo &&
+        previous?.mediaId && <SubmittedVideo mediaId={previous.mediaId} eager />
+      )}
     </SubmissionPreview>
   );
 
   if (reviewId) {
     return (
-      <div className="grid min-h-[min(79.4dvh,780px)] place-items-center bg-gray-50 px-5 py-16">
+      <div className="grid min-w-0 min-h-[min(79.4dvh,780px)] place-items-center bg-gray-50 px-5 py-16">
         <DialogTitle className="sr-only">Submission review</DialogTitle>
         <DialogDescription className="sr-only">Your draft and its review status</DialogDescription>
         <DialogClose
@@ -206,9 +212,9 @@ export function DraftComposer({
   return (
     <form
       onSubmit={submitDraft}
-      className="grid min-h-[min(79.4dvh,780px)] md:grid-cols-[46.25%_1fr]"
+      className="grid min-w-0 grid-cols-[minmax(0,1fr)] min-h-[min(79.4dvh,780px)] md:grid-cols-[46.25%_minmax(0,1fr)]"
     >
-      <div className="relative flex flex-col gap-6 p-5 md:p-8">
+      <div className="relative flex min-w-0 flex-col gap-6 p-5 md:p-8">
         <DialogClose
           aria-label="Close"
           disabled={readOnly}
@@ -355,7 +361,10 @@ export function DraftComposer({
           </Button>
         </div>
       </div>
-      <aside className="space-y-6 bg-gray-50 p-5 md:px-10 md:py-8" aria-label="Post preview">
+      <aside
+        className="min-w-0 space-y-6 bg-gray-50 p-5 md:px-10 md:py-8"
+        aria-label="Post preview"
+      >
         <p className="text-center text-body-sm text-gray-500">Preview</p>
         {preview}
         {previous?.reviewNote && (

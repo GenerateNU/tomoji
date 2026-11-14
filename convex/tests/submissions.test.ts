@@ -504,3 +504,25 @@ describe("closed drafts through the read routes", () => {
     expect(result.page).toEqual([expected]);
   });
 });
+
+test("the company queue lists the latest round per deliverable and only its own drafts", async () => {
+  const t = convexTest(schema, modules);
+  const fixture = await seedAssignmentFixture(t);
+  await seedSubmission(t, fixture, "changesRequested");
+  const latest = await fixture.asCreator.mutation(api.submissions.create, submissionArgs(fixture));
+
+  expect(await fixture.asCompany.query(api.submissions.listCompanyQueue, {})).toMatchObject({
+    rows: [{ submissionId: latest, round: 2, status: "pending" }],
+    isCapped: false,
+  });
+
+  const outsider = await seedUser(t, { subject: "other_company", org: { id: "org_outside" } });
+  expect(await outsider.query(api.submissions.listCompanyQueue, {})).toEqual({
+    rows: [],
+    isCapped: false,
+  });
+  await expectApiError(
+    () => fixture.asCreator.query(api.submissions.listCompanyQueue, {}),
+    "forbidden",
+  );
+});

@@ -114,25 +114,7 @@ function AssignmentWorkspace({ details }: { details: AssignmentDetails }) {
         <section>
           <h2 className="mb-2 text-body-sm font-medium text-gray-500">Content requirements</h2>
           {brief ? (
-            <>
-              <p className="mb-4 text-sm break-words whitespace-pre-wrap">{brief.description}</p>
-              <dl className="space-y-3 text-sm">
-                {[
-                  ["Deliverable guidelines", brief.contentRequirements],
-                  ["Review policy", brief.reviewPolicy],
-                ].map(
-                  ([label, value]) =>
-                    value && (
-                      <div key={label}>
-                        <dt className="font-medium">{label}</dt>
-                        <dd className="break-words whitespace-pre-wrap text-muted-foreground">
-                          {value}
-                        </dd>
-                      </div>
-                    ),
-                )}
-              </dl>
-            </>
+            <p className="text-sm break-words whitespace-pre-wrap">{brief.description}</p>
           ) : (
             <p className="text-sm text-muted-foreground">Brief unavailable.</p>
           )}

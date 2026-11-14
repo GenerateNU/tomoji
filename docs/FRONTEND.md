@@ -81,11 +81,17 @@ dates, future dates, and underage dates.
 uses the existing WorkOS server actions to request a password-reset email or sign
 out. The reset confirmation appears only after the request succeeds. Stripe
 onboarding is not wired on this branch, so its control is disabled with faded brand colors
-while retaining the normal card copy. Profile photo uploads and X linking retain
-their existing disabled state; existing photos and saved links can still be displayed.
+while retaining the normal card copy. In the Profile editor, Change photo validates
+and previews an image locally; Save uploads it through the existing S3 media flow.
+Cancel before Save discards the selected image without uploading. Photo completion
+and profile-field updates are separate operations: if only the photo saves, the error
+explains that result, and retry does not upload it again. Link X opens authorization
+in a separate tab to preserve the current draft and reads verified connection state
+from `xAccounts.me`. X linking is independent of the Profile Save/Cancel controls.
 
 Browser tests use isolated Convex and authentication fixtures. Their screenshots
-verify layout and interaction states, not live Stripe, WorkOS email, or S3 behavior.
+verify layout and interaction states, not live Stripe, WorkOS email, X authorization,
+or S3 behavior.
 
 ## Component Design
 

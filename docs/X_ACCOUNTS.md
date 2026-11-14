@@ -63,7 +63,7 @@ check existing data before deployment and approve any conversion or reconnection
 
 ## OAuth flow
 
-The frontend calls `start` and navigates to its authorization URL. X redirects to
+The frontend calls `start` and opens its authorization URL. X redirects to
 `GET /api/x/callback`. This Next.js handler reads the existing WorkOS session and
 immediately calls `complete` using that session's access token. The callback is
 separate from `/auth/callback` and cannot create a Tomoji session.
@@ -89,11 +89,37 @@ flow rather than replaying the callback. An unpersisted grant may still exist on
 The callback redirects to `/?x_link=connected|failed|denied|sign_in_required|already_linked`, with
 `Cache-Control: no-store` and `Referrer-Policy: no-referrer`. No provider payload,
 code, state, or token appears in that redirect. Signed-out callbacks require a new
-linking attempt after signing in. Settings currently shows only a disabled **Connect X**
-placeholder; it is not wired to this backend. Future connection controls should provide
-result messages and use `me` as the source of truth after returning.
+linking attempt after signing in. Connection controls use `me` as the source of truth;
+the redirect flag only explains the callback outcome.
 `already_linked` identifies only the specific account-ownership conflict, without
 exposing the other creator's identity. Other errors stay generic.
+
+### Connecting from Profile
+
+Profile's **Link X** / **Reconnect X** control opens authorization in a separate tab
+so unsaved profile edits remain in place. The tab is opened by the click before the
+asynchronous start call, with its opener removed. If the browser blocks it, no link
+attempt is started. The UI disables duplicate starts and reads the current `me`
+result before a new attempt, which invalidates any older attempt on the server.
+
+The profile subscribes to `me` and offers **Check connection** after authorization.
+Only verified connected metadata confirms success. A reconnect must return changed
+account identity or `updatedAt`, so an existing connection cannot falsely confirm
+a new attempt. Callback denial, failure, account conflicts, and expiry remain
+recoverable without discarding the profile draft; an interrupted tab is not proof
+of failure. Account reads and start requests have a 30-second UI timeout; late
+answers cannot navigate the tab or replace the current UI. A start still running
+on Convex remains locked for that client and creator until the original request
+settles, including across closing and reopening Profile. Editing and checking the
+current connection remain available. No callback code is replayed automatically.
+`Check connection` reads current client query state; it does not force a network
+refresh. Browser isolation can keep the returned authorization tab inaccessible,
+so callback-specific messages are best effort and the tab may remain open. The
+reactive account read and manual check provide the fallback.
+
+X connections save independently of the profile's Save and Cancel controls.
+Disconnect is not exposed in Profile. Browser
+tests use isolated OAuth and account fixtures; they do not authorize a live X app.
 
 Disconnect invalidates attempts and deletes local account/credential rows first,
 then attempts revocation of both tokens with bounded requests. Even when X is down

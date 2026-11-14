@@ -9,6 +9,25 @@ let fixtureDirectory: string;
 let bundle: string;
 let css: string;
 
+const profilePicture = {
+  name: "avatar.png",
+  mimeType: "image/png",
+  buffer: Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg==",
+    "base64",
+  ),
+};
+
+const linkedXAccount = {
+  xAccountId: "test-x-account" as Id<"xAccounts">,
+  xUserId: "123456",
+  username: "zahra",
+  displayName: "Zahra Wibisana",
+  linkedAt: Date.UTC(2026, 10, 1),
+  updatedAt: Date.UTC(2026, 10, 14),
+  status: "connected" as const,
+};
+
 test.beforeAll(() => {
   fixtureDirectory = mkdtempSync(join(tmpdir(), "tomoji-profile-tests-"));
   execFileSync("bun", [
@@ -62,6 +81,22 @@ async function fillBirthdate(page: Page, value: string) {
     await field.click();
     await field.fill(parts[index] ?? "");
   }
+}
+
+async function chooseProfilePhoto(page: Page, file = profilePicture) {
+  const fileChooser = page.waitForEvent("filechooser");
+  await page.getByRole("button", { name: "Change photo", exact: true }).click();
+  await (await fileChooser).setFiles(file);
+}
+
+async function mockPhotoUploads(page: Page) {
+  const posts: string[] = [];
+  await page.route("https://uploads.example.test/photo", async (route) => {
+    expect(route.request().method()).toBe("POST");
+    posts.push(route.request().postData() ?? "");
+    await route.fulfill({ status: 204, headers: { "access-control-allow-origin": "*" } });
+  });
+  return posts;
 }
 
 test("editing profile opens one form and cancelling preserves the saved profile", async ({
@@ -310,6 +345,202 @@ test("live updates refresh the displayed name, country, and GitHub URL", async (
   expect(await page.evaluate(() => window.profileFixture.calls)).toEqual([]);
 });
 
+test("a selected profile photo stays a draft and Cancel discards it without uploads", async ({
+  page,
+}) => {
+  await openProfile(page);
+  await page.getByRole("button", { name: "Edit", exact: true }).click();
+  const changePhoto = page.getByRole("button", { name: "Change photo", exact: true });
+  await expect(changePhoto).toBeEnabled();
+  await chooseProfilePhoto(page);
+  await expect(page.getByAltText("Your profile picture", { exact: true })).toHaveJSProperty(
+    "naturalWidth",
+    1,
+  );
+  await expect(page.getByRole("button", { name: "Save", exact: true })).toBeEnabled();
+  expect(await page.evaluate(() => window.profileFixture.calls)).toEqual([]);
+  await page.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Edit", exact: true })).toBeVisible();
+  await expect(page.getByAltText("Your profile picture", { exact: true })).toHaveCount(0);
+  expect(await page.evaluate(() => window.profileFixture.calls)).toEqual([]);
+});
+
+test("profile Save waits for photo decoding before allowing an upload", async ({ page }) => {
+  await page.addInitScript(() => {
+    const decode = HTMLImageElement.prototype.decode;
+    const ready = new Promise<void>((resolve) =>
+      window.addEventListener("fixture:finish-photo-decoding", () => resolve(), { once: true }),
+    );
+    HTMLImageElement.prototype.decode = async function () {
+      await ready;
+      return decode.call(this);
+    };
+  });
+  await openProfile(page);
+  await page.getByRole("button", { name: "Edit", exact: true }).click();
+  await page.getByLabel("GitHub profile", { exact: true }).fill("https://github.com/decoding");
+  await chooseProfilePhoto(page);
+  await expect(page.getByText("Checking photo…", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Save", exact: true })).toBeDisabled();
+  expect(await page.evaluate(() => window.profileFixture.calls)).toEqual([]);
+  await page.evaluate(() => window.dispatchEvent(new Event("fixture:finish-photo-decoding")));
+  await expect(page.getByRole("button", { name: "Save", exact: true })).toBeEnabled();
+  await expect(page.getByAltText("Your profile picture", { exact: true })).toHaveJSProperty(
+    "naturalWidth",
+    1,
+  );
+  expect(await page.evaluate(() => window.profileFixture.calls)).toEqual([]);
+});
+
+for (const invalid of [
+  {
+    name: "unsupported format",
+    file: { name: "avatar.gif", mimeType: "image/gif", buffer: Buffer.from("GIF89a") },
+    message: "Choose a JPEG, PNG, or WebP image.",
+  },
+  {
+    name: "over 2 MiB",
+    file: { name: "large.png", mimeType: "image/png", buffer: Buffer.alloc(2 * 1024 * 1024 + 1) },
+    message: "Choose a picture smaller than 2 MB.",
+  },
+  {
+    name: "unreadable image",
+    file: { name: "broken.png", mimeType: "image/png", buffer: Buffer.from("not an image") },
+    message: "We couldn't read that picture. Choose another image.",
+  },
+]) {
+  test(`invalid profile photo ${invalid.name} is rejected before uploading`, async ({ page }) => {
+    await openProfile(page);
+    await page.getByRole("button", { name: "Edit", exact: true }).click();
+    await chooseProfilePhoto(page, invalid.file);
+    await expect(page.getByRole("alert")).toHaveText(invalid.message);
+    await expect(page.getByRole("button", { name: "Save", exact: true })).toBeDisabled();
+    await expect(page.getByAltText("Your profile picture", { exact: true })).toHaveCount(0);
+    expect(await page.evaluate(() => window.profileFixture.calls)).toEqual([]);
+  });
+}
+
+test("saving a profile photo uploads and completes once without an empty profile mutation", async ({
+  page,
+}) => {
+  const posts = await mockPhotoUploads(page);
+  await openProfile(page);
+  await page.getByRole("button", { name: "Edit", exact: true }).click();
+  await chooseProfilePhoto(page);
+  await expect(page.getByRole("button", { name: "Save", exact: true })).toBeEnabled();
+  expect(posts).toHaveLength(0);
+  await page.evaluate(() => window.profileFixture.delayNext("media:completeUpload"));
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Saving…", exact: true })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Change photo", exact: true })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Cancel", exact: true })).toBeDisabled();
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        window.profileFixture.calls.filter(({ name }) => name === "media:completeUpload"),
+      ),
+    )
+    .toHaveLength(1);
+  expect(posts).toHaveLength(1);
+  expect(posts[0]).toContain('filename="avatar.png"');
+  await page.evaluate(() => window.profileFixture.release("media:completeUpload"));
+  await expect(page.getByRole("button", { name: "Edit", exact: true })).toBeVisible();
+  await expect(page.getByAltText("Your profile picture", { exact: true })).toHaveJSProperty(
+    "naturalWidth",
+    1,
+  );
+  expect(
+    await page.evaluate(() =>
+      window.profileFixture.calls.filter(({ name }) => name !== "media:getProfilePicture"),
+    ),
+  ).toEqual([
+    { name: "media:requestUpload", args: { kind: "profile-picture", contentType: "image/png" } },
+    { name: "media:completeUpload", args: { uploadId: "test-upload" } },
+  ]);
+});
+
+test("profile photo completion retries reuse the upload and preserve unsaved form fields", async ({
+  page,
+}, testInfo) => {
+  await page.setViewportSize({ width: 1512, height: 982 });
+  const posts = await mockPhotoUploads(page);
+  await openProfile(page);
+  await page.getByRole("button", { name: "Edit", exact: true }).click();
+  await page.getByLabel("GitHub profile", { exact: true }).fill("https://github.com/photo-draft");
+  await chooseProfilePhoto(page);
+  await expect(page.getByRole("button", { name: "Save", exact: true })).toBeEnabled();
+  await page.evaluate(() => window.profileFixture.failNext("media:completeUpload"));
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(page.getByRole("alert")).toHaveText(
+    "We couldn't confirm your photo was saved. Try saving again.",
+  );
+  await expect(page.getByLabel("GitHub profile", { exact: true })).toHaveValue(
+    "https://github.com/photo-draft",
+  );
+  await expect(page.getByAltText("Your profile picture", { exact: true })).toBeVisible();
+  expect(posts).toHaveLength(1);
+  await page.screenshot({
+    path: testInfo.outputPath("fixture-profile-photo-error-desktop.png"),
+    fullPage: true,
+    animations: "disabled",
+  });
+  await page.setViewportSize({ width: 375, height: 812 });
+  await page.screenshot({
+    path: testInfo.outputPath("fixture-profile-photo-error-mobile.png"),
+    fullPage: true,
+    animations: "disabled",
+  });
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Edit", exact: true })).toBeVisible();
+  await expect(page.getByRole("link", { name: /GitHub profile/ })).toHaveAttribute(
+    "href",
+    "https://github.com/photo-draft",
+  );
+  expect(posts).toHaveLength(1);
+  expect(
+    await page.evaluate(() =>
+      window.profileFixture.calls.filter(({ name }) => name !== "media:getProfilePicture"),
+    ),
+  ).toEqual([
+    { name: "media:requestUpload", args: { kind: "profile-picture", contentType: "image/png" } },
+    { name: "media:completeUpload", args: { uploadId: "test-upload" } },
+    { name: "media:completeUpload", args: { uploadId: "test-upload" } },
+    { name: "creators:update", args: { githubLink: "https://github.com/photo-draft" } },
+  ]);
+});
+
+test("profile field failure after a saved photo retries only the remaining fields", async ({
+  page,
+}) => {
+  const posts = await mockPhotoUploads(page);
+  await openProfile(page);
+  await page.getByRole("button", { name: "Edit", exact: true }).click();
+  await page.getByLabel("GitHub profile", { exact: true }).fill("https://github.com/photo-partial");
+  await chooseProfilePhoto(page);
+  await expect(page.getByRole("button", { name: "Save", exact: true })).toBeEnabled();
+  await page.evaluate(() => window.profileFixture.failNext("creators:update"));
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(page.getByRole("alert")).toHaveText(
+    "Your photo was saved, but your other changes weren't. Try saving again.",
+  );
+  await expect(page.getByLabel("GitHub profile", { exact: true })).toHaveValue(
+    "https://github.com/photo-partial",
+  );
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Edit", exact: true })).toBeVisible();
+  expect(posts).toHaveLength(1);
+  expect(
+    await page.evaluate(() =>
+      window.profileFixture.calls.filter(({ name }) => name !== "media:getProfilePicture"),
+    ),
+  ).toEqual([
+    { name: "media:requestUpload", args: { kind: "profile-picture", contentType: "image/png" } },
+    { name: "media:completeUpload", args: { uploadId: "test-upload" } },
+    { name: "creators:update", args: { githubLink: "https://github.com/photo-partial" } },
+    { name: "creators:update", args: { githubLink: "https://github.com/photo-partial" } },
+  ]);
+});
+
 test("private pictures load through the existing media reader and recover after a failed request", async ({
   page,
 }) => {
@@ -466,6 +697,7 @@ test("saving disables editing and duplicate submissions until the mutation compl
   await expect(page.getByRole("button", { name: "Saving…", exact: true })).toBeDisabled();
   await expect(page.getByRole("button", { name: "Cancel", exact: true })).toBeDisabled();
   await expect(page.getByLabel("GitHub profile", { exact: true })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Link X", exact: true })).toBeDisabled();
   expect(await page.evaluate(() => window.profileFixture.calls)).toHaveLength(1);
   await page.evaluate(() => window.profileFixture.release("creators:update"));
   await expect(page.getByRole("button", { name: "Edit", exact: true })).toBeVisible();
@@ -891,15 +1123,245 @@ test("niches summarize hidden selections without removing them from the dropdown
   ]);
 });
 
-test("unsupported X and photo actions stay unavailable and do not make service calls", async ({
+test("Link X opens a separate authorization tab once and preserves the profile draft", async ({
   page,
-}) => {
+}, testInfo) => {
+  await page.setViewportSize({ width: 1512, height: 982 });
+  await page
+    .context()
+    .route("https://x.com/**", (route) =>
+      route.fulfill({ contentType: "text/html", body: "<h1>Fixture X authorization</h1>" }),
+    );
   await openProfile(page);
   await page.getByRole("button", { name: "Edit", exact: true }).click();
-  await expect(page.getByRole("button", { name: "Change photo", exact: true })).toBeDisabled();
-  await expect(page.getByRole("button", { name: "Link X", exact: true })).toBeDisabled();
-  await expect(page.locator('input[type="file"]')).toHaveCount(0);
+  await page
+    .getByLabel("GitHub profile", { exact: true })
+    .fill("https://github.com/unsaved-x-draft");
+  const linkX = page.getByRole("button", { name: "Link X", exact: true });
+  await expect(linkX).toBeEnabled();
+  await page.evaluate(() => window.profileFixture.delayNext("xAccounts:start"));
+  const popupEvent = page.waitForEvent("popup");
+  await linkX.click();
+  const popup = await popupEvent;
+  await expect(page.getByRole("button", { name: "Opening X…", exact: true })).toBeDisabled();
+  expect(await page.evaluate(() => window.profileFixture.calls)).toEqual([
+    { name: "xAccounts:start", args: {} },
+  ]);
+  await page.evaluate(() => window.profileFixture.release("xAccounts:start"));
+  await expect(popup).toHaveURL("https://x.com/i/oauth2/authorize?state=fixture");
+  expect(await popup.evaluate(() => window.opener)).toBeNull();
+  await expect(page.getByRole("button", { name: "Connecting to X…", exact: true })).toBeDisabled();
+  await page.screenshot({
+    path: testInfo.outputPath("fixture-profile-x-waiting-desktop.png"),
+    fullPage: true,
+    animations: "disabled",
+  });
+  await page.setViewportSize({ width: 375, height: 812 });
+  await page
+    .getByRole("button", { name: "Connecting to X…", exact: true })
+    .scrollIntoViewIfNeeded();
+  await page.screenshot({
+    path: testInfo.outputPath("fixture-profile-x-waiting-mobile.png"),
+    fullPage: true,
+    animations: "disabled",
+  });
+  await expect(page.getByLabel("GitHub profile", { exact: true })).toHaveValue(
+    "https://github.com/unsaved-x-draft",
+  );
+  expect(await page.evaluate(() => window.profileFixture.calls)).toEqual([
+    { name: "xAccounts:start", args: {} },
+  ]);
+  await page.evaluate((account) => window.profileFixture.setXAccount(account), linkedXAccount);
+  await expect(page.getByText("@zahra connected", { exact: true })).toBeVisible();
+  await expect(page.getByLabel("GitHub profile", { exact: true })).toHaveValue(
+    "https://github.com/unsaved-x-draft",
+  );
+  await popup.close();
+});
+
+test("blocked X popups make no authorization calls and can be retried", async ({ page }) => {
+  await page.addInitScript(() => {
+    const open = window.open;
+    let blocked = true;
+    window.open = (...args) => {
+      if (blocked) {
+        blocked = false;
+        return null;
+      }
+      return open.apply(window, args);
+    };
+  });
+  await page
+    .context()
+    .route("https://x.com/**", (route) =>
+      route.fulfill({ contentType: "text/html", body: "<h1>Fixture X authorization</h1>" }),
+    );
+  await openProfile(page);
+  await page.getByRole("button", { name: "Edit", exact: true }).click();
+  await page.getByRole("button", { name: "Link X", exact: true }).click();
+  await expect(page.getByRole("alert")).toHaveText("Allow pop-ups to connect X, then try again.");
   expect(await page.evaluate(() => window.profileFixture.calls)).toEqual([]);
+  const popupEvent = page.waitForEvent("popup");
+  await page.getByRole("button", { name: "Link X", exact: true }).click();
+  const popup = await popupEvent;
+  await expect(popup).toHaveURL("https://x.com/i/oauth2/authorize?state=fixture");
+  expect(await page.evaluate(() => window.profileFixture.calls)).toEqual([
+    { name: "xAccounts:start", args: {} },
+  ]);
+  await popup.close();
+  await expect(page.getByRole("button", { name: "Link X", exact: true })).toBeEnabled();
+});
+
+test("failed X authorization closes its blank tab and preserves the draft for retry", async ({
+  page,
+}) => {
+  await page
+    .context()
+    .route("https://x.com/**", (route) =>
+      route.fulfill({ contentType: "text/html", body: "<h1>Fixture X authorization</h1>" }),
+    );
+  await openProfile(page);
+  await page.getByRole("button", { name: "Edit", exact: true }).click();
+  await page.getByLabel("GitHub profile", { exact: true }).fill("https://github.com/x-retry");
+  await page.evaluate(() => window.profileFixture.failNext("xAccounts:start"));
+  const failedPopupEvent = page.waitForEvent("popup");
+  await page.getByRole("button", { name: "Link X", exact: true }).click();
+  const failedPopup = await failedPopupEvent;
+  await expect.poll(() => failedPopup.isClosed()).toBe(true);
+  await expect(page.getByRole("alert")).toHaveText("Something went wrong. Try again.");
+  await expect(page.getByLabel("GitHub profile", { exact: true })).toHaveValue(
+    "https://github.com/x-retry",
+  );
+  const popupEvent = page.waitForEvent("popup");
+  await page.getByRole("button", { name: "Link X", exact: true }).click();
+  const popup = await popupEvent;
+  await expect(popup).toHaveURL("https://x.com/i/oauth2/authorize?state=fixture");
+  expect(await page.evaluate(() => window.profileFixture.calls)).toEqual([
+    { name: "xAccounts:start", args: {} },
+    { name: "xAccounts:start", args: {} },
+  ]);
+  await popup.close();
+});
+
+test("X connection status comes from account data and reconnect remains available", async ({
+  page,
+}) => {
+  await openProfile(page, "?x=connected");
+  await page.getByRole("button", { name: "Edit", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Link X", exact: true })).toBeEnabled();
+  await expect(page.getByText(/@zahra connected/)).toHaveCount(0);
+  await page.evaluate((account) => window.profileFixture.setXAccount(account), linkedXAccount);
+  await expect(page.getByText("@zahra connected", { exact: true })).toBeVisible();
+  await page.evaluate(
+    (account) => window.profileFixture.setXAccount({ ...account, status: "reconnect_required" }),
+    linkedXAccount,
+  );
+  await expect(page.getByRole("button", { name: "Reconnect X", exact: true })).toBeEnabled();
+  await expect(page.getByText("@zahra connected", { exact: true })).toHaveCount(0);
+  expect(await page.evaluate(() => window.profileFixture.calls)).toEqual([]);
+});
+
+for (const outcome of ["connected", "denied"] as const) {
+  test(`X callback ${outcome} never replaces verified account metadata`, async ({ page }) => {
+    await page
+      .context()
+      .route("https://x.com/**", (route) =>
+        route.fulfill({ contentType: "text/html", body: "<h1>Fixture X authorization</h1>" }),
+      );
+    await page
+      .context()
+      .route(/^http:\/\/profile\.test\/\?x_link=/, (route) =>
+        route.fulfill({ contentType: "text/html", body: "<h1>Fixture X callback</h1>" }),
+      );
+    await openProfile(page);
+    await page.getByRole("button", { name: "Edit", exact: true }).click();
+    const popupEvent = page.waitForEvent("popup");
+    await page.getByRole("button", { name: "Link X", exact: true }).click();
+    const popup = await popupEvent;
+    await expect(popup).toHaveURL("https://x.com/i/oauth2/authorize?state=fixture");
+    await popup.goto(`http://profile.test/?x_link=${outcome}`);
+    await page.bringToFront();
+    await expect(page.getByText("@zahra connected", { exact: true })).toHaveCount(0);
+    if (outcome === "denied") {
+      // Provider navigation can isolate the tab handle, so closing it must allow recovery.
+      await popup.close();
+      await expect(page.getByRole("button", { name: "Link X", exact: true })).toBeEnabled();
+    } else {
+      await page.getByRole("button", { name: "Check connection", exact: true }).click();
+      await expect(page.getByRole("alert")).toHaveText(
+        "No new X connection was confirmed. Finish authorization or try again.",
+      );
+      await page.evaluate((account) => window.profileFixture.setXAccount(account), linkedXAccount);
+      await expect(page.getByText("@zahra connected", { exact: true })).toBeVisible();
+      await expect(page.getByRole("alert")).toHaveCount(0);
+      await popup.close();
+    }
+    expect(await page.evaluate(() => window.profileFixture.calls)).toEqual([
+      { name: "xAccounts:start", args: {} },
+    ]);
+  });
+}
+
+test("slow X authorization stays locked across reopening until its request settles", async ({
+  page,
+}) => {
+  await page.clock.install();
+  await page
+    .context()
+    .route("https://x.com/**", (route) =>
+      route.fulfill({ contentType: "text/html", body: "<h1>Fixture X authorization</h1>" }),
+    );
+  await openProfile(page);
+  await page.getByRole("button", { name: "Edit", exact: true }).click();
+  await page.evaluate(() => window.profileFixture.delayNext("xAccounts:start"));
+  const popupEvent = page.waitForEvent("popup");
+  await page.getByRole("button", { name: "Link X", exact: true }).click();
+  const popup = await popupEvent;
+  await expect(page.getByRole("button", { name: "Opening X…", exact: true })).toBeDisabled();
+  await expect
+    .poll(() => page.evaluate(() => window.profileFixture.calls))
+    .toEqual([{ name: "xAccounts:start", args: {} }]);
+  await page.clock.fastForward(30_001);
+  await expect(page.getByRole("alert")).toHaveText(
+    "X did not respond in time. Check your connection, then try again.",
+  );
+  await expect.poll(() => popup.isClosed()).toBe(true);
+  await expect(page.getByRole("button", { name: "Waiting for X…", exact: true })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Check connection", exact: true })).toBeEnabled();
+  await page
+    .getByLabel("GitHub profile", { exact: true })
+    .fill("https://github.com/still-editable");
+  await page.getByRole("button", { name: "Cancel", exact: true }).click();
+  await page.getByRole("button", { name: "Edit", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Waiting for X…", exact: true })).toBeDisabled();
+  expect(await page.evaluate(() => window.profileFixture.calls)).toEqual([
+    { name: "xAccounts:start", args: {} },
+  ]);
+  await page.evaluate(() => window.profileFixture.delayNext("xAccounts:me"));
+  await page.getByRole("button", { name: "Check connection", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Checking X…", exact: true })).toBeDisabled();
+  await page.clock.fastForward(30_001);
+  await expect(page.getByRole("alert")).toHaveText(
+    "X did not respond in time. Check your connection, then try again.",
+  );
+  await expect(page.getByRole("button", { name: "Waiting for X…", exact: true })).toBeDisabled();
+  await page.evaluate(() => window.profileFixture.release("xAccounts:me"));
+  await page.evaluate(() => window.profileFixture.release("xAccounts:start"));
+  await expect(page.getByRole("button", { name: "Link X", exact: true })).toBeEnabled();
+  await expect(page.getByRole("button", { name: "Connecting to X…", exact: true })).toHaveCount(0);
+  expect(popup.isClosed()).toBe(true);
+  expect(await page.evaluate(() => window.profileFixture.calls)).toEqual([
+    { name: "xAccounts:start", args: {} },
+  ]);
+  const retryPopupEvent = page.waitForEvent("popup");
+  await page.getByRole("button", { name: "Link X", exact: true }).click();
+  const retryPopup = await retryPopupEvent;
+  await expect(retryPopup).toHaveURL("https://x.com/i/oauth2/authorize?state=fixture");
+  expect(await page.evaluate(() => window.profileFixture.calls)).toEqual([
+    { name: "xAccounts:start", args: {} },
+    { name: "xAccounts:start", args: {} },
+  ]);
+  await retryPopup.close();
 });
 
 test("more than five languages is rejected and focuses the invalid selector", async ({ page }) => {

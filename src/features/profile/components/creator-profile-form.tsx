@@ -20,8 +20,10 @@ import { parseBirthdate, toDateInputValue } from "../lib/birthdate";
 import { parseGithubLink } from "../lib/github-link";
 import { parseAdditionalLinks, parseLinkedinLink } from "../lib/links";
 import { PREVIEW_CONTENT_TYPES } from "../lib/profile-preview";
+import { useProfilePhotoDraft } from "../hooks/use-profile-photo-draft";
 import { CreatorProfileHeader } from "./creator-profile-header";
 import { BirthdateField } from "./birthdate-field";
+import { ProfileXConnection } from "./profile-x-connection";
 
 function sameValues(left: string[], right: string[]) {
   return left.length === right.length && left.every((value, index) => value === right[index]);
@@ -59,6 +61,7 @@ export function CreatorProfileForm({
   const formRef = useRef<HTMLFormElement>(null);
   const focusInvalidField = useRef(false);
   const update = useMutation(api.creators.update);
+  const photo = useProfilePhotoDraft();
 
   useEffect(() => {
     if (!focusInvalidField.current) return;
@@ -75,7 +78,8 @@ export function CreatorProfileForm({
     github === (initial.githubLink ?? "") &&
     linkedin === (initial.linkedinLink ?? "") &&
     sameValues(links, initial.additionalLinks);
-  const unchanged = profileUnchanged && sameValues(contentTypes, previewContentTypes);
+  const unchanged =
+    profileUnchanged && sameValues(contentTypes, previewContentTypes) && !photo.dirty;
 
   function clearError(field: string) {
     setErrors((current) => ({ ...current, [field]: "" }));
@@ -84,8 +88,8 @@ export function CreatorProfileForm({
 
   async function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (submitting.current || unchanged) return;
-    if (profileUnchanged) {
+    if (submitting.current || photo.validating || unchanged) return;
+    if (profileUnchanged && !photo.dirty) {
       onSaved(contentTypes, false);
       return;
     }
@@ -127,12 +131,23 @@ export function CreatorProfileForm({
     setPending(true);
     onPendingChange?.(true);
     setSaveError("");
+    let savingPhoto = photo.dirty && !photo.saved;
+    let photoSaved = photo.saved;
     try {
-      await update(changes);
+      if (photo.dirty) {
+        await photo.save();
+        savingPhoto = false;
+        photoSaved = true;
+      }
+      if (!profileUnchanged) await update(changes);
       onSaved(contentTypes, true);
     } catch (error) {
       setSaveError(
-        errorMessage(error, { invalid_state: "Check your profile details and try again." }),
+        savingPhoto
+          ? "We couldn't confirm your photo was saved. Try saving again."
+          : photoSaved
+            ? "Your photo was saved, but your other changes weren't. Try saving again."
+            : errorMessage(error, { invalid_state: "Check your profile details and try again." }),
       );
     } finally {
       submitting.current = false;
@@ -148,7 +163,26 @@ export function CreatorProfileForm({
       noValidate
       className="flex max-h-[calc(100dvh-4rem)] min-h-0 flex-col sm:max-h-[min(38rem,calc(100dvh-4rem))]"
     >
-      <CreatorProfileHeader profile={initial} editing />
+      <CreatorProfileHeader
+        profile={profile}
+        editing
+        photo={{
+          previewUrl: photo.previewUrl,
+          disabled: pending || photo.validating,
+          error: photo.error,
+          status: photo.validating
+            ? "Checking photo…"
+            : photo.phase === "uploading"
+              ? "Uploading photo…"
+              : photo.phase === "saving"
+                ? "Saving photo…"
+                : undefined,
+          onChoose: (file) => {
+            setSaveError("");
+            void photo.choose(file);
+          },
+        }}
+      />
       <div className="min-h-0 space-y-8 overflow-y-auto px-6 pb-6 sm:px-8">
         <section aria-labelledby={`${id}-basic`} className="space-y-4">
           <h3 id={`${id}-basic`} className="font-heading text-body-lg font-medium">
@@ -246,9 +280,10 @@ export function CreatorProfileForm({
           <h3 id={`${id}-portfolio`} className="font-heading text-body-lg font-medium">
             Portfolio
           </h3>
-          <Button type="button" variant="secondary-subtle" size="sm" disabled>
-            {profile.xId ? "X account linked" : "Link X"}
-          </Button>
+          <ProfileXConnection
+            creatorId={profile.creatorId}
+            disabled={pending || photo.validating}
+          />
           <div className="grid gap-5 sm:grid-cols-2">
             <div className="group space-y-2">
               <Label htmlFor={`${id}-github`}>GitHub profile</Label>
@@ -364,7 +399,7 @@ export function CreatorProfileForm({
           <Button type="button" variant="secondary-subtle" disabled={pending} onClick={onCancel}>
             Cancel
           </Button>
-          <Button type="submit" disabled={pending || unchanged}>
+          <Button type="submit" disabled={pending || photo.validating || unchanged}>
             {pending ? "Saving…" : "Save"}
           </Button>
         </div>

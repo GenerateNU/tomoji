@@ -5,9 +5,11 @@ import type { Id } from "../../convex/_generated/dataModel";
 
 type Call = { name: string; args: Record<string, unknown> };
 type Profile = FunctionReturnType<typeof api.creators.me>;
+type XAccount = FunctionReturnType<typeof api.xAccounts.me>;
 
 const listeners = new Set<() => void>();
 let revision = 0;
+let xAccount: XAccount = null;
 let profile: Profile = {
   creatorId: "test-creator" as Id<"creators">,
   joinedAt: Date.UTC(2026, 10, 1),
@@ -56,6 +58,11 @@ export const fixture = {
     profile = { ...profile, ...updates };
     notify();
   },
+  setXAccount(account: XAccount) {
+    xAccount = account;
+    profile = { ...profile, xId: account?.xUserId };
+    notify();
+  },
   failNext(name: string) {
     failures.set(name, [...(failures.get(name) ?? []), new Error("Simulated service failure")]);
   },
@@ -90,6 +97,18 @@ function useRevision() {
 export function useQuery(reference: FunctionReference<"query">, args: unknown) {
   useRevision();
   return queryResult(reference, args);
+}
+
+const client = {
+  async query(reference: FunctionReference<"query">, args: unknown) {
+    const name = getFunctionName(reference);
+    if (delays.has(name)) await delays.get(name)!.promise;
+    return queryResult(reference, args);
+  },
+};
+
+export function useConvex() {
+  return client;
 }
 
 // The shell's notification panel shares this stable empty page across renders.
@@ -132,6 +151,7 @@ function queryResult(reference: FunctionReference<"query">, args: unknown) {
   }
   if (session.failedQuery === name) throw new Error("Simulated query failure");
   if (name === "notifications:unreadCount") return 0;
+  if (name === "xAccounts:me") return xAccount;
   if (name === "users:me") {
     if (!session.isAuthenticated) throw new Error("Signed-out visitors must not query users.me");
     if (session.userLoading) return undefined;
@@ -164,6 +184,12 @@ function operation(reference: FunctionReference<"mutation" | "action">) {
       if (delays.has(name)) await delays.get(name)!.promise;
       const failure = failures.get(name)?.shift();
       if (failure) throw failure;
+      if (name === "xAccounts:start") {
+        return {
+          authorizationUrl: "https://x.com/i/oauth2/authorize?state=fixture",
+          expiresAt: Date.now() + 600_000,
+        };
+      }
       if (name === "creators:update") {
         profile = {
           ...profile,

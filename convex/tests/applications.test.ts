@@ -534,17 +534,59 @@ describe("applications.searchMine", () => {
     );
   });
 
-  test("refuses a tab other than applications", async () => {
+  test("refuses the accepted tab", async () => {
     const t = convexTest(schema, modules);
     const asCreator = await seedUser(t, { subject: "creator_a" });
 
     await expect(
       asCreator.query(api.applications.searchMine, {
         ...searchArgs,
-        // @ts-expect-error The offers and accepted tabs are not part of the contract yet.
-        tab: "offers",
+        // @ts-expect-error The accepted tab is not part of the contract yet.
+        tab: "accepted",
       }),
-    ).rejects.toThrow(/Expected `applications`, got `offers`/);
+    ).rejects.toThrow(/got `"accepted"`/);
+  });
+
+  test("the offers tab lists only the caller's offers, soonest expiry first", async () => {
+    const t = convexTest(schema, modules);
+    const asCreator = await seedUser(t, { subject: "creator_a" });
+    const asOther = await seedUser(t, { subject: "creator_b" });
+    const later = await applyTo(t, asCreator, "Later");
+    const sooner = await applyTo(t, asCreator, "Sooner");
+    await applyTo(t, asCreator, "Still pending");
+    const theirs = await applyTo(t, asOther, "Theirs");
+    const now = Date.now();
+    await t.run(async (ctx) => {
+      await ctx.db.patch("applications", later.applicationId, {
+        status: "offered",
+        offerExpiresAt: now + 3 * 24 * 60 * 60 * 1000,
+      });
+      await ctx.db.patch("applications", sooner.applicationId, {
+        status: "offered",
+        offerExpiresAt: now + 60 * 60 * 1000,
+      });
+      await ctx.db.patch("applications", theirs.applicationId, {
+        status: "offered",
+        offerExpiresAt: now + 60 * 60 * 1000,
+      });
+    });
+
+    const result = await asCreator.query(api.applications.searchMine, {
+      ...searchArgs,
+      tab: "offers",
+    });
+
+    expect(result.tab).toBe("offers");
+    expect(result.rows).toMatchObject([
+      {
+        applicationId: sooner.applicationId,
+        title: "Sooner",
+        status: "offered",
+      },
+      { applicationId: later.applicationId, title: "Later", status: "offered" },
+    ]);
+    expect(result.counts.offers).toEqual({ count: 2, isCapped: false });
+    expect(result.counts.applications).toEqual({ count: 1, isCapped: false });
   });
 
   test("pages through the rows", async () => {
@@ -564,6 +606,83 @@ describe("applications.searchMine", () => {
       pageSize: 3,
       totalCount: 4,
       pageCount: 2,
+    });
+  });
+});
+
+describe("applications.getMineDetail", () => {
+  test("returns the caller's offer with its brief and flags", async () => {
+    const t = convexTest(schema, modules);
+    const { asCompany, asCreator, applicationId, opportunityId } = await seedApplication(t);
+    const offered = await asCompany.mutation(api.applications.offer, {
+      applicationId,
+    });
+
+    const detail = await asCreator.query(api.applications.getMineDetail, {
+      applicationId,
+    });
+
+    expect(detail).toMatchObject({
+      applicationId,
+      status: "offered",
+      offerExpiresAt: offered.offerExpiresAt,
+      canAccept: true,
+      canDecline: true,
+      opportunity: { _id: opportunityId, title: "Moisturizer launch video" },
+    });
+  });
+
+  test("rejects a signed-out caller", async () => {
+    const t = convexTest(schema, modules);
+    const { applicationId } = await seedApplication(t);
+
+    await expectApiError(
+      () => t.query(api.applications.getMineDetail, { applicationId }),
+      "not_authenticated",
+    );
+  });
+
+  test("rejects a company user", async () => {
+    const t = convexTest(schema, modules);
+    const { asCompany, applicationId } = await seedApplication(t);
+
+    await expectApiError(
+      () => asCompany.query(api.applications.getMineDetail, { applicationId }),
+      "forbidden",
+    );
+  });
+
+  test("rejects an operator", async () => {
+    const t = convexTest(schema, modules);
+    const { applicationId } = await seedApplication(t);
+    const asOperator = await seedOperator(t, "operator");
+
+    await expectApiError(
+      () => asOperator.query(api.applications.getMineDetail, { applicationId }),
+      "forbidden",
+    );
+  });
+
+  test("hides another creator's application as not found", async () => {
+    const t = convexTest(schema, modules);
+    const { applicationId } = await seedApplication(t);
+    const asOther = await seedUser(t, { subject: "creator_b" });
+
+    await expectApiError(
+      () => asOther.query(api.applications.getMineDetail, { applicationId }),
+      "not_found",
+    );
+  });
+
+  test("reports not found for the application when its opportunity was deleted", async () => {
+    const t = convexTest(schema, modules);
+    const { asCreator, applicationId, opportunityId } = await seedApplication(t);
+    await t.run((ctx) => ctx.db.delete("opportunities", opportunityId));
+
+    await expect(
+      asCreator.query(api.applications.getMineDetail, { applicationId }),
+    ).rejects.toMatchObject({
+      data: { code: "not_found", resource: "application" },
     });
   });
 });

@@ -247,18 +247,26 @@ count for each tab. It is a creator-only query; the creator always comes from th
 
 - **Tabs.** `APPLICATION_TAB_STATUSES` maps every status to one tab. Applications lists
   `pending`, `rejected`, and `opportunityFull`; Offers lists `offered`, `offerExpired`, and
-  `declined`; Accepted lists `accepted`. Only the applications tab can be requested so far;
-  the other two are counted but have no rows yet. "Hide rejected" hides only `rejected`.
+  `declined` (declined offers stay in Offers); Accepted lists `accepted`. The `tab` argument
+  accepts `applications` or `offers`; `accepted` is counted but has no rows yet. The result
+  echoes `tab` so the client can tell which tab's rows it holds. "Hide rejected" hides only
+  `rejected` and does nothing on Offers.
 - **Read budget.** Each count reads at most `MAX_APPLICATIONS_READ` (300) applications,
   newest first within each status, and the applications tab's statuses share that budget.
   Search, filters, sorting, and paging then run in memory over those rows. A count that
   reaches its limit reports `isCapped: true`, and the UI shows "300+". Counts ignore the
-  search and filters; `totalCount` is the filtered total.
+  search and filters; `totalCount` is the filtered total. The requested tab's count is its
+  joined rows (offers whose opportunity was deleted are skipped); the other tabs count the
+  raw rows read, so they can include rows that would be skipped.
 - **Arguments.** `page` is an integer from 1 and a page past the end is clamped to the last.
   `pageSize` is an integer from 1 to 50 and the search is trimmed to at most 100
   characters. Violations are `invalid_state` with reason `invalid_page`,
-  `invalid_page_size`, or `search_too_long`. Sorting defaults to newest submitted first,
-  and ties always fall back to newest first.
+  `invalid_page_size`, or `search_too_long`. Each tab has its own default sort: Applications
+  newest submitted first, Offers by `expires` ascending. Ties always fall back to newest first.
+- **Offer expiry.** Offer rows carry `offerExpiresAt` (absent when unset). The `expires`
+  sort keeps a fixed group order whatever the direction (`offered`, then `offerExpired`,
+  then `declined`) and sorts by `offerExpiresAt` within a group in the requested direction;
+  offers without an expiry come last in their group.
 - **Rows keep their details after an opportunity closes.** A row reads the opportunity and
   company directly rather than through `requireOpportunity`, so a closed, paused, or
   inactive-company opportunity still shows its title, company, and pay. `canStar` says
@@ -267,6 +275,27 @@ count for each tab. It is a creator-only query; the creator always comes from th
   skipped, and a missing company shows an empty `companyName`.
 - `submittedAt` is the application's creation time. Company logos are private media, so the
   row returns `companyLogoMediaId` and the client loads it with `media.getCompanyMedia`.
+
+### Offer details (`applications.getMineDetail`)
+
+`applications.getMineDetail({ applicationId })` is a creator-only query returning one of
+the caller's applications with its opportunity brief (`creatorOpportunity`, including
+`companyName`, with niches, skills and languages as names), `offerExpiresAt`,
+`offerAcceptedAt`, `companyLogoMediaId`, and `minFollowerRange`.
+
+- **Ownership.** Another creator's application, a missing one, and one whose opportunity was
+  deleted are all `not_found`. A missing company gives an empty `companyName`.
+- **Reads closed offers.** Like table rows, it reads the opportunity directly, so a closed,
+  paused, or inactive-company opportunity still shows its brief to its applicant. It works
+  for any application status.
+- **Flags leave out the clock.** `canAccept` is true when the status is `offered` and the
+  opportunity is `open` or `paused` with a free slot; `canDecline` is true whenever the status
+  is `offered`. `acceptBlockedReason` (`opportunity_closed` or `opportunity_full`) is set only
+  on an offered application that can't be accepted, and matches the `invalid_state` reason
+  `acceptApplication` throws. Queries must not call `Date.now()`, so an offer past its expiry
+  that the cron has not yet marked `offerExpired` still reports `canAccept: true`; the client
+  compares `offerExpiresAt` to its own clock and `accept` refuses with `offer_expired`.
+- **Follower range.** `minFollowerRange` is the stored enum value; the client labels it.
 
 ## Payout records
 

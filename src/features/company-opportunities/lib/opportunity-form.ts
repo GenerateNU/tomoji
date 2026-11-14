@@ -263,49 +263,90 @@ export function parseOpportunityForm(
 ):
   | { input: OpportunityInput; errors?: undefined }
   | { input?: undefined; errors: OpportunityFormErrors } {
-  const errors = Object.assign(
+  const errors = validateAll(values, context);
+  return Object.keys(errors).length > 0 ? { errors } : { input: toInput(values) };
+}
+
+function validateAll(values: OpportunityFormValues, context: Context): OpportunityFormErrors {
+  return Object.assign(
     {},
     ...(Object.keys(STEP_FIELDS) as OpportunityStep[]).map((step) =>
       validateOpportunityStep(values, step, context),
     ),
   ) as OpportunityFormErrors;
+}
+
+/** What `opportunities.update` takes besides the id: only the fields being changed. */
+export type OpportunityUpdate = Omit<
+  FunctionArgs<typeof api.opportunities.update>,
+  "opportunityId"
+>;
+
+/**
+ * Checks an edited brief and returns only what changed from `original`, as
+ * `opportunities.update` takes it: an emptied link or follower minimum is
+ * `null`. Deliverables aren't part of the brief, so they aren't checked.
+ */
+export function parseOpportunityUpdate(
+  values: OpportunityFormValues,
+  original: OpportunityFormValues,
+  context: Context,
+):
+  | { updates: OpportunityUpdate; errors?: undefined }
+  | { updates?: undefined; errors: OpportunityFormErrors } {
+  const errors = Object.fromEntries(
+    Object.entries(validateAll({ ...values, deliverables: [] }, context)).filter(
+      ([field]) => !field.startsWith("deliverables"),
+    ),
+  );
   if (Object.keys(errors).length > 0) return { errors };
+  const { deliverables: _next, ...next } = toInput({ ...values, deliverables: [] });
+  const { deliverables: _before, ...before } = toInput({ ...original, deliverables: [] });
+  const updates: Record<string, unknown> = {};
+  for (const key of new Set([...Object.keys(next), ...Object.keys(before)])) {
+    const after = next[key as keyof typeof next];
+    if (JSON.stringify(after) !== JSON.stringify(before[key as keyof typeof before])) {
+      updates[key] = after ?? null;
+    }
+  }
+  return { updates: updates as OpportunityUpdate };
+}
+
+function toInput(values: OpportunityFormValues): OpportunityInput {
   const link = values.productAccessLink.trim();
   return {
-    input: {
-      title: values.title.trim(),
-      description: values.description.trim(),
-      isGated: !values.isOpenToAll,
-      usesAiReviewDefault: values.usesAiReview,
-      maxSlots: Number(values.maxSlots),
-      deadline: deadlineFromDate(values.deadlineDate),
-      fixedFeeCents: parseCents(values.fixedFee)!,
-      cpmRateCents: parseCents(values.cpmRate)!,
-      paymentCapCents: parseCents(values.paymentCap)!,
-      contentRequirements: values.contentRequirements.trim(),
-      reviewPolicy: values.reviewPolicy.trim(),
-      ...(link === "" ? {} : { productAccessLink: link }),
-      ...(values.minFollowerRange === "" ? {} : { minFollowerRange: values.minFollowerRange }),
-      niches: values.niches,
-      skills: values.skills,
-      languages: values.languages,
-      deliverables: values.deliverables.map((deliverable) => {
-        const criteria = lines(deliverable.criteria);
-        return {
-          title: deliverable.title.trim(),
-          description: deliverable.description.trim(),
-          ...(criteria.length === 0
-            ? {}
-            : {
-                // Ids only need to be unique within the deliverable.
-                reviewCriteria: criteria.map((description, index) => ({
-                  id: `criterion-${index + 1}`,
-                  description,
-                })),
-              }),
-        };
-      }),
-    },
+    title: values.title.trim(),
+    description: values.description.trim(),
+    isGated: !values.isOpenToAll,
+    usesAiReviewDefault: values.usesAiReview,
+    maxSlots: Number(values.maxSlots),
+    deadline: deadlineFromDate(values.deadlineDate),
+    fixedFeeCents: parseCents(values.fixedFee)!,
+    cpmRateCents: parseCents(values.cpmRate)!,
+    paymentCapCents: parseCents(values.paymentCap)!,
+    contentRequirements: values.contentRequirements.trim(),
+    reviewPolicy: values.reviewPolicy.trim(),
+    ...(link === "" ? {} : { productAccessLink: link }),
+    ...(values.minFollowerRange === "" ? {} : { minFollowerRange: values.minFollowerRange }),
+    niches: values.niches,
+    skills: values.skills,
+    languages: values.languages,
+    deliverables: values.deliverables.map((deliverable) => {
+      const criteria = lines(deliverable.criteria);
+      return {
+        title: deliverable.title.trim(),
+        description: deliverable.description.trim(),
+        ...(criteria.length === 0
+          ? {}
+          : {
+              // Ids only need to be unique within the deliverable.
+              reviewCriteria: criteria.map((description, index) => ({
+                id: `criterion-${index + 1}`,
+                description,
+              })),
+            }),
+      };
+    }),
   };
 }
 

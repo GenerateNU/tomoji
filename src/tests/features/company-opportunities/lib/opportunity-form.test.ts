@@ -3,6 +3,7 @@ import {
   EMPTY_OPPORTUNITY_FORM,
   opportunityFormValues,
   parseOpportunityForm,
+  parseOpportunityUpdate,
   validateOpportunityStep,
   type OpportunityFormValues,
 } from "@/features/company-opportunities/lib/opportunity-form";
@@ -156,5 +157,39 @@ describe("opportunityFormValues", () => {
       cpmRate: "3.50",
       isOpenToAll: false,
     });
+  });
+});
+
+describe("parseOpportunityUpdate", () => {
+  const saved = parseOpportunityForm(filled, { now }).input!;
+  const original = opportunityFormValues({ ...saved, productAccessLink: "https://claude.ai" });
+
+  it("sends only the fields that changed", () => {
+    const result = parseOpportunityUpdate(
+      { ...original, title: "Renamed", niches: ["technology", "education"] },
+      original,
+      { now },
+    );
+    expect(result.updates).toEqual({ title: "Renamed", niches: ["technology", "education"] });
+  });
+
+  it("clears an emptied link and follower minimum with null", () => {
+    const result = parseOpportunityUpdate(
+      { ...original, productAccessLink: "", minFollowerRange: "" },
+      original,
+      { now },
+    );
+    expect(result.updates).toEqual({ productAccessLink: null, minFollowerRange: null });
+  });
+
+  it("doesn't ask for deliverables, which change elsewhere", () => {
+    const result = parseOpportunityUpdate({ ...original, maxSlots: "12" }, original, { now });
+    expect(result.errors).toBeUndefined();
+    expect(result.updates).toEqual({ maxSlots: 12 });
+  });
+
+  it("returns field errors instead of updates", () => {
+    const result = parseOpportunityUpdate({ ...original, title: " " }, original, { now });
+    expect(result.errors).toEqual({ title: expect.any(String) });
   });
 });

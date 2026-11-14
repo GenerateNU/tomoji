@@ -2,8 +2,8 @@
 
 import { api } from "@convex/_generated/api";
 import type { Id } from "@convex/_generated/dataModel";
+import type { AcceptedOffer } from "@convex/models/applications";
 import { useMutation } from "convex/react";
-import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { toast } from "sonner";
 import { errorMessage, errorReason } from "@/lib/errors";
@@ -28,30 +28,24 @@ function failureMessage(error: unknown): string {
 }
 
 /**
- * Accepting or declining one offer. Each returns whether it worked; the offer
- * updates by itself when the mutation lands, so callers only need `pending` to
- * block a second tap while one is in flight.
+ * Accepting or declining one offer. Accept returns the accepted offer, or null
+ * if it failed; decline returns whether it worked. Neither confirms success
+ * itself for accept, so the caller shows what happens next. The offer updates by
+ * itself when the mutation lands, so callers only need `pending` to block a
+ * second tap while one is in flight.
  */
 export function useOfferResponse(applicationId: Id<"applications">) {
   const acceptOffer = useMutation(api.applications.accept);
   const declineOffer = useMutation(api.applications.decline);
-  const router = useRouter();
   const [pending, setPending] = useState<Response | null>(null);
 
-  async function accept(options: { acceptedTerms?: boolean } = {}): Promise<boolean> {
+  async function accept(options: { acceptedTerms?: boolean } = {}): Promise<AcceptedOffer | null> {
     setPending("accept");
     try {
-      const { assignmentId } = await acceptOffer({ applicationId, ...options });
-      toast.success("Offer accepted.", {
-        action: {
-          label: "View assignment",
-          onClick: () => router.push(`/assignments/${assignmentId}`),
-        },
-      });
-      return true;
+      return await acceptOffer({ applicationId, ...options });
     } catch (error) {
       toast.error(failureMessage(error));
-      return false;
+      return null;
     } finally {
       setPending(null);
     }

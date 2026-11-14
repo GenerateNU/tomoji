@@ -2,7 +2,7 @@
 
 import { api } from "@convex/_generated/api";
 import type { Id } from "@convex/_generated/dataModel";
-import type { ApplicationDetail } from "@convex/models/applications";
+import type { AcceptedOffer, ApplicationDetail } from "@convex/models/applications";
 import { useQuery } from "convex/react";
 import { useEffect, useRef, useState, type ComponentProps } from "react";
 import { ErrorBoundary } from "@/components/error-boundary";
@@ -26,6 +26,8 @@ type OfferModalProps = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   finalFocus?: ComponentProps<typeof Modal>["finalFocus"];
+  /** Called with the new assignment details once the offer has been accepted. */
+  onAccepted: (result: AcceptedOffer) => void;
 };
 
 const OVERLAY = "backdrop-blur-xs";
@@ -46,6 +48,7 @@ function OfferContent({
   open,
   onOpenChange,
   finalFocus,
+  onAccepted,
 }: OfferModalProps & { applicationId: Id<"applications"> }) {
   const detail = useQuery(api.applications.getMineDetail, open ? { applicationId } : "skip");
   // Offers are timed to the minute, and to the second once urgent.
@@ -70,6 +73,9 @@ function OfferContent({
     onOpenChange,
     finalFocus,
     overlayClassName: OVERLAY,
+    // The reject confirmation opens as a nested dialog; per Figma it replaces the
+    // offer on screen, so hide this popup (keeping its state) while it's open.
+    className: "data-[nested-dialog-open]:invisible",
     titleSize: "lg",
   } as const;
 
@@ -124,7 +130,13 @@ function OfferContent({
         </>
       }
       footer={
-        <OfferFooter detail={detail} now={now} view={view} onReviewTerms={() => setStep("terms")} />
+        <OfferFooter
+          detail={detail}
+          now={now}
+          view={view}
+          onReviewTerms={() => setStep("terms")}
+          onAccepted={onAccepted}
+        />
       }
     >
       {view === "terms" ? (
@@ -141,9 +153,16 @@ function OfferContent({
  * opportunity has a review policy, a terms step; accepting those terms accepts
  * the offer. Deny declines it. An urgent offer shows a live countdown. It reads
  * the offer itself, so it updates live when the offer is accepted, expires, or
- * the opportunity changes. Opening it is up to the caller.
+ * the opportunity changes. Opening it, and what follows an accept, is up to the
+ * caller.
  */
-export function OfferModal({ applicationId, open, onOpenChange, finalFocus }: OfferModalProps) {
+export function OfferModal({
+  applicationId,
+  open,
+  onOpenChange,
+  finalFocus,
+  onAccepted,
+}: OfferModalProps) {
   // Remounting the boundary is what clears a failed read.
   const [attempt, setAttempt] = useState(0);
   if (applicationId === null) return null;
@@ -176,6 +195,7 @@ export function OfferModal({ applicationId, open, onOpenChange, finalFocus }: Of
         open={open}
         onOpenChange={onOpenChange}
         finalFocus={finalFocus}
+        onAccepted={onAccepted}
       />
     </ErrorBoundary>
   );

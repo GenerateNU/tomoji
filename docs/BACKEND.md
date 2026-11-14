@@ -314,7 +314,9 @@ the caller's applications with its opportunity brief (`creatorOpportunity`, incl
 ### Accepting an offer (`applications.accept`)
 
 `applications.accept({ applicationId, acceptedTerms? })` returns
-`{ application, assignmentId }`. When the opportunity has a review policy, `acceptedTerms`
+`{ application, assignmentId, deliverableCount }`. `deliverableCount` is the number of the
+opportunity's deliverables (bounded by `MAX_DELIVERABLES`) and stays stable once an assignment
+exists; the client uses it for the "You have N new assignments" confirmation. When the opportunity has a review policy, `acceptedTerms`
 must be `true`, otherwise it fails with `invalid_state` and reason `terms_not_accepted`; the
 argument is ignored when the policy is blank. Checks run in this order: `not_found`,
 `application_not_offered`, `offer_expired`, `opportunity_closed` or `opportunity_full`, then

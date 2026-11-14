@@ -12,6 +12,7 @@ import { followerRange } from "../schemas/creators.schema";
 import { applicationStatus } from "../schemas/applications.schema";
 
 import { assignmentTarget, createAssignmentFromOffer } from "./assignments";
+import { listOpportunityDeliverables } from "./deliverableDrafts";
 import { creatorName, notifyCompanyUser, notifyCreator } from "./notifications";
 import {
   getOpportunityView,
@@ -508,6 +509,8 @@ export type ApplicationDetail = Infer<typeof applicationDetail>;
 export const acceptedOffer = v.object({
   application: schema.doc("applications"),
   assignmentId: v.id("assignments"),
+  // How many deliverables the new assignment has; the opportunity's set, fixed once an assignment exists.
+  deliverableCount: v.number(),
 });
 export type AcceptedOffer = Infer<typeof acceptedOffer>;
 
@@ -717,6 +720,10 @@ async function requirePendingForReview(
  * guard in `createAssignmentFromOffer` is what prevents an extra assignment.
  * Offers can be accepted while the opportunity is paused.
  *
+ * Returns the updated application, the new `assignmentId`, and
+ * `deliverableCount`, the number of the opportunity's deliverables (what the
+ * creator now has to produce).
+ *
  * Checks run in this order: offered, unexpired, opportunity closed or full,
  * then terms. `options.acceptedTerms` is ignored when the review policy is
  * blank.
@@ -777,7 +784,8 @@ export async function acceptApplication(
       opportunityId: opportunity._id,
     });
   }
-  return { application: { ...application, ...patch }, assignmentId };
+  const deliverableCount = (await listOpportunityDeliverables(ctx, opportunity._id)).length;
+  return { application: { ...application, ...patch }, assignmentId, deliverableCount };
 }
 
 /**

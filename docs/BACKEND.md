@@ -121,6 +121,22 @@ and production are separate WorkOS environments with different organizations. Wh
 is unset, no org is the staff org and `isOperatorOrg` is always false, so a staff
 invite quietly creates an ordinary company instead.
 
+### Counting for the operator dashboard
+
+Convex has no count API, so a total costs one read per row. `models/operators.ts`
+stops every count at `COUNT_CAP` and returns `{ value, capped }`; the dashboard renders
+a capped count as `1,000+`. Add counts there rather than scanning a table in a route,
+and keep each one behind an index.
+
+### Searching a directory
+
+`users.list` and `companies.list` take an optional `search`. Without it they paginate
+the index directly, so the cursor and `isDone` mean what they do anywhere else. With
+it they filter while paginating under `withRowsReadCap`, which bounds the scan but
+makes pages short — so a page is never proof that the next one is empty. There is no
+search index on either table yet; one would need a denormalized field to cover a name
+and an email together.
+
 ## Errors
 
 Throw `apiError(code, detail)` from `lib/errors.ts` instead of using `new Error()`.

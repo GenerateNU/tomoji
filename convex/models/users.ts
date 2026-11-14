@@ -1,3 +1,4 @@
+import { stream } from "convex-helpers/server/stream";
 import type { PaginationOptions, PaginationResult, UserIdentity } from "convex/server";
 import type { Doc, Id } from "../_generated/dataModel";
 import { env } from "../_generated/server";
@@ -5,7 +6,9 @@ import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { requireIdentity } from "../lib/authz";
 import { apiError } from "../lib/errors";
 import { findOrgId } from "../lib/identity";
+import { withRowsReadCap } from "../lib/pagination";
 import { requireNonBlank } from "../lib/validation";
+import schema from "../schema";
 import type { companyRole } from "../schemas/companyUsers.schema";
 import type { Infer } from "convex/values";
 import { getCompanyByWorkosId } from "./companies";
@@ -22,38 +25,90 @@ export async function getUserByWorkosId(
     .unique();
 }
 
-/** Returns a paginated user page, excluding inactive accounts unless explicitly included. */
+/** A directory row: the account, plus the company a company user belongs to. */
+export type UserDirectoryRow = Doc<"users"> & {
+  company?: { companyId: Id<"companies">; name: string; role: Infer<typeof companyRole> };
+};
+
+/** Matches a user against a lowercased search term across their name and email. */
+function matchesUser(user: Doc<"users">, search: string): boolean {
+  return [user.firstName, user.lastName, `${user.firstName} ${user.lastName}`, user.email].some(
+    (field) => field.toLowerCase().includes(search),
+  );
+}
+
+/** Joins the company a company user belongs to; every other role passes through. */
+async function withCompany(ctx: QueryCtx, user: Doc<"users">): Promise<UserDirectoryRow> {
+  if (user.role !== "company") return user;
+  const membership = await getCompanyUserByUserId(ctx, user._id);
+  if (membership === null) return user;
+  const company = await ctx.db.get("companies", membership.companyId);
+  if (company === null) return user;
+  return {
+    ...user,
+    company: { companyId: company._id, name: company.name, role: membership.role },
+  };
+}
+
+/**
+ * Returns a paginated user page, excluding inactive accounts unless explicitly
+ * included.
+ *
+ * Without `search` this paginates the index directly, so the cursor and
+ * `isDone` mean exactly what they would for any other feed. With one, rows are
+ * filtered while paginating, which caps the scan at the cost of short pages.
+ */
 export async function listUsers(
   ctx: QueryCtx,
   options: {
     role?: Doc<"users">["role"];
     includeInactive?: boolean;
+    search?: string;
     paginationOpts: PaginationOptions;
   },
-): Promise<PaginationResult<Doc<"users">>> {
-  const role = options.role;
-  if (options.includeInactive === true) {
-    if (role === undefined) {
-      return await ctx.db.query("users").paginate(options.paginationOpts);
-    }
+): Promise<PaginationResult<UserDirectoryRow>> {
+  const { role, includeInactive, paginationOpts } = options;
+  const search = options.search?.trim().toLowerCase();
 
-    return await ctx.db
-      .query("users")
-      .withIndex("by_role", (q) => q.eq("role", role))
-      .paginate(options.paginationOpts);
+  if (search === undefined || search === "") {
+    const result = await usersQuery(ctx, role, includeInactive).paginate(paginationOpts);
+    return {
+      ...result,
+      page: await Promise.all(result.page.map((user) => withCompany(ctx, user))),
+    };
   }
 
-  if (role === undefined) {
-    return await ctx.db
-      .query("users")
-      .withIndex("by_isActive", (q) => q.eq("isActive", true))
-      .paginate(options.paginationOpts);
-  }
+  return await usersStream(ctx, role, includeInactive)
+    .map(async (user) => (matchesUser(user, search) ? await withCompany(ctx, user) : null))
+    .paginate(withRowsReadCap(paginationOpts));
+}
 
-  return await ctx.db
-    .query("users")
-    .withIndex("by_role_and_isActive", (q) => q.eq("role", role).eq("isActive", true))
-    .paginate(options.paginationOpts);
+function usersQuery(
+  ctx: QueryCtx,
+  role: Doc<"users">["role"] | undefined,
+  includeInactive: boolean | undefined,
+) {
+  const users = ctx.db.query("users");
+  if (includeInactive === true) {
+    return role === undefined ? users : users.withIndex("by_role", (q) => q.eq("role", role));
+  }
+  return role === undefined
+    ? users.withIndex("by_isActive", (q) => q.eq("isActive", true))
+    : users.withIndex("by_role_and_isActive", (q) => q.eq("role", role).eq("isActive", true));
+}
+
+function usersStream(
+  ctx: QueryCtx,
+  role: Doc<"users">["role"] | undefined,
+  includeInactive: boolean | undefined,
+) {
+  const users = stream(ctx.db, schema).query("users");
+  if (includeInactive === true) {
+    return role === undefined ? users : users.withIndex("by_role", (q) => q.eq("role", role));
+  }
+  return role === undefined
+    ? users.withIndex("by_isActive", (q) => q.eq("isActive", true))
+    : users.withIndex("by_role_and_isActive", (q) => q.eq("role", role).eq("isActive", true));
 }
 
 export type WorkosProfile = {

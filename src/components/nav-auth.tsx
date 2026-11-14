@@ -6,6 +6,7 @@ import { signOutAction } from "@/app/auth/actions";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { Skeleton } from "@/components/ui/skeleton";
+import { NotificationBell } from "@/features/notifications/components/notifications-panel";
 import { TeamLink } from "@/features/team/components/team-link";
 
 /** Shows account actions, the inbox, and company-admin invitation navigation. */
@@ -23,12 +24,7 @@ export function NavAuth() {
   if (user) {
     return (
       <div className="flex min-w-0 flex-wrap items-center gap-4">
-        <Link
-          href="/notifications"
-          className="inline-flex min-h-11 items-center rounded-md text-sm underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-offset-4"
-        >
-          Notifications
-        </Link>
+        <NotificationBell />
         <TeamLink />
         <span className="hidden text-sm text-gray-600 sm:inline dark:text-gray-400">
           {user.email}

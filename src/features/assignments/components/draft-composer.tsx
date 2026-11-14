@@ -23,7 +23,6 @@ import { cn } from "@/lib/utils";
 import { aiReviewStatusLabel } from "./assignment-status";
 import { SubmissionPreview } from "./submission-preview";
 import { SubmissionRejection } from "./submission-rejection";
-import { SubmittedVideo } from "./submitted-video";
 import { VideoPreview } from "./video-preview";
 
 const VIDEO_TYPES = ["video/mp4", "video/quicktime", "video/webm"];
@@ -41,7 +40,6 @@ type DraftComposerProps = {
   previous?: {
     caption?: string;
     draftDescription: string;
-    mediaId?: Id<"mediaUploads">;
     reviewNote?: string;
   };
   onCancel: () => void;
@@ -93,7 +91,6 @@ export function DraftComposer({
   const notesId = useId();
   const [caption, setCaption] = useState(previous?.caption ?? "");
   const [notes, setNotes] = useState(previous?.draftDescription ?? "");
-  const [keepPreviousVideo, setKeepPreviousVideo] = useState(Boolean(previous?.mediaId));
   const [file, setFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string>();
   const [error, setError] = useState<string>();
@@ -130,8 +127,8 @@ export function DraftComposer({
     if (readOnly || attempt.current) return;
     const description = notes.trim();
     const text = caption.trim();
-    const existingMedia = keepPreviousVideo ? previous?.mediaId : undefined;
-    if (!description || (!text && !upload.current && !existingMedia)) {
+    const videoUpload = upload.current;
+    if (!description || (!text && !videoUpload)) {
       setError("Add draft notes and either a caption or a video.");
       return;
     }
@@ -142,9 +139,7 @@ export function DraftComposer({
     setError(undefined);
     setPhase("submitting");
     try {
-      const mediaId = upload.current
-        ? await upload.current.save(setPhase, controller.signal)
-        : existingMedia;
+      const mediaId = await videoUpload?.save(setPhase, controller.signal);
       controller.signal.throwIfAborted();
       setPhase("submitting");
       const submissionId = await submit({
@@ -178,14 +173,9 @@ export function DraftComposer({
     submitting: "Submitting…",
   };
 
-  const previousMediaId = keepPreviousVideo ? previous?.mediaId : undefined;
   const preview = (
     <SubmissionPreview caption={caption} placeholder={!reviewId}>
-      {previewUrl ? (
-        <VideoPreview key={previewUrl} url={previewUrl} label="Draft video preview" />
-      ) : previousMediaId ? (
-        <SubmittedVideo mediaId={previousMediaId} eager />
-      ) : null}
+      {previewUrl && <VideoPreview key={previewUrl} url={previewUrl} label="Draft video preview" />}
     </SubmissionPreview>
   );
 
@@ -345,17 +335,6 @@ export function DraftComposer({
               <span className="text-body-xs text-gray-500">MP4, MOV, or WebM up to 250 MiB</span>
             </button>
           )}
-          {!file && previous?.mediaId && (
-            <label className="flex items-center gap-2 text-body-sm">
-              <input
-                type="checkbox"
-                checked={keepPreviousVideo}
-                disabled={readOnly}
-                onChange={(event) => setKeepPreviousVideo(event.target.checked)}
-              />
-              Reuse the previous video
-            </label>
-          )}
         </div>
         <div>
           <label htmlFor={notesId} className="mb-2 block text-body-sm text-gray-700">
@@ -381,14 +360,7 @@ export function DraftComposer({
           <Button type="button" variant="secondary-subtle" onClick={onCancel} disabled={readOnly}>
             Cancel
           </Button>
-          <Button
-            type="submit"
-            disabled={
-              readOnly ||
-              !notes.trim() ||
-              !(caption.trim() || file || (keepPreviousVideo && previous?.mediaId))
-            }
-          >
+          <Button type="submit" disabled={readOnly || !notes.trim() || !(caption.trim() || file)}>
             {phase ? submitLabel[phase] : "Submit for review"}
           </Button>
         </div>

@@ -310,12 +310,11 @@ the caller's applications with its opportunity brief (`creatorOpportunity`, incl
 
 ## Payout records
 
-The [earnings rules and payment contract](EARNINGS.md) defines the
-calculator's verification clock, fixed/variable earnings, cutoffs, and handoff to
-Stripe collection. The calculator and verification/measurement records are
-implemented. Its [internal operations](EARNINGS.md#internal-operations) persist
-trusted evidence; settlement follows in the next stacked PR. This section
-describes the existing payout operations.
+The [earnings rules and payment contract](EARNINGS.md) defines the calculator's
+verification clock, fixed/variable earnings, cutoffs, and handoff to Stripe
+collection. Its [internal operations](EARNINGS.md#internal-operations) record
+measurement evidence and settle one due period; automatic scheduling is separate.
+This section describes the payout operations those settlements use.
 
 `payouts` records individual finalized earning obligations. Every payout identifies
 one post and its assignment; both an assignment and a post can have several payouts.
@@ -379,12 +378,12 @@ the earned amount and deciding when it is final.
   details return `conflict` with reason `payout_source_conflict`. Identical retries
   still reconcile after related records have been deleted.
 
-Source-key generation belongs to the future earnings-calculation workflow, which
-has not been implemented yet. The [earnings handoff](EARNINGS.md#earnings-to-payment-handoff)
-defines identity at the assignment/deliverable, period, and component level so a
-replacement post cannot reset the fixed fee or cap. Keys must identify the earning
-itself, not the attempt: a fresh random key on each retry would allow duplicate
-payouts. The exact key encoding belongs to that implementation.
+The earnings-calculation workflow generates stable source keys from the stored
+earnings agreement, period index, and settlement component. The
+[earnings handoff](EARNINGS.md#earnings-to-payment-handoff) defines identity at the
+assignment/deliverable level so a replacement post cannot reset the fixed fee or
+cap. Keys identify the earning itself, not the attempt: a fresh random key on
+each retry would allow duplicate payouts.
 
 This operation records obligations; it does not calculate fixed fees or view-based
 earnings, approve payouts, or schedule payments.

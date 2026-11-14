@@ -36,6 +36,8 @@ let session = {
   userLoading: parameters.get("account") === "loading",
   profileLoading: parameters.get("profile") === "loading",
   failedQuery: parameters.get("failedQuery") ?? "",
+  // The creator's Stripe account status, `notStarted` unless the URL names one.
+  stripe: parameters.get("stripeStatus") ?? "notStarted",
 };
 
 function notify() {
@@ -152,6 +154,7 @@ function queryResult(reference: FunctionReference<"query">, args: unknown) {
   if (session.failedQuery === name) throw new Error("Simulated query failure");
   if (name === "notifications:unreadCount") return 0;
   if (name === "xAccounts:me") return xAccount;
+  if (name === "stripeAccounts:me") return { status: session.stripe };
   if (name === "users:me") {
     if (!session.isAuthenticated) throw new Error("Signed-out visitors must not query users.me");
     if (session.userLoading) return undefined;
@@ -239,6 +242,13 @@ function operation(reference: FunctionReference<"mutation" | "action">) {
             ),
             (character) => character.charCodeAt(0),
           ).buffer,
+        };
+      }
+      if (name === "stripeAccounts:onboardingLink") {
+        // Same origin, so the test can watch the browser leave for "Stripe".
+        // Echoes `returnPath` so the test can check where Stripe sends them back.
+        return {
+          url: `${location.origin}/stripe-onboarding?returnPath=${String(args.returnPath)}`,
         };
       }
       throw new Error(`Unexpected operation: ${name}`);

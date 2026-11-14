@@ -158,7 +158,10 @@ describe("onboardingLink", () => {
     const t = convexTest(schema, modules);
     const { creatorId, asCreator } = await seedCreator(t, "stripe_onboard_new");
 
-    const link = await asCreator.action(api.stripeAccounts.onboardingLink, {});
+    // Stripe sends the creator back to the page they started from.
+    const link = await asCreator.action(api.stripeAccounts.onboardingLink, {
+      returnPath: "/earnings",
+    });
 
     expect(link).toEqual({
       url: "https://connect.stripe.com/setup/e/acct_new/link",
@@ -179,13 +182,28 @@ describe("onboardingLink", () => {
     expect(stripe.createAccountLink).toHaveBeenCalledWith({
       account: "acct_new",
       type: "account_onboarding",
-      return_url: "http://localhost:3000/profile?stripe=return",
-      refresh_url: "http://localhost:3000/profile?stripe=refresh",
+      return_url: "http://localhost:3000/earnings?stripe=return",
+      refresh_url: "http://localhost:3000/earnings?stripe=refresh",
     });
     expect(await asCreator.query(api.stripeAccounts.me, {})).toEqual({
       status: "actionRequired",
     });
   });
+
+  // The path comes from the client, so it can't send the creator to another site.
+  test.each(["https://evil.example/settings", "//evil.example/settings", "settings"])(
+    "refuses a return path off the Tomoji site: %s",
+    async (returnPath) => {
+      const { asCreator } = await seedCreator(convexTest(schema, modules), "stripe_bad_return");
+
+      await expectApiError(
+        () => asCreator.action(api.stripeAccounts.onboardingLink, { returnPath }),
+        "invalid_state",
+        "return_path_invalid",
+      );
+      expect(stripe.createAccount).not.toHaveBeenCalled();
+    },
+  );
 
   test("reuses the stored account instead of creating another", async () => {
     const t = convexTest(schema, modules);
@@ -195,7 +213,7 @@ describe("onboardingLink", () => {
       requirementsDue: true,
     });
 
-    await asCreator.action(api.stripeAccounts.onboardingLink, {});
+    await asCreator.action(api.stripeAccounts.onboardingLink, { returnPath: "/settings" });
 
     expect(stripe.createAccount).not.toHaveBeenCalled();
     expect(stripe.createAccountLink).toHaveBeenCalledWith(
@@ -211,7 +229,7 @@ describe("onboardingLink", () => {
     });
 
     await expectApiError(
-      () => asCompany.action(api.stripeAccounts.onboardingLink, {}),
+      () => asCompany.action(api.stripeAccounts.onboardingLink, { returnPath: "/settings" }),
       "forbidden",
     );
     expect(stripe.createAccount).not.toHaveBeenCalled();
@@ -222,7 +240,7 @@ describe("onboardingLink", () => {
     const asOperator = await seedOperator(t, "stripe_onboard_operator");
 
     await expectApiError(
-      () => asOperator.action(api.stripeAccounts.onboardingLink, {}),
+      () => asOperator.action(api.stripeAccounts.onboardingLink, { returnPath: "/settings" }),
       "forbidden",
     );
     expect(stripe.createAccount).not.toHaveBeenCalled();
@@ -234,7 +252,7 @@ describe("onboardingLink", () => {
     stripe.createAccount.mockRejectedValue(new Error("Stripe is down"));
 
     await expectApiError(
-      () => asCreator.action(api.stripeAccounts.onboardingLink, {}),
+      () => asCreator.action(api.stripeAccounts.onboardingLink, { returnPath: "/settings" }),
       "upstream_failure",
       "stripe_account_failed",
     );
@@ -250,11 +268,11 @@ describe("onboardingLink", () => {
     stripe.createAccount.mockRejectedValueOnce(new Error("Stripe is down"));
 
     await expectApiError(
-      () => asCreator.action(api.stripeAccounts.onboardingLink, {}),
+      () => asCreator.action(api.stripeAccounts.onboardingLink, { returnPath: "/settings" }),
       "upstream_failure",
       "stripe_account_failed",
     );
-    await asCreator.action(api.stripeAccounts.onboardingLink, {});
+    await asCreator.action(api.stripeAccounts.onboardingLink, { returnPath: "/settings" });
 
     const [first, second] = idempotencyKeys();
     expect(second).toBe(first);
@@ -268,12 +286,12 @@ describe("onboardingLink", () => {
     stripe.createAccount.mockRejectedValueOnce(new Error("Stripe is down"));
 
     await expectApiError(
-      () => asCreator.action(api.stripeAccounts.onboardingLink, {}),
+      () => asCreator.action(api.stripeAccounts.onboardingLink, { returnPath: "/settings" }),
       "upstream_failure",
       "stripe_account_failed",
     );
     await setCountry(t, creatorId, "CA");
-    await asCreator.action(api.stripeAccounts.onboardingLink, {});
+    await asCreator.action(api.stripeAccounts.onboardingLink, { returnPath: "/settings" });
 
     const [first, second] = stripe.createAccount.mock.calls;
     expect(second[0]).toEqual(first[0]);
@@ -287,7 +305,7 @@ describe("onboardingLink", () => {
     const { creatorId, asCreator } = await seedCreator(t, "stripe_onboard_recover");
     stripe.createAccount.mockRejectedValueOnce(new Error("Network dropped"));
     await expectApiError(
-      () => asCreator.action(api.stripeAccounts.onboardingLink, {}),
+      () => asCreator.action(api.stripeAccounts.onboardingLink, { returnPath: "/settings" }),
       "upstream_failure",
       "stripe_account_failed",
     );
@@ -301,7 +319,7 @@ describe("onboardingLink", () => {
       ]) as never,
     );
 
-    await asCreator.action(api.stripeAccounts.onboardingLink, {});
+    await asCreator.action(api.stripeAccounts.onboardingLink, { returnPath: "/settings" });
 
     expect(stripe.createAccount).toHaveBeenCalledTimes(1);
     // No upper bound: Stripe may have created the account well after the attempt
@@ -319,7 +337,7 @@ describe("onboardingLink", () => {
     const t = convexTest(schema, modules);
     const { asCreator } = await seedCreator(t, "stripe_onboard_ca", undefined, "CA");
 
-    await asCreator.action(api.stripeAccounts.onboardingLink, {});
+    await asCreator.action(api.stripeAccounts.onboardingLink, { returnPath: "/settings" });
 
     expect(stripe.createAccount).toHaveBeenCalledWith(
       expect.objectContaining({ country: "CA" }),
@@ -333,7 +351,7 @@ describe("onboardingLink", () => {
     const { asCreator } = await seedCreator(t, "stripe_onboard_nowhere", undefined, null);
 
     await expectApiError(
-      () => asCreator.action(api.stripeAccounts.onboardingLink, {}),
+      () => asCreator.action(api.stripeAccounts.onboardingLink, { returnPath: "/settings" }),
       "invalid_state",
       "country_required",
     );
@@ -354,12 +372,12 @@ describe("onboardingLink", () => {
     );
 
     await expectApiError(
-      () => asCreator.action(api.stripeAccounts.onboardingLink, {}),
+      () => asCreator.action(api.stripeAccounts.onboardingLink, { returnPath: "/settings" }),
       "invalid_state",
       "stripe_country_unsupported",
     );
     await setCountry(t, creatorId, "GB");
-    await asCreator.action(api.stripeAccounts.onboardingLink, {});
+    await asCreator.action(api.stripeAccounts.onboardingLink, { returnPath: "/settings" });
 
     expect(stripe.createAccount).toHaveBeenLastCalledWith(
       expect.objectContaining({ country: "GB" }),
@@ -375,7 +393,7 @@ describe("onboardingLink", () => {
     const logged = vi.spyOn(console, "error").mockImplementation(() => {});
     stripe.createAccount.mockRejectedValueOnce(new Error("Network dropped"));
     await expectApiError(
-      () => asCreator.action(api.stripeAccounts.onboardingLink, {}),
+      () => asCreator.action(api.stripeAccounts.onboardingLink, { returnPath: "/settings" }),
       "upstream_failure",
       "stripe_account_failed",
     );
@@ -384,7 +402,7 @@ describe("onboardingLink", () => {
     });
 
     await expectApiError(
-      () => asCreator.action(api.stripeAccounts.onboardingLink, {}),
+      () => asCreator.action(api.stripeAccounts.onboardingLink, { returnPath: "/settings" }),
       "upstream_failure",
       "stripe_account_failed",
     );
@@ -396,7 +414,7 @@ describe("onboardingLink", () => {
     );
     // The attempt is kept, so the next retry repeats the same request.
     stripe.listAccounts.mockReturnValue(listOf([]) as never);
-    await asCreator.action(api.stripeAccounts.onboardingLink, {});
+    await asCreator.action(api.stripeAccounts.onboardingLink, { returnPath: "/settings" });
     const [first, second] = idempotencyKeys();
     expect(second).toBe(first);
   });
@@ -416,11 +434,11 @@ describe("onboardingLink", () => {
     );
 
     await expectApiError(
-      () => asCreator.action(api.stripeAccounts.onboardingLink, {}),
+      () => asCreator.action(api.stripeAccounts.onboardingLink, { returnPath: "/settings" }),
       "upstream_failure",
       "stripe_account_failed",
     );
-    await asCreator.action(api.stripeAccounts.onboardingLink, {});
+    await asCreator.action(api.stripeAccounts.onboardingLink, { returnPath: "/settings" });
 
     const [first, second] = idempotencyKeys();
     expect(second).not.toBe(first);
@@ -439,11 +457,11 @@ describe("onboardingLink", () => {
     );
 
     await expectApiError(
-      () => asCreator.action(api.stripeAccounts.onboardingLink, {}),
+      () => asCreator.action(api.stripeAccounts.onboardingLink, { returnPath: "/settings" }),
       "upstream_failure",
       "stripe_account_failed",
     );
-    await asCreator.action(api.stripeAccounts.onboardingLink, {});
+    await asCreator.action(api.stripeAccounts.onboardingLink, { returnPath: "/settings" });
 
     const [first, second] = idempotencyKeys();
     expect(second).toBe(first);
@@ -462,7 +480,7 @@ describe("onboardingLink", () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
     stripe.createAccount.mockRejectedValueOnce(new Error("Network dropped"));
     await expectApiError(
-      () => asCreator.action(api.stripeAccounts.onboardingLink, {}),
+      () => asCreator.action(api.stripeAccounts.onboardingLink, { returnPath: "/settings" }),
       "upstream_failure",
       "stripe_account_failed",
     );
@@ -470,7 +488,7 @@ describe("onboardingLink", () => {
       listOf([stripeAccount({ id: "acct_existing", metadata: { creatorId } })]) as never,
     );
 
-    await asCreator.action(api.stripeAccounts.onboardingLink, {});
+    await asCreator.action(api.stripeAccounts.onboardingLink, { returnPath: "/settings" });
 
     expect(stripe.createAccount).toHaveBeenCalledTimes(2);
     expect(stripe.createAccountLink).toHaveBeenCalledWith(
@@ -493,7 +511,7 @@ describe("onboardingLink", () => {
     );
 
     await expectApiError(
-      () => asCreator.action(api.stripeAccounts.onboardingLink, {}),
+      () => asCreator.action(api.stripeAccounts.onboardingLink, { returnPath: "/settings" }),
       "invalid_state",
       "stripe_account_disconnected",
     );
@@ -502,7 +520,7 @@ describe("onboardingLink", () => {
     });
 
     // The next click reconnects with a new account.
-    await asCreator.action(api.stripeAccounts.onboardingLink, {});
+    await asCreator.action(api.stripeAccounts.onboardingLink, { returnPath: "/settings" });
     expect(stripe.createAccount).toHaveBeenCalledTimes(1);
   });
 
@@ -512,7 +530,7 @@ describe("onboardingLink", () => {
     const { asCreator } = await seedCreator(t, "stripe_onboard_reconnect", submitted);
     await t.run((ctx) => disconnectStripeAccount(ctx, "acct_existing", 1_700_000_100_000));
 
-    await asCreator.action(api.stripeAccounts.onboardingLink, {});
+    await asCreator.action(api.stripeAccounts.onboardingLink, { returnPath: "/settings" });
 
     expect(stripe.createAccount).toHaveBeenCalledTimes(1);
     expect(stripe.createAccountLink).toHaveBeenCalledWith(
@@ -531,7 +549,7 @@ describe("onboardingLink", () => {
     stripe.createAccount.mockRejectedValue(new Error("You cannot request `transfers`"));
 
     await expectApiError(
-      () => asCreator.action(api.stripeAccounts.onboardingLink, {}),
+      () => asCreator.action(api.stripeAccounts.onboardingLink, { returnPath: "/settings" }),
       "upstream_failure",
       "stripe_account_failed",
     );
@@ -549,7 +567,7 @@ describe("onboardingLink", () => {
     stripe.createAccountLink.mockRejectedValue(new Error("Stripe is down"));
 
     await expectApiError(
-      () => asCreator.action(api.stripeAccounts.onboardingLink, {}),
+      () => asCreator.action(api.stripeAccounts.onboardingLink, { returnPath: "/settings" }),
       "upstream_failure",
       "stripe_link_failed",
     );
@@ -564,7 +582,7 @@ describe("onboardingLink", () => {
     vi.stubEnv("SITE_URL", "");
 
     await expectApiError(
-      () => asCreator.action(api.stripeAccounts.onboardingLink, {}),
+      () => asCreator.action(api.stripeAccounts.onboardingLink, { returnPath: "/settings" }),
       "misconfigured",
       "site_url_missing",
     );
@@ -577,7 +595,7 @@ describe("onboardingLink", () => {
     vi.stubEnv("STRIPE_SECRET_KEY", "");
 
     await expectApiError(
-      () => asCreator.action(api.stripeAccounts.onboardingLink, {}),
+      () => asCreator.action(api.stripeAccounts.onboardingLink, { returnPath: "/settings" }),
       "misconfigured",
       "stripe_secret_key_missing",
     );

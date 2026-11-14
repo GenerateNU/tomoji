@@ -52,21 +52,37 @@ async function expectSelectedIndicator(page: Page) {
     .toBeLessThanOrEqual(1);
 }
 
-test("Payment is the default tab and unavailable Stripe cannot pretend to connect", async ({
-  page,
-}) => {
+test("Payment is the default tab and connects Stripe from Settings", async ({ page }) => {
   await openSettings(page);
   await expect(page.getByRole("tab", { name: "Payment", exact: true })).toHaveAttribute(
     "aria-selected",
     "true",
   );
-  await expect(page.getByRole("button", { name: /Continue with Stripe/i })).toBeDisabled();
+  await expect(page.getByText("Connect your Stripe account", { exact: true })).toBeVisible();
   await expect(page.getByText("Stripe connected", { exact: true })).toHaveCount(0);
   await page.getByRole("tab", { name: "General", exact: true }).click();
   await expect(page.getByText("zahra@example.test", { exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Reset password", exact: true })).toBeVisible();
-  expect(await page.evaluate(() => window.settingsFixture.calls)).toEqual([]);
   expect(await page.evaluate(() => window.settingsAuthFixture.calls)).toEqual([]);
+
+  // Stripe sends the creator back to Settings when they're done.
+  await page.getByRole("tab", { name: "Payment", exact: true }).click();
+  await page.getByRole("button", { name: /Connect Stripe/i }).click();
+  await page.waitForURL("http://settings.test/stripe-onboarding?returnPath=/settings");
+});
+
+test("Payment shows each Stripe account state", async ({ page }) => {
+  await openSettings(page, "?stripeStatus=ready");
+  await expect(page.getByText("Stripe connected", { exact: true })).toBeVisible();
+  await expect(page.getByRole("status").filter({ hasText: "Connected" })).toBeVisible();
+
+  await openSettings(page, "?stripeStatus=actionRequired");
+  await expect(page.getByText("Finish setting up Stripe", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: /Continue on Stripe/i })).toBeEnabled();
+
+  await openSettings(page, "?stripeStatus=inReview");
+  await expect(page.getByText("Stripe is reviewing your account", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: /Stripe/i })).toHaveCount(0);
 });
 
 test("password reset sends the current account email once and shows pending then confirmation", async ({

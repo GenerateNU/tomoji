@@ -88,9 +88,13 @@ export const creatorOpportunity = schema
     "paymentCapCents",
     "contentRequirements",
     "reviewPolicy",
+    "minFollowerRange",
   )
   .extend({
     companyName: v.string(),
+    // Shown on feed cards; fetched through `media.getCompanyMedia`.
+    companyPictureMediaId: v.optional(v.id("mediaUploads")),
+    companyBannerMediaId: v.optional(v.id("mediaUploads")),
     niches: v.array(v.string()),
     skills: v.array(v.string()),
     languages: v.array(v.string()),
@@ -120,7 +124,10 @@ export function toCreatorOpportunity(
     paymentCapCents: opportunity.paymentCapCents,
     contentRequirements: opportunity.contentRequirements,
     reviewPolicy: opportunity.reviewPolicy,
+    minFollowerRange: opportunity.minFollowerRange,
     companyName: company.name,
+    companyPictureMediaId: company.profilePictureMediaId,
+    companyBannerMediaId: company.bannerMediaId,
     niches: selections.niches,
     skills: selections.skills,
     languages: selections.languages,

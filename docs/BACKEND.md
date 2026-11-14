@@ -324,7 +324,7 @@ argument is ignored when the policy is blank. Checks run in this order: `not_fou
 (`already_assigned`).
 
 In one transaction the call marks the application accepted, takes a slot, and creates the
-assignment already `active` with `termsAcceptedAt` set to the acceptance time, and sends a
+assignment already `active`, and sends a
 single `applicationAccepted` notice (no `assignmentTermsAccepted`). Only claimed (ungated)
 assignments start `termsPending`, so `assignments.acceptTerms`, `declineTerms` and `cancel`
 apply only to those; on an accepted offer's assignment they fail with

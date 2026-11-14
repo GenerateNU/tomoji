@@ -762,11 +762,10 @@ export async function acceptApplication(
   }
 
   // Takes the slot and creates the active assignment with the opportunity's
-  // current terms, recording the acceptance time.
+  // current terms.
   const assignmentId = await createAssignmentFromOffer(ctx, {
     opportunityId: opportunity._id,
     creatorId,
-    termsAcceptedAt: now,
   });
   const patch = {
     status: "accepted" as const,

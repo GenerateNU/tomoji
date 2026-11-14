@@ -81,7 +81,6 @@ export async function createAssignmentFromOffer(
   args: {
     opportunityId: Id<"opportunities">;
     creatorId: Id<"creators">;
-    termsAcceptedAt: number;
   },
 ): Promise<Id<"assignments">> {
   const { opportunity, campaign } = await requireOpportunityWithCampaign(ctx, args.opportunityId);
@@ -93,7 +92,6 @@ export async function createAssignmentFromOffer(
   }
   return await createAssignment(ctx, opportunity, campaign, args.creatorId, {
     status: "active",
-    termsAcceptedAt: args.termsAcceptedAt,
   });
 }
 
@@ -112,7 +110,7 @@ async function requireOpportunityWithCampaign(
 /**
  * Takes a slot and inserts an assignment with the opportunity's current terms,
  * so later opportunity edits do not change the deal. Claims start
- * `termsPending`; accepted offers start `active` with the acceptance time.
+ * `termsPending`; accepted offers start `active`.
  *
  * The slot check and increment read and write the opportunity in this
  * transaction, so when two creators race for the last slot Convex retries the
@@ -123,7 +121,7 @@ async function createAssignment(
   opportunity: Doc<"opportunities">,
   campaign: Doc<"campaigns">,
   creatorId: Id<"creators">,
-  initial: { status: "termsPending" } | { status: "active"; termsAcceptedAt: number },
+  initial: { status: "termsPending" } | { status: "active" },
 ): Promise<Id<"assignments">> {
   // One assignment per creator per opportunity, whatever its status. The index
   // is not unique, so this check is what blocks double claims and retries.
@@ -557,7 +555,7 @@ export async function acceptAssignmentTerms(
     { role: "creator", creatorId },
     assignmentId,
   );
-  const patch = { status: "active" as const, termsAcceptedAt: Date.now() };
+  const patch = { status: "active" as const };
   await ctx.db.patch("assignments", assignment._id, patch);
   const opportunity = await ctx.db.get("opportunities", assignment.opportunityId);
   if (opportunity !== null) {

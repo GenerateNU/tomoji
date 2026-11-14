@@ -700,13 +700,11 @@ describe("acceptApplication", () => {
     expect(accepted.assignmentId).toBe(assignments[0]._id);
     expect(assignments[0]).toMatchObject({
       status: "active",
-      termsAcceptedAt: accepted.application.offerAcceptedAt,
       fixedFeeCents: opportunity?.fixedFeeCents,
       cpmRateCents: opportunity?.cpmRateCents,
       paymentCapCents: opportunity?.paymentCapCents,
       usesAiReview: opportunity?.usesAiReviewDefault,
     });
-    expect(assignments[0].termsAcceptedAt).toBeGreaterThanOrEqual(before);
   });
 
   test.each([
@@ -748,9 +746,7 @@ describe("acceptApplication", () => {
 
       const assignments = await assignmentsOf(t, opportunityId, creatorId);
       expect(accepted.application.status).toBe("accepted");
-      expect(assignments).toMatchObject([
-        { _id: accepted.assignmentId, status: "active", termsAcceptedAt: expect.any(Number) },
-      ]);
+      expect(assignments).toMatchObject([{ _id: accepted.assignmentId, status: "active" }]);
     },
   );
 

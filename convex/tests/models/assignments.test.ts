@@ -111,7 +111,6 @@ describe("claimAssignment", () => {
         status: "termsPending",
       },
     ]);
-    expect(assignments[0]).not.toHaveProperty("termsAcceptedAt");
     expect(opportunity?.numFilledSlots).toBe(1);
   });
 
@@ -267,7 +266,7 @@ describe("claimAssignment", () => {
 
 describe("createAssignmentFromOffer", () => {
   test.each(["open", "paused"] as const)(
-    "creates an active assignment, recording when terms were accepted, on a gated %s opportunity",
+    "creates an active assignment on a gated %s opportunity",
     async (status) => {
       const t = convexTest(schema, modules);
       const owner = await seedOpportunityIn(t, { opportunity: status }, { isGated: true });
@@ -278,7 +277,6 @@ describe("createAssignmentFromOffer", () => {
           await createAssignmentFromOffer(ctx, {
             opportunityId: owner.opportunityId,
             creatorId,
-            termsAcceptedAt: 123,
           }),
       );
 
@@ -294,7 +292,6 @@ describe("createAssignmentFromOffer", () => {
           paymentCapCents: 25_000,
           usesAiReview: true,
           status: "active",
-          termsAcceptedAt: 123,
         },
       ]);
       expect(opportunity?.numFilledSlots).toBe(1);
@@ -311,7 +308,6 @@ describe("createAssignmentFromOffer", () => {
         await createAssignmentFromOffer(ctx, {
           opportunityId: owner.opportunityId,
           creatorId,
-          termsAcceptedAt: 123,
         }),
     );
 
@@ -330,7 +326,6 @@ describe("createAssignmentFromOffer", () => {
           await createAssignmentFromOffer(ctx, {
             opportunityId: owner.opportunityId,
             creatorId,
-            termsAcceptedAt: 123,
           }),
       ),
     ).rejects.toMatchObject({ data: { code: "invalid_state", reason: "opportunity_closed" } });
@@ -348,7 +343,6 @@ describe("createAssignmentFromOffer", () => {
           await createAssignmentFromOffer(ctx, {
             opportunityId: owner.opportunityId,
             creatorId,
-            termsAcceptedAt: 123,
           }),
       ),
     ).rejects.toMatchObject({ data: { code: "invalid_state", reason: "opportunity_not_gated" } });
@@ -364,7 +358,6 @@ describe("createAssignmentFromOffer", () => {
         await createAssignmentFromOffer(ctx, {
           opportunityId: owner.opportunityId,
           creatorId: first,
-          termsAcceptedAt: 123,
         }),
     );
 
@@ -374,7 +367,6 @@ describe("createAssignmentFromOffer", () => {
           await createAssignmentFromOffer(ctx, {
             opportunityId: owner.opportunityId,
             creatorId: second,
-            termsAcceptedAt: 123,
           }),
       ),
     ).rejects.toMatchObject({ data: { code: "invalid_state", reason: "opportunity_full" } });
@@ -391,7 +383,6 @@ describe("createAssignmentFromOffer", () => {
         await createAssignmentFromOffer(ctx, {
           opportunityId: owner.opportunityId,
           creatorId,
-          termsAcceptedAt: 123,
         }),
     );
 
@@ -1344,8 +1335,6 @@ describe("acceptAssignmentTerms", () => {
     const t = convexTest(schema, modules);
     const { creatorId, assignmentId, read } = await seedClaimed(t);
 
-    const before = Date.now();
-
     const result = await t.run(
       async (ctx) => await acceptAssignmentTerms(ctx, creatorId, assignmentId),
     );
@@ -1353,7 +1342,6 @@ describe("acceptAssignmentTerms", () => {
     const { assignment, opportunity } = await read();
     expect(result).toEqual(assignment);
     expect(assignment?.status).toBe("active");
-    expect(assignment?.termsAcceptedAt).toBeGreaterThanOrEqual(before);
     expect(opportunity?.numFilledSlots).toBe(1);
   });
 
@@ -1613,10 +1601,7 @@ describe("notifications", () => {
     );
     const creatorId = await seedCreatorId(t, "creator");
 
-    await t.run(
-      async (ctx) =>
-        await createAssignmentFromOffer(ctx, { opportunityId, creatorId, termsAcceptedAt: 123 }),
-    );
+    await t.run(async (ctx) => await createAssignmentFromOffer(ctx, { opportunityId, creatorId }));
 
     expect(await memberNotifications(t, membership)).toEqual([]);
   });

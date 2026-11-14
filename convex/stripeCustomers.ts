@@ -30,15 +30,18 @@ import schema from "./schema";
  * Stripe event, never one taken from a client.
  */
 
-/** Whether the company has a card on file: `missing`, or `ready` with the card to display. */
+/**
+ * Whether the company has a card on file: `missing`, `ready` with the card to
+ * display, or `expired`. Queries don't rerun as time passes, so the caller
+ * passes `asOf`, any time in its current month (e.g. the 1st, in UTC, so the
+ * argument only changes monthly), and the card is checked against that month.
+ * Charging checks expiry itself, so a wrong `asOf` only changes what's shown.
+ */
 export const me = companyQuery({
-  args: {},
+  args: { asOf: v.number() },
   returns: paymentMethodStatus,
-  handler: async (ctx) =>
-    toPaymentMethodStatus(
-      await getStripeCustomerByCompanyId(ctx, ctx.membership.companyId),
-      Date.now(),
-    ),
+  handler: async (ctx, { asOf }) =>
+    toPaymentMethodStatus(await getStripeCustomerByCompanyId(ctx, ctx.membership.companyId), asOf),
 });
 
 /**

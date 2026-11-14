@@ -66,12 +66,16 @@ const visa = {
   expYear: 2028,
 };
 
+// The caller's current month. Queries don't rerun as time passes, so the
+// client says which month to check the card against.
+const NOVEMBER = Date.UTC(2026, 10, 1);
+
 describe("me", () => {
   test("reports missing before the company has saved a card", async () => {
     const t = convexTest(schema, modules);
     const { asUser } = await seedCompanyUser(t, "pm_me_new", "admin");
 
-    expect(await asUser.query(api.stripeCustomers.me, {})).toEqual({
+    expect(await asUser.query(api.stripeCustomers.me, { asOf: NOVEMBER })).toEqual({
       status: "missing",
       card: null,
     });
@@ -93,10 +97,32 @@ describe("me", () => {
       });
     });
 
-    expect(await asUser.query(api.stripeCustomers.me, {})).toEqual({
+    expect(await asUser.query(api.stripeCustomers.me, { asOf: NOVEMBER })).toEqual({
       status: "ready",
       card: { brand: "visa", last4: "4242", expMonth: 8, expYear: 2028 },
     });
+  });
+
+  test("checks the card's expiry against the month the caller passes", async () => {
+    const t = convexTest(schema, modules);
+    const { asUser, companyId } = await seedCompanyUser(t, "pm_me_expiry", "member");
+    await t.run(async (ctx) => {
+      await createStripeCustomer(ctx, companyId, {
+        stripeCustomerId: "cus_company",
+        stripeUpdatedAt: 1_700_000_000_000,
+      });
+      await savePaymentMethod(ctx, {
+        stripeCustomerId: "cus_company",
+        card: { ...visa, expMonth: 11, expYear: 2026 },
+        stripeUpdatedAt: 1_700_000_060_000,
+      });
+    });
+
+    const status = async (asOf: number) =>
+      (await asUser.query(api.stripeCustomers.me, { asOf })).status;
+
+    expect(await status(NOVEMBER)).toBe("ready");
+    expect(await status(Date.UTC(2026, 11, 1))).toBe("expired");
   });
 
   test("refuses a creator", async () => {
@@ -104,7 +130,10 @@ describe("me", () => {
     await seedCreatorId(t, "pm_me_creator");
     const asCreator = await seedUser(t, { subject: "pm_me_creator" });
 
-    await expectApiError(() => asCreator.query(api.stripeCustomers.me, {}), "forbidden");
+    await expectApiError(
+      () => asCreator.query(api.stripeCustomers.me, { asOf: NOVEMBER }),
+      "forbidden",
+    );
   });
 });
 
@@ -142,7 +171,7 @@ describe("setupPaymentMethod", () => {
       stripeUpdatedAt: 1_700_000_000_000,
     });
     // Opening Checkout saves no card; the webhook does.
-    expect(await asUser.query(api.stripeCustomers.me, {})).toEqual({
+    expect(await asUser.query(api.stripeCustomers.me, { asOf: NOVEMBER })).toEqual({
       status: "missing",
       card: null,
     });

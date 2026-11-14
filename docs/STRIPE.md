@@ -176,7 +176,9 @@ bunx convex run stripeAccounts:me '{}' --identity '{"subject":"<your workosId>"}
 
 ## Status
 
-`stripeCustomers.me` returns `{ status, card }`:
+`stripeCustomers.me({ asOf })` returns `{ status, card }`. Queries don't rerun as time
+passes, so pass `asOf`, the start of the current month in UTC
+(`Date.UTC(year, month, 1)`), and the card is checked against that month:
 
 | Status    | Meaning                                 | What the UI shows                                  |
 | --------- | --------------------------------------- | -------------------------------------------------- |
@@ -194,7 +196,7 @@ numbers never reach Tomoji.
 
 | Route                                | Type   | Who                 | Returns                      |
 | ------------------------------------ | ------ | ------------------- | ---------------------------- |
-| `stripeCustomers.me`                 | query  | Any company member  | `{ status, card }`           |
+| `stripeCustomers.me({ asOf })`       | query  | Any company member  | `{ status, card }`           |
 | `stripeCustomers.setupPaymentMethod` | action | Company admins only | `{ url }` to Stripe Checkout |
 
 Members get `forbidden` / `company_admin_required` from `setupPaymentMethod`; creators and
@@ -247,4 +249,4 @@ bunx convex run stripeCustomers:setupPaymentMethod '{"returnPath":"/campaigns"}'
 ```
 
 Open the URL, enter card `4242 4242 4242 4242` with any future expiry, CVC, and ZIP, and save.
-Then `stripeCustomers:me` with the same identity returns `ready` with the Visa ending in 4242.
+Then `stripeCustomers:me '{"asOf": <now in ms>}'` with the same identity returns `ready` with the Visa ending in 4242.

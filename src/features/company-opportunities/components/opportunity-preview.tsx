@@ -1,5 +1,6 @@
 "use client";
 
+import { RichText } from "@/components/rich-text";
 import { RiMoneyDollarCircleLine, RiTimeLine } from "@remixicon/react";
 import type { ReactNode } from "react";
 import { Modal } from "@/components/modal";
@@ -53,7 +54,6 @@ export function OpportunityPreview({
   input: OpportunityInput;
   catalog: CatalogOptions;
 }) {
-  const requirements = input.contentRequirements.split("\n").filter((line) => line.trim());
   return (
     <Modal
       open={open}
@@ -96,12 +96,8 @@ export function OpportunityPreview({
             <Tags names={input.languages!} options={catalog.languages} />
           </Section>
         )}
-        <Section title="Content requirements">
-          <ul className="list-disc pl-5 text-body-sm text-gray-950">
-            {requirements.map((line, index) => (
-              <li key={index}>{line}</li>
-            ))}
-          </ul>
+        <Section title="Requirements + guidelines">
+          <RichText markdown={input.contentRequirements} />
         </Section>
         <Section title="Deliverables">
           <ol className="flex flex-col gap-2 text-body-sm text-gray-950">
@@ -114,7 +110,7 @@ export function OpportunityPreview({
           </ol>
         </Section>
         <Section title="Policy guidelines">
-          <p className="text-body-sm whitespace-pre-line text-gray-950">{input.reviewPolicy}</p>
+          <RichText markdown={input.reviewPolicy} />
         </Section>
       </div>
     </Modal>

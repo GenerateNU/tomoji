@@ -75,6 +75,7 @@ import type * as models_notifications from "../models/notifications.js";
 import type * as models_opportunities from "../models/opportunities.js";
 import type * as models_opportunityFeed from "../models/opportunityFeed.js";
 import type * as models_opportunityLanguages from "../models/opportunityLanguages.js";
+import type * as models_opportunityMatch from "../models/opportunityMatch.js";
 import type * as models_opportunityNiches from "../models/opportunityNiches.js";
 import type * as models_opportunityScores from "../models/opportunityScores.js";
 import type * as models_opportunitySkills from "../models/opportunitySkills.js";
@@ -176,6 +177,7 @@ declare const fullApi: ApiFromModules<{
   "models/opportunities": typeof models_opportunities;
   "models/opportunityFeed": typeof models_opportunityFeed;
   "models/opportunityLanguages": typeof models_opportunityLanguages;
+  "models/opportunityMatch": typeof models_opportunityMatch;
   "models/opportunityNiches": typeof models_opportunityNiches;
   "models/opportunityScores": typeof models_opportunityScores;
   "models/opportunitySkills": typeof models_opportunitySkills;

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { followerRangeFit } from "../../models/followerRanges";
-import { scoreOpportunityMatch } from "../../models/opportunityScores";
+import { scoreOpportunityMatch } from "../../models/opportunityMatch";
 
 describe("scoreOpportunityMatch", () => {
   test("scores the share of the opportunity's niches and skills the creator has", () => {

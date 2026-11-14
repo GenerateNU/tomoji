@@ -47,4 +47,10 @@ export const postsTable = defineTable({
 })
   .index("by_submissionId_and_isActive", ["submissionId", "isActive"])
   .index("by_campaignId_and_isActive", ["campaignId", "isActive"])
-  .index("by_xPostId", ["xPostId"]);
+  .index("by_xPostId", ["xPostId"])
+  // The daily X sync reads verified, active posts by when they were first verified.
+  .index("by_isVerified_and_isActive_and_firstVerifiedAt", [
+    "isVerified",
+    "isActive",
+    "firstVerifiedAt",
+  ]);

@@ -5,7 +5,8 @@ import type { Doc } from "@convex/_generated/dataModel";
 import { useQueries } from "convex/react";
 import type { FunctionReturnType } from "convex/server";
 import { useMemo } from "react";
-import { applicationExpiresAt, formatCompensation, formatRelativeTime } from "../lib/format";
+import { formatRelativeTime } from "@/lib/relative-time";
+import { applicationExpiresAt, formatCompensation } from "../lib/format";
 import { ApplicationStatusBadge } from "./application-status-badge";
 import { Skeleton } from "@/components/ui/skeleton";
 

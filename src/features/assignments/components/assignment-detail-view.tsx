@@ -20,7 +20,8 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { RequireAccount } from "@/features/users/components/require-account";
 import { formatCompensation } from "@/lib/money";
-import { assignmentStatusLabel, submissionStatusLabel } from "./assignment-status";
+import { assignmentStatusLabel } from "./assignment-status";
+import { AssignmentSubmission } from "./assignment-submission";
 
 type AssignmentDetails = NonNullable<FunctionReturnType<typeof api.assignments.getMineDetails>>;
 
@@ -59,7 +60,8 @@ function AssignmentDetail({ assignmentId, status }: { assignmentId: string; stat
       }}
     >
       <DialogContent
-        className="grid h-[min(720px,calc(100dvh-32px))] max-w-[742px] grid-rows-[minmax(0,1fr)_auto] gap-0 overflow-hidden rounded-lg shadow-2xl"
+        initialFocus={false}
+        className="grid h-[min(720px,calc(100dvh-32px))] max-w-[742px] grid-rows-[minmax(0,1fr)_auto] gap-0 overflow-hidden rounded-lg shadow-2xl data-nested-dialog-open:opacity-0"
         overlayClassName="bg-gray-950/20 backdrop-blur-[2px]"
       >
         <div className="overflow-y-auto px-5 py-8 sm:px-8">
@@ -70,7 +72,7 @@ function AssignmentDetail({ assignmentId, status }: { assignmentId: string; stat
               {details.title && <span className="font-medium">{details.title}</span>}
             </div>
           )}
-          <DialogTitle className="text-[26px] leading-tight">
+          <DialogTitle className="text-[28px] leading-tight">
             {details?.deliverables[0]?.title ??
               details?.title ??
               (details === null ? "Assignment unavailable" : "Assignment")}
@@ -110,7 +112,26 @@ function AssignmentWorkspace({ details }: { details: AssignmentDetails }) {
       {assignment.status !== "active" && (
         <Badge className="mt-2">{assignmentStatusLabel[assignment.status]}</Badge>
       )}
-      <div className="mt-8 space-y-7">
+      <div className="mt-6 space-y-6">
+        {deliverables.some(({ latest }) => latest) && (
+          <section>
+            <h2 className="mb-2 text-body-sm font-medium text-gray-500">Your submissions</h2>
+            <ul className="space-y-3">
+              {deliverables.map(
+                ({ _id, title, latest }) =>
+                  latest && (
+                    <li key={_id}>
+                      <AssignmentSubmission
+                        key={latest._id}
+                        title={title}
+                        submissionId={latest._id}
+                      />
+                    </li>
+                  ),
+              )}
+            </ul>
+          </section>
+        )}
         <section>
           <h2 className="mb-2 text-body-sm font-medium text-gray-500">Content requirements</h2>
           {brief ? (
@@ -119,28 +140,23 @@ function AssignmentWorkspace({ details }: { details: AssignmentDetails }) {
             <p className="text-sm text-muted-foreground">Brief unavailable.</p>
           )}
         </section>
-        <section className="border-t pt-7">
-          <h2 className="mb-4 text-body-lg font-medium">Your submissions</h2>
-          {deliverables.length === 0 && (
-            <p className="text-sm text-muted-foreground">No deliverables yet.</p>
-          )}
-          <ul className="divide-y">
-            {deliverables.map(({ _id, title, description, latest, exampleMediaIds }) => (
-              <li key={_id} className="py-3 first:pt-0 last:pb-0">
-                <div className="flex flex-wrap items-baseline justify-between gap-2">
-                  <h3 className="font-medium break-words">{title}</h3>
-                  <Badge>{latest ? submissionStatusLabel[latest.status] : "To do"}</Badge>
-                </div>
-                <p className="mt-1 text-sm break-words whitespace-pre-wrap text-muted-foreground">
-                  {description}
-                </p>
+        {deliverables.length > 0 && (
+          <section className="space-y-4" aria-label="Deliverables">
+            {deliverables.map(({ _id, title, description, exampleMediaIds }) => (
+              <div key={_id}>
                 {!!exampleMediaIds?.length && (
                   <AssignmentExamples deliverableId={_id} mediaIds={exampleMediaIds} />
                 )}
-              </li>
+                <div className="mt-3 space-y-1">
+                  {deliverables.length > 1 && <h3 className="font-medium break-words">{title}</h3>}
+                  <p className="text-sm break-words whitespace-pre-wrap text-muted-foreground">
+                    {description}
+                  </p>
+                </div>
+              </div>
             ))}
-          </ul>
-        </section>
+          </section>
+        )}
         <section>
           <h2 className="mb-2 text-body-sm font-medium text-gray-500">Payment</h2>
           <p className="text-body-sm">{formatCompensation(assignment)}</p>

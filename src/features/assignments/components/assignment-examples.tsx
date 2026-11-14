@@ -16,8 +16,8 @@ export function AssignmentExamples({
   mediaIds: Id<"mediaUploads">[];
 }) {
   return (
-    <div className="mt-4 space-y-2">
-      <h4 className="text-body-sm text-gray-500">Examples</h4>
+    <div className="space-y-2">
+      <h3 className="text-body-sm font-medium text-gray-500">Examples</h3>
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         {mediaIds.map((mediaId, index) => (
           <AssignmentExample

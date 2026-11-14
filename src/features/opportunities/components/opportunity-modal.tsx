@@ -3,6 +3,7 @@
 import { api } from "@convex/_generated/api";
 import type { Id } from "@convex/_generated/dataModel";
 import { useMutation, useQuery } from "convex/react";
+import Link from "next/link";
 import { useRef, useState, type FormEvent } from "react";
 import { CountdownButton } from "@/components/countdown-button";
 import { Modal } from "@/components/modal";
@@ -11,16 +12,18 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { errorMessage } from "@/lib/errors";
-import { feedAction } from "../lib/feed-status";
+import { claimTerms } from "../lib/claim-terms";
+import { feedAction, feedTags } from "../lib/feed-status";
 import type { FeedOpportunity } from "../lib/types";
 import { CompanyAvatar } from "./company-avatar";
-import { OpportunityDetails } from "./opportunity-details";
+import { OpportunityDetails, OpportunitySummary } from "./opportunity-details";
 
 const NOTE_MAX_LENGTH = 200;
 const NOTE_FORM_ID = "application-note-form";
 
 function Heading({ opportunity }: { opportunity: FeedOpportunity }) {
-  const applied = opportunity.application !== null;
+  // The creator's own progress if there is any, otherwise how to get in.
+  const tag = feedTags(opportunity).at(-1);
   return (
     <span className="flex flex-col gap-4">
       <span className="flex items-center gap-2 text-body font-normal">
@@ -29,9 +32,9 @@ function Heading({ opportunity }: { opportunity: FeedOpportunity }) {
       </span>
       <span className="flex flex-wrap items-center gap-3">
         {opportunity.title}
-        {(applied || opportunity.isGated) && (
+        {tag && (
           <Badge tone="primary" size="md">
-            {applied ? "Applied" : "Application required"}
+            {tag.label}
           </Badge>
         )}
       </span>
@@ -102,9 +105,26 @@ function ApplicationNote({
   );
 }
 
+function Terms({ companyName }: { companyName: string }) {
+  return (
+    <section className="mt-6 flex flex-col gap-2">
+      <h3 className="text-body-sm text-gray-500">Terms &amp; Conditions</h3>
+      <ol className="flex list-decimal flex-col gap-1 pl-5 text-body text-gray-950">
+        {claimTerms(companyName).map((term) => (
+          <li key={term.title}>
+            {term.title} {term.body}
+          </li>
+        ))}
+      </ol>
+    </section>
+  );
+}
+
 /**
  * The pop-up a card opens: the full brief, and the next step for this creator.
- * Applying needs a note; once sent, a confirmation closes itself.
+ * Applying needs a note; once sent, a confirmation closes itself. Claiming a
+ * spot shows the terms first; the spot is only taken once they're accepted.
+ * A claim whose terms are still pending reopens on the terms.
  */
 export function OpportunityModal({
   opportunityId,
@@ -116,13 +136,20 @@ export function OpportunityModal({
   onOpenChange: (open: boolean) => void;
 }) {
   const opportunity = useQuery(api.opportunities.get, open ? { opportunityId } : "skip");
-  const [step, setStep] = useState<"details" | "sent">("details");
+  const [step, setStep] = useState<"details" | "terms" | "sent" | "claimed">("details");
   const [submitting, setSubmitting] = useState(false);
+  const [claimError, setClaimError] = useState<string>();
+  const claim = useMutation(api.assignments.claim);
+  const acceptTerms = useMutation(api.assignments.acceptTerms);
+  const declineTerms = useMutation(api.assignments.declineTerms);
 
   function changeOpen(next: boolean) {
     onOpenChange(next);
     // Reopening starts from the brief again.
-    if (!next) setStep("details");
+    if (!next) {
+      setStep("details");
+      setClaimError(undefined);
+    }
   }
 
   if (opportunity === undefined) {
@@ -166,7 +193,106 @@ export function OpportunityModal({
     );
   }
 
-  const canApply = feedAction(opportunity).kind === "apply";
+  if (step === "claimed") {
+    return (
+      <Modal
+        open={open}
+        onOpenChange={changeOpen}
+        title="You have 1 new assignment!"
+        titleSize="lg"
+        className="sm:max-w-[600px]"
+        footer={
+          <>
+            <Button variant="secondary-subtle" onClick={() => changeOpen(false)}>
+              Dismiss
+            </Button>
+            <Button render={<Link href="/assignments" />} nativeButton={false}>
+              Go to assignments
+            </Button>
+          </>
+        }
+      >
+        <p className="text-body text-gray-700">
+          Go to your assignments portal to view the video guidelines, information, and start
+          filming.
+        </p>
+      </Modal>
+    );
+  }
+
+  const pendingTerms =
+    opportunity.assignment?.status === "termsPending" ? opportunity.assignment._id : null;
+  const onTerms = step === "terms" || pendingTerms !== null;
+
+  async function accept(opportunityId: Id<"opportunities">) {
+    setSubmitting(true);
+    setClaimError(undefined);
+    try {
+      const assignmentId = pendingTerms ?? (await claim({ opportunityId }));
+      await acceptTerms({ assignmentId });
+      setStep("claimed");
+    } catch (caught) {
+      setClaimError(
+        errorMessage(caught, {
+          conflict: "You've already claimed a spot on this opportunity.",
+          invalid_state: "There are no spots left on this opportunity.",
+          not_found: "This opportunity is no longer available.",
+        }),
+      );
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function deny() {
+    // A claim waiting on these terms gives its spot back; otherwise nothing was taken.
+    if (pendingTerms !== null) {
+      setSubmitting(true);
+      try {
+        await declineTerms({ assignmentId: pendingTerms });
+      } catch (caught) {
+        setClaimError(errorMessage(caught));
+        setSubmitting(false);
+        return;
+      }
+      setSubmitting(false);
+    }
+    changeOpen(false);
+  }
+
+  if (onTerms) {
+    const opportunityId = opportunity._id;
+    return (
+      <Modal
+        open={open}
+        onOpenChange={changeOpen}
+        titleSize="lg"
+        title={<Heading opportunity={opportunity} />}
+        className="sm:max-w-2xl"
+        footer={
+          <>
+            <Button variant="secondary-subtle" disabled={submitting} onClick={deny}>
+              Deny
+            </Button>
+            <Button disabled={submitting} onClick={() => accept(opportunityId)}>
+              {submitting ? "Claiming…" : "Accept terms & conditions"}
+            </Button>
+          </>
+        }
+      >
+        <OpportunitySummary opportunity={opportunity} />
+        <Terms companyName={opportunity.companyName} />
+        {claimError && (
+          <p role="alert" className="mt-4 text-body-sm text-red-600">
+            {claimError}
+          </p>
+        )}
+      </Modal>
+    );
+  }
+
+  const action = feedAction(opportunity).kind;
+  const canApply = action === "apply";
   return (
     <Modal
       open={open}
@@ -175,14 +301,18 @@ export function OpportunityModal({
       title={<Heading opportunity={opportunity} />}
       className="sm:max-w-2xl"
       footer={
-        canApply && (
+        (canApply || action === "claim") && (
           <>
             <Button variant="secondary-subtle" onClick={() => changeOpen(false)}>
               Cancel
             </Button>
-            <Button type="submit" form={NOTE_FORM_ID} disabled={submitting}>
-              {submitting ? "Applying…" : "Apply"}
-            </Button>
+            {canApply ? (
+              <Button type="submit" form={NOTE_FORM_ID} disabled={submitting}>
+                {submitting ? "Applying…" : "Apply"}
+              </Button>
+            ) : (
+              <Button onClick={() => setStep("terms")}>Claim spot</Button>
+            )}
           </>
         )
       }

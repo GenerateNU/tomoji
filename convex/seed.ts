@@ -679,8 +679,8 @@ export const more = internalMutation({
 
 /**
  * Deletes the demo campaign and everything the seed hung off it, so a later run
- * can rebuild it against a different account. Matched by the demo title, so real
- * campaigns and the accounts themselves are untouched.
+ * can rebuild it against a different account. An invite marker ties the
+ * reset to the campaign created by the seed.
  */
 export const clearDemo = internalMutation({
   args: {},
@@ -690,7 +690,14 @@ export const clearDemo = internalMutation({
     const all = await ctx.db.query("campaigns").take(campaignReadLimit);
     if (all.length === campaignReadLimit)
       throw apiError("invalid_state", { reason: "too_many_campaigns_to_seed" });
-    const demos = all.filter((row) => row.title === demoCampaignTitle);
+    const demos = [];
+    for (const campaign of all) {
+      const marker = await ctx.db
+        .query("invites")
+        .withIndex("by_workosId", (q) => q.eq("workosId", `invite_tomoji_seed_${campaign._id}`))
+        .unique();
+      if (marker?.companyId === campaign.companyId) demos.push({ campaign, marker });
+    }
 
     let documents = 0;
     const removed = {
@@ -710,7 +717,7 @@ export const clearDemo = internalMutation({
       }
     }
 
-    for (const campaign of demos) {
+    for (const { campaign, marker } of demos) {
       const opportunities = await ctx.db
         .query("opportunities")
         .withIndex("by_campaignId_and_deadline", (q) => q.eq("campaignId", campaign._id))
@@ -808,14 +815,7 @@ export const clearDemo = internalMutation({
       await drop("assignments", assignments);
       await drop("opportunities", opportunities);
 
-      const invites = await ctx.db
-        .query("invites")
-        .withIndex("by_companyId", (q) => q.eq("companyId", campaign.companyId))
-        .collect();
-      await drop(
-        "invites",
-        invites.filter((row) => row.workosId.startsWith("invite_tomoji_seed_")),
-      );
+      await drop("invites", [marker]);
 
       for (const creatorId of creatorIds) {
         const creator = await ctx.db.get("creators", creatorId);

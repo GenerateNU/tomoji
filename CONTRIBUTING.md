@@ -243,8 +243,8 @@ campaign. It includes an application offer, an assignment to start, a draft wait
 company review, a change request, an approval waiting for a post, and a posted assignment
 with example earnings and a dispute. Run it on a fresh dev deployment if you want an empty
 starting point. Rerunning it reuses the demo campaign, preserves other data, and does not reset
-actions you took while testing. The old `seed-clear` command was removed because it deleted
-unrelated records too.
+actions you took while testing. Run `just seed-clear` only when you want to delete the seeded
+campaigns and activity linked to them, then start over.
 
 Synthetic accounts cannot sign in through WorkOS. For browser testing, finish onboarding on your
 dev creator account and pass its email and the email of a dev company admin that has synced to

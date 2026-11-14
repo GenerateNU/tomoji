@@ -168,3 +168,25 @@ test("the larger demo catalog can be rerun and never introduces fake filled slot
   expect(extra).toHaveLength(5);
   expect(extra.every((row) => row.numFilledSlots === 0)).toBe(true);
 });
+
+test("reset preserves a campaign with the same name when it has no seed marker", async () => {
+  vi.stubEnv("TOMOJI_DEV_SEED", "true");
+  const t = convexTest(schema, modules);
+  const { campaignId } = await t.mutation(internal.seed.run, {});
+  const unrelated = await t.run(async (ctx) => {
+    const campaign = (await ctx.db.get("campaigns", campaignId))!;
+    return await ctx.db.insert("campaigns", {
+      companyId: campaign.companyId,
+      createdBy: campaign.createdBy,
+      title: campaign.title,
+      description: campaign.description,
+      status: campaign.status,
+      budgetCents: campaign.budgetCents,
+      startsAt: campaign.startsAt,
+    });
+  });
+
+  expect(await t.mutation(internal.seed.clearDemo, {})).toMatchObject({ campaigns: 1 });
+  expect(await t.run((ctx) => ctx.db.get("campaigns", campaignId))).toBeNull();
+  expect(await t.run((ctx) => ctx.db.get("campaigns", unrelated))).not.toBeNull();
+});

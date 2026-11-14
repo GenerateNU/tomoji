@@ -1,113 +1,135 @@
 "use client";
 
-import { useState } from "react";
-import Link from "next/link";
-import { usePaginatedQuery } from "convex/react";
 import { api } from "@convex/_generated/api";
-import { useMe } from "@/features/users/hooks/use-me";
-import type { Doc } from "@convex/_generated/dataModel";
-import { Button, buttonVariants } from "@/components/ui/button";
+import { RiAddLine, RiLayoutGridLine, RiListUnordered } from "@remixicon/react";
+import { usePaginatedQuery } from "convex/react";
+import Link from "next/link";
+import { useState } from "react";
 import { EmptyState } from "@/components/empty-state";
-import { formatMoney } from "@/lib/money";
+import { Button } from "@/components/ui/button";
+import { Segment, SegmentedControl } from "@/components/ui/segmented-control";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Label } from "@/components/ui/label";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { useMe } from "@/features/users/hooks/use-me";
+import { formatMoney } from "@/lib/money";
+import { CAMPAIGN_TABS, campaignTiming, type CampaignTab } from "../lib/campaign-status";
+import { PerformanceCard } from "./performance-card";
 
-const statuses: Record<Doc<"campaigns">["status"], string> = {
-  draft: "Draft",
-  open: "Open",
-  paused: "Paused",
-  closed: "Closed",
-};
+const PAGE_SIZE = 12;
 const date = new Intl.DateTimeFormat("en-US", { dateStyle: "medium" });
 
-/** The campaign list itself. `RequireAccount` has already proven the role. */
+/** The company's campaigns by status, as cards or a table. `RequireAccount` has proven the role. */
 export function CompanyCampaigns() {
   const me = useMe();
-  const [status, setStatus] = useState<Doc<"campaigns">["status"] | "">("");
-  const {
-    results,
-    status: pageStatus,
-    loadMore,
-  } = usePaginatedQuery(api.campaigns.list, status ? { status } : {}, {
-    initialNumItems: 20,
-  });
+  const [tab, setTab] = useState<CampaignTab>("open");
+  const [view, setView] = useState<"grid" | "list">("grid");
+  // Read once so every card's "began N days ago" agrees.
+  const [now] = useState(() => Date.now());
+  const { results, status, loadMore } = usePaginatedQuery(
+    api.campaigns.list,
+    { status: tab },
+    { initialNumItems: PAGE_SIZE },
+  );
+  const isAdmin = me?.synced === true && me.role === "company" && me.companyRole === "admin";
 
   return (
-    <div className="mx-auto w-full max-w-6xl space-y-8 px-5 py-10 sm:px-10 lg:py-16">
-      <header className="flex flex-wrap items-center justify-between gap-4">
-        <div className="space-y-2">
-          <h1 className="text-3xl font-semibold tracking-tight">Campaigns</h1>
-          <p className="text-muted-foreground">Manage and track your creator campaigns.</p>
+    <div className="flex w-full flex-col gap-8 px-4 py-12 sm:px-10 lg:px-16 lg:py-16">
+      <header className="flex flex-wrap items-end justify-between gap-4">
+        <div className="flex flex-col gap-1">
+          <h1 className="text-heading-lg text-gray-950">Campaigns</h1>
+          <p className="text-body text-gray-500">Manage and track your creator campaigns</p>
         </div>
-        {me?.synced && me.role === "company" && me.companyRole === "admin" && (
-          <Link href="/campaigns/new" className={buttonVariants({ className: "min-h-11" })}>
-            Create campaign
-          </Link>
+        {isAdmin && (
+          <Button render={<Link href="/campaigns/new" />} nativeButton={false}>
+            <RiAddLine aria-hidden />
+            Create New Campaign
+          </Button>
         )}
       </header>
-      <div className="group flex items-center gap-3 border-b pb-5">
-        <Label htmlFor="campaign-status">Status</Label>
-        <select
-          id="campaign-status"
-          value={status}
-          onChange={(event) => setStatus(event.target.value as typeof status)}
-          className="min-h-11 rounded-lg border bg-background px-3 text-sm focus-visible:outline-2 focus-visible:outline-offset-2"
+
+      <div className="flex flex-wrap items-center gap-3">
+        <SegmentedControl
+          aria-label="Campaign status"
+          value={tab}
+          onChange={(next) => setTab(next as CampaignTab)}
         >
-          <option value="">All statuses</option>
-          {Object.entries(statuses).map(([value, label]) => (
-            <option key={value} value={value}>
-              {label}
-            </option>
+          {CAMPAIGN_TABS.map(({ value, label }) => (
+            <Segment key={value} value={value} label={label} />
           ))}
-        </select>
+        </SegmentedControl>
+        <SegmentedControl
+          aria-label="View"
+          value={view}
+          onChange={(next) => setView(next as "grid" | "list")}
+        >
+          <Segment value="grid" label="Grid view" icon={RiLayoutGridLine} />
+          <Segment value="list" label="List view" icon={RiListUnordered} />
+        </SegmentedControl>
       </div>
-      {pageStatus === "LoadingFirstPage" ? (
-        <div role="status" className="space-y-5">
-          <span className="sr-only">Loading campaigns…</span>
-          {[0, 1].map((key) => (
-            <Skeleton key={key} className="h-36 rounded-xl" />
+
+      {status === "LoadingFirstPage" ? (
+        <div
+          aria-busy="true"
+          aria-label="Loading campaigns"
+          className="grid gap-4 md:grid-cols-2 xl:grid-cols-3"
+        >
+          {[0, 1, 2].map((key) => (
+            <Skeleton key={key} className="h-72 rounded-lg" />
           ))}
         </div>
       ) : results.length === 0 ? (
         <EmptyState className="py-24">No campaigns to show</EmptyState>
-      ) : (
-        <ul className="divide-y rounded-xl border px-5 sm:px-7">
+      ) : view === "grid" ? (
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
           {results.map((campaign) => (
-            <li key={campaign._id} className="space-y-5 py-6">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <h2 className="min-w-0 break-words text-lg font-semibold">{campaign.title}</h2>
-                <span className="rounded-full bg-muted px-3 py-1 text-xs font-medium">
-                  {statuses[campaign.status]}
-                </span>
-              </div>
-              <dl className="grid gap-4 text-sm sm:grid-cols-3">
-                <div>
-                  <dt className="text-muted-foreground">Budget</dt>
-                  <dd className="mt-1 font-medium">{formatMoney(campaign.budgetCents)}</dd>
-                </div>
-                <div>
-                  <dt className="text-muted-foreground">Starts</dt>
-                  <dd className="mt-1">{date.format(campaign.startsAt)}</dd>
-                </div>
-                <div>
-                  <dt className="text-muted-foreground">Ends</dt>
-                  <dd className="mt-1">
-                    {campaign.endsAt === undefined ? "No end date" : date.format(campaign.endsAt)}
-                  </dd>
-                </div>
-              </dl>
-            </li>
+            <PerformanceCard
+              key={campaign._id}
+              id={campaign._id}
+              title={campaign.title}
+              subtitle={campaignTiming(campaign, now)}
+            />
           ))}
-        </ul>
+        </div>
+      ) : (
+        <Table className="min-w-[640px]">
+          <TableHeader>
+            <TableHead className="w-[40%]">Campaign</TableHead>
+            <TableHead className="w-40">Starts</TableHead>
+            <TableHead className="w-40">Ends</TableHead>
+            <TableHead className="w-32">Budget</TableHead>
+          </TableHeader>
+          <TableBody>
+            {results.map((campaign) => (
+              <TableRow key={campaign._id}>
+                <TableCell secondary={campaignTiming(campaign, now)} avatar={null}>
+                  {campaign.title}
+                </TableCell>
+                <TableCell>{date.format(campaign.startsAt)}</TableCell>
+                <TableCell>
+                  {campaign.endsAt === undefined ? "No end date" : date.format(campaign.endsAt)}
+                </TableCell>
+                <TableCell>{formatMoney(campaign.budgetCents)}</TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
       )}
-      {(pageStatus === "CanLoadMore" || pageStatus === "LoadingMore") && (
+
+      {(status === "CanLoadMore" || status === "LoadingMore") && (
         <Button
           variant="secondary-subtle"
-          className="min-h-11"
-          disabled={pageStatus === "LoadingMore"}
-          onClick={() => loadMore(20)}
+          className="self-center"
+          disabled={status === "LoadingMore"}
+          onClick={() => loadMore(PAGE_SIZE)}
         >
-          {pageStatus === "LoadingMore" ? "Loading more…" : "Load more"}
+          {status === "LoadingMore" ? "Loading…" : "Load more"}
         </Button>
       )}
     </div>

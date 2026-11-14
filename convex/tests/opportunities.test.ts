@@ -1,5 +1,6 @@
 /// <reference types="vite/client" />
 import { convexTest } from "convex-test";
+import type { FunctionArgs } from "convex/server";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { api, internal } from "../_generated/api";
 import { deactivateUser } from "../models/users";
@@ -804,6 +805,42 @@ describe("opportunities.update", () => {
 });
 
 describe("opportunities.discover", () => {
+  test("narrows the feed by niches, skills, type, and the caller's applications", async () => {
+    const t = convexTest(schema, modules);
+    const llms = await seedOpportunity(t, { subject: "filter_llms" }, { niches: ["llms"] });
+    const python = await seedOpportunity(
+      t,
+      { subject: "filter_python" },
+      { skills: ["python"], isGated: true },
+    );
+    const asCreator = await seedUser(t, { subject: "filter_creator" });
+    const creatorId = await seedCreatorId(t, "filter_creator");
+    await t.run(
+      async (ctx) =>
+        await ctx.db.insert("applications", {
+          opportunityId: python.opportunityId,
+          creatorId,
+          companyId: python.membership.companyId,
+          status: "pending",
+        }),
+    );
+    const ids = async (
+      filters: Omit<FunctionArgs<typeof api.opportunities.discover>, "paginationOpts">,
+    ) =>
+      (
+        await asCreator.query(api.opportunities.discover, {
+          ...filters,
+          paginationOpts: { numItems: 10, cursor: null },
+        })
+      ).page.map((brief) => brief._id);
+
+    expect(await ids({ niches: ["LLMs", "databases"] })).toEqual([llms.opportunityId]);
+    expect(await ids({ skills: ["python"] })).toEqual([python.opportunityId]);
+    expect(await ids({ isGated: false })).toEqual([llms.opportunityId]);
+    expect(await ids({ applied: true })).toEqual([python.opportunityId]);
+    expect(await ids({ niches: ["llms"], skills: ["python"] })).toEqual([]);
+  });
+
   test("includes only the caller's own application and assignment", async () => {
     const t = convexTest(schema, modules);
     const applied = await seedOpportunity(t, { subject: "progress_applied" });

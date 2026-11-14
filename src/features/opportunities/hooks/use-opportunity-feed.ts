@@ -16,9 +16,13 @@ export function useOpportunityFeed({
   niche?: string;
   starredOnly: boolean;
 }) {
-  const discover = usePaginatedQuery(api.opportunities.discover, starredOnly ? "skip" : { niche }, {
-    initialNumItems: PAGE_SIZE,
-  });
+  const discover = usePaginatedQuery(
+    api.opportunities.discover,
+    starredOnly ? "skip" : { niches: niche === undefined ? undefined : [niche] },
+    {
+      initialNumItems: PAGE_SIZE,
+    },
+  );
   const starred = usePaginatedQuery(api.opportunities.listStarred, starredOnly ? {} : "skip", {
     initialNumItems: PAGE_SIZE,
   });

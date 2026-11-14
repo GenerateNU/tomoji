@@ -19,13 +19,18 @@ import {
 } from "./deliverableDrafts";
 import { notifyCompanyUser, notifyCreator } from "./notifications";
 import { requireNiche } from "./niches";
+import { requireSkill } from "./skills";
 import {
   hasOpportunityNiche,
   listOpportunityNiches,
   updateOpportunityNiches,
 } from "./opportunityNiches";
 import { listOpportunityLanguages, updateOpportunityLanguages } from "./opportunityLanguages";
-import { listOpportunitySkills, updateOpportunitySkills } from "./opportunitySkills";
+import {
+  hasOpportunitySkill,
+  listOpportunitySkills,
+  updateOpportunitySkills,
+} from "./opportunitySkills";
 import schema from "../schema";
 import { followerRange } from "../schemas/creators.schema";
 
@@ -480,9 +485,18 @@ export const opportunityList = schema
     paginationOpts: paginationOptsValidator,
   });
 
-export const opportunityDiscover = opportunityList
-  .pick("paginationOpts")
-  .extend({ niche: v.optional(v.string()) });
+/**
+ * Discovery filters. Within niches or skills a brief needs any one of them;
+ * across filters it needs all. `isGated` picks briefs that need an
+ * application (true) or let creators claim a spot (false). `applied` keeps
+ * only briefs the caller has applied to.
+ */
+export const opportunityDiscover = opportunityList.pick("paginationOpts").extend({
+  niches: v.optional(v.array(v.string())),
+  skills: v.optional(v.array(v.string())),
+  isGated: v.optional(v.boolean()),
+  applied: v.optional(v.boolean()),
+});
 
 /**
  * Returns the creator-facing brief if creators may see the opportunity: it's
@@ -519,22 +533,76 @@ export async function getVisibleOpportunityCompany(
   return company !== null && company.isActive ? company : null;
 }
 
-/** Discovers open briefs across active companies without ranking or application eligibility rules. */
+async function hasApplied(
+  ctx: QueryCtx,
+  creatorId: Id<"creators">,
+  opportunityId: Id<"opportunities">,
+): Promise<boolean> {
+  const application = await ctx.db
+    .query("applications")
+    .withIndex("by_opportunityId_and_creatorId", (q) =>
+      q.eq("opportunityId", opportunityId).eq("creatorId", creatorId),
+    )
+    .first();
+  return application !== null;
+}
+
+/**
+ * Builds the check a brief must pass to appear in discovery: visible to
+ * creators and matching every filter. Returns the creator-facing brief, or
+ * `null` to leave it out.
+ */
+function discoverFilter(
+  ctx: QueryCtx,
+  options: Infer<typeof opportunityDiscover>,
+  creatorId?: Id<"creators">,
+): (opportunity: Doc<"opportunities">) => Promise<CreatorOpportunity | null> {
+  const niches = options.niches?.map(requireNiche) ?? [];
+  const skills = options.skills?.map(requireSkill) ?? [];
+  return async (opportunity) => {
+    if (options.isGated !== undefined && opportunity.isGated !== options.isGated) return null;
+    if (
+      niches.length > 0 &&
+      !(await anyAsync(niches, (name) => hasOpportunityNiche(ctx, opportunity._id, name)))
+    ) {
+      return null;
+    }
+    if (
+      skills.length > 0 &&
+      !(await anyAsync(skills, (name) => hasOpportunitySkill(ctx, opportunity._id, name)))
+    ) {
+      return null;
+    }
+    if (options.applied === true) {
+      if (creatorId === undefined || !(await hasApplied(ctx, creatorId, opportunity._id))) {
+        return null;
+      }
+    }
+    return await getVisibleCreatorOpportunity(ctx, opportunity);
+  };
+}
+
+async function anyAsync<T>(items: T[], check: (item: T) => Promise<boolean>): Promise<boolean> {
+  for (const item of items) if (await check(item)) return true;
+  return false;
+}
+
+/**
+ * Discovers open briefs across active companies in deadline order, narrowed by
+ * the discovery filters. `applied` needs the caller's creator ID.
+ */
 export async function discoverOpportunities(
   ctx: QueryCtx,
   options: Infer<typeof opportunityDiscover>,
+  creatorId?: Id<"creators">,
 ): Promise<PaginationResult<CreatorOpportunity>> {
-  const niche = options.niche === undefined ? undefined : requireNiche(options.niche);
-  // Filter inside the stream so hidden or off-niche opportunities don't leave
-  // pages short or empty. Keep deadline ordering while checking indexed associations.
+  const filter = discoverFilter(ctx, options, creatorId);
+  // Filter inside the stream so hidden or filtered-out opportunities don't
+  // leave pages short or empty. Keep deadline ordering while checking indexed associations.
   return await stream(ctx.db, schema)
     .query("opportunities")
     .withIndex("by_status_and_deadline", (q) => q.eq("status", "open"))
-    .map(async (opportunity) => {
-      if (niche !== undefined && !(await hasOpportunityNiche(ctx, opportunity._id, niche)))
-        return null;
-      return await getVisibleCreatorOpportunity(ctx, opportunity);
-    })
+    .map(filter)
     .paginate(withRowsReadCap(options.paginationOpts));
 }
 

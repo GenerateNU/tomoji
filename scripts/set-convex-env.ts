@@ -88,7 +88,7 @@ if (missing.length > 0) {
 }
 
 for (const key of keys) {
-  const result = spawnSync("bunx", ["convex", "env", "set", key, readValue(key)], {
+  const result = spawnSync("bunx", ["convex", "env", "set", "--", key, readValue(key)], {
     stdio: "inherit",
     shell: process.platform === "win32",
   });
@@ -123,10 +123,14 @@ if (webhookSecret === "") {
   process.exit(1);
 }
 
-const result = spawnSync("bunx", ["convex", "env", "set", "WORKOS_WEBHOOK_SECRET", webhookSecret], {
-  stdio: "inherit",
-  shell: process.platform === "win32",
-});
+const result = spawnSync(
+  "bunx",
+  ["convex", "env", "set", "--", "WORKOS_WEBHOOK_SECRET", webhookSecret],
+  {
+    stdio: "inherit",
+    shell: process.platform === "win32",
+  },
+);
 if (result.status !== 0) {
   process.exit(result.status ?? 1);
 }

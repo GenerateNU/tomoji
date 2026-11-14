@@ -2,12 +2,14 @@
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
 import type { Id } from "../../_generated/dataModel";
+import { updateCreatorLanguages } from "../../models/creatorLanguages";
 import { updateCreatorNiches } from "../../models/creatorNiches";
 import { updateCreatorSkills } from "../../models/creatorSkills";
 import {
   getCreatorByUserId,
   hasCreatorActivity,
   listCreators,
+  completeCreatorOnboarding,
   requireCreatorProfile,
   requireCreatorProfileById,
   updateCreatorProfile,
@@ -159,6 +161,7 @@ describe("listCreators", () => {
     expect(secondPage.page).toEqual([
       {
         creatorId: lastCreatorId,
+        joinedAt: expect.any(Number),
         firstName: "Test",
         lastName: "",
         email: "creator_budget_100@example.com",
@@ -207,6 +210,7 @@ describe("listCreators", () => {
     expect(result.page).toEqual([
       {
         creatorId,
+        joinedAt: expect.any(Number),
         firstName: "Creator",
         lastName: "Name",
         email: "creator@example.com",
@@ -265,6 +269,7 @@ describe("listCreators", () => {
     expect(firstPage.page).toEqual([
       {
         creatorId: firstCreatorId,
+        joinedAt: expect.any(Number),
         firstName: "Ada",
         lastName: "Lovelace",
         email: "page-one@example.com",
@@ -278,6 +283,7 @@ describe("listCreators", () => {
     expect(secondPage.page).toEqual([
       {
         creatorId: secondCreatorId,
+        joinedAt: expect.any(Number),
         firstName: "Grace",
         lastName: "Hopper",
         email: "page-two@example.com",
@@ -315,6 +321,72 @@ describe("listCreators", () => {
     expect(result.page.map((creator) => creator.email)).toEqual([
       "model_creator_list_active@example.com",
     ]);
+  });
+});
+
+describe("completeCreatorOnboarding", () => {
+  /** Fills everything the flow collects, so completion is the only thing left. */
+  async function seedReadyCreator(t: ReturnType<typeof convexTest>, subject: string) {
+    const creatorId = await seedCreatorId(t, subject);
+    const user = await requireSeededUser(t, subject);
+    await t.run(async (ctx) => {
+      await ctx.db.patch("creators", creatorId, {
+        dateOfBirth: Date.UTC(2000, 0, 1),
+        countryOfResidence: "US",
+      });
+      await updateCreatorNiches(ctx, creatorId, ["databases"]);
+      await updateCreatorSkills(ctx, creatorId, ["typescript"]);
+      await updateCreatorLanguages(ctx, creatorId, ["english"]);
+    });
+    return { creatorId, user };
+  }
+
+  test("stamps the completion time once everything is filled in", async () => {
+    const t = convexTest(schema, modules);
+    const { creatorId, user } = await seedReadyCreator(t, "onboarding_ready");
+
+    const profile = await t.run((ctx) => completeCreatorOnboarding(ctx, user));
+
+    expect(profile.onboardingCompletedAt).toEqual(expect.any(Number));
+    expect(await t.run((ctx) => ctx.db.get("creators", creatorId))).toMatchObject({
+      onboardingCompletedAt: profile.onboardingCompletedAt,
+    });
+  });
+
+  test("keeps the first completion time when called again", async () => {
+    const t = convexTest(schema, modules);
+    const { user } = await seedReadyCreator(t, "onboarding_repeat");
+
+    const first = await t.run((ctx) => completeCreatorOnboarding(ctx, user));
+    const second = await t.run((ctx) => completeCreatorOnboarding(ctx, user));
+
+    expect(second.onboardingCompletedAt).toBe(first.onboardingCompletedAt);
+  });
+
+  test("refuses a profile missing what the flow collects, naming each field", async () => {
+    const t = convexTest(schema, modules);
+    const subject = "onboarding_incomplete";
+    const creatorId = await seedCreatorId(t, subject);
+    const user = await requireSeededUser(t, subject);
+
+    await expectApiError(
+      () => t.run((ctx) => completeCreatorOnboarding(ctx, user)),
+      "invalid_state",
+      "onboarding_incomplete",
+    );
+    expect(await t.run((ctx) => ctx.db.get("creators", creatorId))).not.toHaveProperty(
+      "onboardingCompletedAt",
+    );
+  });
+
+  test("does not require a connected X account", async () => {
+    const t = convexTest(schema, modules);
+    const { user } = await seedReadyCreator(t, "onboarding_no_x");
+
+    const profile = await t.run((ctx) => completeCreatorOnboarding(ctx, user));
+
+    expect(profile.xId).toBeUndefined();
+    expect(profile.onboardingCompletedAt).toEqual(expect.any(Number));
   });
 });
 
@@ -427,6 +499,7 @@ describe("requireCreatorProfileById", () => {
 
     expect(result.profile).toEqual({
       creatorId: result.creatorId,
+      joinedAt: expect.any(Number),
       firstName: "Creator",
       lastName: "Name",
       email: "creator@example.com",

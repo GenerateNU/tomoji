@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { CheckboxIndicator } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { iconProps } from "@/lib/icons";
+import { useOverflowCount } from "@/hooks/use-overflow-count";
 import { cn } from "@/lib/utils";
 
 type MultiSelectFieldProps = {
@@ -66,6 +67,11 @@ export function MultiSelectField({
   const focusAfterRemove = useRef<number | null>(null);
   const message = error ?? helper;
   const hasValues = selected.length > 0;
+  const tagRow = useRef<HTMLSpanElement>(null);
+  const overflow = useOverflowCount(tagRow, selected.join("\u0000"));
+  const [focused, setFocused] = useState(false);
+  // Open or focused shows every tag; at rest the row is one line plus a count.
+  const expanded = open || focused;
 
   function commit(next: string[]) {
     if (value === undefined) setInternal(next);
@@ -138,6 +144,13 @@ export function MultiSelectField({
           aria-invalid={error ? true : undefined}
           aria-disabled={disabled || undefined}
           onKeyDown={onTriggerKeyDown}
+          onFocus={() => setFocused(true)}
+          onBlur={(event) => {
+            // Focus moving between the tags' remove buttons stays inside.
+            if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+              setFocused(false);
+            }
+          }}
           className={cn(
             "flex w-full gap-2 rounded border px-3 transition-shadow outline-none focus-visible:ring-4 focus-visible:ring-blue-primary/25",
             hasValues ? "items-start py-2" : "items-center py-3",
@@ -150,17 +163,41 @@ export function MultiSelectField({
           )}
         >
           {hasValues ? (
-            <span className="flex flex-1 flex-wrap gap-1.5">
-              {selected.map((item, index) => (
-                <Badge
-                  key={item}
-                  size="md"
-                  removeLabel={`Remove ${labelOf(item)}`}
-                  onRemove={disabled ? undefined : () => remove(item, index)}
-                >
-                  {labelOf(item)}
-                </Badge>
-              ))}
+            <span className="relative min-w-0 flex-1">
+              <span
+                ref={tagRow}
+                className={cn(
+                  "flex flex-wrap gap-1.5",
+                  // Collapsed to one line at rest; expanded while it has focus
+                  // so every tag can be reached and removed.
+                  !expanded && "h-8 overflow-hidden",
+                )}
+              >
+                {selected.map((item, index) => (
+                  <Badge
+                    key={item}
+                    size="md"
+                    className="h-8 shrink-0"
+                    removeLabel={`Remove ${labelOf(item)}`}
+                    onRemove={disabled ? undefined : () => remove(item, index)}
+                  >
+                    {labelOf(item)}
+                  </Badge>
+                ))}
+              </span>
+              {!expanded &&
+                overflow.count > 0 && (
+                  // Spans to the right edge so it also hides the tag it displaces.
+                  // The field is gray-0 whenever it has tags: the error state only
+                  // fires on an empty selection.
+                  <span
+                    aria-hidden
+                    style={{ left: overflow.left }}
+                    className="absolute inset-y-0 right-0 flex items-center bg-gray-0 pl-2 text-body-sm font-normal text-gray-500"
+                  >
+                    +{overflow.count}
+                  </span>
+                )}
             </span>
           ) : (
             <span className="flex-1 truncate text-body font-normal text-gray-400">

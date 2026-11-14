@@ -10,6 +10,7 @@ const listeners = new Set<() => void>();
 let revision = 0;
 let profile: Profile = {
   creatorId: "test-creator" as Id<"creators">,
+  joinedAt: Date.UTC(2026, 10, 1),
   firstName: "Zahra",
   lastName: "Wibisana",
   email: "zahra@example.test",

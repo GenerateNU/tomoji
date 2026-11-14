@@ -1,11 +1,11 @@
 import { expect, test } from "vitest";
 import {
   calculateEarnings,
-  DAY_MS,
   EARNING_WINDOW_MS,
   getEarningPeriod,
   type EarningsCalculationInput,
 } from "../../lib/earningsCalculator";
+import { DAY_MS } from "../../lib/time";
 
 function example(overrides: Partial<EarningsCalculationInput> = {}): EarningsCalculationInput {
   return {

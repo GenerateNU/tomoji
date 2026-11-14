@@ -1,4 +1,5 @@
-export const DAY_MS = 24 * 60 * 60 * 1000;
+import { DAY_MS } from "./time";
+
 export const EARNING_PERIOD_MS = 7 * DAY_MS;
 export const EARNING_WINDOW_MS = 30 * DAY_MS;
 
@@ -59,13 +60,16 @@ function isNonnegativeSafeInteger(value: number): boolean {
  * settle the earned fixed fee without attaching an invalid payout earningPeriod.
  */
 export function getEarningPeriod(input: EarningPeriodInput): EarningPeriod | null {
-  if (
-    ![input.startsAt, input.windowEndsAt, input.periodIndex].every(isNonnegativeSafeInteger) ||
-    input.windowEndsAt <= input.startsAt ||
-    input.periodIndex >= Math.ceil((input.windowEndsAt - input.startsAt) / EARNING_PERIOD_MS) ||
-    (input.cutoffAt !== undefined &&
-      (!isNonnegativeSafeInteger(input.cutoffAt) || input.cutoffAt < input.startsAt))
-  ) {
+  const hasInvalidValues = ![input.startsAt, input.windowEndsAt, input.periodIndex].every(
+    isNonnegativeSafeInteger,
+  );
+  const hasInvalidWindow = input.windowEndsAt <= input.startsAt;
+  const isOutsideOriginalWindow =
+    input.periodIndex >= Math.ceil((input.windowEndsAt - input.startsAt) / EARNING_PERIOD_MS);
+  const hasInvalidCutoff =
+    input.cutoffAt !== undefined &&
+    (!isNonnegativeSafeInteger(input.cutoffAt) || input.cutoffAt < input.startsAt);
+  if (hasInvalidValues || hasInvalidWindow || isOutsideOriginalWindow || hasInvalidCutoff) {
     throw new RangeError("Invalid earnings period input");
   }
   const effectiveEnd = Math.min(input.windowEndsAt, input.cutoffAt ?? input.windowEndsAt);
@@ -76,6 +80,8 @@ export function getEarningPeriod(input: EarningPeriodInput): EarningPeriod | nul
   const periodStart =
     BigInt(input.startsAt) + BigInt(input.periodIndex) * BigInt(EARNING_PERIOD_MS);
   const end = BigInt(effectiveEnd);
+  // A valid period in the original window can fall after a cancellation or removal
+  // cutoff. Return null because that period no longer earns; the input itself is valid.
   if (periodStart >= end) return null;
   const weeklyEnd = periodStart + BigInt(EARNING_PERIOD_MS);
   const periodEnd = weeklyEnd < end ? weeklyEnd : end;
@@ -88,16 +94,16 @@ export function getEarningPeriod(input: EarningPeriodInput): EarningPeriod | nul
 
 /** Computes an increment from cumulative earnings, regardless of collection status. */
 export function calculateEarnings(input: EarningsCalculationInput): EarningsCalculation {
-  if (
-    ![
-      input.fixedFeeCents,
-      input.cpmRateCents,
-      input.paymentCapCents,
-      input.previouslyRecordedEarningsCents,
-    ].every(isNonnegativeSafeInteger) ||
-    (input.cumulativeEligibleViews !== null &&
-      !isNonnegativeSafeInteger(input.cumulativeEligibleViews))
-  ) {
+  const hasInvalidAmounts = ![
+    input.fixedFeeCents,
+    input.cpmRateCents,
+    input.paymentCapCents,
+    input.previouslyRecordedEarningsCents,
+  ].every(isNonnegativeSafeInteger);
+  const hasInvalidViewCount =
+    input.cumulativeEligibleViews !== null &&
+    !isNonnegativeSafeInteger(input.cumulativeEligibleViews);
+  if (hasInvalidAmounts || hasInvalidViewCount) {
     return { status: "needsAttention", reason: "invalid_input", newPayoutCents: 0 };
   }
   if (input.paymentCapCents < input.fixedFeeCents) {

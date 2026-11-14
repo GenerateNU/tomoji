@@ -9,8 +9,15 @@ export default async function AssignmentPage({
   searchParams,
 }: {
   params: Promise<{ assignmentId: string }>;
-  searchParams: Promise<{ status?: string }>;
+  searchParams: Promise<{ status?: string | string[]; task?: string | string[]; deliverable?: string | string[] }>;
 }) {
-  const [{ assignmentId }, { status }] = await Promise.all([params, searchParams]);
-  return <AssignmentDetailView assignmentId={assignmentId} status={status} />;
+  const [{ assignmentId }, { status, task, deliverable }] = await Promise.all([params, searchParams]);
+  return (
+    <AssignmentDetailView
+      assignmentId={assignmentId}
+      status={typeof status === "string" ? status : undefined}
+      task={typeof task === "string" ? task : undefined}
+      deliverable={typeof deliverable === "string" ? deliverable : undefined}
+    />
+  );
 }

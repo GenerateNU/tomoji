@@ -21,33 +21,36 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { RequireAccount } from "@/features/users/components/require-account";
 import { assignmentStatusLabel } from "./assignment-status";
 import { AssignmentSubmission } from "./assignment-submission";
+import { DeliverableSubmissions } from "./deliverable-submissions";
 
 type AssignmentDetails = NonNullable<FunctionReturnType<typeof api.assignments.getMineDetails>>;
 
 /** Opens the assignment workspace after the creator's account is resolved. */
-export function AssignmentDetailView({
-  assignmentId,
-  status,
-}: {
+type AssignmentSelection = {
   assignmentId: string;
   status?: string;
-}) {
+  task?: string;
+  deliverable?: string;
+};
+
+export function AssignmentDetailView(selection: AssignmentSelection) {
+  const { assignmentId, status } = selection;
   return (
     <>
-      <AssignmentsView status={status} />
+      <AssignmentsView stage="draft" status={status} />
       <RequireAccount
         role="creator"
         next={`/assignments/${assignmentId}`}
         wrongRole="Assignments are available to creators."
       >
-        <AssignmentDetail assignmentId={assignmentId} status={status} />
+        <AssignmentDetail {...selection} />
       </RequireAccount>
     </>
   );
 }
 
 /** Displays the assignment in a focused panel above the assignments table. */
-function AssignmentDetail({ assignmentId, status }: { assignmentId: string; status?: string }) {
+function AssignmentDetail({ assignmentId, status, task, deliverable }: AssignmentSelection) {
   const back = `/assignments?status=${assignmentQueue(status)}`;
   const router = useRouter();
   const details = useQuery(api.assignments.getMineDetails, { assignmentId });
@@ -87,7 +90,7 @@ function AssignmentDetail({ assignmentId, status }: { assignmentId: string; stat
               All assignments
             </Link>
           )}
-          {details && <AssignmentWorkspace details={details} />}
+          {details && <AssignmentWorkspace details={details} task={task} deliverable={deliverable} />}
         </div>
         <div className="flex justify-end gap-2 bg-gray-0 px-5 py-6 sm:px-8">
           <DialogClose render={<Button variant="secondary-subtle" />}>Close</DialogClose>
@@ -98,7 +101,11 @@ function AssignmentDetail({ assignmentId, status }: { assignmentId: string; stat
 }
 
 /** Shows the creator's current terms and the latest state of each deliverable. */
-function AssignmentWorkspace({ details }: { details: AssignmentDetails }) {
+function AssignmentWorkspace({
+  details,
+  task,
+  deliverable,
+}: { details: AssignmentDetails } & Pick<AssignmentSelection, "task" | "deliverable">) {
   const { assignment, brief, deliverables } = details;
   const assignedOn = new Intl.DateTimeFormat("en-US", {
     month: "long",
@@ -139,19 +146,27 @@ function AssignmentWorkspace({ details }: { details: AssignmentDetails }) {
             <p className="text-sm text-muted-foreground">Brief unavailable.</p>
           )}
         </section>
-        {deliverables.some(({ exampleMediaIds }) => exampleMediaIds?.length) && (
+        {deliverables.length > 0 && (
           <section className="space-y-4" aria-label="Deliverables">
-            {deliverables.map(
-              ({ _id, title, exampleMediaIds }) =>
-                !!exampleMediaIds?.length && (
-                  <div key={_id} className="space-y-2">
-                    {deliverables.length > 1 && (
-                      <h3 className="font-medium break-words">{title}</h3>
-                    )}
-                    <AssignmentExamples deliverableId={_id} mediaIds={exampleMediaIds} />
-                  </div>
-                ),
-            )}
+            {deliverables.map(({ _id, title, latest, exampleMediaIds }) => (
+              <div key={_id}>
+                {deliverables.length > 1 && (
+                  <h3 className="mb-2 font-medium break-words">{title}</h3>
+                )}
+                {!!exampleMediaIds?.length && (
+                  <AssignmentExamples deliverableId={_id} mediaIds={exampleMediaIds} />
+                )}
+                <DeliverableSubmissions
+                  assignmentId={assignment._id}
+                  deliverableId={_id}
+                  assignmentTitle={details.title ?? "Assignment"}
+                  usesAiReview={assignment.usesAiReview}
+                  startDraft={task === "draft" && deliverable === _id}
+                  submissionId={latest?._id}
+                  active={assignment.status === "active"}
+                />
+              </div>
+            ))}
           </section>
         )}
       </div>

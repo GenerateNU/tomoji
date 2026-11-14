@@ -6,17 +6,10 @@ import { usePaginatedQuery, useQuery } from "convex/react";
 import type { FunctionReturnType } from "convex/server";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogTitle,
-  DialogTrigger,
-} from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogTrigger } from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
 import { aiReviewStatusLabel, submissionStatusLabel } from "./assignment-status";
 import { DraftComposer } from "./draft-composer";
-import { SubmissionPreview } from "./submission-preview";
 import { SubmittedVideo } from "./submitted-video";
 
 type Submission = FunctionReturnType<typeof api.submissions.get>;
@@ -46,7 +39,6 @@ export function DeliverableSubmissions({
   active,
 }: Props) {
   const latest = useQuery(api.submissions.get, submissionId ? { submissionId } : "skip");
-  const [commentsOpen, setCommentsOpen] = useState(false);
   const [revising, setRevising] = useState<Id<"submissions">>();
   const [reviewId, setReviewId] = useState<Id<"submissions">>();
   const [draftInFlight, setDraftInFlight] = useState(false);
@@ -73,59 +65,6 @@ export function DeliverableSubmissions({
   return (
     <div className="mt-3 space-y-3">
       {busy && <Skeleton aria-label="Loading review" className="h-10 w-full" />}
-      {latest?.status === "changesRequested" ? (
-        <Dialog open={commentsOpen} onOpenChange={setCommentsOpen}>
-          <DialogTrigger render={<Button type="button" variant="secondary-subtle" />}>
-            View comments
-          </DialogTrigger>
-          <DialogContent
-            className="min-h-[min(79.4dvh,780px)] max-w-[1186px] content-center overflow-y-auto bg-gray-50 px-5 py-14 shadow-2xl"
-            overlayClassName="bg-gray-950/20 backdrop-blur-[2px]"
-          >
-            <div className="mx-auto w-full max-w-[446px] space-y-5">
-              <SubmissionPreview caption={latest.caption}>
-                {latest.mediaId && <SubmittedVideo mediaId={latest.mediaId} eager />}
-              </SubmissionPreview>
-              <div className="space-y-3 rounded-lg bg-gray-0 p-5">
-                <DialogTitle className="sr-only">Submission comments</DialogTitle>
-                <DialogDescription className="text-gray-950">
-                  Your submission has been rejected. Review the reasons below and resubmit after
-                  adjusting.
-                </DialogDescription>
-                {latest.reviewNote && (
-                  <p className="text-body-sm break-words whitespace-pre-wrap text-gray-700">
-                    {latest.reviewNote}
-                  </p>
-                )}
-              </div>
-              {canSubmit && (
-                <Button
-                  type="button"
-                  size="sm"
-                  className="w-full"
-                  onClick={() => {
-                    setCommentsOpen(false);
-                    onComposingChange(true);
-                  }}
-                >
-                  Resubmit
-                </Button>
-              )}
-              <Button
-                type="button"
-                size="sm"
-                variant="secondary-ghost"
-                className="w-full"
-                onClick={() => setCommentsOpen(false)}
-              >
-                Not now
-              </Button>
-            </div>
-          </DialogContent>
-        </Dialog>
-      ) : (
-        latest && <SubmissionFeedback submission={latest} />
-      )}
       {(canSubmit || draftInFlight || reviewId || revising) && (
         <Dialog
           open={composing}

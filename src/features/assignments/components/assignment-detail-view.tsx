@@ -159,6 +159,9 @@ function AssignmentWorkspace({
                         key={latest._id}
                         title={title}
                         submissionId={latest._id}
+                        onResubmit={
+                          assignment.status === "active" ? () => setDraftTarget(_id) : undefined
+                        }
                       />
                     </li>
                   ),

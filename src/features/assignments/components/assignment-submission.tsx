@@ -25,9 +25,11 @@ import { SubmittedVideo } from "./submitted-video";
 export function AssignmentSubmission({
   submissionId,
   title,
+  onResubmit,
 }: {
   submissionId: Id<"submissions">;
   title: string;
+  onResubmit?: () => void;
 }) {
   const submission = useQuery(api.submissions.get, { submissionId });
   const [now] = useState(() => Date.now());
@@ -102,6 +104,14 @@ export function AssignmentSubmission({
               </p>
             )}
           </div>
+          {changesNeeded && onResubmit && (
+            <DialogClose
+              render={<Button type="button" size="sm" className="w-full" />}
+              onClick={onResubmit}
+            >
+              Resubmit
+            </DialogClose>
+          )}
           <DialogClose
             render={<Button type="button" size="sm" variant="secondary-ghost" className="w-full" />}
           >

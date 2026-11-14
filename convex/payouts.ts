@@ -2,7 +2,14 @@ import { paginationResultValidator } from "convex/server";
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
 import { internalMutation } from "./_generated/server";
-import { authedQuery, companyAdminMutation, requireCallerViewer } from "./lib/functions";
+import type { QueryCtx } from "./_generated/server";
+import type { Doc } from "./_generated/dataModel";
+import {
+  authedQuery,
+  companyAdminMutation,
+  companyContext,
+  requireCallerViewer,
+} from "./lib/functions";
 import {
   approvePayout,
   autoApprovePayouts,
@@ -14,8 +21,16 @@ import {
   payoutView,
   requirePayout,
   type PayoutApprovalContinuation,
+  type PayoutViewer,
 } from "./models/payouts";
 import schema from "./schema";
+
+/** Resolve ownership and approval authority from the caller's current membership. */
+async function requirePayoutViewer(ctx: QueryCtx, user: Doc<"users">): Promise<PayoutViewer> {
+  if (user.role !== "company") return await requireCallerViewer(ctx, user);
+  const { membership } = await companyContext(ctx);
+  return { role: "company", companyId: membership.companyId, companyRole: membership.role };
+}
 
 /**
  * Records a finalized earning from trusted backend code and starts a 72-hour
@@ -61,8 +76,10 @@ export const autoApprove = internalMutation({
 });
 
 /**
- * Gets one payout: creators see their own, company users see their company's,
- * and operators see all. Internal source keys and approval actor IDs are omitted.
+ * Gets one payout with its stored deliverable identity and current review context:
+ * creators see their own, company users see their company's, and operators see all.
+ * Internal source keys and approval actor IDs are omitted. Review eligibility is
+ * informational; the approval mutation independently enforces permission and holds.
  *
  * @throws `not_found` if the payout is missing or belongs to another owner.
  */
@@ -70,7 +87,7 @@ export const get = authedQuery({
   args: { payoutId: v.id("payouts") },
   returns: payoutView,
   handler: async (ctx, args) => {
-    return await requirePayout(ctx, await requireCallerViewer(ctx, ctx.user), args.payoutId);
+    return await requirePayout(ctx, await requirePayoutViewer(ctx, ctx.user), args.payoutId);
   },
 });
 
@@ -80,6 +97,7 @@ export const get = authedQuery({
  * Company callers cannot filter by an existing campaign or assignment owned by
  * another company. Missing parents still allow reads of historical payouts.
  * Creator and operator filters use the payout's stored ownership.
+ * Each row includes current review context without dropping disputed payouts.
  *
  * Uses native cursor pagination; a scan-limited page may be short or empty while
  * `isDone` is false. Continue with `continueCursor` and the same filters.
@@ -90,6 +108,6 @@ export const list = authedQuery({
   args: payoutListFilters.fields,
   returns: paginationResultValidator(payoutView),
   handler: async (ctx, args) => {
-    return await listPayouts(ctx, await requireCallerViewer(ctx, ctx.user), args);
+    return await listPayouts(ctx, await requirePayoutViewer(ctx, ctx.user), args);
   },
 });

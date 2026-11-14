@@ -14,13 +14,13 @@ import { FilterChip } from "@/components/filter-chip";
 import { TextField } from "@/components/text-field";
 import { Button } from "@/components/ui/button";
 import { Segment, SegmentedControl } from "@/components/ui/segmented-control";
-import { ApplicationModal } from "@/features/applications/components/application-modal";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { useOpportunityFeed } from "../hooks/use-opportunity-feed";
 import { NO_FEED_FILTERS, type FeedFilters, type FeedView } from "../lib/types";
 import { FeedSkeleton } from "./feed-skeleton";
 import { FiltersDrawer } from "./filters-drawer";
 import { NoOpportunities } from "./no-opportunities";
+import { OpportunityModal } from "./opportunity-modal";
 import { OpportunityCard } from "./opportunity-card";
 import { OpportunityTable } from "./opportunity-table";
 
@@ -155,7 +155,7 @@ export function CreatorFeed() {
       </section>
 
       {selectedId !== null && (
-        <ApplicationModal opportunityId={selectedId} open={modalOpen} onOpenChange={setModalOpen} />
+        <OpportunityModal opportunityId={selectedId} open={modalOpen} onOpenChange={setModalOpen} />
       )}
     </div>
   );

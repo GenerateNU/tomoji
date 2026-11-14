@@ -1,10 +1,10 @@
 /// <reference types="vite/client" />
 import { convexTest } from "convex-test";
-import { describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import type { Doc, Id } from "../../_generated/dataModel";
-import type { ApiErrorCode } from "../../lib/errors";
 import {
   createSubmission,
+  finishAiReview,
   listSubmissions,
   requireSubmission,
   reviewSubmission,
@@ -13,13 +13,25 @@ import {
   type SubmissionReview,
   type SubmissionViewer,
 } from "../../models/submissions";
+import { listOpportunityDeliverables } from "../../models/deliverableDrafts";
+import { markAiReviewForManualReview } from "../../models/aiReviewAttempts";
 import schema from "../../schema";
 import {
+  prepareAiReviewEvaluation,
+  aiReviewResultArgs,
+  seedAiReviewFixture,
+  creatorNotifications,
   expectApiError,
+  submissionArgs,
+  submissionDraftFields as draft,
+  expectedSubmissionView as expectedFull,
+  memberNotifications,
   seedAssignmentFixture,
   seedCreatorId,
+  seedDeliverable,
   seedMembership,
   seedOneSubmission,
+  seedOpportunity,
   seedSubmission,
   storedSubmission,
   storedSubmissions,
@@ -29,14 +41,11 @@ import {
 } from "../helpers";
 
 const modules = import.meta.glob("../../**/*.ts");
-
-const draft = {
-  draftUrl: "https://drive.example.com/drafts/driftwood-first-deploy",
-  draftDescription: "60-second walkthrough: install, `driftwood init`, first deploy at 0:45.",
-};
+afterEach(() => vi.unstubAllEnvs());
 
 const firstPage = { numItems: 10, cursor: null as string | null };
 
+/** Calls the model with shared draft fields while preserving per-test owner and input overrides. */
 async function submit(
   t: TestConvex,
   fixture: AssignmentFixture,
@@ -44,17 +53,8 @@ async function submit(
   creatorId: Id<"creators"> = fixture.creatorId,
 ) {
   return await t.run(
-    async (ctx) =>
-      await createSubmission(ctx, creatorId, {
-        assignmentId: fixture.assignmentId,
-        ...draft,
-        ...overrides,
-      }),
+    async (ctx) => await createSubmission(ctx, creatorId, submissionArgs(fixture, overrides)),
   );
-}
-
-async function expectReason(call: () => Promise<unknown>, code: ApiErrorCode, reason: string) {
-  await expect(call()).rejects.toMatchObject({ data: { code, reason } });
 }
 
 async function reviewAs(
@@ -83,18 +83,14 @@ async function getAs(t: TestConvex, viewer: SubmissionViewer, submissionId: Id<"
 async function listAs(
   t: TestConvex,
   viewer: SubmissionViewer,
-  assignmentId: Id<"assignments">,
+  fixture: AssignmentFixture,
   paginationOpts = firstPage,
+  deliverableId = fixture.deliverableId,
 ) {
   return await t.run(
-    async (ctx) => await listSubmissions(ctx, viewer, assignmentId, paginationOpts),
+    async (ctx) =>
+      await listSubmissions(ctx, viewer, fixture.assignmentId, deliverableId, paginationOpts),
   );
-}
-
-async function expectedFull(t: TestConvex, submissionId: Id<"submissions">, closed = false) {
-  const stored = await storedSubmission(t, submissionId);
-  if (stored === null) throw new Error("expected a stored submission");
-  return { ...stored, closedWithoutReview: closed };
 }
 
 describe("createSubmission", () => {
@@ -108,7 +104,9 @@ describe("createSubmission", () => {
 
       expect(await storedSubmission(t, id)).toMatchObject({
         assignmentId: fixture.assignmentId,
+        deliverableId: fixture.deliverableId,
         ...draft,
+        mediaId: fixture.mediaId,
         status: "pending",
         usesAiReview,
       });
@@ -120,7 +118,6 @@ describe("createSubmission", () => {
     const fixture = await seedAssignmentFixture(t);
 
     const id = await submit(t, fixture, {
-      draftUrl: `  ${draft.draftUrl}  `,
       draftDescription: `  ${draft.draftDescription}\n`,
     });
 
@@ -151,7 +148,7 @@ describe("createSubmission", () => {
       const t = convexTest(schema, modules);
       const fixture = await seedAssignmentFixture(t, { status });
 
-      await expectReason(() => submit(t, fixture), "invalid_state", "assignment_not_active");
+      await expectApiError(() => submit(t, fixture), "invalid_state", "assignment_not_active");
 
       expect(await storedSubmissions(t)).toHaveLength(0);
     },
@@ -161,7 +158,7 @@ describe("createSubmission", () => {
     const t = convexTest(schema, modules);
     const { fixture } = await seedOneSubmission(t);
 
-    await expectReason(() => submit(t, fixture), "conflict", "submission_pending");
+    await expectApiError(() => submit(t, fixture), "conflict", "submission_pending");
 
     expect(await storedSubmissions(t)).toHaveLength(1);
   });
@@ -172,7 +169,7 @@ describe("createSubmission", () => {
     await seedSubmission(t, fixture, "changesRequested");
     await seedSubmission(t, fixture, "approved");
 
-    await expectReason(() => submit(t, fixture), "invalid_state", "already_approved");
+    await expectApiError(() => submit(t, fixture), "invalid_state", "already_approved");
 
     expect(await storedSubmissions(t)).toHaveLength(2);
   });
@@ -190,82 +187,63 @@ describe("createSubmission", () => {
     ]);
   });
 
-  test.each([
-    ["draftUrl", "   "],
-    ["draftDescription", " \n "],
-  ] as const)("rejects a blank %s without writing a submission", async (field, value) => {
+  test("lets a creator submit one deliverable while another is pending or approved", async () => {
     const t = convexTest(schema, modules);
     const fixture = await seedAssignmentFixture(t);
+    const secondId = await seedDeliverable(t, fixture);
+    const thirdId = await seedDeliverable(t, fixture);
+    await seedSubmission(t, fixture, "approved");
+    await submit(t, fixture, { deliverableId: secondId });
 
-    await expectReason(
-      () => submit(t, fixture, { [field]: value } as Partial<SubmissionDraft>),
-      "invalid_state",
-      `${field}_blank`,
+    const id = await submit(t, fixture, { deliverableId: thirdId });
+
+    expect(await storedSubmission(t, id)).toMatchObject({ deliverableId: thirdId });
+    // The rules still hold per deliverable.
+    await expectApiError(
+      () => submit(t, fixture, { deliverableId: secondId }),
+      "conflict",
+      "submission_pending",
     );
+    await expectApiError(() => submit(t, fixture), "invalid_state", "already_approved");
+  });
 
+  test("rejects a deliverable from another opportunity without writing a submission", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await seedAssignmentFixture(t);
+    const other = await seedOpportunity(t, { subject: "cs-other-company", orgId: "org_other" });
+    const [otherDeliverable] = await t.run((ctx) =>
+      listOpportunityDeliverables(ctx, other.opportunityId),
+    );
+    const deleted = await seedDeliverable(t, fixture);
+    await t.run(async (ctx) => await ctx.db.delete("deliverables", deleted));
+
+    for (const deliverableId of [otherDeliverable._id, deleted]) {
+      await expect(submit(t, fixture, { deliverableId })).rejects.toMatchObject({
+        data: { code: "not_found", resource: "deliverable" },
+      });
+    }
     expect(await storedSubmissions(t)).toHaveLength(0);
   });
 
-  // Everything before `@` is login details: `drive.google.com@evil.example` goes to evil.example.
-  test.each([
-    "not a url",
-    "ftp://example.com/draft.mp4",
-    "javascript:alert(1)",
-    "https://drive.google.com@evil.example/draft",
-    "https://user:pass@drive.example.com/draft",
-  ])("rejects draft URL %s without writing a submission", async (draftUrl) => {
+  test("rejects a blank description without writing a submission", async () => {
     const t = convexTest(schema, modules);
     const fixture = await seedAssignmentFixture(t);
-
-    await expectReason(() => submit(t, fixture, { draftUrl }), "invalid_state", "draftUrl_invalid");
-
+    await expectApiError(
+      () => submit(t, fixture, { draftDescription: " \n " }),
+      "invalid_state",
+      "draftDescription_blank",
+    );
     expect(await storedSubmissions(t)).toHaveLength(0);
   });
 
-  test.each([
-    ["https://drive.example.com/a\nb", "https://drive.example.com/ab"],
-    [
-      'https://drive.example.com/"><img src=x>',
-      "https://drive.example.com/%22%3E%3Cimg%20src=x%3E",
-    ],
-    ["HTTPS://Drive.Example.com/draft", "https://drive.example.com/draft"],
-  ])("stores draft URL %j in its parsed form", async (draftUrl, stored) => {
+  test("rejects a description over the length limit", async () => {
     const t = convexTest(schema, modules);
     const fixture = await seedAssignmentFixture(t);
-
-    const id = await submit(t, fixture, { draftUrl });
-
-    expect(await storedSubmission(t, id)).toMatchObject({ draftUrl: stored });
-  });
-
-  test("rejects a draft URL that goes over the length limit once encoded", async () => {
-    const t = convexTest(schema, modules);
-    const fixture = await seedAssignmentFixture(t);
-    // 726 characters as typed; each `"` becomes `%22`, making it 2,126.
-    const draftUrl = `https://drive.example.com/${'"'.repeat(700)}`;
-
-    await expectReason(
-      () => submit(t, fixture, { draftUrl }),
+    await expectApiError(
+      () => submit(t, fixture, { draftDescription: "a".repeat(5001) }),
       "invalid_state",
-      "draftUrl_too_long",
+      "draftDescription_too_long",
     );
-
-    expect(await storedSubmissions(t)).toHaveLength(0);
-  });
-
-  test.each([
-    ["draftUrl", `https://drive.example.com/${"a".repeat(2048)}`],
-    ["draftDescription", "a".repeat(5001)],
-  ] as const)("rejects a %s over the length limit", async (field, value) => {
-    const t = convexTest(schema, modules);
-    const fixture = await seedAssignmentFixture(t);
-
-    await expectReason(
-      () => submit(t, fixture, { [field]: value } as Partial<SubmissionDraft>),
-      "invalid_state",
-      `${field}_too_long`,
-    );
-
     expect(await storedSubmissions(t)).toHaveLength(0);
   });
 
@@ -351,7 +329,7 @@ describe("reviewSubmission", () => {
     const t = convexTest(schema, modules);
     const { fixture, submissionId: id } = await seedOneSubmission(t);
 
-    await expectReason(
+    await expectApiError(
       () => reviewAs(t, fixture.membership, id, { status: "changesRequested", reviewNote: "  \n" }),
       "invalid_state",
       "reviewNote_blank",
@@ -366,7 +344,7 @@ describe("reviewSubmission", () => {
       const t = convexTest(schema, modules);
       const { fixture, submissionId: id } = await seedOneSubmission(t);
 
-      await expectReason(
+      await expectApiError(
         () => reviewAs(t, fixture.membership, id, { status, reviewNote: "a".repeat(2001) }),
         "invalid_state",
         "reviewNote_too_long",
@@ -416,7 +394,7 @@ describe("reviewSubmission", () => {
       const { fixture, submissionId: id } = await seedOneSubmission(t, status);
       const original = await storedSubmission(t, id);
 
-      await expectReason(
+      await expectApiError(
         () => reviewAs(t, fixture.membership, id, { status: "approved" }),
         "invalid_state",
         "already_reviewed",
@@ -432,7 +410,7 @@ describe("reviewSubmission", () => {
       const t = convexTest(schema, modules);
       const { fixture, submissionId: id } = await seedOneSubmission(t, "pending", { status });
 
-      await expectReason(
+      await expectApiError(
         () => reviewAs(t, fixture.membership, id, { status: "approved" }),
         "invalid_state",
         "assignment_not_active",
@@ -464,9 +442,9 @@ describe("closedWithoutReview", () => {
   async function readAll(t: TestConvex, fixture: AssignmentFixture, id: Id<"submissions">) {
     return [
       await getAs(t, operatorViewer, id),
-      (await listAs(t, operatorViewer, fixture.assignmentId)).page[0],
+      (await listAs(t, operatorViewer, fixture)).page[0],
       await getAs(t, creatorViewer(fixture), id),
-      (await listAs(t, creatorViewer(fixture), fixture.assignmentId)).page[0],
+      (await listAs(t, creatorViewer(fixture), fixture)).page[0],
     ];
   }
 
@@ -510,9 +488,11 @@ describe("closedWithoutReview", () => {
 
 describe("toSubmissionView", () => {
   const base = {
+    mediaId: "mediaUploads|1" as Id<"mediaUploads">,
     _id: "submissions|1" as Id<"submissions">,
     _creationTime: 1,
     assignmentId: "assignments|1" as Id<"assignments">,
+    deliverableId: "deliverables|1" as Id<"deliverables">,
     ...draft,
     usesAiReview: false,
   };
@@ -659,7 +639,7 @@ describe("listSubmissions", () => {
     const firstId = await seedSubmission(t, fixture, "changesRequested");
     const secondId = await seedSubmission(t, fixture, "pending");
 
-    const result = await listAs(t, companyViewer(fixture), fixture.assignmentId);
+    const result = await listAs(t, companyViewer(fixture), fixture);
 
     expect(result.page.map((s) => s._id)).toEqual([secondId, firstId]);
     expect(result.isDone).toBe(true);
@@ -671,11 +651,11 @@ describe("listSubmissions", () => {
     const firstId = await seedSubmission(t, fixture, "changesRequested");
     const secondId = await seedSubmission(t, fixture, "pending");
 
-    const pageOne = await listAs(t, operatorViewer, fixture.assignmentId, {
+    const pageOne = await listAs(t, operatorViewer, fixture, {
       numItems: 1,
       cursor: null,
     });
-    const pageTwo = await listAs(t, operatorViewer, fixture.assignmentId, {
+    const pageTwo = await listAs(t, operatorViewer, fixture, {
       numItems: 1,
       cursor: pageOne.continueCursor,
     });
@@ -690,7 +670,7 @@ describe("listSubmissions", () => {
     const firstId = await seedSubmission(t, fixture, "changesRequested");
     const secondId = await seedSubmission(t, fixture, "approved");
 
-    const result = await listAs(t, creatorViewer(fixture), fixture.assignmentId);
+    const result = await listAs(t, creatorViewer(fixture), fixture);
 
     expect(result.page).toEqual([
       withoutReviewerIdentity(await expectedFull(t, secondId)),
@@ -702,7 +682,7 @@ describe("listSubmissions", () => {
     const t = convexTest(schema, modules);
     const fixture = await seedAssignmentFixture(t);
 
-    const result = await listAs(t, creatorViewer(fixture), fixture.assignmentId);
+    const result = await listAs(t, creatorViewer(fixture), fixture);
 
     expect(result.page).toEqual([]);
   });
@@ -713,7 +693,7 @@ describe("listSubmissions", () => {
     const intruderId = await seedCreatorId(t, "ls-intruder");
 
     await expectApiError(
-      () => listAs(t, { role: "creator", creatorId: intruderId }, fixture.assignmentId),
+      () => listAs(t, { role: "creator", creatorId: intruderId }, fixture),
       "not_found",
     );
   });
@@ -724,7 +704,7 @@ describe("listSubmissions", () => {
     const { membership: outsider } = await seedMembership(t, "ls-outsider");
 
     await expectApiError(
-      () => listAs(t, { role: "company", companyId: outsider.companyId }, fixture.assignmentId),
+      () => listAs(t, { role: "company", companyId: outsider.companyId }, fixture),
       "not_found",
     );
   });
@@ -734,6 +714,220 @@ describe("listSubmissions", () => {
     const fixture = await seedAssignmentFixture(t);
     await t.run(async (ctx) => await ctx.db.delete("assignments", fixture.assignmentId));
 
-    await expectApiError(() => listAs(t, operatorViewer, fixture.assignmentId), "not_found");
+    await expectApiError(() => listAs(t, operatorViewer, fixture), "not_found");
   });
+
+  test("lists only the given deliverable's drafts, newest first", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await seedAssignmentFixture(t);
+    const otherId = await seedDeliverable(t, fixture);
+    const firstId = await seedSubmission(t, fixture, "changesRequested");
+    const otherDraftId = await seedSubmission(t, { ...fixture, deliverableId: otherId }, "pending");
+    const secondId = await seedSubmission(t, fixture, "pending");
+
+    const result = await listAs(t, companyViewer(fixture), fixture);
+    const other = await listAs(t, companyViewer(fixture), fixture, firstPage, otherId);
+
+    expect(result.page.map((s) => s._id)).toEqual([secondId, firstId]);
+    expect(other.page.map((s) => s._id)).toEqual([otherDraftId]);
+  });
+
+  test("hides a deliverable from another opportunity", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await seedAssignmentFixture(t);
+    const other = await seedOpportunity(t, { subject: "ls-other-company", orgId: "org_other" });
+    const [otherDeliverable] = await t.run((ctx) =>
+      listOpportunityDeliverables(ctx, other.opportunityId),
+    );
+
+    await expect(
+      listAs(t, operatorViewer, fixture, firstPage, otherDeliverable._id),
+    ).rejects.toMatchObject({ data: { code: "not_found", resource: "deliverable" } });
+  });
+});
+
+describe("notifications", () => {
+  const title = "Moisturizer launch video";
+
+  test("a first draft notifies the member who created the opportunity", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await seedAssignmentFixture(t);
+
+    const submissionId = await submit(t, fixture);
+
+    expect(await memberNotifications(t, fixture.membership)).toEqual([
+      {
+        type: "submissionCreated",
+        title: `Test submitted a draft for ${title}`,
+        target: { kind: "submission", submissionId, assignmentId: fixture.assignmentId },
+      },
+    ]);
+  });
+
+  test("a draft sent after a change request is reported as a resubmission", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await seedAssignmentFixture(t);
+    await seedSubmission(t, fixture, "changesRequested");
+
+    const submissionId = await submit(t, fixture);
+
+    expect(await memberNotifications(t, fixture.membership)).toEqual([
+      {
+        type: "submissionResubmitted",
+        title: `Test resubmitted a draft for ${title}`,
+        target: { kind: "submission", submissionId, assignmentId: fixture.assignmentId },
+      },
+    ]);
+  });
+
+  test("an approval notifies the creator", async () => {
+    const t = convexTest(schema, modules);
+    const { fixture, submissionId } = await seedOneSubmission(t);
+
+    await reviewAs(t, fixture.membership, submissionId, { status: "approved" });
+
+    expect(await creatorNotifications(t, fixture.creatorId)).toEqual([
+      {
+        type: "submissionApproved",
+        title: `Your draft for ${title} was approved`,
+        target: { kind: "submission", submissionId, assignmentId: fixture.assignmentId },
+      },
+    ]);
+  });
+
+  test("a change request notifies the creator with the review note", async () => {
+    const t = convexTest(schema, modules);
+    const { fixture, submissionId } = await seedOneSubmission(t);
+
+    await reviewAs(t, fixture.membership, submissionId, {
+      status: "changesRequested",
+      reviewNote: "  Add #ad to the caption.  ",
+    });
+
+    expect(await creatorNotifications(t, fixture.creatorId)).toEqual([
+      {
+        type: "submissionChangesRequested",
+        title: `Changes requested on your draft for ${title}`,
+        body: "Add #ad to the caption.",
+        target: { kind: "submission", submissionId, assignmentId: fixture.assignmentId },
+      },
+    ]);
+  });
+});
+
+test("paginated creator reads retain safe review outcomes on the second page", async () => {
+  const t = convexTest(schema, modules);
+  const fixture = await seedAiReviewFixture(t);
+  const result = aiReviewResultArgs();
+  await prepareAiReviewEvaluation(t, fixture.attempt._id);
+  await t.run(async (ctx) => {
+    await finishAiReview(ctx, fixture.attempt._id, {
+      ...result,
+      results: [
+        {
+          ...result.results[0],
+          outcome: "not_met",
+          probabilities: { met: 0.02, not_met: 0.95, uncertain: 0.03 },
+        },
+      ],
+    });
+    await createSubmission(
+      ctx,
+      fixture.creatorId,
+      submissionArgs(fixture, { mediaId: fixture.mediaId }),
+    );
+  });
+  const viewer = { role: "creator" as const, creatorId: fixture.creatorId };
+  const first = await t.run((ctx) =>
+    listSubmissions(ctx, viewer, fixture.assignmentId, fixture.deliverableId, {
+      numItems: 1,
+      cursor: null,
+    }),
+  );
+  expect(first.isDone).toBe(false);
+  expect(first.page[0].aiReview).toEqual({ status: "manualReview", results: [] });
+  const second = await t.run((ctx) =>
+    listSubmissions(ctx, viewer, fixture.assignmentId, fixture.deliverableId, {
+      numItems: 1,
+      cursor: first.continueCursor,
+    }),
+  );
+  expect(second.isDone).toBe(true);
+  expect(second.page).toEqual([
+    {
+      _id: fixture.submissionId,
+      _creationTime: expect.any(Number),
+      assignmentId: fixture.assignmentId,
+      deliverableId: fixture.deliverableId,
+      mediaId: fixture.mediaId,
+      draftDescription: "60-second walkthrough: install, `driftwood init`, first deploy at 0:45.",
+      usesAiReview: true,
+      closedWithoutReview: false,
+      status: "changesRequested",
+      reviewerType: "ai",
+      reviewedAt: expect.any(Number),
+      reviewNote: "Please address these spoken requirements: Mention Driftwood.",
+      aiReview: { status: "completed", results: [{ criterionId: "product", outcome: "not_met" }] },
+    },
+  ]);
+});
+
+test("company review is blocked while an enabled AI workflow is processing", async () => {
+  const t = convexTest(schema, modules);
+  const fixture = await seedAiReviewFixture(t);
+  vi.stubEnv("AI_REVIEW_ENABLED", "true");
+  // Model the queued state without running provider actions in this model test.
+  await t.run((ctx) =>
+    ctx.db.patch("aiReviewAttempts", fixture.attempt._id, { workflowId: "workflow-processing" }),
+  );
+  await expectApiError(
+    () => reviewAs(t, fixture.membership, fixture.submissionId, { status: "approved" }),
+    "invalid_state",
+    "ai_review_processing",
+  );
+});
+
+test("company review is allowed after an enabled AI workflow falls back", async () => {
+  const t = convexTest(schema, modules);
+  const fixture = await seedAiReviewFixture(t);
+  vi.stubEnv("AI_REVIEW_ENABLED", "true");
+  await t.run(async (ctx) => {
+    await ctx.db.patch("aiReviewAttempts", fixture.attempt._id, {
+      workflowId: "workflow-fallback",
+    });
+    await markAiReviewForManualReview(ctx, fixture.attempt._id, "review_failed");
+  });
+  expect(
+    await reviewAs(t, fixture.membership, fixture.submissionId, { status: "approved" }),
+  ).toMatchObject({
+    status: "approved",
+    reviewerType: "companyUser",
+    reviewedBy: fixture.membership._id,
+  });
+});
+
+test("a met result below the probability cutoff stays pending without being labeled uncertain", async () => {
+  const t = convexTest(schema, modules);
+  const fixture = await seedAiReviewFixture(t);
+  await prepareAiReviewEvaluation(t, fixture.attempt._id);
+  const result = aiReviewResultArgs({
+    results: [
+      {
+        criterionId: "product",
+        outcome: "met",
+        confidence: 0.68,
+        probabilities: { met: 0.79, not_met: 0.16, uncertain: 0.05 },
+      },
+    ],
+  });
+  await t.run((ctx) => finishAiReview(ctx, fixture.attempt._id, result));
+  expect(await t.run((ctx) => ctx.db.get("aiReviewAttempts", fixture.attempt._id))).toMatchObject({
+    status: "manualReview",
+    failureReason: "low_probability",
+    result,
+  });
+  expect(await t.run((ctx) => ctx.db.get("submissions", fixture.submissionId))).toMatchObject({
+    status: "pending",
+  });
+  expect(await creatorNotifications(t, fixture.creatorId)).toEqual([]);
 });

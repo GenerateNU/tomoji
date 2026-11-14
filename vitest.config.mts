@@ -10,7 +10,11 @@ export default defineConfig({
           name: "convex",
           environment: "edge-runtime",
           include: ["convex/tests/**/*.test.ts"],
-          exclude: ["convex/tests/lib/s3.test.ts", "convex/tests/mediaActions.test.ts"],
+          exclude: [
+            "convex/tests/lib/s3.test.ts",
+            "convex/tests/mediaActions.test.ts",
+            "convex/tests/aiReview.test.ts",
+          ],
           server: { deps: { inline: ["convex-test"] } },
         },
       },
@@ -19,15 +23,38 @@ export default defineConfig({
         test: {
           name: "convex-node",
           environment: "node",
-          include: ["convex/tests/lib/s3.test.ts", "convex/tests/mediaActions.test.ts"],
+          include: [
+            "convex/tests/lib/s3.test.ts",
+            "convex/tests/mediaActions.test.ts",
+            "convex/tests/aiReview.test.ts",
+          ],
         },
       },
       {
-        // Everything else: pure units, helpers, stage-machine logic.
+        // Everything else: pure units, helpers, stage-machine logic. Tests live
+        // in src/tests/, mirroring the source path, so they reach their subject
+        // through the same aliases tsconfig.json defines rather than by
+        // climbing out of the folder with ../../.
+        resolve: {
+          alias: {
+            "@/": new URL("./src/", import.meta.url).pathname,
+            "@convex/": new URL("./convex/", import.meta.url).pathname,
+          },
+        },
         test: {
-          name: "unit",
+          name: "frontend",
           environment: "node",
-          include: ["src/**/*.test.ts", "src/**/*.test.tsx", "scripts/tests/**/*.test.ts"],
+          include: ["src/tests/**/*.test.ts", "src/tests/**/*.test.tsx"],
+        },
+      },
+      {
+        // Setup scripts. Their own project so `--project frontend` means only
+        // the frontend: a path filter cannot separate them, because
+        // `scripts/tests/` matches any filter containing "tests".
+        test: {
+          name: "scripts",
+          environment: "node",
+          include: ["scripts/tests/**/*.test.ts"],
         },
       },
     ],

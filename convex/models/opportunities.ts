@@ -2,17 +2,59 @@ import { paginationOptsValidator, type PaginationResult } from "convex/server";
 import { v, type Infer } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
+import { stream } from "convex-helpers/server/stream";
 import { apiError } from "../lib/errors";
-import { requireNonBlank } from "../lib/validation";
+import { requireUrl } from "../lib/urls";
+import { withRowsReadCap } from "../lib/pagination";
+import { requireNonBlank, isHalfHourTimestamp } from "../lib/validation";
 import { requireMembership } from "./companyUsers";
+import {
+  deliverableCreate,
+  hasDeliverables,
+  requireAiReviewCriteria,
+  insertDeliverables,
+  listOpportunityDeliverables,
+} from "./deliverableDrafts";
+import { notifyCompanyUser, notifyCreator } from "./notifications";
+import { requireNiche } from "./niches";
+import {
+  hasOpportunityNiche,
+  listOpportunityNiches,
+  updateOpportunityNiches,
+} from "./opportunityNiches";
+import { listOpportunitySkills, updateOpportunitySkills } from "./opportunitySkills";
 import schema from "../schema";
+import { followerRange } from "../schemas/creators.schema";
 
 export const opportunityCreate = schema
   .doc("opportunities")
   .omit("_id", "_creationTime", "companyId", "createdBy", "numFilledSlots", "status")
-  .extend({ status: v.union(v.literal("draft"), v.literal("open")) });
+  .extend({
+    status: v.union(v.literal("draft"), v.literal("open")),
+    // Required to create it open; a draft can get them later through `deliverables.create`.
+    deliverables: v.optional(v.array(deliverableCreate)),
+    skills: v.optional(v.array(v.string())),
+  });
 
 export type OpportunityCreate = Infer<typeof opportunityCreate>;
+
+export const opportunityView = schema.doc("opportunities").extend({
+  niches: v.array(v.string()),
+  skills: v.array(v.string()),
+});
+export type OpportunityView = Infer<typeof opportunityView>;
+
+/** Joins bounded selections onto an already-authorized opportunity document. */
+export async function getOpportunityView(
+  ctx: QueryCtx | MutationCtx,
+  opportunity: Doc<"opportunities">,
+): Promise<OpportunityView> {
+  const [niches, skills] = await Promise.all([
+    listOpportunityNiches(ctx, opportunity),
+    listOpportunitySkills(ctx, opportunity._id),
+  ]);
+  return { ...opportunity, niches, skills };
+}
 
 // Allowlist creator fields so new stored fields do not become public by default.
 export const creatorOpportunity = schema
@@ -38,7 +80,7 @@ export const creatorOpportunity = schema
     "disclosureRequirements",
     "usageRights",
   )
-  .extend({ companyName: v.string() });
+  .extend({ companyName: v.string(), niches: v.array(v.string()), skills: v.array(v.string()) });
 
 export type CreatorOpportunity = Infer<typeof creatorOpportunity>;
 
@@ -46,6 +88,7 @@ export type CreatorOpportunity = Infer<typeof creatorOpportunity>;
 export function toCreatorOpportunity(
   opportunity: Doc<"opportunities">,
   company: Doc<"companies">,
+  selections: Pick<OpportunityView, "niches" | "skills">,
 ): CreatorOpportunity {
   return {
     _id: opportunity._id,
@@ -68,6 +111,8 @@ export function toCreatorOpportunity(
     disclosureRequirements: opportunity.disclosureRequirements,
     usageRights: opportunity.usageRights,
     companyName: company.name,
+    niches: selections.niches,
+    skills: selections.skills,
   };
 }
 
@@ -76,29 +121,32 @@ export async function getOpportunity(
   ctx: QueryCtx,
   opportunityId: Id<"opportunities">,
   caller: { user: Doc<"users">; orgId: string | null },
-): Promise<Doc<"opportunities"> | CreatorOpportunity> {
+): Promise<OpportunityView | CreatorOpportunity> {
   const opportunity = await requireOpportunity(ctx, opportunityId, caller);
-  if (caller.user.role === "company" || caller.user.role === "operator") return opportunity;
+  if (caller.user.role === "company" || caller.user.role === "operator")
+    return await getOpportunityView(ctx, opportunity);
 
   const company = await ctx.db.get("companies", opportunity.companyId);
   if (company === null) {
     throw apiError("not_found", { resource: "opportunity" });
   }
-  return toCreatorOpportunity(opportunity, company);
+  return toCreatorOpportunity(opportunity, company, await getOpportunityView(ctx, opportunity));
 }
 
+// Deliverables change through the `deliverables` routes.
 export const opportunityUpdate = opportunityCreate
-  .omit("campaignId", "status", "productAccessLink")
+  .omit("campaignId", "status", "productAccessLink", "minFollowerRange", "deliverables")
   .partial()
   .extend({
     productAccessLink: v.optional(v.union(v.string(), v.null())),
+    minFollowerRange: v.optional(v.union(followerRange, v.null())),
   });
 
 export type OpportunityUpdate = Infer<typeof opportunityUpdate>;
 
 /** Requires an exact UTC :00 or :30 deadline with zero seconds and milliseconds. */
 function validateOpportunityDeadline(deadline: number): void {
-  if (!Number.isSafeInteger(deadline) || deadline % (30 * 60 * 1000) !== 0) {
+  if (!isHalfHourTimestamp(deadline)) {
     throw apiError("invalid_state", { reason: "invalid_deadline" });
   }
 }
@@ -110,7 +158,38 @@ async function applyOpportunityClose(
 ): Promise<Doc<"opportunities">> {
   if (opportunity.status === "closed") return opportunity;
   await ctx.db.patch("opportunities", opportunity._id, { status: "closed" });
+  await notifyWaitingApplicants(ctx, opportunity);
   return { ...opportunity, status: "closed" };
+}
+
+/**
+ * Tells each creator with a pending or offered application that the
+ * opportunity closed, since neither can go further. An opportunity never has
+ * more than `maxApplications` applications, so this is bounded.
+ */
+async function notifyWaitingApplicants(
+  ctx: MutationCtx,
+  opportunity: Doc<"opportunities">,
+): Promise<void> {
+  for (const status of ["pending", "offered"] as const) {
+    const waiting = await ctx.db
+      .query("applications")
+      .withIndex("by_opportunityId_and_status", (q) =>
+        q.eq("opportunityId", opportunity._id).eq("status", status),
+      )
+      .take(opportunity.maxApplications);
+    for (const application of waiting) {
+      await notifyCreator(ctx, application.creatorId, {
+        type: "applicationOpportunityClosed",
+        title: `${opportunity.title} has closed`,
+        target: {
+          kind: "application",
+          applicationId: application._id,
+          opportunityId: opportunity._id,
+        },
+      });
+    }
+  }
 }
 
 /** Permanently closes an owned published opportunity, preserving existing commitments. */
@@ -136,14 +215,22 @@ export async function closeExpiredOpportunities(ctx: MutationCtx): Promise<boole
       .query("opportunities")
       .withIndex("by_status_and_deadline", (q) => q.eq("status", status).lte("deadline", now))
       .take(batchSize);
-    for (const opportunity of opportunities) await applyOpportunityClose(ctx, opportunity);
+    for (const opportunity of opportunities) {
+      await applyOpportunityClose(ctx, opportunity);
+      // A manual close is the company's own action; only the deadline close is news to them.
+      await notifyCompanyUser(ctx, opportunity.createdBy, {
+        type: "opportunityClosed",
+        title: `${opportunity.title} closed at its deadline`,
+        target: { kind: "opportunity", opportunityId: opportunity._id },
+      });
+    }
     hasMore ||= opportunities.length === batchSize;
   }
   return hasMore;
 }
 
 /** Loads an owned opportunity and its campaign for company lifecycle transitions. */
-async function requireOwnedOpportunity(
+export async function requireOwnedOpportunity(
   ctx: MutationCtx,
   membership: Doc<"companyUsers">,
   opportunityId: Id<"opportunities">,
@@ -161,6 +248,23 @@ async function requireOwnedOpportunity(
     !company.isActive
   ) {
     throw apiError("not_found", { resource: "opportunity" });
+  }
+  return { opportunity, campaign };
+}
+
+/** Loads an owned opportunity whose brief may change: neither it nor its campaign is closed, and it hasn't expired. */
+export async function requireEditableOpportunity(
+  ctx: MutationCtx,
+  membership: Doc<"companyUsers">,
+  opportunityId: Id<"opportunities">,
+): Promise<{ opportunity: Doc<"opportunities">; campaign: Doc<"campaigns"> }> {
+  const { opportunity, campaign } = await requireOwnedOpportunity(ctx, membership, opportunityId);
+  if (opportunity.status === "closed" || campaign.status === "closed") {
+    throw apiError("invalid_state", { reason: "opportunity_not_editable" });
+  }
+  // Deadline closure is permanent even during the interval before the cron materializes it.
+  if (opportunity.status !== "draft" && opportunity.deadline <= Date.now()) {
+    throw apiError("invalid_state", { reason: "opportunity_expired" });
   }
   return { opportunity, campaign };
 }
@@ -208,6 +312,9 @@ export async function resumeOpportunity(
   if (opportunity.deadline <= Date.now()) {
     throw apiError("invalid_state", { reason: "invalid_deadline" });
   }
+  if (opportunity.usesAiReviewDefault) {
+    requireAiReviewCriteria(true, await listOpportunityDeliverables(ctx, opportunityId));
+  }
   await ctx.db.patch("opportunities", opportunityId, { status: "open" });
   return { ...opportunity, status: "open" };
 }
@@ -218,30 +325,23 @@ export async function publishOpportunity(
   membership: Doc<"companyUsers">,
   opportunityId: Id<"opportunities">,
 ): Promise<Doc<"opportunities">> {
-  const opportunity = await ctx.db.get("opportunities", opportunityId);
-  if (opportunity === null || opportunity.companyId !== membership.companyId) {
-    throw apiError("not_found", { resource: "opportunity" });
-  }
-  const campaign = await ctx.db.get("campaigns", opportunity.campaignId);
-  const company = await ctx.db.get("companies", opportunity.companyId);
-  if (
-    campaign === null ||
-    campaign.companyId !== opportunity.companyId ||
-    company === null ||
-    !company.isActive
-  ) {
-    throw apiError("not_found", { resource: "opportunity" });
-  }
+  const { opportunity, campaign } = await requireOwnedOpportunity(ctx, membership, opportunityId);
   if (opportunity.status !== "draft") {
     throw apiError("invalid_state", { reason: "opportunity_not_draft" });
   }
   if (campaign.status !== "open") {
     throw apiError("invalid_state", { reason: "campaign_not_open" });
   }
+  if (!(await hasDeliverables(ctx, opportunityId))) {
+    throw apiError("invalid_state", { reason: "deliverables_required" });
+  }
   // Validate the target state so a deadline allowed on a draft must still be future at publication.
   const normalized = validateOpportunityFields({ ...opportunity, status: "open" });
   if (campaign.endsAt !== undefined && opportunity.deadline > campaign.endsAt) {
     throw apiError("invalid_state", { reason: "deadline_after_campaign_end" });
+  }
+  if (opportunity.usesAiReviewDefault) {
+    requireAiReviewCriteria(true, await listOpportunityDeliverables(ctx, opportunityId));
   }
   await ctx.db.patch("opportunities", opportunityId, { status: "open", ...normalized });
   return { ...opportunity, status: "open", ...normalized };
@@ -253,20 +353,7 @@ export async function removeOpportunity(
   membership: Doc<"companyUsers">,
   opportunityId: Id<"opportunities">,
 ): Promise<void> {
-  const opportunity = await ctx.db.get("opportunities", opportunityId);
-  if (opportunity === null || opportunity.companyId !== membership.companyId) {
-    throw apiError("not_found", { resource: "opportunity" });
-  }
-  const campaign = await ctx.db.get("campaigns", opportunity.campaignId);
-  const company = await ctx.db.get("companies", opportunity.companyId);
-  if (
-    campaign === null ||
-    campaign.companyId !== opportunity.companyId ||
-    company === null ||
-    !company.isActive
-  ) {
-    throw apiError("not_found", { resource: "opportunity" });
-  }
+  const { opportunity } = await requireOwnedOpportunity(ctx, membership, opportunityId);
   if (opportunity.status !== "draft" || opportunity.numFilledSlots !== 0) {
     throw apiError("invalid_state", { reason: "opportunity_not_removable" });
   }
@@ -282,6 +369,12 @@ export async function removeOpportunity(
   if (applications.length > 0 || assignments.length > 0) {
     throw apiError("invalid_state", { reason: "opportunity_has_workflow_history" });
   }
+  // Deliverables are part of the brief, not workflow history, so they go with it.
+  for (const deliverable of await listOpportunityDeliverables(ctx, opportunityId)) {
+    await ctx.db.delete("deliverables", deliverable._id);
+  }
+  await updateOpportunityNiches(ctx, opportunityId, []);
+  await updateOpportunitySkills(ctx, opportunityId, []);
   await ctx.db.delete("opportunities", opportunityId);
 }
 
@@ -291,28 +384,12 @@ export async function updateOpportunity(
   membership: Doc<"companyUsers">,
   opportunityId: Id<"opportunities">,
   updates: OpportunityUpdate,
-): Promise<Doc<"opportunities">> {
-  const opportunity = await ctx.db.get("opportunities", opportunityId);
-  if (opportunity === null || opportunity.companyId !== membership.companyId) {
-    throw apiError("not_found", { resource: "opportunity" });
-  }
-  const campaign = await ctx.db.get("campaigns", opportunity.campaignId);
-  const company = await ctx.db.get("companies", opportunity.companyId);
-  if (
-    campaign === null ||
-    campaign.companyId !== opportunity.companyId ||
-    company === null ||
-    !company.isActive
-  ) {
-    throw apiError("not_found", { resource: "opportunity" });
-  }
-  if (opportunity.status === "closed" || campaign.status === "closed") {
-    throw apiError("invalid_state", { reason: "opportunity_not_editable" });
-  }
-  // Deadline closure is permanent even during the interval before the cron materializes it.
-  if (opportunity.status !== "draft" && opportunity.deadline <= Date.now()) {
-    throw apiError("invalid_state", { reason: "opportunity_expired" });
-  }
+): Promise<OpportunityView> {
+  const { opportunity, campaign } = await requireEditableOpportunity(
+    ctx,
+    membership,
+    opportunityId,
+  );
 
   const patch: Partial<OpportunityCreate> = {};
   for (const field of [
@@ -340,9 +417,19 @@ export async function updateOpportunity(
     if (updates[field] !== undefined) patch[field] = updates[field];
   }
   // Omitted fields stay unchanged; null removes the optional link, as in creator updates.
-  if (updates.productAccessLink !== undefined)
-    patch.productAccessLink = updates.productAccessLink ?? undefined;
+  if (updates.productAccessLink !== undefined) {
+    patch.productAccessLink =
+      updates.productAccessLink === null
+        ? undefined
+        : requireUrl(updates.productAccessLink, { reason: "invalid_product_access_link" });
+  }
+  if (updates.minFollowerRange !== undefined) {
+    patch.minFollowerRange = updates.minFollowerRange ?? undefined;
+  }
   const updated = { ...opportunity, ...patch };
+  if (updated.usesAiReviewDefault) {
+    requireAiReviewCriteria(true, await listOpportunityDeliverables(ctx, opportunityId));
+  }
   const normalized = validateOpportunityFields(updated);
   if (campaign.endsAt !== undefined && updated.deadline > campaign.endsAt) {
     throw apiError("invalid_state", { reason: "deadline_after_campaign_end" });
@@ -358,8 +445,16 @@ export async function updateOpportunity(
     throw apiError("invalid_state", { reason: "invalid_deadline" });
   }
 
+  const niches =
+    updates.niches === undefined
+      ? await listOpportunityNiches(ctx, opportunity)
+      : await updateOpportunityNiches(ctx, opportunityId, updates.niches);
+  const skills =
+    updates.skills === undefined
+      ? await listOpportunitySkills(ctx, opportunityId)
+      : await updateOpportunitySkills(ctx, opportunityId, updates.skills);
   await ctx.db.patch("opportunities", opportunityId, { ...patch, ...normalized });
-  return { ...updated, ...normalized };
+  return { ...updated, ...normalized, niches, skills };
 }
 
 export const opportunityList = schema
@@ -370,36 +465,61 @@ export const opportunityList = schema
     paginationOpts: paginationOptsValidator,
   });
 
-export const opportunityDiscover = opportunityList.pick("paginationOpts");
+export const opportunityDiscover = opportunityList
+  .pick("paginationOpts")
+  .extend({ niche: v.optional(v.string()) });
+
+/**
+ * Returns the creator-facing brief if creators may see the opportunity: it's
+ * open, its campaign is open, and its company is active. Otherwise `null`.
+ */
+export async function getVisibleCreatorOpportunity(
+  ctx: QueryCtx,
+  opportunity: Doc<"opportunities">,
+): Promise<CreatorOpportunity | null> {
+  const company = await getVisibleOpportunityCompany(ctx, opportunity);
+  return company === null
+    ? null
+    : toCreatorOpportunity(opportunity, company, await getOpportunityView(ctx, opportunity));
+}
+
+/**
+ * Returns the opportunity's company if creators may see the opportunity: it's
+ * open, its campaign is open, and its company is active. Otherwise `null`.
+ */
+export async function getVisibleOpportunityCompany(
+  ctx: QueryCtx | MutationCtx,
+  opportunity: Doc<"opportunities">,
+): Promise<Doc<"companies"> | null> {
+  if (opportunity.status !== "open") return null;
+  const campaign = await ctx.db.get("campaigns", opportunity.campaignId);
+  if (
+    campaign === null ||
+    campaign.status !== "open" ||
+    campaign.companyId !== opportunity.companyId
+  ) {
+    return null;
+  }
+  const company = await ctx.db.get("companies", opportunity.companyId);
+  return company !== null && company.isActive ? company : null;
+}
 
 /** Discovers open briefs across active companies without ranking or application eligibility rules. */
 export async function discoverOpportunities(
   ctx: QueryCtx,
   options: Infer<typeof opportunityDiscover>,
 ): Promise<PaginationResult<CreatorOpportunity>> {
-  const result = await ctx.db
+  const niche = options.niche === undefined ? undefined : requireNiche(options.niche);
+  // Filter inside the stream so hidden or off-niche opportunities don't leave
+  // pages short or empty. Keep deadline ordering while checking indexed associations.
+  return await stream(ctx.db, schema)
     .query("opportunities")
     .withIndex("by_status_and_deadline", (q) => q.eq("status", "open"))
-    .paginate(options.paginationOpts);
-  const visible = await Promise.all(
-    result.page.map(async (opportunity) => {
-      const campaign = await ctx.db.get("campaigns", opportunity.campaignId);
-      if (
-        campaign === null ||
-        campaign.status !== "open" ||
-        campaign.companyId !== opportunity.companyId
-      ) {
-        return null;
-      }
-      const company = await ctx.db.get("companies", opportunity.companyId);
-      return company !== null && company.isActive
-        ? toCreatorOpportunity(opportunity, company)
-        : null;
-    }),
-  );
-
-  // Visibility can shorten a page; retain the native cursor and isDone so callers can continue.
-  return { ...result, page: visible.filter((opportunity) => opportunity !== null) };
+    .map(async (opportunity) => {
+      if (niche !== undefined && !(await hasOpportunityNiche(ctx, opportunity, niche))) return null;
+      return await getVisibleCreatorOpportunity(ctx, opportunity);
+    })
+    .paginate(withRowsReadCap(options.paginationOpts));
 }
 
 /** Lists the company's opportunities, optionally scoped to an owned campaign and status. */
@@ -407,28 +527,38 @@ export async function listOpportunities(
   ctx: QueryCtx,
   companyId: Id<"companies">,
   options: Infer<typeof opportunityList>,
-): Promise<PaginationResult<Doc<"opportunities">>> {
+): Promise<PaginationResult<OpportunityView>> {
   const { campaignId, status } = options;
   if (campaignId !== undefined) {
     const campaign = await ctx.db.get("campaigns", campaignId);
     if (campaign === null || campaign.companyId !== companyId) {
       throw apiError("not_found", { resource: "campaign" });
     }
-    return await ctx.db
+    const result = await ctx.db
       .query("opportunities")
       .withIndex("by_campaignId_and_status", (q) => {
         const range = q.eq("campaignId", campaignId);
         return status === undefined ? range : range.eq("status", status);
       })
       .paginate(options.paginationOpts);
+    return {
+      ...result,
+      page: await Promise.all(
+        result.page.map((opportunity) => getOpportunityView(ctx, opportunity)),
+      ),
+    };
   }
-  return await ctx.db
+  const result = await ctx.db
     .query("opportunities")
     .withIndex("by_companyId_and_status", (q) => {
       const range = q.eq("companyId", companyId);
       return status === undefined ? range : range.eq("status", status);
     })
     .paginate(options.paginationOpts);
+  return {
+    ...result,
+    page: await Promise.all(result.page.map((opportunity) => getOpportunityView(ctx, opportunity))),
+  };
 }
 
 /** Creates a draft or open opportunity in the caller's campaign; ownership is server-derived. */
@@ -445,17 +575,36 @@ export async function createOpportunity(
     throw apiError("invalid_state", { reason: "campaign_not_open" });
   }
   const { title, description } = validateOpportunityFields(fields);
+  const { deliverables = [], ...brief } = fields;
+  requireAiReviewCriteria(fields.usesAiReviewDefault, deliverables);
+  if (fields.status === "open" && deliverables.length === 0) {
+    throw apiError("invalid_state", { reason: "deliverables_required" });
+  }
   if (campaign.endsAt !== undefined && fields.deadline > campaign.endsAt) {
     throw apiError("invalid_state", { reason: "deadline_after_campaign_end" });
   }
-  return await ctx.db.insert("opportunities", {
-    ...fields,
+  const { niches, skills, ...storedFields } = brief;
+  const productAccess =
+    fields.productAccessLink === undefined
+      ? {}
+      : {
+          productAccessLink: requireUrl(fields.productAccessLink, {
+            reason: "invalid_product_access_link",
+          }),
+        };
+  const opportunityId = await ctx.db.insert("opportunities", {
+    ...storedFields,
+    ...productAccess,
     title,
     description,
     companyId: campaign.companyId,
     createdBy: membership._id,
     numFilledSlots: 0,
   });
+  await insertDeliverables(ctx, opportunityId, membership._id, deliverables, 0);
+  if (niches !== undefined) await updateOpportunityNiches(ctx, opportunityId, niches);
+  if (skills !== undefined) await updateOpportunitySkills(ctx, opportunityId, skills);
+  return opportunityId;
 }
 
 /** Validates shared write bounds and returns the normalized brief text. */

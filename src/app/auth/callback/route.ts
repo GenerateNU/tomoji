@@ -1,3 +1,12 @@
 import { handleAuth } from "@workos-inc/authkit-nextjs";
+import type { NextRequest } from "next/server";
+import { authKitFailure } from "@/features/auth/lib/callback-error";
+import { finishGoogleSignIn, googleAttemptFor } from "@/features/auth/lib/google";
 
-export const GET = handleAuth();
+const authkitCallback = handleAuth({ onError: authKitFailure });
+
+// The one registered WorkOS redirect URI, shared by AuthKit and our Google button.
+export async function GET(request: NextRequest): Promise<Response> {
+  const attempt = googleAttemptFor(request);
+  return attempt ? finishGoogleSignIn(request, attempt) : authkitCallback(request);
+}

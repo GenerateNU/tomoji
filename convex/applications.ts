@@ -1,11 +1,10 @@
 import { paginationOptsValidator, paginationResultValidator } from "convex/server";
 import { v } from "convex/values";
-import type { Doc } from "./_generated/dataModel";
 import { internal } from "./_generated/api";
-import { internalMutation, type QueryCtx } from "./_generated/server";
+import { internalMutation } from "./_generated/server";
 import {
   authedQuery,
-  companyContext,
+  requireCallerViewer,
   companyMutation,
   companyQuery,
   creatorMutation,
@@ -21,7 +20,6 @@ import {
   offerApplication,
   rejectApplication,
   requireApplication,
-  type ApplicationViewer,
 } from "./models/applications";
 import { requireCallerCreatorId } from "./models/users";
 import schema from "./schema";
@@ -70,7 +68,7 @@ export const get = authedQuery({
   handler: async (ctx, args) => {
     return await requireApplication(
       ctx,
-      await applicationViewer(ctx, ctx.user),
+      await requireCallerViewer(ctx, ctx.user),
       args.applicationId,
     );
   },
@@ -176,18 +174,3 @@ export const expireOffers = internalMutation({
     return null;
   },
 });
-
-/** Resolves what the caller is allowed to see from their account type. */
-async function applicationViewer(ctx: QueryCtx, user: Doc<"users">): Promise<ApplicationViewer> {
-  switch (user.role) {
-    case "operator":
-      return { role: "operator" };
-    case "creator":
-      return { role: "creator", creatorId: await requireCallerCreatorId(ctx, user) };
-    case "company": {
-      // Proves membership in the token's org, not just the account type.
-      const { membership } = await companyContext(ctx);
-      return { role: "company", companyId: membership.companyId };
-    }
-  }
-}

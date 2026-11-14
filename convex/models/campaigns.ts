@@ -3,13 +3,14 @@ import { v, type Infer } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { apiError } from "../lib/errors";
-import { requireNonBlank } from "../lib/validation";
+import { requireNonBlank, isHalfHourTimestamp } from "../lib/validation";
 import schema from "../schema";
+import { notifyCompanyUser } from "./notifications";
 import { applyOpportunityPause } from "./opportunities";
 
 export const campaignUpdate = schema
   .doc("campaigns")
-  .pick("title", "objective", "product", "audience", "description", "budgetCents", "startsAt")
+  .pick("title", "description", "budgetCents", "startsAt")
   .partial()
   .extend({ endsAt: v.optional(v.union(v.number(), v.null())) });
 
@@ -60,7 +61,7 @@ export async function updateCampaign(
   }
   const patch: Partial<Pick<Doc<"campaigns">, keyof CampaignUpdate>> = {};
 
-  for (const field of ["title", "objective", "product", "audience", "description"] as const) {
+  for (const field of ["title", "description"] as const) {
     const value = fields[field];
     if (value !== undefined) {
       patch[field] = requireNonBlank(value, `campaign_${field}`);
@@ -225,6 +226,12 @@ export async function closeExpiredCampaigns(ctx: MutationCtx): Promise<boolean> 
 
     for (const campaign of campaigns) {
       await ctx.db.patch("campaigns", campaign._id, { status: "closed" });
+      // A manual close is the company's own action; only the end-date close is news to them.
+      await notifyCompanyUser(ctx, campaign.createdBy, {
+        type: "campaignClosed",
+        title: `${campaign.title} ended`,
+        target: { kind: "campaign", campaignId: campaign._id },
+      });
     }
     if (campaigns.length === batchSize) {
       shouldContinue = true;
@@ -253,9 +260,6 @@ export async function createCampaign(
   return await ctx.db.insert("campaigns", {
     ...campaign,
     title: requireNonBlank(campaign.title, "campaign_title"),
-    objective: requireNonBlank(campaign.objective, "campaign_objective"),
-    product: requireNonBlank(campaign.product, "campaign_product"),
-    audience: requireNonBlank(campaign.audience, "campaign_audience"),
     description: requireNonBlank(campaign.description, "campaign_description"),
   });
 }
@@ -280,7 +284,7 @@ async function pauseOpenOpportunities(
 
 function validateCampaignForOpening(campaign: Doc<"campaigns">): void {
   validateCampaignBudgetAndSchedule(campaign);
-  for (const field of ["title", "objective", "product", "audience", "description"] as const) {
+  for (const field of ["title", "description"] as const) {
     requireNonBlank(campaign[field], `campaign_${field}`);
   }
   if (campaign.endsAt !== undefined && campaign.endsAt <= Date.now()) {
@@ -291,7 +295,7 @@ function validateCampaignForOpening(campaign: Doc<"campaigns">): void {
 
 /** Requires supplied end dates to match the cron's exact :00/:30 UTC boundaries. */
 function validateCampaignEndTime(endsAt: number | undefined): void {
-  if (endsAt !== undefined && (!Number.isSafeInteger(endsAt) || endsAt % (30 * 60 * 1000) !== 0)) {
+  if (endsAt !== undefined && !isHalfHourTimestamp(endsAt)) {
     throw apiError("invalid_state", { reason: "invalid_end_time" });
   }
 }

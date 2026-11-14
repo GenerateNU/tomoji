@@ -1,12 +1,15 @@
 import { CopyObjectCommand, HeadObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { createPresignedPost } from "@aws-sdk/s3-presigned-post";
 import { apiError } from "./errors";
+import type { MediaKind } from "../schemas/mediaUploads.schema";
 
-export type MediaKind = "profile-picture" | "video-submission";
+export type { MediaKind } from "../schemas/mediaUploads.schema";
 
 export const mediaLimits = {
   // Profile pictures: 2 MiB maximum.
   "profile-picture": 2 * 1024 * 1024,
+  "company-profile-picture": 2 * 1024 * 1024,
+  "company-banner": 5 * 1024 * 1024,
   // Video submissions: 250 MiB maximum.
   "video-submission": 250 * 1024 * 1024,
 } as const satisfies Record<MediaKind, number>;
@@ -15,8 +18,12 @@ export type MediaConfig = { bucket: string; region: string };
 
 const uploadGrantTtlSeconds = 15 * 60;
 
+const imageContentTypes = ["image/jpeg", "image/png", "image/webp"] as const;
+
 const allowedContentTypes: Record<MediaKind, readonly string[]> = {
-  "profile-picture": ["image/jpeg", "image/png", "image/webp"],
+  "profile-picture": imageContentTypes,
+  "company-profile-picture": imageContentTypes,
+  "company-banner": imageContentTypes,
   "video-submission": ["video/mp4", "video/quicktime", "video/webm"],
 };
 

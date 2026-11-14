@@ -1,13 +1,13 @@
-import type { Infer } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { apiError } from "../lib/errors";
 import { uploadCompletionGracePeriodMs } from "../lib/mediaUploadPolicy";
-import { mediaKind } from "../schemas/mediaUploads.schema";
-import { companyContext } from "../lib/functions";
+import { isCompanyMediaKind, type MediaKind } from "../schemas/mediaUploads.schema";
+import { requireAssignment, requireActiveAssignment } from "./assignments";
+import { companyAdminContext, companyContext } from "../lib/functions";
 import { requireCallerCreatorId } from "./users";
 
-export type MediaKind = Infer<typeof mediaKind>;
+export type { MediaKind } from "../schemas/mediaUploads.schema";
 
 export type NewMediaUpload = {
   kind: MediaKind;
@@ -17,6 +17,22 @@ export type NewMediaUpload = {
   grantExpiresAt: number;
 };
 
+/**
+ * The company a company-kind upload belongs to. Taken from the caller's own
+ * admin membership rather than an argument, so nobody can upload into another
+ * company, and stored on the row so the link survives them leaving.
+ */
+async function requireUploadCompanyId(
+  ctx: QueryCtx | MutationCtx,
+  assignmentId?: Id<"assignments">,
+): Promise<Id<"companies">> {
+  if (assignmentId !== undefined) {
+    throw apiError("invalid_state", { reason: "unexpected_assignment" });
+  }
+  const { membership } = await companyAdminContext(ctx);
+  return membership.companyId;
+}
+
 export type VerifiedMediaUpload = {
   stagingKey: string;
   permanentKey: string;
@@ -24,17 +40,46 @@ export type VerifiedMediaUpload = {
   sizeBytes: number;
 };
 
-/** Checks the owner and target before a grant is issued or a staged upload is accepted. */
+/** Requires a completed immutable video owned by the assignment's creator. */
+export async function requireSubmissionVideo(
+  ctx: QueryCtx | MutationCtx,
+  assignment: Doc<"assignments">,
+  mediaId: Id<"mediaUploads">,
+): Promise<Doc<"mediaUploads">> {
+  const creator = await ctx.db.get("creators", assignment.creatorId);
+  const upload = await ctx.db.get("mediaUploads", mediaId);
+  if (
+    !creator ||
+    !upload ||
+    upload.ownerUserId !== creator.userId ||
+    upload.assignmentId !== assignment._id ||
+    upload.kind !== "video-submission"
+  )
+    throw apiError("not_found", { resource: "video" });
+  if (upload.status !== "complete" || !upload.permanentKey?.startsWith("media/video-submission/"))
+    throw apiError("invalid_state", { reason: "video_not_complete" });
+  return upload;
+}
+
+/**
+ * Checks the owner and target before a grant is issued or a staged upload is
+ * accepted. Returns the company a company-kind upload belongs to, so callers
+ * do not resolve the caller's membership a second time.
+ */
 export async function authorizeMediaUpload(
   ctx: QueryCtx | MutationCtx,
   user: Doc<"users">,
   kind: MediaKind,
   assignmentId?: Id<"assignments">,
-): Promise<void> {
+): Promise<{ companyId?: Id<"companies"> }> {
   if (kind === "profile-picture") {
     if (assignmentId !== undefined)
       throw apiError("invalid_state", { reason: "unexpected_assignment" });
-    return;
+    return {};
+  }
+
+  if (isCompanyMediaKind(kind)) {
+    return { companyId: await requireUploadCompanyId(ctx, assignmentId) };
   }
 
   if (assignmentId === undefined)
@@ -42,13 +87,9 @@ export async function authorizeMediaUpload(
   if (user.role !== "creator") throw apiError("forbidden", { requiredRole: "creator" });
 
   const creatorId = await requireCallerCreatorId(ctx, user);
-  const assignment = await ctx.db.get("assignments", assignmentId);
-  if (assignment === null || assignment.creatorId !== creatorId) {
-    throw apiError("not_found", { resource: "assignment" });
-  }
-  if (assignment.status !== "active") {
-    throw apiError("invalid_state", { reason: "assignment_not_active" });
-  }
+  const assignment = await requireAssignment(ctx, { role: "creator", creatorId }, assignmentId);
+  requireActiveAssignment(assignment);
+  return {};
 }
 
 /** Records the server-issued grant only after its target has been authorized. */
@@ -57,11 +98,12 @@ export async function reserveMediaUpload(
   user: Doc<"users">,
   upload: NewMediaUpload,
 ): Promise<Id<"mediaUploads">> {
-  await authorizeMediaUpload(ctx, user, upload.kind, upload.assignmentId);
+  const { companyId } = await authorizeMediaUpload(ctx, user, upload.kind, upload.assignmentId);
   return await ctx.db.insert("mediaUploads", {
     ownerUserId: user._id,
     kind: upload.kind,
     assignmentId: upload.assignmentId,
+    companyId,
     stagingKey: upload.stagingKey,
     contentType: upload.contentType,
     grantExpiresAt: upload.grantExpiresAt,
@@ -109,6 +151,13 @@ export async function finalizeMediaUpload(
   if (upload.kind === "profile-picture") {
     await ctx.db.patch("users", user._id, { profilePictureMediaId: uploadId });
   }
+  if (isCompanyMediaKind(upload.kind)) {
+    if (upload.companyId === undefined) throw apiError("misconfigured");
+    await ctx.db.patch("companies", upload.companyId, {
+      [upload.kind === "company-profile-picture" ? "profilePictureMediaId" : "bannerMediaId"]:
+        uploadId,
+    });
+  }
   return { permanentKey: verified.permanentKey, adopted: true };
 }
 
@@ -124,6 +173,26 @@ export async function requireReadableProfilePicture(
   const owner = await ctx.db.get("users", upload.ownerUserId);
   if (owner === null || !owner.isActive || owner.profilePictureMediaId !== mediaId) {
     throw apiError("not_found", { resource: "profilePicture" });
+  }
+  return upload;
+}
+
+/** Returns only media a company currently shows as its picture or banner. */
+export async function requireReadableCompanyMedia(
+  ctx: QueryCtx,
+  mediaId: Id<"mediaUploads">,
+): Promise<Doc<"mediaUploads">> {
+  const upload = await ctx.db.get("mediaUploads", mediaId);
+  if (upload === null || !isCompanyMediaKind(upload.kind) || upload.status !== "complete") {
+    throw apiError("not_found", { resource: "companyMedia" });
+  }
+  const company = upload.companyId && (await ctx.db.get("companies", upload.companyId));
+  const current =
+    upload.kind === "company-profile-picture"
+      ? company && company.profilePictureMediaId
+      : company && company.bannerMediaId;
+  if (!company || !company.isActive || current !== mediaId) {
+    throw apiError("not_found", { resource: "companyMedia" });
   }
   return upload;
 }

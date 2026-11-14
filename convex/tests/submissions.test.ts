@@ -1,6 +1,5 @@
 /// <reference types="vite/client" />
 import { convexTest } from "convex-test";
-import type { FunctionArgs } from "convex/server";
 import { describe, expect, test } from "vitest";
 import { api } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
@@ -8,6 +7,8 @@ import type { ApiErrorCode } from "../lib/errors";
 import schema from "../schema";
 import {
   expectApiError,
+  submissionArgs,
+  expectedSubmissionView as fullView,
   seedAssignmentFixture,
   seedMembership,
   seedOneSubmission,
@@ -16,6 +17,12 @@ import {
   seedSubmission,
   seedUser,
   seedWrongOrgCaller,
+  seedSubmissionVideo,
+  seedCreatorId,
+  seedAssignment,
+  seedAiReviewFixture,
+  requireSeededUser,
+  seedOpportunity,
   storedSubmission,
   storedSubmissions,
   withoutReviewerIdentity,
@@ -25,25 +32,112 @@ import {
 
 const modules = import.meta.glob("../**/*.ts");
 
-const draft = {
-  draftUrl: "https://drive.example.com/drafts/driftwood-first-deploy",
-  draftDescription: "60-second walkthrough: install, `driftwood init`, first deploy at 0:45.",
-};
+test("media drafts expose only the owned media ID, not private storage keys or review internals", async () => {
+  const t = convexTest(schema, modules);
+  const fixture = await seedAiReviewFixture(t);
+  const result = await fixture.asCreator.query(api.submissions.get, {
+    submissionId: fixture.submissionId,
+  });
+  expect(result.mediaId).toBe(fixture.mediaId);
+  expect(result).not.toHaveProperty("draftUrl");
+  expect(result).not.toHaveProperty("permanentKey");
+  expect(result).not.toHaveProperty("context");
+  expect(result).not.toHaveProperty("transcription");
+});
 
-type CreateArgs = FunctionArgs<typeof api.submissions.create>;
+test("rejects another creator's uploaded video even when its assignment matches", async () => {
+  const t = convexTest(schema, modules);
+  const fixture = await seedAssignmentFixture(t);
+  await seedCreatorId(t, "video-intruder");
+  const other = await requireSeededUser(t, "video-intruder");
+  const mediaId = await seedSubmissionVideo(t, fixture, { ownerUserId: other._id });
+  await expectApiError(
+    () => fixture.asCreator.mutation(api.submissions.create, submissionArgs(fixture, { mediaId })),
+    "not_found",
+  );
+});
 
-function createArgs(fixture: AssignmentFixture): CreateArgs {
-  return { assignmentId: fixture.assignmentId, ...draft };
-}
+test("rejects a video bound to another assignment of the same creator", async () => {
+  const t = convexTest(schema, modules);
+  const fixture = await seedAssignmentFixture(t);
+  const other = await seedOpportunity(t, {
+    subject: "other-video-company",
+    orgId: "org_other_video",
+  });
+  const otherAssignmentId = await seedAssignment(t, {
+    creatorId: fixture.creatorId,
+    opportunityId: other.opportunityId,
+    status: "active",
+  });
+  const mediaId = await seedSubmissionVideo(t, fixture, { assignmentId: otherAssignmentId });
+  await expectApiError(
+    () => fixture.asCreator.mutation(api.submissions.create, submissionArgs(fixture, { mediaId })),
+    "not_found",
+  );
+});
+
+test("rejects a pending video even when its permanent key is valid", async () => {
+  const t = convexTest(schema, modules);
+  const fixture = await seedAssignmentFixture(t);
+  const mediaId = await seedSubmissionVideo(t, fixture, { status: "pending" });
+  await expectApiError(
+    () => fixture.asCreator.mutation(api.submissions.create, submissionArgs(fixture, { mediaId })),
+    "invalid_state",
+    "video_not_complete",
+  );
+});
+
+test("rejects a completed video without an immutable storage key", async () => {
+  const t = convexTest(schema, modules);
+  const fixture = await seedAssignmentFixture(t);
+  const mediaId = await seedSubmissionVideo(t, fixture, {
+    permanentKey: undefined,
+  });
+  await expectApiError(
+    () => fixture.asCreator.mutation(api.submissions.create, submissionArgs(fixture, { mediaId })),
+    "invalid_state",
+    "video_not_complete",
+  );
+});
+
+test("rejects profile pictures as submission videos", async () => {
+  const t = convexTest(schema, modules);
+  const fixture = await seedAssignmentFixture(t);
+  const mediaId = await seedSubmissionVideo(t, fixture, { kind: "profile-picture" });
+  await expectApiError(
+    () => fixture.asCreator.mutation(api.submissions.create, submissionArgs(fixture, { mediaId })),
+    "not_found",
+  );
+});
+
+test("rejects a submission without an uploaded video", async () => {
+  const t = convexTest(schema, modules);
+  const fixture = await seedAssignmentFixture(t);
+  const draft = {
+    assignmentId: fixture.assignmentId,
+    deliverableId: fixture.deliverableId,
+    draftDescription: "A product demo.",
+  };
+  await expect(
+    fixture.asCreator.mutation(api.submissions.create, draft as never),
+  ).rejects.toThrow();
+  expect(await t.run((ctx) => ctx.db.query("submissions").collect())).toEqual([]);
+});
+
+test("rejects the removed external draft URL argument", async () => {
+  const t = convexTest(schema, modules);
+  const fixture = await seedAssignmentFixture(t);
+  const args = { ...submissionArgs(fixture), draftUrl: "https://example.com/draft.mp4" };
+  await expect(fixture.asCreator.mutation(api.submissions.create, args)).rejects.toThrow();
+  expect(await t.run((ctx) => ctx.db.query("submissions").collect())).toEqual([]);
+});
 
 function pageArgs(fixture: AssignmentFixture) {
-  return { assignmentId: fixture.assignmentId, paginationOpts: { numItems: 10, cursor: null } };
-}
-
-async function fullView(t: TestConvex, submissionId: Id<"submissions">, closed = false) {
-  const stored = await storedSubmission(t, submissionId);
-  if (stored === null) throw new Error("expected a stored submission");
-  return { ...stored, closedWithoutReview: closed };
+  return {
+    assignmentId: fixture.assignmentId,
+    deliverableId: fixture.deliverableId,
+    paginationOpts: { numItems: 10, cursor: null },
+  };
 }
 
 async function creatorView(t: TestConvex, submissionId: Id<"submissions">, closed = false) {
@@ -84,10 +178,10 @@ describe("submissions.create", () => {
     const t = convexTest(schema, modules);
     const fixture = await seedAssignmentFixture(t, { usesAiReview: true });
 
-    const id = await fixture.asCreator.mutation(api.submissions.create, createArgs(fixture));
+    const id = await fixture.asCreator.mutation(api.submissions.create, submissionArgs(fixture));
 
     expect(await storedSubmission(t, id)).toMatchObject({
-      ...createArgs(fixture),
+      ...submissionArgs(fixture),
       status: "pending",
       usesAiReview: true,
     });
@@ -102,7 +196,7 @@ describe("submissions.create", () => {
 
     await expect(
       fixture.asCreator.mutation(api.submissions.create, {
-        ...createArgs(fixture),
+        ...submissionArgs(fixture),
         [field]: value,
         // Bypasses the type check to hit the runtime validator.
       } as never),
@@ -117,7 +211,7 @@ describe("submissions.create", () => {
     const asIntruder = await seedUser(t, { subject: "sc-intruder" });
 
     await expectApiError(
-      () => asIntruder.mutation(api.submissions.create, createArgs(fixture)),
+      () => asIntruder.mutation(api.submissions.create, submissionArgs(fixture)),
       "not_found",
     );
 
@@ -132,7 +226,7 @@ describe("submissions.create", () => {
       const client = await caller(t, fixture);
 
       await expectApiError(
-        () => client.mutation(api.submissions.create, createArgs(fixture)),
+        () => client.mutation(api.submissions.create, submissionArgs(fixture)),
         code,
       );
 

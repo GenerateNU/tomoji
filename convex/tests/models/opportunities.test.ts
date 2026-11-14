@@ -1,6 +1,7 @@
 /// <reference types="vite/client" />
 import { convexTest } from "convex-test";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import type { Doc, Id } from "../../_generated/dataModel";
 import {
   closeOpportunity,
   closeExpiredOpportunities,
@@ -17,17 +18,74 @@ import {
 import { authedContext } from "../../lib/functions";
 import schema from "../../schema";
 import {
+  creatorNotifications,
+  deliverableArgs,
   expectApiError,
+  memberNotifications,
   opportunityArgs,
+  withoutDeliverables,
   readOpportunityHistory,
+  readOpportunitySelections,
   seedCampaign,
   seedCreatorId,
   seedOpportunity,
   seedOpportunityHistory,
   seedUser,
+  type TestConvex,
 } from "../helpers";
 
 const modules = import.meta.glob("../../**/*.ts");
+
+test("company lifecycle writes reject a mismatched parent owner without changing the opportunity", async () => {
+  const t = convexTest(schema, modules);
+  const owner = await seedOpportunity(
+    t,
+    { subject: "guard_owner", orgId: "org_guard" },
+    { status: "draft" },
+  );
+  const other = await seedCampaign(t, { subject: "guard_other", orgId: "org_guard_other" });
+  await t.run((ctx) =>
+    ctx.db.patch("campaigns", owner.campaignId, { companyId: other.membership.companyId }),
+  );
+  const before = await t.run((ctx) => ctx.db.get("opportunities", owner.opportunityId));
+  const error = { data: { code: "not_found", resource: "opportunity" } };
+  await expect(
+    t.run((ctx) => publishOpportunity(ctx, owner.membership, owner.opportunityId)),
+  ).rejects.toMatchObject(error);
+  await expect(
+    t.run((ctx) => removeOpportunity(ctx, owner.membership, owner.opportunityId)),
+  ).rejects.toMatchObject(error);
+  await expect(
+    t.run((ctx) =>
+      updateOpportunity(ctx, owner.membership, owner.opportunityId, { title: "Changed" }),
+    ),
+  ).rejects.toMatchObject(error);
+  expect(await t.run((ctx) => ctx.db.get("opportunities", owner.opportunityId))).toEqual(before);
+});
+
+test("company lifecycle writes reject a missing company without changing the opportunity", async () => {
+  const t = convexTest(schema, modules);
+  const owner = await seedOpportunity(
+    t,
+    { subject: "guard_missing", orgId: "org_missing_guard" },
+    { status: "draft" },
+  );
+  await t.run((ctx) => ctx.db.delete("companies", owner.membership.companyId));
+  const before = await t.run((ctx) => ctx.db.get("opportunities", owner.opportunityId));
+  const error = { data: { code: "not_found", resource: "opportunity" } };
+  await expect(
+    t.run((ctx) => publishOpportunity(ctx, owner.membership, owner.opportunityId)),
+  ).rejects.toMatchObject(error);
+  await expect(
+    t.run((ctx) => removeOpportunity(ctx, owner.membership, owner.opportunityId)),
+  ).rejects.toMatchObject(error);
+  await expect(
+    t.run((ctx) =>
+      updateOpportunity(ctx, owner.membership, owner.opportunityId, { title: "Changed" }),
+    ),
+  ).rejects.toMatchObject(error);
+  expect(await t.run((ctx) => ctx.db.get("opportunities", owner.opportunityId))).toEqual(before);
+});
 
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ["Date"] });
@@ -160,7 +218,7 @@ describe("closeExpiredOpportunities", () => {
     expect(await t.run(async (ctx) => await closeExpiredOpportunities(ctx))).toBe(false);
     expect(
       await t.run(async (ctx) => await ctx.db.get("opportunities", owner.opportunityId)),
-    ).toEqual(updated);
+    ).toEqual({ ...updated, niches: undefined, skills: undefined });
   });
 
   test("closes expired open and paused opportunities but preserves drafts and future deadlines", async () => {
@@ -847,6 +905,17 @@ describe("publishOpportunity", () => {
 });
 
 describe("removeOpportunity", () => {
+  test("deletes the draft's deliverables with it", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(
+      t,
+      { subject: "remove_with_deliverables" },
+      { status: "draft", deliverables: [deliverableArgs(), deliverableArgs({ title: "Thread" })] },
+    );
+    await t.run(async (ctx) => await removeOpportunity(ctx, owner.membership, owner.opportunityId));
+    expect(await t.run(async (ctx) => await ctx.db.query("deliverables").collect())).toEqual([]);
+  });
+
   test("conceals a draft whose company is inactive", async () => {
     const t = convexTest(schema, modules);
     const owner = await seedOpportunity(t, { subject: "remove_owner" }, { status: "draft" });
@@ -1158,6 +1227,36 @@ describe("updateOpportunity", () => {
     );
   });
 
+  test.each([
+    ["a javascript scheme", "javascript:alert(1)"],
+    ["plain http", "http://example.com/product"],
+    ["login details that disguise the host", "https://example.com@evil.test"],
+    ["something that is not a URL", "ask the brand"],
+  ])(
+    "refuses %s as a product access link without changing the opportunity",
+    async (_label, productAccessLink) => {
+      const t = convexTest(schema, modules);
+      const owner = await seedOpportunity(t, { subject: "product_link_owner" });
+      const before = await t.run(
+        async (ctx) => await ctx.db.get("opportunities", owner.opportunityId),
+      );
+
+      await expectApiError(
+        () =>
+          t.run(
+            async (ctx) =>
+              await updateOpportunity(ctx, owner.membership, owner.opportunityId, {
+                productAccessLink,
+              }),
+          ),
+        "invalid_state",
+      );
+      expect(
+        await t.run(async (ctx) => await ctx.db.get("opportunities", owner.opportunityId)),
+      ).toEqual(before);
+    },
+  );
+
   test("updates brief, capacity, schedule, and defaults on a paused opportunity", async () => {
     const t = convexTest(schema, modules);
     const owner = await seedOpportunity(t, { subject: "update_owner" });
@@ -1193,10 +1292,16 @@ describe("updateOpportunity", () => {
       async (ctx) => await updateOpportunity(ctx, owner.membership, owner.opportunityId, updates),
     );
 
-    expect(result).toEqual({ ...before, ...updates, description: "Show the evening routine." });
+    expect(result).toEqual({
+      ...before,
+      ...updates,
+      niches: [],
+      skills: [],
+      description: "Show the evening routine.",
+    });
     expect(
       await t.run(async (ctx) => await ctx.db.get("opportunities", owner.opportunityId)),
-    ).toEqual(result);
+    ).toEqual({ ...result, niches: undefined, skills: undefined });
   });
 
   test("accepts an empty patch without changing the document", async () => {
@@ -1210,7 +1315,7 @@ describe("updateOpportunity", () => {
       async (ctx) => await updateOpportunity(ctx, owner.membership, owner.opportunityId, {}),
     );
 
-    expect(result).toEqual(before);
+    expect(result).toEqual({ ...before, niches: [], skills: [] });
     expect(
       await t.run(async (ctx) => await ctx.db.get("opportunities", owner.opportunityId)),
     ).toEqual(before);
@@ -1268,6 +1373,8 @@ describe("updateOpportunity", () => {
           cpmRateCents: 1_000,
           paymentCapCents: 50_000,
           usesAiReviewDefault: false,
+          niches: ["databases"],
+          skills: ["typescript"],
         }),
     );
 
@@ -1523,10 +1630,16 @@ describe("updateOpportunity", () => {
         }),
     );
 
-    expect(result).toEqual({ ...before, title: "Evening routine", fixedFeeCents: 0 });
+    expect(result).toEqual({
+      ...before,
+      title: "Evening routine",
+      fixedFeeCents: 0,
+      niches: [],
+      skills: [],
+    });
     expect(
       await t.run(async (ctx) => await ctx.db.get("opportunities", owner.opportunityId)),
-    ).toEqual(result);
+    ).toEqual({ ...result, niches: undefined, skills: undefined });
   });
 });
 
@@ -1687,10 +1800,21 @@ describe("discoverOpportunities", () => {
       { _id: later.opportunityId, companyName: "Acme", title: "Moisturizer launch video" },
     ]);
     expect(secondPage.page[0]).not.toHaveProperty("productAccessLink");
-    expect(secondPage.isDone).toBe(true);
+    // A stream that fills a page exactly can't know nothing follows, so the
+    // end may arrive as one more empty, finished page.
+    const lastPage = secondPage.isDone
+      ? secondPage
+      : await t.run(
+          async (ctx) =>
+            await discoverOpportunities(ctx, {
+              paginationOpts: { numItems: 1, cursor: secondPage.continueCursor },
+            }),
+        );
+    expect(lastPage.isDone).toBe(true);
+    expect(secondPage.isDone ? [] : lastPage.page).toEqual([]);
   });
 
-  test("continues past an empty visibility-filtered page", async () => {
+  test("skips hidden opportunities instead of returning an empty page", async () => {
     const t = convexTest(schema, modules);
     const hidden = await seedOpportunity(t, { subject: "discover_hidden" });
     await t.run(
@@ -1708,17 +1832,8 @@ describe("discoverOpportunities", () => {
           paginationOpts: { numItems: 1, cursor: null },
         }),
     );
-    const secondPage = await t.run(
-      async (ctx) =>
-        await discoverOpportunities(ctx, {
-          paginationOpts: { numItems: 1, cursor: firstPage.continueCursor },
-        }),
-    );
 
-    expect(firstPage.page).toEqual([]);
-    expect(firstPage.isDone).toBe(false);
-    expect(secondPage.page).toMatchObject([{ _id: visible.opportunityId, companyName: "Acme" }]);
-    expect(secondPage.isDone).toBe(true);
+    expect(firstPage.page).toMatchObject([{ _id: visible.opportunityId, companyName: "Acme" }]);
   });
 
   test("returns open briefs across companies, including gated and filled opportunities", async () => {
@@ -1795,7 +1910,11 @@ describe("listOpportunities", () => {
     );
 
     expect(result.page).toEqual([
-      await t.run(async (ctx) => await ctx.db.get("opportunities", owner.opportunityId)),
+      {
+        ...(await t.run(async (ctx) => await ctx.db.get("opportunities", owner.opportunityId))),
+        niches: [],
+        skills: [],
+      },
     ]);
     expect(result.isDone).toBe(true);
   });
@@ -1848,7 +1967,11 @@ describe("listOpportunities", () => {
     );
 
     expect(result.page).toEqual([
-      await t.run(async (ctx) => await ctx.db.get("opportunities", owner.opportunityId)),
+      {
+        ...(await t.run(async (ctx) => await ctx.db.get("opportunities", owner.opportunityId))),
+        niches: [],
+        skills: [],
+      },
     ]);
   });
 
@@ -1861,6 +1984,8 @@ describe("listOpportunities", () => {
       { subject: "list_second" },
       {
         title: "Evening routine video",
+        niches: ["databases"],
+        skills: ["typescript"],
         productAccessLink: "https://example.com/product",
       },
     );
@@ -1871,7 +1996,11 @@ describe("listOpportunities", () => {
         }),
     );
     expect(firstPage.page).toEqual([
-      await t.run(async (ctx) => await ctx.db.get("opportunities", owner.opportunityId)),
+      {
+        ...(await t.run(async (ctx) => await ctx.db.get("opportunities", owner.opportunityId))),
+        niches: [],
+        skills: [],
+      },
     ]);
     expect(firstPage.isDone).toBe(false);
 
@@ -1882,7 +2011,11 @@ describe("listOpportunities", () => {
         }),
     );
     expect(secondPage.page).toEqual([
-      await t.run(async (ctx) => await ctx.db.get("opportunities", second.opportunityId)),
+      {
+        ...(await t.run(async (ctx) => await ctx.db.get("opportunities", second.opportunityId))),
+        niches: ["databases"],
+        skills: ["typescript"],
+      },
     ]);
     expect(secondPage.isDone).toBe(true);
   });
@@ -1916,7 +2049,11 @@ describe("listOpportunities", () => {
         }),
     );
     expect(firstPage.page).toEqual([
-      await t.run(async (ctx) => await ctx.db.get("opportunities", owner.opportunityId)),
+      {
+        ...(await t.run(async (ctx) => await ctx.db.get("opportunities", owner.opportunityId))),
+        niches: [],
+        skills: [],
+      },
     ]);
     expect(firstPage.isDone).toBe(false);
 
@@ -1928,7 +2065,11 @@ describe("listOpportunities", () => {
         }),
     );
     expect(secondPage.page).toEqual([
-      await t.run(async (ctx) => await ctx.db.get("opportunities", secondId)),
+      {
+        ...(await t.run(async (ctx) => await ctx.db.get("opportunities", secondId))),
+        niches: [],
+        skills: [],
+      },
     ]);
     expect(secondPage.isDone).toBe(true);
   });
@@ -2062,7 +2203,7 @@ describe("createOpportunity", () => {
 
     const id = await t.run(async (ctx) => await createOpportunity(ctx, membership, args));
     expect(await t.run(async (ctx) => await ctx.db.get("opportunities", id))).toMatchObject({
-      ...args,
+      ...withoutDeliverables(args),
       title: "Launch video",
       description: "Show your routine.",
     });
@@ -2077,7 +2218,9 @@ describe("createOpportunity", () => {
     const args = opportunityArgs(campaignId, { status: "draft", deadline: Date.now() - 1_800_000 });
 
     const id = await t.run(async (ctx) => await createOpportunity(ctx, membership, args));
-    expect(await t.run(async (ctx) => await ctx.db.get("opportunities", id))).toMatchObject(args);
+    expect(await t.run(async (ctx) => await ctx.db.get("opportunities", id))).toMatchObject(
+      withoutDeliverables(args),
+    );
   });
   test("stores the brief with campaign ownership and zero filled slots", async () => {
     const t = convexTest(schema, modules);
@@ -2088,7 +2231,7 @@ describe("createOpportunity", () => {
     const stored = await t.run(async (ctx) => await ctx.db.get("opportunities", id));
 
     expect(stored).toMatchObject({
-      ...args,
+      ...withoutDeliverables(args),
       companyId: membership.companyId,
       createdBy: membership._id,
       numFilledSlots: 0,
@@ -2135,7 +2278,9 @@ describe("createOpportunity", () => {
     });
 
     const id = await t.run(async (ctx) => await createOpportunity(ctx, membership, args));
-    expect(await t.run(async (ctx) => await ctx.db.get("opportunities", id))).toMatchObject(args);
+    expect(await t.run(async (ctx) => await ctx.db.get("opportunities", id))).toMatchObject(
+      withoutDeliverables(args),
+    );
   });
 
   test("rejects publishing beneath a draft campaign", async () => {
@@ -2368,7 +2513,9 @@ describe("createOpportunity", () => {
     );
 
     const id = await t.run(async (ctx) => await createOpportunity(ctx, membership, args));
-    expect(await t.run(async (ctx) => await ctx.db.get("opportunities", id))).toMatchObject(args);
+    expect(await t.run(async (ctx) => await ctx.db.get("opportunities", id))).toMatchObject(
+      withoutDeliverables(args),
+    );
   });
 
   test("rejects publishing with an elapsed deadline without writing", async () => {
@@ -2561,5 +2708,490 @@ describe("requireOpportunity", () => {
     const stored = await t.run(async (ctx) => await ctx.db.get("opportunities", opportunityId));
 
     expect(result).toEqual(stored);
+  });
+});
+
+describe("notifications", () => {
+  const title = "Moisturizer launch video";
+
+  /** Seeds pending, offered, and accepted applications and returns each creator by status. */
+  async function seedApplicants(t: TestConvex, opportunityId: Id<"opportunities">) {
+    const { applications } = await seedOpportunityHistory(t, opportunityId);
+    const byStatus = (status: Doc<"applications">["status"]) => {
+      const application = applications.find((a) => a.status === status);
+      if (application === undefined) throw new Error(`expected a ${status} application`);
+      return application;
+    };
+    return {
+      pending: byStatus("pending"),
+      offered: byStatus("offered"),
+      accepted: byStatus("accepted"),
+    };
+  }
+
+  const closedNotice = (application: Doc<"applications">) => ({
+    type: "applicationOpportunityClosed",
+    title: `${title} has closed`,
+    target: {
+      kind: "application",
+      applicationId: application._id,
+      opportunityId: application.opportunityId,
+    },
+  });
+
+  test("closing notifies creators with pending or offered applications, not the closer", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(t, { subject: "close_owner" });
+    const { pending, offered, accepted } = await seedApplicants(t, owner.opportunityId);
+
+    await t.run(async (ctx) => await closeOpportunity(ctx, owner.membership, owner.opportunityId));
+
+    expect(await creatorNotifications(t, pending.creatorId)).toEqual([closedNotice(pending)]);
+    expect(await creatorNotifications(t, offered.creatorId)).toEqual([closedNotice(offered)]);
+    expect(await creatorNotifications(t, accepted.creatorId)).toEqual([]);
+    expect(await memberNotifications(t, owner.membership)).toEqual([]);
+  });
+
+  test("closing an already closed opportunity sends nothing new", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(t, { subject: "close_owner" });
+    const { pending } = await seedApplicants(t, owner.opportunityId);
+    const close = () =>
+      t.run(async (ctx) => await closeOpportunity(ctx, owner.membership, owner.opportunityId));
+
+    await close();
+    await close();
+
+    expect(await creatorNotifications(t, pending.creatorId)).toEqual([closedNotice(pending)]);
+  });
+
+  test("closing at the deadline also notifies the member who created the opportunity", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(t, { subject: "deadline_owner" });
+    const { pending } = await seedApplicants(t, owner.opportunityId);
+    vi.advanceTimersByTime(86_400_000);
+
+    await t.run(async (ctx) => await closeExpiredOpportunities(ctx));
+
+    expect(await memberNotifications(t, owner.membership)).toEqual([
+      {
+        type: "opportunityClosed",
+        title: `${title} closed at its deadline`,
+        target: { kind: "opportunity", opportunityId: owner.opportunityId },
+      },
+    ]);
+    expect(await creatorNotifications(t, pending.creatorId)).toEqual([closedNotice(pending)]);
+  });
+});
+
+describe("opportunity associations", () => {
+  test("invalid skills on create leave no opportunity or association rows behind", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedCampaign(t, { subject: "invalid_creation_tags" });
+    await expectApiError(
+      () =>
+        t.run((ctx) =>
+          createOpportunity(
+            ctx,
+            owner.membership,
+            opportunityArgs(owner.campaignId, { niches: ["databases"], skills: ["unknown"] }),
+          ),
+        ),
+      "invalid_state",
+      "invalid_skill",
+    );
+    expect(await t.run((ctx) => ctx.db.query("opportunities").take(10))).toEqual([]);
+    expect(await t.run((ctx) => ctx.db.query("opportunityNiches").take(10))).toEqual([]);
+    expect(await t.run((ctx) => ctx.db.query("opportunitySkills").take(10))).toEqual([]);
+  });
+
+  test("selection updates normalize, deduplicate, preserve omitted fields, and clear independently", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(
+      t,
+      { subject: "tags_owner" },
+      { niches: ["databases"], skills: ["python"] },
+    );
+    const replaced = await t.run((ctx) =>
+      updateOpportunity(ctx, owner.membership, owner.opportunityId, {
+        niches: ["Web Development", "web-development"],
+        skills: ["C#", "TypeScript", "C#"],
+      }),
+    );
+    expect(replaced).toMatchObject({
+      niches: ["web-development"],
+      skills: ["c-sharp", "typescript"],
+    });
+    const cleared = await t.run((ctx) =>
+      updateOpportunity(ctx, owner.membership, owner.opportunityId, { skills: [] }),
+    );
+    expect(cleared).toMatchObject({ niches: ["web-development"], skills: [] });
+    expect(await t.run((ctx) => ctx.db.query("opportunityNiches").take(10))).toHaveLength(1);
+    expect(await t.run((ctx) => ctx.db.query("opportunitySkills").take(10))).toEqual([]);
+  });
+
+  test("invalid skills roll back niche and opportunity changes together", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(
+      t,
+      { subject: "tags_atomic" },
+      { niches: ["databases"], skills: ["python"] },
+    );
+    const before = await readOpportunitySelections(t, owner.opportunityId);
+    await expectApiError(
+      () =>
+        t.run((ctx) =>
+          updateOpportunity(ctx, owner.membership, owner.opportunityId, {
+            niches: ["web-development"],
+            skills: ["unknown"],
+            title: "Changed",
+          }),
+        ),
+      "invalid_state",
+      "invalid_skill",
+    );
+    expect(await readOpportunitySelections(t, owner.opportunityId)).toEqual(before);
+  });
+
+  test("removing a draft removes its associations without affecting another opportunity", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(
+      t,
+      { subject: "tags_remove" },
+      { status: "draft", niches: ["llms"], skills: ["python"] },
+    );
+    const other = await seedOpportunity(
+      t,
+      { subject: "tags_sibling" },
+      { niches: ["databases"], skills: ["typescript"] },
+    );
+    await t.run((ctx) => removeOpportunity(ctx, owner.membership, owner.opportunityId));
+    expect(await t.run((ctx) => ctx.db.get("opportunities", owner.opportunityId))).toBeNull();
+    expect(await t.run((ctx) => ctx.db.query("opportunityNiches").take(10))).toMatchObject([
+      { opportunityId: other.opportunityId, name: "databases" },
+    ]);
+    expect(await t.run((ctx) => ctx.db.query("opportunitySkills").take(10))).toMatchObject([
+      { opportunityId: other.opportunityId, name: "typescript" },
+    ]);
+  });
+
+  test("filtered discovery paginates mixed legacy and association rows while hiding paused campaigns", async () => {
+    const t = convexTest(schema, modules);
+    await seedOpportunity(t, { subject: "off_niche" }, { niches: ["databases"] });
+    const hidden = await seedOpportunity(t, { subject: "hidden_niche" }, { niches: ["llms"] });
+    await t.run((ctx) => ctx.db.patch("campaigns", hidden.campaignId, { status: "paused" }));
+    const first = await seedOpportunity(
+      t,
+      { subject: "new_niche" },
+      { niches: ["llms"], skills: ["python"] },
+    );
+    const second = await seedOpportunity(t, { subject: "legacy_niche" });
+    await t.run((ctx) => ctx.db.patch("opportunities", second.opportunityId, { niches: ["llms"] }));
+    const firstPage = await t.run((ctx) =>
+      discoverOpportunities(ctx, { niche: "LLMs", paginationOpts: { numItems: 1, cursor: null } }),
+    );
+    const secondPage = await t.run((ctx) =>
+      discoverOpportunities(ctx, {
+        niche: "LLMs",
+        paginationOpts: { numItems: 1, cursor: firstPage.continueCursor },
+      }),
+    );
+    expect(firstPage.page.map(({ _id, niches, skills }) => ({ _id, niches, skills }))).toEqual([
+      { _id: first.opportunityId, niches: ["llms"], skills: ["python"] },
+    ]);
+    expect(firstPage.isDone).toBe(false);
+    expect(secondPage.page.map(({ _id, niches, skills }) => ({ _id, niches, skills }))).toEqual([
+      { _id: second.opportunityId, niches: ["llms"], skills: [] },
+    ]);
+    // A full stream page may need one more read to discover the end of the index.
+    const lastPage = await t.run((ctx) =>
+      discoverOpportunities(ctx, {
+        niche: "LLMs",
+        paginationOpts: { numItems: 1, cursor: secondPage.continueCursor },
+      }),
+    );
+    expect(lastPage.page).toEqual([]);
+    expect(lastPage.isDone).toBe(true);
+  });
+});
+
+describe("opportunity niches", () => {
+  const firstPage = { numItems: 10, cursor: null };
+
+  test("create stores niches by their lowercase name, without repeats", async () => {
+    const t = convexTest(schema, modules);
+    const { campaignId, membership } = await seedCampaign(t, { subject: "niche_owner" });
+
+    const opportunityId = await t.run(
+      async (ctx) =>
+        await createOpportunity(
+          ctx,
+          membership,
+          opportunityArgs(campaignId, {
+            niches: ["LLMs", "AI Agents", "llms"],
+            skills: ["C++", "TypeScript", "C++"],
+          }),
+        ),
+    );
+
+    const stored = await t.run(async (ctx) => await ctx.db.get("opportunities", opportunityId));
+    expect(stored).not.toHaveProperty("niches");
+    expect(await t.run((ctx) => ctx.db.query("opportunityNiches").take(10))).toMatchObject([
+      { opportunityId, name: "llms" },
+      { opportunityId, name: "ai-agents" },
+    ]);
+    expect(await t.run((ctx) => ctx.db.query("opportunitySkills").take(10))).toMatchObject([
+      { opportunityId, name: "c-plus-plus" },
+      { opportunityId, name: "typescript" },
+    ]);
+  });
+
+  test("create refuses a niche that isn't on the list", async () => {
+    const t = convexTest(schema, modules);
+    const { campaignId, membership } = await seedCampaign(t, { subject: "niche_owner" });
+
+    await expect(
+      t.run(
+        async (ctx) =>
+          await createOpportunity(
+            ctx,
+            membership,
+            opportunityArgs(campaignId, { niches: ["crypto"] }),
+          ),
+      ),
+    ).rejects.toMatchObject({ data: { code: "invalid_state", reason: "invalid_niche" } });
+  });
+
+  test("update replaces niches, and an empty list clears them", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(
+      t,
+      { subject: "niche_owner" },
+      { niches: ["developer-tools"] },
+    );
+
+    const replaced = await t.run(
+      async (ctx) =>
+        await updateOpportunity(ctx, owner.membership, owner.opportunityId, {
+          niches: ["game-dev", "developer-tools"],
+        }),
+    );
+    const cleared = await t.run(
+      async (ctx) =>
+        await updateOpportunity(ctx, owner.membership, owner.opportunityId, { niches: [] }),
+    );
+
+    expect(replaced.niches).toEqual(["game-dev", "developer-tools"]);
+    expect(cleared.niches).toEqual([]);
+    expect(
+      (await t.run(async (ctx) => await ctx.db.get("opportunities", owner.opportunityId)))?.niches,
+    ).toBeUndefined();
+  });
+
+  test("update leaves niches alone when they aren't sent", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(
+      t,
+      { subject: "niche_owner" },
+      { niches: ["developer-tools"] },
+    );
+
+    const updated = await t.run(
+      async (ctx) =>
+        await updateOpportunity(ctx, owner.membership, owner.opportunityId, { title: "Renamed" }),
+    );
+
+    expect(updated.niches).toEqual(["developer-tools"]);
+  });
+
+  test("update refuses too many niches without changing the opportunity", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(t, { subject: "niche_owner" });
+    const before = await t.run(
+      async (ctx) => await ctx.db.get("opportunities", owner.opportunityId),
+    );
+
+    await expect(
+      t.run(
+        async (ctx) =>
+          await updateOpportunity(ctx, owner.membership, owner.opportunityId, {
+            niches: ["ai-agents", "llms", "open-source", "devops", "cybersecurity", "databases"],
+          }),
+      ),
+    ).rejects.toMatchObject({ data: { code: "invalid_state", reason: "too_many_niches" } });
+    expect(
+      await t.run(async (ctx) => await ctx.db.get("opportunities", owner.opportunityId)),
+    ).toEqual(before);
+  });
+
+  test("creator briefs always include niches, empty when none were set", async () => {
+    const t = convexTest(schema, modules);
+    const tagged = await seedOpportunity(
+      t,
+      { subject: "niche_owner" },
+      { niches: ["web-development"] },
+    );
+    const untagged = await seedOpportunity(t, { subject: "niche_owner" });
+
+    const feed = await t.run(
+      async (ctx) => await discoverOpportunities(ctx, { paginationOpts: firstPage }),
+    );
+    const niches = Object.fromEntries(feed.page.map((brief) => [brief._id, brief.niches]));
+
+    expect(niches).toEqual({
+      [tagged.opportunityId]: ["web-development"],
+      [untagged.opportunityId]: [],
+    });
+  });
+
+  test("discover filters to one niche", async () => {
+    const t = convexTest(schema, modules);
+    const fitness = await seedOpportunity(
+      t,
+      { subject: "niche_owner" },
+      { niches: ["devops", "cybersecurity"] },
+    );
+    await seedOpportunity(t, { subject: "niche_owner" }, { niches: ["game-dev"] });
+    await seedOpportunity(t, { subject: "niche_owner" });
+
+    const feed = await t.run(
+      async (ctx) =>
+        await discoverOpportunities(ctx, { niche: "cybersecurity", paginationOpts: firstPage }),
+    );
+
+    expect(feed.page.map((brief) => brief._id)).toEqual([fitness.opportunityId]);
+  });
+
+  test("the niche filter fills the page instead of returning it short", async () => {
+    const t = convexTest(schema, modules);
+    // Three off-niche opportunities are read first, then one match.
+    for (let i = 0; i < 3; i++) {
+      await seedOpportunity(t, { subject: "niche_owner" }, { niches: ["game-dev"] });
+    }
+    const match = await seedOpportunity(t, { subject: "niche_owner" }, { niches: ["llms"] });
+
+    const feed = await t.run(
+      async (ctx) =>
+        await discoverOpportunities(ctx, {
+          niche: "LLMs",
+          paginationOpts: { numItems: 2, cursor: null },
+        }),
+    );
+
+    expect(feed.page.map((brief) => brief._id)).toEqual([match.opportunityId]);
+  });
+
+  test("discover refuses a niche filter that isn't on the list", async () => {
+    const t = convexTest(schema, modules);
+    await seedOpportunity(t, { subject: "niche_owner" });
+
+    await expect(
+      t.run(
+        async (ctx) =>
+          await discoverOpportunities(ctx, { niche: "crypto", paginationOpts: firstPage }),
+      ),
+    ).rejects.toMatchObject({ data: { code: "invalid_state", reason: "invalid_niche" } });
+  });
+});
+
+test("AI opportunities reject a deliverable without confirmed criteria", async () => {
+  const t = convexTest(schema, modules);
+  const owner = await seedCampaign(t, { subject: "ai-criteria-owner" });
+  await expectApiError(
+    () =>
+      t.run((ctx) =>
+        createOpportunity(
+          ctx,
+          owner.membership,
+          opportunityArgs(owner.campaignId, {
+            usesAiReviewDefault: true,
+            deliverables: [
+              deliverableArgs({
+                reviewCriteria: [{ id: "product", description: "Mention the product." }],
+              }),
+              deliverableArgs({ reviewCriteria: [] }),
+            ],
+          }),
+        ),
+      ),
+    "invalid_state",
+    "ai_review_criteria_required",
+  );
+  expect(await t.run((ctx) => ctx.db.query("opportunities").collect())).toEqual([]);
+});
+
+test("enabling AI requires criteria on every existing deliverable", async () => {
+  const t = convexTest(schema, modules);
+  const owner = await seedOpportunity(
+    t,
+    { subject: "enable-ai-criteria" },
+    {
+      usesAiReviewDefault: false,
+      deliverables: [deliverableArgs(), deliverableArgs({ reviewCriteria: undefined })],
+    },
+  );
+  await expectApiError(
+    () =>
+      t.run((ctx) =>
+        updateOpportunity(ctx, owner.membership, owner.opportunityId, {
+          usesAiReviewDefault: true,
+        }),
+      ),
+    "invalid_state",
+    "ai_review_criteria_required",
+  );
+  expect(await t.run((ctx) => ctx.db.get("opportunities", owner.opportunityId))).toMatchObject({
+    usesAiReviewDefault: false,
+  });
+});
+
+test("AI publication rejects missing criteria even on an invalid stored draft", async () => {
+  const t = convexTest(schema, modules);
+  const owner = await seedOpportunity(
+    t,
+    { subject: "publish-ai-criteria" },
+    {
+      status: "draft",
+      usesAiReviewDefault: false,
+      deliverables: [deliverableArgs({ reviewCriteria: undefined })],
+    },
+  );
+  // Simulate a preexisting invalid row; regular writes now reject this state.
+  await t.run((ctx) =>
+    ctx.db.patch("opportunities", owner.opportunityId, { usesAiReviewDefault: true }),
+  );
+  await expectApiError(
+    () => t.run((ctx) => publishOpportunity(ctx, owner.membership, owner.opportunityId)),
+    "invalid_state",
+    "ai_review_criteria_required",
+  );
+  expect(await t.run((ctx) => ctx.db.get("opportunities", owner.opportunityId))).toMatchObject({
+    status: "draft",
+  });
+});
+
+test("AI resume rejects missing criteria without reopening the opportunity", async () => {
+  const t = convexTest(schema, modules);
+  const owner = await seedOpportunity(
+    t,
+    { subject: "resume-ai-criteria" },
+    {
+      usesAiReviewDefault: false,
+      deliverables: [deliverableArgs({ reviewCriteria: undefined })],
+    },
+  );
+  await t.run((ctx) =>
+    ctx.db.patch("opportunities", owner.opportunityId, {
+      status: "paused",
+      usesAiReviewDefault: true,
+    }),
+  );
+  await expectApiError(
+    () => t.run((ctx) => resumeOpportunity(ctx, owner.membership, owner.opportunityId)),
+    "invalid_state",
+    "ai_review_criteria_required",
+  );
+  expect(await t.run((ctx) => ctx.db.get("opportunities", owner.opportunityId))).toMatchObject({
+    status: "paused",
   });
 });

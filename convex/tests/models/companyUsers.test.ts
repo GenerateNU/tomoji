@@ -3,7 +3,12 @@ import { convexTest } from "convex-test";
 import { describe, expect, test, vi } from "vitest";
 import type { Id } from "../../_generated/dataModel";
 import { getCompanyByWorkosId } from "../../models/companies";
-import { getCompanyUser, listCompanyUsers, requireMembership } from "../../models/companyUsers";
+import {
+  getCompanyUser,
+  getCompanyUserByUserId,
+  listCompanyUsers,
+  requireMembership,
+} from "../../models/companyUsers";
 import { getUserByWorkosId, removeMembership } from "../../models/users";
 import schema from "../../schema";
 import { expectApiError, seedProfilePictureUpload, seedUser, type TestConvex } from "../helpers";
@@ -77,7 +82,7 @@ describe("getCompanyUser", () => {
     expect(membership).toBeNull();
   });
 
-  test("returns null after the membership is removed", async () => {
+  test("still finds the row after the membership ends, now marked inactive", async () => {
     const t = convexTest(schema, modules);
     await seedUser(t, { subject: "cu4", org: { id: "org_acme" } });
     const { userId, companyId } = await idsFor(t, "cu4", "org_acme");
@@ -88,10 +93,11 @@ describe("getCompanyUser", () => {
 
     const membership = await t.run(async (ctx) => await getCompanyUser(ctx, userId, companyId));
 
-    expect(membership).toBeNull();
+    expect(membership).not.toBeNull();
+    expect(membership?.isActive).toBe(false);
   });
 
-  test("finds only the new company after the previous membership is removed", async () => {
+  test("keeps the old company's row inactive while the new one is current", async () => {
     const t = convexTest(schema, modules);
     await seedUser(t, { subject: "cu5", org: { id: "org_acme" } });
     await t.run(
@@ -110,9 +116,15 @@ describe("getCompanyUser", () => {
     );
 
     expect(membership?.companyId).toBe(otherCompanyId);
-    expect(
-      await t.run(async (ctx) => await getCompanyUser(ctx, userId, previousCompanyId)),
-    ).toBeNull();
+    expect(membership?.isActive).toBe(true);
+    const previous = await t.run(
+      async (ctx) => await getCompanyUser(ctx, userId, previousCompanyId),
+    );
+    expect(previous?.isActive).toBe(false);
+    // Only the current one answers "which company is this user in?".
+    expect(await t.run(async (ctx) => await getCompanyUserByUserId(ctx, userId))).toMatchObject({
+      companyId: otherCompanyId,
+    });
   });
 });
 
@@ -191,6 +203,63 @@ describe("requireMembership", () => {
 });
 
 describe("listCompanyUsers", () => {
+  test("excludes a former member after a company switch and continues past the empty page", async () => {
+    const t = convexTest(schema, modules);
+    await seedUser(t, {
+      subject: "directory_moved",
+      email: "moved@example.com",
+      org: { id: "org_directory_a" },
+    });
+    await t.run((ctx) =>
+      removeMembership(ctx, {
+        workosUserId: "directory_moved",
+        organizationId: "org_directory_a",
+      }),
+    );
+    await seedUser(t, {
+      subject: "directory_moved",
+      email: "moved@example.com",
+      org: { id: "org_directory_b" },
+    });
+    await seedUser(t, {
+      subject: "directory_remaining",
+      email: "remaining@example.com",
+      org: { id: "org_directory_a", role: "admin" },
+    });
+    await seedUser(t, {
+      subject: "directory_other",
+      org: { id: "org_directory_b" },
+    });
+    const { userId, companyId } = await idsFor(t, "directory_remaining", "org_directory_a");
+    const membership = await t.run((ctx) => getCompanyUser(ctx, userId, companyId));
+    const movedUser = await t.run((ctx) => getUserByWorkosId(ctx, "directory_moved"));
+    expect(movedUser?.isActive).toBe(true);
+    expect(await t.run((ctx) => getCompanyUser(ctx, movedUser!._id, companyId))).toMatchObject({
+      isActive: false,
+    });
+
+    const first = await listPage(t, companyId, null, 1);
+    expect(first.page).toEqual([]);
+    expect(first.isDone).toBe(false);
+    const second = await listPage(t, companyId, first.continueCursor, 1);
+    expect(second.page).toEqual([
+      {
+        membershipId: membership!._id,
+        userId,
+        role: "admin",
+        firstName: "Test",
+        lastName: "",
+        email: "remaining@example.com",
+      },
+    ]);
+    expect(second.isDone).toBe(true);
+    const otherCompany = await listPage(t, await companyIdFor(t, "org_directory_b"));
+    expect(otherCompany.page.map((member) => member.email).sort()).toEqual([
+      "directory_other@example.com",
+      "moved@example.com",
+    ]);
+  });
+
   test("returns only that company's members", async () => {
     const t = convexTest(schema, modules);
     await seedUser(t, { subject: "cu11", email: "a@acme.com", org: { id: "org_acme" } });

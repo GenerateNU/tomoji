@@ -12,6 +12,7 @@ import {
   seedOpportunity,
   seedUser,
   seedWrongOrgCaller,
+  withoutDeliverables,
   workosIdentity,
 } from "./helpers";
 
@@ -62,7 +63,7 @@ describe("opportunities.close", () => {
     expect(result.status).toBe("closed");
     expect(
       await t.run(async (ctx) => await ctx.db.get("opportunities", owner.opportunityId)),
-    ).toEqual(result);
+    ).toEqual({ ...result, niches: undefined, skills: undefined });
   });
 
   test("rejects a signed-out caller", async () => {
@@ -152,7 +153,7 @@ describe("opportunities.closeExpired", () => {
       for (const status of ["open", "paused"] as const) {
         for (let i = 0; i < 51; i++) {
           const id = await ctx.db.insert("opportunities", {
-            ...opportunityArgs(owner.campaignId, { deadline: Date.now() - 1 }),
+            ...withoutDeliverables(opportunityArgs(owner.campaignId, { deadline: Date.now() - 1 })),
             companyId: owner.membership.companyId,
             createdBy: owner.membership._id,
             numFilledSlots: 0,
@@ -228,7 +229,7 @@ describe("opportunities.pause", () => {
     expect(result).toEqual({ ...before, status: "paused" });
     expect(
       await t.run(async (ctx) => await ctx.db.get("opportunities", owner.opportunityId)),
-    ).toEqual(result);
+    ).toEqual({ ...result, niches: undefined, skills: undefined });
     await expectApiError(
       () => asCreator.query(api.opportunities.get, { opportunityId: owner.opportunityId }),
       "not_found",
@@ -313,7 +314,7 @@ describe("opportunities.resume", () => {
       opportunityId: owner.opportunityId,
     });
 
-    expect(result).toEqual({ ...before, status: "open" });
+    expect(result).toEqual({ ...before, status: "open", niches: [], skills: [] });
     const creatorView = await asCreator.query(api.opportunities.get, {
       opportunityId: owner.opportunityId,
     });
@@ -411,7 +412,7 @@ describe("opportunities.publish", () => {
       opportunityId: owner.opportunityId,
     });
 
-    expect(result).toEqual({ ...before, status: "open" });
+    expect(result).toEqual({ ...before, status: "open", niches: [], skills: [] });
     const creatorView = await asCreator.query(api.opportunities.get, {
       opportunityId: owner.opportunityId,
     });
@@ -441,7 +442,7 @@ describe("opportunities.publish", () => {
     expect(result.status).toBe("open");
     expect(
       await t.run(async (ctx) => await ctx.db.get("opportunities", owner.opportunityId)),
-    ).toEqual(result);
+    ).toEqual({ ...result, niches: undefined, skills: undefined });
   });
 
   test("rejects a signed-out caller", async () => {
@@ -650,10 +651,31 @@ describe("opportunities.update", () => {
       title: "  Evening routine  ",
     });
 
-    expect(result).toEqual({ ...before, title: "Evening routine" });
+    expect(result).toEqual({ ...before, title: "Evening routine", niches: [], skills: [] });
     expect(
       await t.run(async (ctx) => await ctx.db.get("opportunities", owner.opportunityId)),
-    ).toEqual(result);
+    ).toEqual({ ...result, niches: undefined, skills: undefined });
+  });
+
+  test("sets and clears an opportunity's minimum follower range", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(
+      t,
+      { subject: "update_followers" },
+      { minFollowerRange: "10k-50k" },
+    );
+
+    const raised = await owner.asCompany.mutation(api.opportunities.update, {
+      opportunityId: owner.opportunityId,
+      minFollowerRange: "50k-100k",
+    });
+    expect(raised.minFollowerRange).toBe("50k-100k");
+
+    const cleared = await owner.asCompany.mutation(api.opportunities.update, {
+      opportunityId: owner.opportunityId,
+      minFollowerRange: null,
+    });
+    expect(cleared).not.toHaveProperty("minFollowerRange");
   });
 
   test("lets a company admin remove an optional product link", async () => {
@@ -672,7 +694,7 @@ describe("opportunities.update", () => {
     expect(result).not.toHaveProperty("productAccessLink");
     expect(
       await t.run(async (ctx) => await ctx.db.get("opportunities", owner.opportunityId)),
-    ).toEqual(result);
+    ).toEqual({ ...result, niches: undefined, skills: undefined });
   });
 
   test("rejects a signed-out caller", async () => {
@@ -800,6 +822,9 @@ describe("opportunities.discover", () => {
         "_id",
         "_creationTime",
         "companyName",
+        "isStarred",
+        "niches",
+        "skills",
         "title",
         "description",
         "isGated",
@@ -896,7 +921,11 @@ describe("opportunities.list", () => {
     });
 
     expect(result.page).toEqual([
-      await t.run(async (ctx) => await ctx.db.get("opportunities", owner.opportunityId)),
+      {
+        ...(await t.run(async (ctx) => await ctx.db.get("opportunities", owner.opportunityId))),
+        niches: [],
+        skills: [],
+      },
     ]);
     expect(result.isDone).toBe(true);
   });
@@ -914,7 +943,11 @@ describe("opportunities.list", () => {
     });
 
     expect(result.page).toEqual([
-      await t.run(async (ctx) => await ctx.db.get("opportunities", owner.opportunityId)),
+      {
+        ...(await t.run(async (ctx) => await ctx.db.get("opportunities", owner.opportunityId))),
+        niches: [],
+        skills: [],
+      },
     ]);
   });
 
@@ -1120,7 +1153,7 @@ describe("opportunities.create", () => {
     const stored = await t.run(async (ctx) => await ctx.db.get("opportunities", id));
 
     expect(stored).toMatchObject({
-      ...args,
+      ...withoutDeliverables(args),
       companyId: membership.companyId,
       createdBy: membership._id,
       numFilledSlots: 0,
@@ -1288,6 +1321,9 @@ describe("opportunities.get", () => {
         "_id",
         "_creationTime",
         "companyName",
+        "isStarred",
+        "niches",
+        "skills",
         "title",
         "description",
         "isGated",
@@ -1314,12 +1350,102 @@ describe("opportunities.get", () => {
     const { asCompany, opportunityId } = await seedOpportunity(
       t,
       { subject: "op_owner" },
-      { productAccessLink: "https://example.com/private-product" },
+      {
+        productAccessLink: "https://example.com/private-product",
+        niches: ["databases"],
+        skills: ["typescript"],
+      },
     );
     const asOperator = await seedOperator(t, "op_operator");
     const stored = await t.run(async (ctx) => await ctx.db.get("opportunities", opportunityId));
 
-    expect(await asCompany.query(api.opportunities.get, { opportunityId })).toEqual(stored);
-    expect(await asOperator.query(api.opportunities.get, { opportunityId })).toEqual(stored);
+    expect(await asCompany.query(api.opportunities.get, { opportunityId })).toEqual({
+      ...stored,
+      niches: ["databases"],
+      skills: ["typescript"],
+    });
+    expect(await asOperator.query(api.opportunities.get, { opportunityId })).toEqual({
+      ...stored,
+      niches: ["databases"],
+      skills: ["typescript"],
+    });
+  });
+});
+
+describe("opportunities.star / unstar / listStarred", () => {
+  const firstPage = { numItems: 10, cursor: null };
+
+  test("a creator stars, sees it in the feed and starred list, then unstars", async () => {
+    const t = convexTest(schema, modules);
+    const { opportunityId } = await seedOpportunity(t, { subject: "star_owner" });
+    const asCreator = await seedUser(t, { subject: "star_creator" });
+
+    await asCreator.mutation(api.opportunities.star, { opportunityId });
+
+    const feed = await asCreator.query(api.opportunities.discover, { paginationOpts: firstPage });
+    expect(feed.page).toMatchObject([{ _id: opportunityId, isStarred: true }]);
+    const detail = await asCreator.query(api.opportunities.get, { opportunityId });
+    expect(detail).toMatchObject({ isStarred: true });
+    const starred = await asCreator.query(api.opportunities.listStarred, {
+      paginationOpts: firstPage,
+    });
+    expect(starred.page.map((opportunity) => opportunity._id)).toEqual([opportunityId]);
+
+    await asCreator.mutation(api.opportunities.unstar, { opportunityId });
+
+    const after = await asCreator.query(api.opportunities.discover, { paginationOpts: firstPage });
+    expect(after.page).toMatchObject([{ _id: opportunityId, isStarred: false }]);
+  });
+
+  test("another creator's stars don't show as starred", async () => {
+    const t = convexTest(schema, modules);
+    const { opportunityId } = await seedOpportunity(t, { subject: "star_owner" });
+    const asCreator = await seedUser(t, { subject: "star_creator" });
+    const asOtherCreator = await seedUser(t, { subject: "other_star_creator" });
+    await asOtherCreator.mutation(api.opportunities.star, { opportunityId });
+
+    const feed = await asCreator.query(api.opportunities.discover, { paginationOpts: firstPage });
+    const starred = await asCreator.query(api.opportunities.listStarred, {
+      paginationOpts: firstPage,
+    });
+
+    expect(feed.page).toMatchObject([{ _id: opportunityId, isStarred: false }]);
+    expect(starred.page).toEqual([]);
+  });
+
+  test("company responses don't include isStarred", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(t, { subject: "star_owner" });
+
+    const detail = await owner.asCompany.query(api.opportunities.get, {
+      opportunityId: owner.opportunityId,
+    });
+
+    expect(detail).not.toHaveProperty("isStarred");
+  });
+
+  test("rejects company users and operators", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(t, { subject: "star_owner" });
+    const asOperator = await seedOperator(t, "star_operator");
+    const args = { opportunityId: owner.opportunityId };
+
+    for (const caller of [owner.asCompany, asOperator]) {
+      await expectApiError(() => caller.mutation(api.opportunities.star, args), "forbidden");
+      await expectApiError(() => caller.mutation(api.opportunities.unstar, args), "forbidden");
+      await expectApiError(
+        () => caller.query(api.opportunities.listStarred, { paginationOpts: firstPage }),
+        "forbidden",
+      );
+    }
+  });
+
+  test("rejects a signed-out caller", async () => {
+    const t = convexTest(schema, modules);
+    const { opportunityId } = await seedOpportunity(t, { subject: "star_owner" });
+    await expectApiError(
+      () => t.mutation(api.opportunities.star, { opportunityId }),
+      "not_authenticated",
+    );
   });
 });

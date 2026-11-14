@@ -3,8 +3,11 @@ import type { Infer } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { apiError } from "../lib/errors";
+import { canViewResource, type ResourceViewer } from "../lib/authz";
+import { HALF_HOUR_MS, isHalfHourTimestamp } from "../lib/validation";
 import type { applicationStatus } from "../schemas/applications.schema";
-import { createAssignmentFromOffer } from "./assignments";
+import { assignmentTarget, createAssignmentFromOffer } from "./assignments";
+import { creatorName, notifyCompanyUser, notifyCreator } from "./notifications";
 
 /**
  * Creates a pending application from a creator to an open, gated opportunity.
@@ -54,13 +57,28 @@ export async function createApplication(
     throw apiError("invalid_state", { reason: "applications_full" });
   }
 
-  return await ctx.db.insert("applications", {
+  const applicationId = await ctx.db.insert("applications", {
     opportunityId: opportunity._id,
     creatorId,
     companyId: campaign.companyId,
     note,
     status: "pending",
   });
+  await notifyCompanyUser(ctx, opportunity.createdBy, {
+    type: "applicationReceived",
+    title: `${await creatorName(ctx, creatorId)} applied to ${opportunity.title}`,
+    target: applicationTarget({ _id: applicationId, opportunityId: opportunity._id }),
+  });
+  return applicationId;
+}
+
+/** Links a notification to the application, alongside its opportunity. */
+function applicationTarget(application: Pick<Doc<"applications">, "_id" | "opportunityId">) {
+  return {
+    kind: "application" as const,
+    applicationId: application._id,
+    opportunityId: application.opportunityId,
+  };
 }
 
 /**
@@ -88,10 +106,7 @@ async function requireOpportunityOpen(
 }
 
 /** Who is reading an application, resolved from the caller by the route. */
-export type ApplicationViewer =
-  | { role: "operator" }
-  | { role: "creator"; creatorId: Id<"creators"> }
-  | { role: "company"; companyId: Id<"companies"> };
+export type ApplicationViewer = ResourceViewer;
 
 /**
  * Returns an application the viewer may see: creators see their own, company
@@ -107,21 +122,10 @@ export async function requireApplication(
   applicationId: Id<"applications">,
 ): Promise<Doc<"applications">> {
   const application = await ctx.db.get("applications", applicationId);
-  if (application === null || !canViewApplication(viewer, application)) {
+  if (application === null || !canViewResource(viewer, application)) {
     throw apiError("not_found", { resource: "application" });
   }
   return application;
-}
-
-function canViewApplication(viewer: ApplicationViewer, application: Doc<"applications">): boolean {
-  switch (viewer.role) {
-    case "operator":
-      return true;
-    case "creator":
-      return application.creatorId === viewer.creatorId;
-    case "company":
-      return application.companyId === viewer.companyId;
-  }
 }
 
 /**
@@ -185,10 +189,6 @@ export async function listApplicationsByOpportunityId(
 /** How long an offer stays open when the company does not choose an expiry. */
 export const DEFAULT_OFFER_DURATION_MS = 48 * 60 * 60 * 1000;
 
-// Offer expiries sit on :00/:30 UTC boundaries, the same times the expiry cron
-// runs, so an offer is marked expired exactly when it expires.
-const HALF_HOUR_MS = 30 * 60 * 1000;
-
 /**
  * Sends an offer on a pending application to one of the company's
  * opportunities. Offers are not capped by open slots: the first creators to
@@ -214,16 +214,20 @@ export async function offerApplication(
   const offerExpiresAt =
     requestedExpiresAt ??
     Math.ceil((now + DEFAULT_OFFER_DURATION_MS) / HALF_HOUR_MS) * HALF_HOUR_MS;
-  if (
-    !Number.isSafeInteger(offerExpiresAt) ||
-    offerExpiresAt % HALF_HOUR_MS !== 0 ||
-    offerExpiresAt <= now
-  ) {
+  if (!isHalfHourTimestamp(offerExpiresAt) || offerExpiresAt <= now) {
     throw apiError("invalid_state", { reason: "invalid_offer_expiry" });
   }
 
   const patch = { status: "offered" as const, statusLastUpdatedAt: now, offerExpiresAt };
   await ctx.db.patch("applications", application._id, patch);
+  const opportunity = await ctx.db.get("opportunities", application.opportunityId);
+  if (opportunity !== null) {
+    await notifyCreator(ctx, application.creatorId, {
+      type: "applicationOffered",
+      title: `You received an offer for ${opportunity.title}`,
+      target: applicationTarget(application),
+    });
+  }
   return { ...application, ...patch };
 }
 
@@ -243,6 +247,14 @@ export async function rejectApplication(
   const application = await requirePendingForReview(ctx, companyId, applicationId);
   const patch = { status: "rejected" as const, statusLastUpdatedAt: Date.now() };
   await ctx.db.patch("applications", application._id, patch);
+  const opportunity = await ctx.db.get("opportunities", application.opportunityId);
+  if (opportunity !== null) {
+    await notifyCreator(ctx, application.creatorId, {
+      type: "applicationRejected",
+      title: `Your application for ${opportunity.title} wasn't accepted`,
+      target: applicationTarget(application),
+    });
+  }
   return { ...application, ...patch };
 }
 
@@ -297,9 +309,17 @@ export async function acceptApplication(
 
   // Refuses a closed opportunity or a full one, then takes the slot and creates
   // the termsPending assignment with the opportunity's current terms.
-  await createAssignmentFromOffer(ctx, { opportunityId: opportunity._id, creatorId });
+  const assignmentId = await createAssignmentFromOffer(ctx, {
+    opportunityId: opportunity._id,
+    creatorId,
+  });
   const patch = { status: "accepted" as const, offerAcceptedAt: now, statusLastUpdatedAt: now };
   await ctx.db.patch("applications", application._id, patch);
+  await notifyCompanyUser(ctx, opportunity.createdBy, {
+    type: "applicationAccepted",
+    title: `${await creatorName(ctx, creatorId)} accepted your offer for ${opportunity.title}`,
+    target: assignmentTarget(assignmentId),
+  });
   if (opportunity.numFilledSlots + 1 >= opportunity.maxSlots) {
     await markRemainingApplicationsFull(ctx, opportunity, now);
   }
@@ -322,6 +342,14 @@ export async function declineApplication(
   const application = await requireOfferedApplication(ctx, creatorId, applicationId);
   const patch = { status: "declined" as const, statusLastUpdatedAt: Date.now() };
   await ctx.db.patch("applications", application._id, patch);
+  const opportunity = await ctx.db.get("opportunities", application.opportunityId);
+  if (opportunity !== null) {
+    await notifyCompanyUser(ctx, opportunity.createdBy, {
+      type: "applicationDeclined",
+      title: `${await creatorName(ctx, creatorId)} declined your offer for ${opportunity.title}`,
+      target: applicationTarget(application),
+    });
+  }
   return { ...application, ...patch };
 }
 
@@ -340,8 +368,9 @@ async function requireOfferedApplication(
 
 /**
  * Marks every pending or offered application to the opportunity as
- * `opportunityFull` once its last slot is taken. An opportunity never has more
- * than `maxApplications` applications, so this batch is bounded.
+ * `opportunityFull` once its last slot is taken, and tells each creator. An
+ * opportunity never has more than `maxApplications` applications, so this
+ * batch is bounded.
  */
 async function markRemainingApplicationsFull(
   ctx: MutationCtx,
@@ -360,13 +389,19 @@ async function markRemainingApplicationsFull(
         status: "opportunityFull",
         statusLastUpdatedAt: now,
       });
+      await notifyCreator(ctx, application.creatorId, {
+        type: "applicationOpportunityFull",
+        title: `${opportunity.title} has filled all its slots`,
+        target: applicationTarget(application),
+      });
     }
   }
 }
 
 /**
- * Marks one bounded batch of offers past their expiry as `offerExpired` and
- * reports whether more may remain. `acceptApplication` already refuses expired
+ * Marks one bounded batch of offers past their expiry as `offerExpired`,
+ * notifies the creator and the opportunity's creator, and reports whether more
+ * may remain. `acceptApplication` already refuses expired
  * offers, so this only makes the status visible.
  */
 export async function expireApplicationOffers(ctx: MutationCtx): Promise<boolean> {
@@ -382,6 +417,19 @@ export async function expireApplicationOffers(ctx: MutationCtx): Promise<boolean
     await ctx.db.patch("applications", application._id, {
       status: "offerExpired",
       statusLastUpdatedAt: now,
+    });
+    const opportunity = await ctx.db.get("opportunities", application.opportunityId);
+    if (opportunity === null) continue;
+    const target = applicationTarget(application);
+    await notifyCreator(ctx, application.creatorId, {
+      type: "applicationOfferExpired",
+      title: `Your offer for ${opportunity.title} expired`,
+      target,
+    });
+    await notifyCompanyUser(ctx, opportunity.createdBy, {
+      type: "applicationOfferExpired",
+      title: `${await creatorName(ctx, application.creatorId)}'s offer for ${opportunity.title} expired unanswered`,
+      target,
     });
   }
   return expired.length === batchSize;

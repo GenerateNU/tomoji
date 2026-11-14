@@ -1,7 +1,7 @@
 import { paginationOptsValidator, paginationResultValidator } from "convex/server";
 import { v, type Infer } from "convex/values";
 import type { Doc } from "./_generated/dataModel";
-import { companyMutation, operatorMutation, operatorQuery } from "./lib/functions";
+import { companyAdminMutation, operatorMutation, operatorQuery } from "./lib/functions";
 import { createCompany, listCompanies, requireCompany, updateCompany } from "./models/companies";
 import schema from "./schema";
 
@@ -13,8 +13,30 @@ const companyView = schema.doc("companies").omit("workosId");
  * exposed on purpose. The returns validator rejects extra fields.
  */
 function toCompanyView(company: Doc<"companies">): Infer<typeof companyView> {
-  const { _id, _creationTime, name, isActive, profilePicture } = company;
-  return { _id, _creationTime, name, isActive, profilePicture };
+  const {
+    _id,
+    _creationTime,
+    name,
+    isActive,
+    profilePictureMediaId,
+    bannerMediaId,
+    website,
+    description,
+    countryOfResidence,
+    industry,
+  } = company;
+  return {
+    _id,
+    _creationTime,
+    name,
+    isActive,
+    profilePictureMediaId,
+    bannerMediaId,
+    website,
+    description,
+    countryOfResidence,
+    industry,
+  };
 }
 
 /**
@@ -32,15 +54,17 @@ export const get = operatorQuery({
 });
 
 /**
- * Updates the caller's company. Open to any member for now; restricting it
- * to company admins is tracked in a follow-up ticket.
+ * Updates the caller's company.
  *
- * @throws `invalid_state` if `name` or `profilePicture` is blank.
+ * @throws `invalid_state` if a provided field is blank.
  */
-export const update = companyMutation({
+export const update = companyAdminMutation({
   args: {
     name: v.optional(v.string()),
-    profilePicture: v.optional(v.string()),
+    website: v.optional(v.union(v.string(), v.null())),
+    description: v.optional(v.union(v.string(), v.null())),
+    countryOfResidence: v.optional(v.union(v.string(), v.null())),
+    industry: v.optional(v.union(v.string(), v.null())),
   },
   returns: v.null(),
   handler: async (ctx, args) => {

@@ -1,9 +1,12 @@
 import { paginationOptsValidator, paginationResultValidator } from "convex/server";
 import { v } from "convex/values";
-import type { Doc } from "./_generated/dataModel";
-import type { QueryCtx } from "./_generated/server";
-import { authedQuery, companyContext, companyMutation, creatorMutation } from "./lib/functions";
-import { requireCreatorProfile } from "./models/creators";
+import {
+  authedQuery,
+  requireCallerViewer,
+  companyMutation,
+  creatorMutation,
+} from "./lib/functions";
+import { requireCallerCreatorId } from "./models/users";
 import {
   createSubmission,
   listSubmissions,
@@ -12,42 +15,28 @@ import {
   submissionDraft,
   submissionReview,
   submissionView,
-  type SubmissionViewer,
 } from "./models/submissions";
 import schema from "./schema";
 
-/** Company users go through `companyContext`, so their token's org must be one they belong to. */
-async function requireViewer(ctx: QueryCtx, user: Doc<"users">): Promise<SubmissionViewer> {
-  switch (user.role) {
-    case "creator": {
-      const { creatorId } = await requireCreatorProfile(ctx, user);
-      return { role: "creator", creatorId };
-    }
-    case "company": {
-      const { membership } = await companyContext(ctx);
-      return { role: "company", companyId: membership.companyId };
-    }
-    case "operator":
-      return { role: "operator" };
-  }
-}
-
 /**
- * Submits a draft for review on the caller's own active assignment. The URL is
- * stored in its parsed form.
+ * Submits a draft for one deliverable of the caller's own active assignment.
+ * Each deliverable is reviewed on its own: one being pending or approved doesn't
+ * block the others. Supply a completed owned video mediaId.
+ * AI drafts snapshot confirmed criteria and start background review when enabled.
  *
- * @throws `not_found` if the assignment doesn't exist or isn't the caller's.
- * @throws `invalid_state` if the assignment isn't active, a draft is already
- * approved, a draft field is blank or too long, or the URL isn't http(s) or
- * includes login details.
- * @throws `conflict` if a draft is already pending review.
+ * @throws `not_found` if the assignment doesn't exist or isn't the caller's, or
+ * the deliverable isn't one of the assignment's opportunity.
+ * @throws `invalid_state` if the assignment isn't active, a draft for that
+ * deliverable is already approved, a draft field is blank or too long, or the
+ * video is incomplete, or an AI video draft has no confirmed criteria.
+ * @throws `conflict` if a draft for that deliverable is already pending review.
  * @returns the new submission's id.
  */
 export const create = creatorMutation({
   args: submissionDraft.fields,
   returns: v.id("submissions"),
   handler: async (ctx, args) => {
-    const { creatorId } = await requireCreatorProfile(ctx, ctx.user);
+    const creatorId = await requireCallerCreatorId(ctx, ctx.user);
     return await createSubmission(ctx, creatorId, args);
   },
 });
@@ -59,7 +48,7 @@ export const create = creatorMutation({
  *
  * @throws `not_found` if the submission doesn't exist or isn't the company's.
  * @throws `invalid_state` if it was already reviewed, the assignment isn't
- * active, the note on a change request is blank, or the note is too long.
+ * active, automation is processing, the note on a change request is blank, or the note is too long.
  * @returns the reviewed submission.
  */
 export const review = companyMutation({
@@ -85,25 +74,33 @@ export const get = authedQuery({
   args: { submissionId: v.id("submissions") },
   returns: submissionView,
   handler: async (ctx, args) => {
-    const viewer = await requireViewer(ctx, ctx.user);
+    const viewer = await requireCallerViewer(ctx, ctx.user);
     return await requireSubmission(ctx, viewer, args.submissionId);
   },
 });
 
 /**
- * Lists an assignment's submissions, newest first, with cursor pagination. Each
- * row is what `get` returns to the same caller.
+ * Lists the drafts for one deliverable of an assignment, newest first, with
+ * cursor pagination. Each row is what `get` returns to the same caller.
  *
- * @throws `not_found` if the assignment doesn't exist or isn't the caller's.
+ * @throws `not_found` if the assignment doesn't exist or isn't the caller's, or
+ * the deliverable isn't one of its opportunity's.
  */
 export const list = authedQuery({
   args: {
     assignmentId: v.id("assignments"),
+    deliverableId: v.id("deliverables"),
     paginationOpts: paginationOptsValidator,
   },
   returns: paginationResultValidator(submissionView),
   handler: async (ctx, args) => {
-    const viewer = await requireViewer(ctx, ctx.user);
-    return await listSubmissions(ctx, viewer, args.assignmentId, args.paginationOpts);
+    const viewer = await requireCallerViewer(ctx, ctx.user);
+    return await listSubmissions(
+      ctx,
+      viewer,
+      args.assignmentId,
+      args.deliverableId,
+      args.paginationOpts,
+    );
   },
 });

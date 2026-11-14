@@ -1,16 +1,19 @@
 /// <reference types="vite/client" />
 import { convexTest } from "convex-test";
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import { api } from "../_generated/api";
 import { getCreatorByUserId, updateCreatorProfile } from "../models/creators";
 import { getUserByWorkosId } from "../models/users";
 import schema from "../schema";
 import {
   expectApiError,
+  seedAssignment,
   seedCreatorId,
   seedOperator,
+  seedOpportunity,
   seedProfilePictureUpload,
   seedUser,
+  seedXAccount,
 } from "./helpers";
 
 const modules = import.meta.glob("../**/*.ts");
@@ -29,14 +32,21 @@ describe("creators.me", () => {
       if (creator === null) throw new Error("expected seeded creator");
       return creator._id;
     });
-    const expected = { creatorId, email: "creator_names@example.com", ...names };
+    const expected = {
+      creatorId,
+      email: "creator_names@example.com",
+      additionalLinks: [],
+      isPrivate: false,
+      niches: [],
+      skills: [],
+      ...names,
+    };
 
     expect(await asCreator.query(api.creators.me, {})).toEqual(expected);
-    expect(await asCreator.mutation(api.creators.update, { username: "ada" })).toEqual({
+    expect(await asCreator.mutation(api.creators.update, {})).toEqual({
       ...expected,
-      username: "ada",
     });
-    expect(await asCreator.query(api.creators.me, {})).toEqual({ ...expected, username: "ada" });
+    expect(await asCreator.query(api.creators.me, {})).toEqual({ ...expected });
   });
 
   test("rejects a signed-out caller", async () => {
@@ -54,6 +64,7 @@ describe("creators.me", () => {
       firstName: "Creator",
       lastName: "Name",
     });
+    await seedXAccount(t, "creator_me");
     const creatorId = await t.run(async (ctx) => {
       const user = await getUserByWorkosId(ctx, "creator_me");
       if (user === null) throw new Error("expected seeded user");
@@ -61,24 +72,31 @@ describe("creators.me", () => {
       if (creator === null) throw new Error("expected seeded creator");
 
       await updateCreatorProfile(ctx, user, {
-        username: "creator_name",
-        xId: "creator_x",
         githubLink: "https://github.com/creator",
-        phoneNumber: "+15555550123",
+        linkedinLink: "https://www.linkedin.com/in/creator",
+        additionalLinks: ["https://creator.example.com/"],
+        dateOfBirth: Date.UTC(1990, 0, 1),
+        countryOfResidence: "us",
+        isPrivate: true,
       });
       return creator._id;
     });
 
     expect(await asCreator.query(api.creators.me, {})).toEqual({
       creatorId,
-      username: "creator_name",
       firstName: "Creator",
       lastName: "Name",
       email: "creator@example.com",
       profilePictureMediaId: uploadId,
-      xId: "creator_x",
+      xId: "123456789",
       githubLink: "https://github.com/creator",
-      phoneNumber: "+15555550123",
+      linkedinLink: "https://www.linkedin.com/in/creator",
+      additionalLinks: ["https://creator.example.com/"],
+      dateOfBirth: Date.UTC(1990, 0, 1),
+      countryOfResidence: "US",
+      isPrivate: true,
+      niches: [],
+      skills: [],
     });
   });
 
@@ -169,11 +187,39 @@ describe("creators.list", () => {
     expect(firstPage.page).toHaveLength(1);
     expect(firstPage.isDone).toBe(false);
     expect(secondPage.page).toHaveLength(1);
-    expect(secondPage.isDone).toBe(true);
     expect([...firstPage.page, ...secondPage.page].map((creator) => creator.email)).toEqual([
       "one@example.com",
       "two@example.com",
     ]);
+    // The filtered stream reports completion on the page after the last row.
+    const thirdPage = await asCompany.query(api.creators.list, {
+      paginationOpts: { cursor: secondPage.continueCursor, numItems: 1 },
+    });
+    expect(thirdPage.page).toEqual([]);
+    expect(thirdPage.isDone).toBe(true);
+  });
+
+  test("skips duplicate-email accounts, which have no creator row, instead of throwing", async () => {
+    const t = convexTest(schema, modules);
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const asCompany = await seedUser(t, {
+      subject: "dup_list_company",
+      org: { id: "org_dup_list" },
+    });
+    await seedUser(t, {
+      subject: "dup_list_owner",
+      email: "dup-creator@example.com",
+    });
+    await seedUser(t, {
+      subject: "dup_list_claimant",
+      email: "dup-creator@example.com",
+    });
+
+    const result = await asCompany.query(api.creators.list, {
+      paginationOpts: { cursor: null, numItems: 10 },
+    });
+
+    expect(result.page.map((creator) => creator.email)).toEqual(["dup-creator@example.com"]);
   });
 });
 
@@ -198,6 +244,106 @@ describe("creators.get", () => {
       firstName: "Test",
       lastName: "",
       email: "target@example.com",
+      additionalLinks: [],
+      isPrivate: false,
+      niches: [],
+      skills: [],
+    });
+  });
+
+  // A birth date is the creator's own; a company browsing for creators has no
+  // business reading it.
+  test("never discloses a creator's date of birth to a company", async () => {
+    const t = convexTest(schema, modules);
+    const asCompany = await seedUser(t, {
+      subject: "dob_company",
+      org: { id: "org_dob" },
+    });
+    await seedUser(t, { subject: "dob_target", email: "dob@example.com" });
+    const creatorId = await t.run(async (ctx) => {
+      const user = (await getUserByWorkosId(ctx, "dob_target"))!;
+      const profile = await updateCreatorProfile(ctx, user, {
+        dateOfBirth: Date.UTC(1990, 0, 1),
+      });
+      return profile.creatorId;
+    });
+
+    expect(await asCompany.query(api.creators.get, { creatorId })).not.toHaveProperty(
+      "dateOfBirth",
+    );
+    const { page } = await asCompany.query(api.creators.list, {
+      paginationOpts: { cursor: null, numItems: 10 },
+    });
+    expect(page).not.toHaveLength(0);
+    for (const profile of page) expect(profile).not.toHaveProperty("dateOfBirth");
+  });
+
+  // The route derives the company from the caller's membership. The model
+  // skips the privacy check entirely when no company is passed, so a route
+  // that stopped forwarding it would expose every private creator.
+  describe("private creators", () => {
+    async function seedPrivateCreator(t: ReturnType<typeof convexTest>, subject: string) {
+      const creatorId = await seedCreatorId(t, subject);
+      await t.run(async (ctx) => await ctx.db.patch("creators", creatorId, { isPrivate: true }));
+      return creatorId;
+    }
+
+    test("are not found by a company with no relationship", async () => {
+      const t = convexTest(schema, modules);
+      const creatorId = await seedPrivateCreator(t, "route_private_target");
+      const { asCompany } = await seedOpportunity(t, { subject: "route_unrelated_owner" });
+
+      await expectApiError(() => asCompany.query(api.creators.get, { creatorId }), "not_found");
+    });
+
+    test("are returned to a company they applied to", async () => {
+      const t = convexTest(schema, modules);
+      const creatorId = await seedPrivateCreator(t, "route_applicant");
+      const { asCompany, opportunityId, membership } = await seedOpportunity(t, {
+        subject: "route_applied_owner",
+      });
+      await t.run(async (ctx) => {
+        await ctx.db.insert("applications", {
+          opportunityId,
+          creatorId,
+          companyId: membership.companyId,
+          status: "pending",
+        });
+      });
+
+      expect(await asCompany.query(api.creators.get, { creatorId })).toMatchObject({
+        creatorId,
+        isPrivate: true,
+      });
+    });
+
+    test("are returned to a company that assigned them", async () => {
+      const t = convexTest(schema, modules);
+      const creatorId = await seedPrivateCreator(t, "route_assignee");
+      const { asCompany, opportunityId } = await seedOpportunity(t, {
+        subject: "route_assigned_owner",
+      });
+      await seedAssignment(t, { opportunityId, creatorId, status: "active" });
+
+      expect(await asCompany.query(api.creators.get, { creatorId })).toMatchObject({
+        creatorId,
+        isPrivate: true,
+      });
+    });
+
+    test("are left out of the list a company browses", async () => {
+      const t = convexTest(schema, modules);
+      const hiddenId = await seedPrivateCreator(t, "route_listed_private");
+      const openId = await seedCreatorId(t, "route_listed_open");
+      const { asCompany } = await seedOpportunity(t, { subject: "route_list_owner" });
+
+      const { page } = await asCompany.query(api.creators.list, {
+        paginationOpts: { cursor: null, numItems: 20 },
+      });
+
+      const listed = page.map((profile) => profile.creatorId);
+      expect(listed).toContain(openId);
+      expect(listed).not.toContain(hiddenId);
     });
   });
 
@@ -226,35 +372,40 @@ describe("creators.get", () => {
 });
 
 describe("creators.update", () => {
-  test("normalizes the username and allows equivalent updates by its owner", async () => {
+  test("updates only the caller's selections and returns them through me and company get", async () => {
     const t = convexTest(schema, modules);
-    const asCreator = await seedUser(t, { subject: "creator_username" });
-
-    const updated = await asCreator.mutation(api.creators.update, { username: "  AdA  " });
-    expect(updated.username).toBe("ada");
-    expect((await asCreator.mutation(api.creators.update, { username: "ada" })).username).toBe(
-      "ada",
+    const asCreator = await seedUser(t, { subject: "creator_tags" });
+    const asOther = await seedUser(t, { subject: "other_tags" });
+    const asCompany = await seedUser(t, { subject: "company_tags", org: { id: "org_tags" } });
+    const result = await asCreator.mutation(api.creators.update, {
+      niches: ["databases"],
+      skills: ["C#"],
+    });
+    expect(result).toMatchObject({ niches: ["databases"], skills: ["c-sharp"] });
+    expect(await asCreator.query(api.creators.me, {})).toEqual(result);
+    expect(await asCompany.query(api.creators.get, { creatorId: result.creatorId })).toEqual(
+      result,
     );
-    expect((await asCreator.mutation(api.creators.update, { username: " ADA " })).username).toBe(
-      "ada",
-    );
-    await asCreator.mutation(api.creators.update, { xId: "ada_x" });
-    expect((await asCreator.query(api.creators.me, {})).username).toBe("ada");
+    expect(await asOther.query(api.creators.me, {})).toMatchObject({ niches: [], skills: [] });
   });
 
-  test("returns conflict for a taken username without applying other profile edits", async () => {
+  test("sets and clears the creator's follower range", async () => {
     const t = convexTest(schema, modules);
-    const asOwner = await seedUser(t, { subject: "route_username_owner" });
-    const asClaimant = await seedUser(t, { subject: "route_username_claimant" });
-    await asOwner.mutation(api.creators.update, { username: "ada" });
-    const before = await asClaimant.query(api.creators.me, {});
+    const asCreator = await seedUser(t, { subject: "creator_followers" });
 
-    await expectApiError(
-      () => asClaimant.mutation(api.creators.update, { username: "ada", xId: "changed_x" }),
-      "conflict",
-    );
+    const set = await asCreator.mutation(api.creators.update, { followerRange: "1k-5k" });
+    expect(set.followerRange).toBe("1k-5k");
+    const cleared = await asCreator.mutation(api.creators.update, { followerRange: null });
+    expect(cleared).not.toHaveProperty("followerRange");
+  });
 
-    expect(await asClaimant.query(api.creators.me, {})).toEqual(before);
+  test("rejects manual X ID editing", async () => {
+    const t = convexTest(schema, modules);
+    const asCreator = await seedUser(t, { subject: "creator_manual_x" });
+    // Deliberately bypass the client type to verify runtime argument validation.
+    await expect(
+      asCreator.mutation(api.creators.update, { xId: "forged" } as never),
+    ).rejects.toThrow();
   });
 
   test("updates the authenticated creator's profile", async () => {
@@ -265,18 +416,14 @@ describe("creators.update", () => {
     });
 
     const profile = await asCreator.mutation(api.creators.update, {
-      xId: "creator_x",
       githubLink: "https://github.com/creator",
-      phoneNumber: "+15555550123",
     });
 
     expect(profile).toMatchObject({
       firstName: "Test",
       lastName: "",
       email: "creator@example.com",
-      xId: "creator_x",
       githubLink: "https://github.com/creator",
-      phoneNumber: "+15555550123",
     });
   });
 
@@ -284,19 +431,13 @@ describe("creators.update", () => {
     const t = convexTest(schema, modules);
     const asCreator = await seedUser(t, { subject: "creator_update_partial" });
     await asCreator.mutation(api.creators.update, {
-      xId: "creator_x",
       githubLink: "https://github.com/creator",
-      phoneNumber: "+15555550123",
     });
 
-    const profile = await asCreator.mutation(api.creators.update, {
-      xId: "updated_creator_x",
-    });
+    const profile = await asCreator.mutation(api.creators.update, {});
 
     expect(profile).toMatchObject({
-      xId: "updated_creator_x",
       githubLink: "https://github.com/creator",
-      phoneNumber: "+15555550123",
     });
   });
 
@@ -304,15 +445,11 @@ describe("creators.update", () => {
     const t = convexTest(schema, modules);
     const asCreator = await seedUser(t, { subject: "creator_update_clear" });
     await asCreator.mutation(api.creators.update, {
-      xId: "creator_x",
       githubLink: "https://github.com/creator",
-      phoneNumber: "+15555550123",
     });
 
     const profile = await asCreator.mutation(api.creators.update, {
-      xId: null,
       githubLink: null,
-      phoneNumber: null,
     });
 
     expect(profile).not.toHaveProperty("xId");
@@ -324,7 +461,7 @@ describe("creators.update", () => {
     const t = convexTest(schema, modules);
 
     await expectApiError(
-      () => t.mutation(api.creators.update, { xId: "signed_out" }),
+      () => t.mutation(api.creators.update, { skills: ["python"] }),
       "not_authenticated",
     );
   });
@@ -337,7 +474,7 @@ describe("creators.update", () => {
     });
 
     await expectApiError(
-      () => asCompany.mutation(api.creators.update, { xId: "company" }),
+      () => asCompany.mutation(api.creators.update, { skills: ["python"] }),
       "forbidden",
     );
   });
@@ -347,7 +484,7 @@ describe("creators.update", () => {
     const asOperator = await seedOperator(t, "creator_update_operator");
 
     await expectApiError(
-      () => asOperator.mutation(api.creators.update, { xId: "operator" }),
+      () => asOperator.mutation(api.creators.update, { skills: ["python"] }),
       "forbidden",
     );
   });

@@ -3,16 +3,30 @@ import { v, type Infer } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { apiError } from "../lib/errors";
-import { requireNonBlank } from "../lib/validation";
+import { optionalNonBlank, requireNonBlank } from "../lib/validation";
+import { aiReviewAttemptsTable } from "../schemas/aiReviewAttempts.schema";
 import { submissionShapes } from "../schemas/submissions.schema";
-import { requireAssignment, type AssignmentViewer } from "./assignments";
+import { requireAssignment, requireActiveAssignment, type AssignmentViewer } from "./assignments";
+import { creatorName, notifyCompanyUser, notifyCreator } from "./notifications";
+import { requireSubmissionVideo } from "./media";
+import { criterionResult, type aiReviewResult } from "../lib/ai/validation";
+import { decideAiReview, AI_REVIEW_MAX_DURATION_SECONDS } from "../lib/ai/reviewPolicy";
+import { env } from "../_generated/server";
+import {
+  createAiReviewAttempt,
+  enqueueAiReview,
+  requireCurrentAiReviewAttempt,
+  markAiReviewForManualReview,
+} from "./aiReviewAttempts";
 
 /** The creator-supplied fields of a new submission. */
 export const submissionDraft = v.object({
   assignmentId: v.id("assignments"),
-  draftUrl: v.string(),
+  deliverableId: v.id("deliverables"),
+  mediaId: v.id("mediaUploads"),
   draftDescription: v.string(),
 });
+
 export type SubmissionDraft = Infer<typeof submissionDraft>;
 
 /** A review decision. A change request needs a note; an approval's is optional. */
@@ -37,6 +51,12 @@ export const submissionView = v.union(
     _creationTime: v.number(),
     // Derived on read, never stored. See `isClosedWithoutReview`.
     closedWithoutReview: v.boolean(),
+    aiReview: v.optional(
+      v.object({
+        status: aiReviewAttemptsTable.validator.fields.status,
+        results: v.array(criterionResult.pick("criterionId", "outcome")),
+      }),
+    ),
   }),
 );
 export type SubmissionView = Infer<typeof submissionView>;
@@ -46,49 +66,11 @@ export type SubmissionViewer = AssignmentViewer;
 
 // Limits on free text after trimming. `.length` counts UTF-16 units, so an emoji counts as two.
 const MAX_LENGTH = {
-  draftUrl: 2048,
   draftDescription: 5000,
-  reviewNote: 2000,
 } as const;
 
 function requireText(value: string, field: keyof typeof MAX_LENGTH): string {
-  const trimmed = requireNonBlank(value, field);
-  if (trimmed.length > MAX_LENGTH[field]) {
-    throw apiError("invalid_state", { reason: `${field}_too_long` });
-  }
-  return trimmed;
-}
-
-/** Like `requireText`, but a missing or blank value becomes `undefined`. */
-function optionalText(
-  value: string | undefined,
-  field: keyof typeof MAX_LENGTH,
-): string | undefined {
-  if (value === undefined || value.trim() === "") return undefined;
-  return requireText(value, field);
-}
-
-/** Returns the URL in its parsed form, so reviewers open exactly the link that was checked. */
-function requireDraftUrl(value: string): string {
-  const trimmed = requireText(value, "draftUrl");
-  let url: URL;
-  try {
-    url = new URL(trimmed);
-  } catch {
-    throw apiError("invalid_state", { reason: "draftUrl_invalid" });
-  }
-  if (url.protocol !== "http:" && url.protocol !== "https:") {
-    throw apiError("invalid_state", { reason: "draftUrl_invalid" });
-  }
-  // Draft links never need login details, and `drive.google.com@evil.example` goes to evil.example.
-  if (url.username !== "" || url.password !== "") {
-    throw apiError("invalid_state", { reason: "draftUrl_invalid" });
-  }
-  // Encoding can make the URL longer than what was typed, so check again.
-  if (url.href.length > MAX_LENGTH.draftUrl) {
-    throw apiError("invalid_state", { reason: "draftUrl_too_long" });
-  }
-  return url.href;
+  return requireNonBlank(value, field, MAX_LENGTH[field]);
 }
 
 /**
@@ -152,7 +134,8 @@ function toCreatorView(
     _id: submission._id,
     _creationTime: submission._creationTime,
     assignmentId: submission.assignmentId,
-    draftUrl: submission.draftUrl,
+    deliverableId: submission.deliverableId,
+    mediaId: submission.mediaId,
     draftDescription: submission.draftDescription,
     usesAiReview: submission.usesAiReview,
     closedWithoutReview,
@@ -181,21 +164,42 @@ function toCreatorView(
   }
 }
 
+/** Requires an active assignment before applying submission-specific deadline rules. */
 function requireSubmissionWindowOpen(assignment: Doc<"assignments">): void {
-  if (assignment.status !== "active") {
-    throw apiError("invalid_state", { reason: "assignment_not_active" });
-  }
+  requireActiveAssignment(assignment);
   // TODO(dueAt): reject after `assignment.dueAt` once assignments have it.
 }
 
-/** Indexes end in `_creationTime`, so descending order reads the newest row first. */
-async function getLatestSubmission(
+/**
+ * A deliverable of the assignment's opportunity. Throws `not_found` for one
+ * from another opportunity, the same as a missing one.
+ */
+async function requireAssignmentDeliverable(
+  ctx: QueryCtx | MutationCtx,
+  assignment: Doc<"assignments">,
+  deliverableId: Id<"deliverables">,
+): Promise<Doc<"deliverables">> {
+  const deliverable = await ctx.db.get("deliverables", deliverableId);
+  if (deliverable === null || deliverable.opportunityId !== assignment.opportunityId) {
+    throw apiError("not_found", { resource: "deliverable" });
+  }
+  return deliverable;
+}
+
+/**
+ * The newest draft for one deliverable of an assignment. Indexes end in
+ * `_creationTime`, so descending order reads the newest row first.
+ */
+export async function getLatestSubmission(
   ctx: QueryCtx | MutationCtx,
   assignmentId: Id<"assignments">,
+  deliverableId: Id<"deliverables">,
 ): Promise<Doc<"submissions"> | null> {
   return await ctx.db
     .query("submissions")
-    .withIndex("by_assignmentId", (q) => q.eq("assignmentId", assignmentId))
+    .withIndex("by_assignmentId_and_deliverableId", (q) =>
+      q.eq("assignmentId", assignmentId).eq("deliverableId", deliverableId),
+    )
     .order("desc")
     .first();
 }
@@ -212,8 +216,10 @@ export async function createSubmission(
     draft.assignmentId,
   );
   requireSubmissionWindowOpen(assignment);
+  const deliverable = await requireAssignmentDeliverable(ctx, assignment, draft.deliverableId);
 
-  const latest = await getLatestSubmission(ctx, assignment._id);
+  // One approved draft per deliverable; the others are still open to submit.
+  const latest = await getLatestSubmission(ctx, assignment._id, deliverable._id);
   if (latest?.status === "pending") {
     throw apiError("conflict", { reason: "submission_pending" });
   }
@@ -221,13 +227,35 @@ export async function createSubmission(
     throw apiError("invalid_state", { reason: "already_approved" });
   }
 
-  return await ctx.db.insert("submissions", {
+  await requireSubmissionVideo(ctx, assignment, draft.mediaId);
+
+  const submissionId = await ctx.db.insert("submissions", {
     assignmentId: assignment._id,
-    draftUrl: requireDraftUrl(draft.draftUrl),
+    deliverableId: deliverable._id,
+    mediaId: draft.mediaId,
     draftDescription: requireText(draft.draftDescription, "draftDescription"),
     status: "pending",
     usesAiReview: assignment.usesAiReview,
   });
+  let automated = false;
+  if (assignment.usesAiReview) {
+    const attemptId = await createAiReviewAttempt(ctx, submissionId);
+    if (env.AI_REVIEW_ENABLED === "true") {
+      await enqueueAiReview(ctx, attemptId);
+      automated = true;
+    }
+  }
+  const opportunity = await ctx.db.get("opportunities", assignment.opportunityId);
+  if (opportunity !== null && !automated) {
+    // A draft after a change request is the creator's response to that review.
+    const isResubmission = latest?.status === "changesRequested";
+    await notifyCompanyUser(ctx, opportunity.createdBy, {
+      type: isResubmission ? "submissionResubmitted" : "submissionCreated",
+      title: `${await creatorName(ctx, creatorId)} ${isResubmission ? "resubmitted" : "submitted"} a draft for ${opportunity.title}`,
+      target: { kind: "submission", submissionId, assignmentId: assignment._id },
+    });
+  }
+  return submissionId;
 }
 
 /** Records a company user's review. Errors are listed on the `submissions.review` route. */
@@ -245,23 +273,23 @@ export async function reviewSubmission(
   if (submission.status !== "pending") {
     throw apiError("invalid_state", { reason: "already_reviewed" });
   }
-  if (assignment.status !== "active") {
-    throw apiError("invalid_state", { reason: "assignment_not_active" });
-  }
-  // TODO(ai-layer): reject when `submission.usesAiReview` is true.
-
-  const outcome =
-    review.status === "changesRequested"
-      ? { status: review.status, reviewNote: requireText(review.reviewNote, "reviewNote") }
-      : { status: review.status, reviewNote: optionalText(review.reviewNote, "reviewNote") };
-  const patch = {
-    ...outcome,
-    reviewerType: "companyUser" as const,
+  requireActiveAssignment(assignment);
+  const attempt = await ctx.db
+    .query("aiReviewAttempts")
+    .withIndex("by_submissionId", (q) => q.eq("submissionId", submissionId))
+    .order("desc")
+    .first();
+  if (
+    env.AI_REVIEW_ENABLED === "true" &&
+    attempt?.workflowId &&
+    attempt.status !== "manualReview" &&
+    attempt.status !== "completed"
+  )
+    throw apiError("invalid_state", { reason: "ai_review_processing" });
+  return await recordSubmissionReview(ctx, submission, assignment, review, {
+    reviewerType: "companyUser",
     reviewedBy: membership._id,
-    reviewedAt: Date.now(),
-  };
-  await ctx.db.patch("submissions", submissionId, patch);
-  return { ...submission, ...patch };
+  });
 }
 
 /** One submission, as the viewer may see it. */
@@ -271,26 +299,171 @@ export async function requireSubmission(
   submissionId: Id<"submissions">,
 ): Promise<SubmissionView> {
   const { submission, assignment } = await requireSubmissionAccess(ctx, viewer, submissionId);
-  return toSubmissionView(viewer, submission, isClosedWithoutReview(submission, assignment));
+  return await withAiReviewSummary(
+    ctx,
+    toSubmissionView(viewer, submission, isClosedWithoutReview(submission, assignment)),
+  );
 }
 
-/** One page of an assignment's submissions, newest first, as the viewer may see them. */
+/**
+ * One page of the drafts for one deliverable of an assignment, newest first, as
+ * the viewer may see them. Drafts are always read per deliverable.
+ */
 export async function listSubmissions(
   ctx: QueryCtx,
   viewer: SubmissionViewer,
   assignmentId: Id<"assignments">,
+  deliverableId: Id<"deliverables">,
   paginationOpts: PaginationOptions,
 ): Promise<PaginationResult<SubmissionView>> {
   const assignment = await requireAssignment(ctx, viewer, assignmentId);
+  await requireAssignmentDeliverable(ctx, assignment, deliverableId);
   const result = await ctx.db
     .query("submissions")
-    .withIndex("by_assignmentId", (q) => q.eq("assignmentId", assignmentId))
+    .withIndex("by_assignmentId_and_deliverableId", (q) =>
+      q.eq("assignmentId", assignmentId).eq("deliverableId", deliverableId),
+    )
     .order("desc")
     .paginate(paginationOpts);
   return {
     ...result,
-    page: result.page.map((submission) =>
-      toSubmissionView(viewer, submission, isClosedWithoutReview(submission, assignment)),
+    page: await Promise.all(
+      result.page.map((submission) =>
+        withAiReviewSummary(
+          ctx,
+          toSubmissionView(viewer, submission, isClosedWithoutReview(submission, assignment)),
+        ),
+      ),
     ),
   };
+}
+
+/** Projects processing state and criterion outcomes; raw provider evidence stays internal. */
+async function withAiReviewSummary(ctx: QueryCtx, view: SubmissionView): Promise<SubmissionView> {
+  if (!view.usesAiReview) return view;
+  const attempt = await ctx.db
+    .query("aiReviewAttempts")
+    .withIndex("by_submissionId", (q) => q.eq("submissionId", view._id))
+    .order("desc")
+    .first();
+  if (!attempt) return view;
+  return {
+    ...view,
+    aiReview: {
+      status:
+        attempt.status !== "completed" && (env.AI_REVIEW_ENABLED !== "true" || !attempt.workflowId)
+          ? "manualReview"
+          : attempt.status,
+      results:
+        attempt.result?.results.map(({ criterionId, outcome }) => ({ criterionId, outcome })) ?? [],
+    },
+  };
+}
+
+type Reviewer =
+  | { reviewerType: "ai" }
+  | { reviewerType: "companyUser"; reviewedBy: Id<"companyUsers"> };
+
+/** Commits either initial reviewer's decision and notification together; callers authorize first. */
+export async function recordSubmissionReview<R extends Reviewer>(
+  ctx: MutationCtx,
+  submission: Extract<Doc<"submissions">, { status: "pending" }>,
+  assignment: Doc<"assignments">,
+  review: SubmissionReview,
+  reviewer: R,
+) {
+  requireActiveAssignment(assignment);
+  const outcome =
+    review.status === "changesRequested"
+      ? {
+          status: review.status,
+          reviewNote: requireNonBlank(review.reviewNote, "reviewNote", 2000),
+        }
+      : {
+          status: review.status,
+          reviewNote: optionalNonBlank(review.reviewNote, "reviewNote", 2000),
+        };
+  const patch = { ...outcome, ...reviewer, reviewedAt: Date.now() };
+  await ctx.db.patch("submissions", submission._id, patch);
+  const opportunity = await ctx.db.get("opportunities", assignment.opportunityId);
+  if (opportunity) {
+    const target = {
+      kind: "submission" as const,
+      submissionId: submission._id,
+      assignmentId: assignment._id,
+    };
+    await notifyCreator(
+      ctx,
+      assignment.creatorId,
+      outcome.status === "approved"
+        ? {
+            type: "submissionApproved",
+            title: `Your draft for ${opportunity.title} was approved`,
+            target,
+          }
+        : {
+            type: "submissionChangesRequested",
+            title: `Changes requested on your draft for ${opportunity.title}`,
+            body: outcome.reviewNote,
+            target,
+          },
+    );
+  }
+  return { ...submission, ...patch };
+}
+
+/** Saves evidence and its business outcome in one transaction; retries cannot notify twice. */
+export async function finishAiReview(
+  ctx: MutationCtx,
+  attemptId: Id<"aiReviewAttempts">,
+  result: Infer<typeof aiReviewResult>,
+): Promise<void> {
+  const attempt = await requireCurrentAiReviewAttempt(ctx, attemptId, "evaluating");
+  if (
+    !attempt.transcription?.text.trim() ||
+    attempt.transcription.durationSeconds > AI_REVIEW_MAX_DURATION_SECONDS
+  )
+    throw apiError("invalid_state", { reason: "review_input_invalid" });
+  if (attempt.deadlineAt !== undefined && Date.now() >= attempt.deadlineAt)
+    return await markAiReviewForManualReview(ctx, attemptId, "timeout");
+  const ids = new Set(result.results.map((item) => item.criterionId));
+  if (
+    ids.size !== attempt.criteria.length ||
+    result.results.length !== ids.size ||
+    !attempt.criteria.every((c) => ids.has(c.id))
+  )
+    throw apiError("invalid_state", { reason: "review_result_mismatch" });
+  if (attempt.workflowId && env.AI_REVIEW_ENABLED !== "true")
+    return await markAiReviewForManualReview(ctx, attemptId, "disabled");
+  const decision = decideAiReview(result.results);
+  if (decision.status === "manualReview") {
+    // A selected "met"/"not_met" below the cutoff is different from an uncertain answer.
+    const reason = result.results.some((item) => item.outcome === "uncertain")
+      ? "uncertain"
+      : "low_probability";
+    await markAiReviewForManualReview(ctx, attemptId, reason);
+    await ctx.db.patch("aiReviewAttempts", attemptId, { result });
+    return;
+  }
+  await ctx.db.patch("aiReviewAttempts", attemptId, {
+    result,
+    status: "completed",
+    finishedAt: Date.now(),
+  });
+  const submission = await ctx.db.get("submissions", attempt.submissionId);
+  if (!submission || submission.status !== "pending")
+    throw apiError("invalid_state", { reason: "ai_review_stale" });
+  const assignment = await ctx.db.get("assignments", submission.assignmentId);
+  if (!assignment) throw apiError("not_found", { resource: "assignment" });
+  const review =
+    decision.status === "approved"
+      ? { status: "approved" as const }
+      : {
+          status: "changesRequested" as const,
+          reviewNote: `Please address these spoken requirements: ${attempt.criteria
+            .filter((c) => decision.failedCriterionIds.includes(c.id))
+            .map((c) => c.description)
+            .join("; ")}`.slice(0, 2000),
+        };
+  await recordSubmissionReview(ctx, submission, assignment, review, { reviewerType: "ai" });
 }

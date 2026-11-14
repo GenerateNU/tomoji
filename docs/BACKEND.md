@@ -4,6 +4,8 @@ This document covers how we structure and write Convex code. Setup instructions 
 
 Shared S3 media configuration and upload guarantees are documented in [S3 media foundation](S3.md).
 
+Linked X account storage and credential handling are documented in [X accounts](X_ACCOUNTS.md).
+
 ## Layout
 
 Convex maps the **file path directly to the API path**. For example, a function exported from `convex/creators.ts` is called as `api.creators.<name>`. There is no separate router because the filename itself defines the namespace.
@@ -63,16 +65,60 @@ Default to internal for anything that is not intentionally part of the public AP
 
 `lib/functions.ts` exports function builders that verify the caller's account type before the handler runs:
 
-| Builder                              | Caller must be     | Extra context           |
-| ------------------------------------ | ------------------ | ----------------------- |
-| `authedQuery` / `authedMutation`     | any signed-in user | `ctx.user`              |
-| `creatorQuery` / `creatorMutation`   | a creator          | `ctx.user`              |
-| `companyQuery` / `companyMutation`   | a company user     | `ctx.user`, `ctx.orgId` |
-| `operatorQuery` / `operatorMutation` | a Tomoji operator  | `ctx.user`              |
+| Builder                                        | Caller must be                                      | Extra context                                                          |
+| ---------------------------------------------- | --------------------------------------------------- | ---------------------------------------------------------------------- |
+| `authedQuery` / `authedMutation`               | any signed-in user                                  | `ctx.user`                                                             |
+| `creatorQuery` / `creatorMutation`             | a creator                                           | `ctx.user`                                                             |
+| `companyQuery` / `companyMutation`             | a company user                                      | `ctx.user`, `ctx.orgId`, `ctx.membership`                              |
+| `companyAdminQuery` / `companyAdminMutation`   | a company **admin**                                 | same as `companyQuery`                                                 |
+| `companyScopedQuery` / `companyScopedMutation` | a company user, or an operator naming a `companyId` | `ctx.user`, `ctx.companyId`, `ctx.membership` (`null` for an operator) |
+| `operatorQuery` / `operatorMutation`           | a Tomoji operator                                   | `ctx.user`                                                             |
+| `operatorAction`                               | a Tomoji operator                                   | `ctx.user`                                                             |
+| `companyAdminAction`                           | a company **admin**                                 | `ctx.user`, `ctx.membership`, `ctx.orgId`                              |
+
+Actions have no `ctx.db`, so the two action builders run the same check through an
+internal query in `convex/authorize.ts` first. That keeps an action from being looser
+than the query or mutation it mirrors.
 
 Use these instead of the raw `query` and `mutation` functions. It proves the caller is signed in, synced, active, and of the right account type. Note that additional access checks may be necessary to ensure that sensitive company/creator data is not leaked beyond role checks.
 
 Authorization should always happen on the server. Never accept a `userId` from the client to determine what someone is allowed to do. Derive the caller's identity from `ctx` instead.
+
+For application, assignment, submission, and payout reads, `requireCallerViewer` in
+`lib/functions.ts` resolves the caller to the shared `ResourceViewer` ownership scope.
+`canViewResource` checks creator/company ownership; domain `require…` helpers still
+own missing-row errors and resource-specific rules. Do not apply that ownership policy
+to opportunity discovery or private media reads, which have different visibility rules.
+
+## Accounts, invites, and the operator org
+
+Nobody signs themselves up. An operator sends a WorkOS invitation, and the account
+appears when it is accepted. Which WorkOS organization the invitation names decides
+what the person becomes:
+
+| Organization on the invite                  | Account                       |
+| ------------------------------------------- | ----------------------------- |
+| none                                        | creator                       |
+| `WORKOS_OPERATOR_ORG_ID`                    | Tomoji operator               |
+| any other org we have a `companies` row for | company user, admin or member |
+| an org we have never seen                   | ignored                       |
+
+That last row matters: the `companies` row has to exist before the invitation is sent,
+which is why `invites.inviteCompany` creates the organization and the company row before
+calling WorkOS. That ordering makes it the one route here that is not safe to retry — a
+second call makes a second organization. When the invite is what failed, the error carries
+the `companyId` it already created so the caller can finish with `invites.inviteCompanyUser`
+instead of starting over.
+
+The routes in `convex/invites.ts` only call WorkOS. Every write happens in the
+`invitation.*` webhook handlers in `convex/auth.ts`, so the `invites` table reflects
+what WorkOS actually did rather than what we asked it to do. Revoking, for the same
+reason, leaves the row alone and waits for `invitation.revoked`.
+
+`WORKOS_OPERATOR_ORG_ID` is a deployment setting, not a hardcoded id, because staging
+and production are separate WorkOS environments with different organizations. When it
+is unset, no org is the staff org and `isOperatorOrg` is always false, so a staff
+invite quietly creates an ordinary company instead.
 
 ## Errors
 
@@ -95,12 +141,13 @@ A route should only get its own name when it returns or does something meaningfu
 
 Model functions are imported directly, so their names should make sense on their own at the import site. This is different from routes, where the filename already provides the domain. For example, a `create` route in `campaigns.ts` would call a model function named `createCampaign`.
 
-| Prefix                            | Returns                 | Use when                                                             |
-| --------------------------------- | ----------------------- | -------------------------------------------------------------------- |
-| `get…`                            | the row, or `null`      | it is normal for the row not to exist and the caller can handle that |
-| `list…`                           | an array or page        | reading multiple rows                                                |
-| `require…`                        | the row, or throws      | the row must exist for the operation to continue (e.x. auth)         |
-| `create…` / `update…` / `remove…` | the result of the write | creating, updating, or removing a row                                |
+| Prefix                            | Returns                 | Use when                                                                              |
+| --------------------------------- | ----------------------- | ------------------------------------------------------------------------------------- |
+| `get…`                            | the row, or `null`      | it is normal for the row not to exist and the caller can handle that                  |
+| `list…`                           | an array or page        | reading multiple rows                                                                 |
+| `require…`                        | the row, or throws      | the row must exist for the operation to continue (e.x. auth)                          |
+| `create…` / `update…` / `remove…` | the result of the write | creating, updating, or removing a row                                                 |
+| `upsert…`                         | the result of the write | creating or updating a row in one operation, such as provider sync or account linking |
 
 Use the table name as the subject of the function instead of introducing a different term for the same thing. This keeps naming consistent from the schema to the model and route layers. Only add `By<Field>` when the table supports multiple lookups and the function name would otherwise be unclear. In most cases, the arguments already make it obvious what field is being matched.
 
@@ -110,6 +157,181 @@ Opportunity deadlines are Unix milliseconds on exact UTC half-hour boundaries
 (`:00` or `:30`, with zero seconds/milliseconds). Create, update, publish, and resume
 reject off-grid deadlines rather than rounding them. Deadline closure runs at those
 same boundaries through the internal cron, in bounded batches; drafts do not auto-close.
+
+Campaign end dates and offer expiries share `isHalfHourTimestamp` and `HALF_HOUR_MS`
+from `lib/validation.ts`. Callers retain their own optionality, future-time checks,
+and error reasons.
+
+## Opportunity recommendations
+
+`opportunityScores` stores how well an open opportunity fits a creator, from 0 to 1.
+`scoreOpportunityMatch` weighs the opportunity's minimum follower range (0.45), skills
+(0.35), and niches (0.20) against the creator's profile. Signals the opportunity
+doesn't ask for are left out and the rest re-normalized.
+
+Follower ranges are self-reported (`creators.followerRange`,
+`opportunities.minFollowerRange`; `null` clears them). They're uneven, so
+`followerRangeFit` measures the shortfall on a log scale: the score drops by 1 for
+every 10x a creator falls short. A minimum ranks a brief lower but never hides it.
+
+Only matches are stored; no row means a score of 0. The internal mutations
+`opportunityScores.scoreOpportunity` and `scoreCreator` rebuild scores in bounded,
+self-scheduling batches: first rescoring existing rows, then one stage per shared
+niche or skill (named, not numbered, so edits between batches don't misdirect them).
+Both read candidates through the `by_name_and_*Id` selection indexes, so cost grows
+with matches, not with every creator or opportunity; a brief that only sets a
+follower minimum has no selections to look up and isn't scored. Both skip users who
+aren't active creators and clear scores once the opportunity or creator drops out of
+discovery. Nothing calls them on edits yet, and `discover` doesn't read scores yet;
+both come next.
+
+## Opportunity deliverables
+
+A deliverable is one piece of content an opportunity asks every assigned creator
+to make (title and description). They are rows in `deliverables`, listed in the
+order they were added, at most 20 per opportunity.
+
+- An opportunity can't be open without one: `opportunities.create` with
+  `status: "open"` needs inline `deliverables`, `publish` refuses a draft with none,
+  and `deliverables.remove` keeps the last one of a published opportunity.
+- Once the opportunity has an assignment, in any status, its deliverables can't be
+  edited or removed, so the work a creator agreed to never changes under them and
+  their drafts keep pointing at real rows. New deliverables can still be added.
+  There is no copy on the assignment.
+- Creators see them for opportunities they can discover, and for ones they're
+  assigned to even after those pause or close.
+
+`models/deliverableDrafts.ts` holds the row rules that `models/opportunities.ts`
+also needs; `models/deliverables.ts` holds the route rules and depends on
+opportunities, which keeps the imports acyclic.
+
+### Submissions and posts per deliverable
+
+Every submission names the deliverable it's a draft for (`deliverableId`,
+required), which must belong to the assignment's opportunity; any other is
+`not_found` with resource `deliverable`. The submission rules apply to each
+deliverable separately:
+
+- One pending draft and one approved draft per deliverable. Approval is final for
+  that deliverable while the creator keeps submitting the others.
+- `submissions.list` always takes a `deliverableId` and returns that
+  deliverable's drafts newest first. There is no assignment-wide list; read
+  drafts through `by_assignmentId_and_deliverableId`.
+- Each approved deliverable has at most one active post. `posts.list` by
+  assignment returns every active post on it in one page, newest first, which
+  the 20-deliverable cap keeps bounded.
+
+`deliverableId` is required with no migration, since nothing is deployed yet. A
+dev deployment holding submissions from before it won't accept the schema:
+clear its `submissions`, `posts`, and `disputes` tables, then push again.
+
+## Payout records
+
+`payouts` records individual finalized earnings payments. Every payout identifies
+one post and its assignment; both an assignment and a post can have several payouts.
+An earning period is optional. Ownership is stored on the payout so historical reads
+do not depend on an assignment, campaign, or post remaining active or present.
+
+- `payouts.get({ payoutId })` returns one authorized payout. Missing and inaccessible
+  payouts both return `not_found`.
+- `payouts.list({ paginationOpts, assignmentId?, campaignId?, approvalStatus? })`
+  returns a page ordered by `reviewRequestedAt` descending, then creation time
+  descending for ties. Filters combine and only narrow the caller's scope.
+  For company callers, filters naming an existing campaign or assignment owned by
+  another company return `not_found` before scanning payouts. Missing parents fall
+  back to the payout's stored ownership so historical payouts remain readable.
+  Creator and operator access is unchanged by parent existence or company ownership.
+  Other filters with no visible matching payouts return an empty page. Parent-filtered
+  queries cap rows scanned per page, so a short or empty page with `isDone: false`
+  must be continued using `continueCursor` and the same filters.
+- Creators see their own payouts, company members and admins see their company's,
+  and operators can read all payouts. Company scope comes from verified membership;
+  callers cannot supply a creator or company ID to override it.
+- Both endpoints return an explicit public view, excluding `sourceKey` and
+  `approvedBy`. The source key is for internal earning-event deduplication and the
+  approver ID is audit metadata.
+
+Approval and payment status are separate. `transferred` means money reached the
+creator's payment-provider balance, not their bank. Times are Unix milliseconds;
+`amount` is stored in integer currency minor units (cents for USD, yen for JPY),
+alongside `currency`. Renaming the field does not rescale existing monetary values.
+
+### Recording finalized earnings
+
+`internal.payouts.create({ assignmentId, sourceKey, amount, currency, postId,
+earningPeriod? })` records a finalized earning and returns the stored payout.
+Only trusted backend functions call it; creators, companies, and operators do not
+have a public payout-creation endpoint. The caller is responsible for calculating
+the earned amount and deciding when it is final.
+
+- Ownership comes from the assignment. The required post must exist and link to
+  that assignment through its submission. Parent activity and assignment status
+  do not determine whether historical earnings can be recorded.
+- `amount` must be a positive safe integer in the currency's minor units.
+  Currency is trimmed, lowercased, and checked for three ASCII letters. This is
+  format validation; provider-supported currencies and currency-specific payout
+  limits belong to the later payment integration.
+- An optional earning period must use nonnegative integer Unix milliseconds,
+  with `startsAt < endsAt <= reviewRequestedAt`.
+- Creation sets `reviewRequestedAt` from server time, `approvalDueAt` exactly
+  72 hours later, `approvalStatus: "pending"`, and `paymentStatus: "notStarted"`.
+  The deadline is not rounded to the campaign/opportunity half-hour schedule.
+- `sourceKey` is a trimmed, nonblank earning-event identifier supplied by the
+  trusted earnings caller; `createPayout` does not generate it. The caller must
+  reuse the key for every retry of the same earning, including a recalculation
+  that changes the amount (which returns a conflict rather than another payout).
+  Different earnings on one assignment use different keys. The same key may be
+  used on another assignment.
+- A single mutation reads the `(assignmentId, sourceKey)` index and inserts the
+  payout. This enforces uniqueness transactionally; the index alone is not unique.
+  Retrying with the same amount, currency, post, and period returns the existing
+  payout without changing its deadline or approval/payment progress. Changed
+  details return `conflict` with reason `payout_source_conflict`. Identical retries
+  still reconcile after related records have been deleted.
+
+Source-key generation belongs to the future earnings-calculation workflow, which
+has not been implemented yet. Illustrative formats are `post:<postId>:fixed-fee`
+for a post's fixed fee or `views:<postId>:<periodStart>:<periodEnd>` for one finalized
+measurement period. The final format depends on the agreed earning rules. Keys
+must identify the earning itself, not the attempt: a fresh random key on each
+retry would allow duplicate payouts.
+
+This operation records obligations; it does not calculate fixed fees or view-based
+earnings, approve payouts, or schedule payments.
+
+### Approval and dispute holds
+
+`payouts.approve({ payoutId })` lets a company admin approve their company's payout.
+The route uses `companyAdminMutation`; creators, ordinary members, and operators
+cannot approve on a company's behalf. Missing and foreign payouts return
+`not_found`. Successful approval returns the same public view as `get` and `list`.
+
+- Manual approval records `approvalStatus: "approved"`, server-time `approvedAt`,
+  `approvalSource: "company"`, and the authenticated user's ID in `approvedBy`.
+- A minute-interval cron calls `internal.payouts.autoApprove({})`. It scans pending
+  payouts with `approvalDueAt <= server time`, approving eligible rows with
+  `approvalSource: "automatic"` and no `approvedBy`. The original 72-hour deadline
+  is exact; the stored approval happens on a subsequent run, subject to job delay.
+- Each transaction scans at most 50 payouts. Cursor continuations keep the initial
+  cutoff and advance past held payouts, so a page of disputes cannot starve later
+  eligible payouts. A new cron sweep revisits any remaining pending payouts.
+- Any open dispute on the assignment blocks a new approval, including a dispute
+  about a particular post. Manual approval returns `invalid_state` with reason
+  `payout_disputed`; automatic approval skips the payout. The indexed dispute read
+  and approval write happen in the same transaction.
+- All assignment disputes must be resolved before approval can proceed. Resolution
+  never changes `reviewRequestedAt` or `approvalDueAt`; an overdue payout becomes
+  eligible on the next sweep, while a future deadline still has to be reached for
+  automatic approval. Resolution does not recalculate the payout amount.
+- Already-approved payouts are unchanged on repeated calls, preserving the first
+  approval's source, time, and actor even if another dispute is opened later.
+  Manual approval and the automatic sweep can safely race; the first approval wins.
+
+Dispute holds are derived from current dispute rows, not copied to each payout.
+Approval preserves the amount, deadline, and payment status; it does not send money.
+Stripe execution and bank-payout reconciliation remain separate integration work.
+That future payment operation must check current disputes again before transferring
+funds, including disputes opened after approval.
 
 ## Tests
 
@@ -121,5 +343,11 @@ tests/models/users.test.ts
 ```
 
 Shared fixtures and testing utilities should stay in `tests/helpers.ts`.
+
+Use `campaignArgs` and `submissionArgs` for shared input fixtures, with explicit
+scenario overrides. Expected submission views remain independent of production
+serializers. `expectApiError` can assert both code and reason without invoking an
+operation twice. Preserve raw inserts for invalid/legacy data and public-route calls
+when testing route behavior.
 
 Prefer testing model functions directly with `t.run()`. Use the `api.*` route path when the behavior you are testing specifically involves authorization, argument validation, or route behavior.

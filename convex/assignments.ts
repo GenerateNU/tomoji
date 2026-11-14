@@ -1,27 +1,33 @@
 import { paginationResultValidator } from "convex/server";
 import { v } from "convex/values";
-import type { Doc } from "./_generated/dataModel";
-import { internalMutation, type QueryCtx } from "./_generated/server";
+import { internalMutation } from "./_generated/server";
 import {
   authedQuery,
-  companyContext,
+  requireCallerViewer,
+  companyAdminMutation,
   companyMutation,
+  companyAdminQuery,
   companyQuery,
   creatorMutation,
   creatorQuery,
 } from "./lib/functions";
 import {
   acceptAssignmentTerms,
+  assignmentCreatorExportOptions,
+  assignmentCreatorsCsv,
   assignmentListFilters,
   cancelPendingAssignment,
   claimAssignment,
   completeAssignment,
+  creatorAssignment,
   creatorAssignmentListFilters,
   declineAssignmentTerms,
+  exportAssignmentCreatorsCsv,
   listAssignments,
   listCreatorAssignments,
+  markAssignmentProductAccessDelivered,
   requireAssignment,
-  type AssignmentViewer,
+  toCreatorAssignment,
 } from "./models/assignments";
 import { requireCallerCreatorId } from "./models/users";
 import schema from "./schema";
@@ -63,61 +69,94 @@ export const list = companyQuery({
 });
 
 /**
+ * Exports creator contact details for exactly one company-owned campaign or
+ * opportunity. Includes every assignment status and one row per assignment.
+ * CSV columns: assignmentId, campaignId, opportunityId, status, name, email.
+ * Missing/deactivated profiles have blank contact fields. Names use first/last
+ * name, falling back to the legacy name or email. Formula-like cells are escaped.
+ *
+ * Start with paginationOpts { numItems: 100, cursor: null }. Concatenate each
+ * result.csv, then request continueCursor with the same scope until isDone.
+ * Only the first page includes a header. Save as fileName with text/csv MIME type.
+ * Use sequential queries, not reactive usePaginatedQuery: endCursor is unsupported.
+ * Pages reflect current data, not a single snapshot of the entire export.
+ *
+ * @throws `not_found` for a missing or foreign parent, including empty scopes.
+ * @throws `invalid_state` unless exactly one parent is supplied and numItems is
+ * an integer from 1–100, or when a non-null endCursor is supplied.
+ */
+export const exportCreatorsCsv = companyAdminQuery({
+  args: assignmentCreatorExportOptions.fields,
+  returns: assignmentCreatorsCsv,
+  handler: async (ctx, args) => {
+    return await exportAssignmentCreatorsCsv(ctx, ctx.membership.companyId, args);
+  },
+});
+
+/**
  * Lists the calling creator's assignments: `current` for termsPending and
  * active, `past` for completed and cancelled. Newest first.
+ * Includes delivery time without the company-user audit ID.
  */
 export const listMine = creatorQuery({
   args: creatorAssignmentListFilters.fields,
-  returns: paginationResultValidator(assignment),
+  returns: paginationResultValidator(creatorAssignment),
   handler: async (ctx, args) => {
     const creatorId = await requireCallerCreatorId(ctx, ctx.user);
-    return await listCreatorAssignments(ctx, creatorId, args);
+    const result = await listCreatorAssignments(ctx, creatorId, args);
+    return { ...result, page: result.page.map(toCreatorAssignment) };
   },
 });
 
 /**
  * Gets one assignment. Creators see their own, company users see their
- * company's, and operators see all.
+ * company's, and operators see all. Delivery actor IDs are omitted for creators.
  *
  * @throws `not_found` if the assignment does not exist or is not visible to
  * the caller.
  */
 export const get = authedQuery({
   args: { assignmentId: v.id("assignments") },
-  returns: assignment,
+  returns: v.union(assignment, creatorAssignment),
   handler: async (ctx, args) => {
-    return await requireAssignment(ctx, await assignmentViewer(ctx, ctx.user), args.assignmentId);
+    const viewer = await requireCallerViewer(ctx, ctx.user);
+    const result = await requireAssignment(ctx, viewer, args.assignmentId);
+    return viewer.role === "creator" ? toCreatorAssignment(result) : result;
   },
 });
 
 /**
  * Accepts the terms on the calling creator's assignment, making it active.
+ * Returns the creator view, including delivery time but no delivery actor ID.
  *
  * @throws `not_found` if the assignment does not exist or is not the caller's.
  * @throws `invalid_state` if the assignment is not termsPending.
  */
 export const acceptTerms = creatorMutation({
   args: { assignmentId: v.id("assignments") },
-  returns: assignment,
+  returns: creatorAssignment,
   handler: async (ctx, args) => {
     const creatorId = await requireCallerCreatorId(ctx, ctx.user);
-    return await acceptAssignmentTerms(ctx, creatorId, args.assignmentId);
+    const updated = await acceptAssignmentTerms(ctx, creatorId, args.assignmentId);
+    return toCreatorAssignment(updated);
   },
 });
 
 /**
  * Declines the terms on the calling creator's assignment, cancelling it and
  * freeing its slot.
+ * Returns the creator view, including delivery time but no delivery actor ID.
  *
  * @throws `not_found` if the assignment does not exist or is not the caller's.
  * @throws `invalid_state` if the assignment is not termsPending.
  */
 export const declineTerms = creatorMutation({
   args: { assignmentId: v.id("assignments") },
-  returns: assignment,
+  returns: creatorAssignment,
   handler: async (ctx, args) => {
     const creatorId = await requireCallerCreatorId(ctx, ctx.user);
-    return await declineAssignmentTerms(ctx, creatorId, args.assignmentId);
+    const updated = await declineAssignmentTerms(ctx, creatorId, args.assignmentId);
+    return toCreatorAssignment(updated);
   },
 });
 
@@ -129,11 +168,29 @@ export const declineTerms = creatorMutation({
  * company.
  * @throws `invalid_state` if the assignment is not termsPending.
  */
-export const cancel = companyMutation({
+export const cancel = companyAdminMutation({
   args: { assignmentId: v.id("assignments") },
   returns: assignment,
   handler: async (ctx, args) => {
     return await cancelPendingAssignment(ctx, ctx.membership.companyId, args.assignmentId);
+  },
+});
+
+/**
+ * Marks product access delivered for 1–100 assignment IDs in the caller's company.
+ * Open to any company member. The server records the delivery time and actor;
+ * repeated confirmations preserve the original delivery details.
+ *
+ * @throws `not_found` if any assignment is missing or belongs to another company.
+ * @throws `invalid_state` for an invalid batch size or a new confirmation on a
+ * cancelled assignment. A rejected batch leaves every assignment unchanged.
+ * @returns the updated assignments once each, in first-occurrence input order.
+ */
+export const markProductAccessDelivered = companyMutation({
+  args: { assignmentIds: v.array(v.id("assignments")) },
+  returns: v.array(assignment),
+  handler: async (ctx, args) => {
+    return await markAssignmentProductAccessDelivered(ctx, ctx.membership, args.assignmentIds);
   },
 });
 
@@ -145,17 +202,3 @@ export const complete = internalMutation({
     return await completeAssignment(ctx, args.assignmentId);
   },
 });
-
-async function assignmentViewer(ctx: QueryCtx, user: Doc<"users">): Promise<AssignmentViewer> {
-  switch (user.role) {
-    case "operator":
-      return { role: "operator" };
-    case "creator":
-      return { role: "creator", creatorId: await requireCallerCreatorId(ctx, user) };
-    case "company": {
-      // Proves membership in the token's org, not just the account type.
-      const { membership } = await companyContext(ctx);
-      return { role: "company", companyId: membership.companyId };
-    }
-  }
-}

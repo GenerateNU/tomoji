@@ -7,8 +7,13 @@ export const companyUsersTable = defineTable({
   userId: v.id("users"),
   companyId: v.id("companies"),
   role: companyRole,
+  // Ended memberships are kept rather than deleted, because campaigns,
+  // opportunities, submissions, and assignments all attribute work to a
+  // companyUsers id.
+  isActive: v.boolean(),
 })
   // Convex indexes are not unique; applyMembership enforces one company per user.
   .index("by_userId", ["userId"])
+  .index("by_userId_and_isActive", ["userId", "isActive"])
   .index("by_companyId", ["companyId"])
   .index("by_userId_and_companyId", ["userId", "companyId"]);

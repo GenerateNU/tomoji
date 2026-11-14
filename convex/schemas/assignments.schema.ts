@@ -23,10 +23,15 @@ export const assignmentsTable = defineTable({
   paymentCapCents: v.number(),
   usesAiReview: v.boolean(),
   status: assignmentStatus,
+  // No timestamp means product access is pending. Delivery time is Unix milliseconds.
+  productAccessDeliveredAt: v.optional(v.number()),
+  productAccessDeliveredBy: v.optional(v.id("companyUsers")),
 })
   .index("by_opportunityId_and_creatorId", ["opportunityId", "creatorId"])
   .index("by_opportunityId_and_status", ["opportunityId", "status"])
   .index("by_creatorId_and_status", ["creatorId", "status"])
   .index("by_companyId_and_status", ["companyId", "status"])
+  // Export cursors must not move when an assignment's status changes.
+  .index("by_campaignId", ["campaignId"])
   .index("by_campaignId_and_status", ["campaignId", "status"])
   .index("by_status", ["status"]);

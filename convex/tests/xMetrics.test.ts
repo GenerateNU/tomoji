@@ -1,0 +1,410 @@
+/// <reference types="vite/client" />
+import { convexTest } from "convex-test";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import { internal } from "../_generated/api";
+import type { Id } from "../_generated/dataModel";
+import schema from "../schema";
+import { seedAssignmentFixture, seedPost, type TestConvex } from "./helpers";
+
+const modules = import.meta.glob("../**/*.ts");
+
+// Timers are fake too, so a page one test schedules can't fire during a later test.
+beforeEach(() => {
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date("2026-11-14T00:00:00Z"));
+});
+
+afterEach(() => {
+  vi.useRealTimers();
+  vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
+});
+
+function enableSync() {
+  vi.stubEnv("X_METRICS_SYNC_ENABLED", "true");
+  vi.stubEnv("X_BEARER_TOKEN", "test-bearer");
+}
+
+/**
+ * Verified, active posts in the sync window. `seedPost` generates ids longer
+ * than X allows, so each gets a realistic one, built as text because a 19-digit
+ * number is past what JavaScript stores exactly.
+ */
+async function seedSyncedPosts(t: TestConvex, count: number) {
+  const { assignmentId } = await seedAssignmentFixture(t);
+  const posts: { postId: Id<"posts">; xPostId: string }[] = [];
+  for (let i = 1; i <= count; i++) {
+    const postId = await seedPost(t, assignmentId);
+    const xPostId = `1900000000000000${String(i).padStart(3, "0")}`;
+    // `seedPost` doesn't record a first verification, which the sync window keys off.
+    await t.run(
+      async (ctx) => await ctx.db.patch("posts", postId, { xPostId, firstVerifiedAt: Date.now() }),
+    );
+    posts.push({ postId, xPostId });
+  }
+  return posts;
+}
+
+function xPost(id: string, views: number) {
+  return {
+    id,
+    text: "post",
+    public_metrics: {
+      impression_count: views,
+      like_count: 38,
+      reply_count: 3,
+      retweet_count: 7,
+      quote_count: 1,
+    },
+  };
+}
+
+function stubX(body: unknown, status = 200) {
+  const fetch = vi.fn().mockResolvedValue(Response.json(body, { status }));
+  vi.stubGlobal("fetch", fetch);
+  return fetch;
+}
+
+async function storedPost(t: TestConvex, postId: Id<"posts">) {
+  return await t.run(async (ctx) => await ctx.db.get("posts", postId));
+}
+
+/** Answers each lookup with the posts it asked for, failing any page that includes `failing`. */
+function stubXByPage(failing: string[] = []) {
+  const fetch = vi.fn().mockImplementation(async (url: string) => {
+    const ids = new URL(url).searchParams.get("ids")!.split(",");
+    if (ids.some((id) => failing.includes(id))) {
+      return Response.json({ title: "Service Unavailable" }, { status: 503 });
+    }
+    return Response.json({ data: ids.map((id) => xPost(id, 100)) });
+  });
+  vi.stubGlobal("fetch", fetch);
+  return fetch;
+}
+
+/** Runs the first page and every page it schedules. */
+async function runFullSync(t: TestConvex, pageSize: number) {
+  await t.action(internal.xMetrics.sync, { pageSize });
+  await t.finishAllScheduledFunctions(vi.runAllTimers);
+}
+
+async function scheduledSyncs(t: TestConvex) {
+  return await t.run(async (ctx) => await ctx.db.system.query("_scheduled_functions").take(10));
+}
+
+describe("xMetrics.sync", () => {
+  test("does nothing while the sync is switched off", async () => {
+    const t = convexTest(schema, modules);
+    const [post] = await seedSyncedPosts(t, 1);
+    const fetch = stubX({ data: [] });
+
+    await t.action(internal.xMetrics.sync, {});
+
+    expect(fetch).not.toHaveBeenCalled();
+    expect(await storedPost(t, post!.postId)).not.toHaveProperty("views");
+  });
+
+  test("stores views and engagement for each post X returns", async () => {
+    enableSync();
+    const t = convexTest(schema, modules);
+    const [first, second] = await seedSyncedPosts(t, 2);
+    const fetch = stubX({ data: [xPost(first!.xPostId, 1250), xPost(second!.xPostId, 0)] });
+
+    await t.action(internal.xMetrics.sync, {});
+
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(await storedPost(t, first!.postId)).toMatchObject({
+      views: 1250,
+      viewsUpdatedAt: Date.now(),
+      likes: 38,
+      comments: 3,
+      reposts: 7,
+      quotes: 1,
+    });
+    expect(await storedPost(t, second!.postId)).toMatchObject({ views: 0 });
+    expect(await scheduledSyncs(t)).toEqual([]);
+  });
+
+  test("posts X leaves out keep their stored counts", async () => {
+    enableSync();
+    const t = convexTest(schema, modules);
+    const [kept, refreshed] = await seedSyncedPosts(t, 2);
+    await t.run(
+      async (ctx) => await ctx.db.patch("posts", kept!.postId, { views: 900, likes: 10 }),
+    );
+    stubX({ data: [xPost(refreshed!.xPostId, 1250)] });
+
+    await t.action(internal.xMetrics.sync, {});
+
+    expect(await storedPost(t, kept!.postId)).toMatchObject({ views: 900, likes: 10 });
+    expect(await storedPost(t, refreshed!.postId)).toMatchObject({ views: 1250 });
+  });
+
+  test("continues with the next page at the same cutoff", async () => {
+    enableSync();
+    const t = convexTest(schema, modules);
+    const [first] = await seedSyncedPosts(t, 2);
+    stubX({ data: [xPost(first!.xPostId, 1250)] });
+
+    await t.action(internal.xMetrics.sync, { pageSize: 1 });
+
+    const [next] = await scheduledSyncs(t);
+    expect(next).toMatchObject({
+      name: "xMetrics:sync",
+      args: [{ now: Date.now(), pageSize: 1, cursor: expect.any(String) }],
+    });
+  });
+
+  test("runs every page through to the end", async () => {
+    enableSync();
+    const t = convexTest(schema, modules);
+    const posts = await seedSyncedPosts(t, 3);
+    const fetch = stubXByPage();
+
+    await runFullSync(t, 1);
+
+    expect(fetch).toHaveBeenCalledTimes(3);
+    for (const { postId } of posts) {
+      expect(await storedPost(t, postId)).toMatchObject({ views: 100 });
+    }
+  });
+
+  test("a page X can't answer is skipped and the run continues", async () => {
+    enableSync();
+    const t = convexTest(schema, modules);
+    const [first, failing, last] = await seedSyncedPosts(t, 3);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    stubXByPage([failing!.xPostId]);
+
+    await runFullSync(t, 1);
+
+    expect(await storedPost(t, first!.postId)).toMatchObject({ views: 100 });
+    expect(await storedPost(t, failing!.postId)).not.toHaveProperty("views");
+    expect(await storedPost(t, last!.postId)).toMatchObject({ views: 100 });
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining("skipped"),
+      expect.objectContaining({ code: "upstream_failure" }),
+    );
+  });
+
+  test("a post whose save fails is skipped and the run continues", async () => {
+    enableSync();
+    const t = convexTest(schema, modules);
+    const [conflicted, last] = await seedSyncedPosts(t, 2);
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    stubXByPage();
+    // A snapshot already at this exact moment makes the first page's save fail.
+    await t.run(
+      async (ctx) =>
+        await ctx.db.insert("postViewSnapshots", {
+          postId: conflicted!.postId,
+          observedAt: Date.now(),
+          views: 1,
+          sourceKey: "preexisting",
+          receivedAt: Date.now(),
+        }),
+    );
+
+    await runFullSync(t, 1);
+
+    expect(await storedPost(t, last!.postId)).toMatchObject({ views: 100 });
+  });
+
+  test("a rate limit stops the run without storing or continuing", async () => {
+    enableSync();
+    const t = convexTest(schema, modules);
+    const [post] = await seedSyncedPosts(t, 2);
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    stubX({ title: "Too Many Requests" }, 429);
+
+    await t.action(internal.xMetrics.sync, { pageSize: 1 });
+
+    expect(await storedPost(t, post!.postId)).not.toHaveProperty("views");
+    expect(await scheduledSyncs(t)).toEqual([]);
+  });
+});
+
+describe("xMetrics.collect", () => {
+  test("reads and saves the given posts now", async () => {
+    enableSync();
+    const t = convexTest(schema, modules);
+    const [post] = await seedSyncedPosts(t, 2);
+    const fetch = stubXByPage();
+
+    await t.action(internal.xMetrics.collect, { postIds: [post!.postId] });
+
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(await storedPost(t, post!.postId)).toMatchObject({ views: 100 });
+  });
+
+  test("does nothing while the sync is switched off", async () => {
+    const t = convexTest(schema, modules);
+    const [post] = await seedSyncedPosts(t, 1);
+    const fetch = stubXByPage();
+
+    await t.action(internal.xMetrics.collect, { postIds: [post!.postId] });
+
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  // Seeded posts share one assignment, so each skip reason gets its own test.
+  test("skips replaced and removed posts", async () => {
+    enableSync();
+    const t = convexTest(schema, modules);
+    const [replaced, removed, kept] = await seedSyncedPosts(t, 3);
+    const fetch = stubXByPage();
+    await t.run(async (ctx) => {
+      await ctx.db.patch("posts", replaced!.postId, { isActive: false });
+      // A recorded removal means X no longer has the post.
+      await ctx.db.patch("posts", removed!.postId, { removedAt: Date.now() });
+    });
+
+    await t.action(internal.xMetrics.collect, {
+      postIds: [replaced!.postId, removed!.postId, kept!.postId],
+    });
+
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(fetch.mock.calls[0]![0]).toContain(`ids=${kept!.xPostId}&`);
+  });
+
+  test("skips posts on cancelled assignments", async () => {
+    enableSync();
+    const t = convexTest(schema, modules);
+    const [post] = await seedSyncedPosts(t, 1);
+    const fetch = stubXByPage();
+    await t.run(async (ctx) => {
+      const stored = await ctx.db.get("posts", post!.postId);
+      const submission = await ctx.db.get("submissions", stored!.submissionId);
+      await ctx.db.patch("assignments", submission!.assignmentId, { status: "cancelled" });
+    });
+
+    await t.action(internal.xMetrics.collect, { postIds: [post!.postId] });
+
+    expect(fetch).not.toHaveBeenCalled();
+  });
+});
+
+describe("xMetrics.collectForCutoff", () => {
+  const minute = 60_000;
+
+  test("reads a post just before its cutoff", async () => {
+    enableSync();
+    const t = convexTest(schema, modules);
+    const [post] = await seedSyncedPosts(t, 1);
+    stubXByPage();
+
+    await t.action(internal.xMetrics.collectForCutoff, {
+      postId: post!.postId,
+      cutoffAt: Date.now() + 4 * minute,
+    });
+
+    expect(await storedPost(t, post!.postId)).toMatchObject({ views: 100 });
+  });
+
+  test("skips the retry when a reading already lands in the 5 minutes before the cutoff", async () => {
+    enableSync();
+    const t = convexTest(schema, modules);
+    const [post] = await seedSyncedPosts(t, 1);
+    const fetch = stubXByPage();
+    const cutoffAt = Date.now() + 4 * minute;
+    await t.action(internal.xMetrics.collectForCutoff, { postId: post!.postId, cutoffAt });
+    vi.setSystemTime(cutoffAt - 2 * minute);
+
+    await t.action(internal.xMetrics.collectForCutoff, { postId: post!.postId, cutoffAt });
+
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  test("retries when the earlier reading is older than 5 minutes before the cutoff", async () => {
+    enableSync();
+    const t = convexTest(schema, modules);
+    const [post] = await seedSyncedPosts(t, 1);
+    const fetch = stubXByPage();
+    const cutoffAt = Date.now() + 10 * minute;
+    await t.action(internal.xMetrics.collect, { postIds: [post!.postId] });
+    vi.setSystemTime(cutoffAt - 2 * minute);
+
+    await t.action(internal.xMetrics.collectForCutoff, { postId: post!.postId, cutoffAt });
+
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  test("does nothing once the cutoff has passed", async () => {
+    enableSync();
+    const t = convexTest(schema, modules);
+    const [post] = await seedSyncedPosts(t, 1);
+    const fetch = stubXByPage();
+
+    await t.action(internal.xMetrics.collectForCutoff, {
+      postId: post!.postId,
+      cutoffAt: Date.now(),
+    });
+
+    expect(fetch).not.toHaveBeenCalled();
+  });
+});
+
+describe("xMetrics.saveCounts", () => {
+  test("skips a post replaced since it was listed", async () => {
+    const t = convexTest(schema, modules);
+    const [replaced, kept] = await seedSyncedPosts(t, 2);
+    await t.run(async (ctx) => await ctx.db.patch("posts", replaced!.postId, { isActive: false }));
+
+    const saved = await t.mutation(internal.xMetrics.saveCounts, {
+      counts: [
+        { postId: replaced!.postId, views: 10, engagement: { likes: 1 } },
+        { postId: kept!.postId, views: 20, engagement: { likes: 2 } },
+      ],
+    });
+
+    expect(saved).toEqual({ saved: 1, skipped: [] });
+    expect(await storedPost(t, replaced!.postId)).not.toHaveProperty("views");
+    expect(await storedPost(t, kept!.postId)).toMatchObject({ views: 20, likes: 2 });
+  });
+
+  test("a post that can't be saved is skipped and named, and the rest still save", async () => {
+    const t = convexTest(schema, modules);
+    const [conflicted, kept] = await seedSyncedPosts(t, 2);
+    // A snapshot already at this exact moment makes this post's views save fail.
+    await t.run(
+      async (ctx) =>
+        await ctx.db.insert("postViewSnapshots", {
+          postId: conflicted!.postId,
+          observedAt: Date.now(),
+          views: 1,
+          sourceKey: "preexisting",
+          receivedAt: Date.now(),
+        }),
+    );
+
+    const result = await t.mutation(internal.xMetrics.saveCounts, {
+      counts: [
+        { postId: conflicted!.postId, views: 10, engagement: { likes: 1 } },
+        { postId: kept!.postId, views: 20, engagement: { likes: 2 } },
+      ],
+    });
+
+    expect(result).toEqual({
+      saved: 1,
+      skipped: [{ postId: conflicted!.postId, reason: "view_snapshot_time_conflict" }],
+    });
+    expect(await storedPost(t, kept!.postId)).toMatchObject({ views: 20, likes: 2 });
+  });
+
+  test("bad engagement counts are caught before the views are written", async () => {
+    const t = convexTest(schema, modules);
+    const [post] = await seedSyncedPosts(t, 1);
+
+    const result = await t.mutation(internal.xMetrics.saveCounts, {
+      counts: [{ postId: post!.postId, views: 10, engagement: { likes: -1 } }],
+    });
+
+    expect(result).toEqual({
+      saved: 0,
+      skipped: [{ postId: post!.postId, reason: "invalid_engagement" }],
+    });
+    expect(await storedPost(t, post!.postId)).not.toHaveProperty("views");
+    const snapshots = await t.run(async (ctx) => await ctx.db.query("postViewSnapshots").take(5));
+    expect(snapshots).toEqual([]);
+  });
+});

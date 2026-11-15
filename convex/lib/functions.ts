@@ -188,6 +188,13 @@ export const operatorAction = customAction(
   }),
 );
 
+export const creatorAction = customAction(
+  action,
+  customCtx(async (ctx): Promise<{ user: Doc<"users">; creatorId: Id<"creators"> }> => {
+    return await ctx.runQuery(internal.authorize.creator, {});
+  }),
+);
+
 export const companyAdminAction = customAction(
   action,
   customCtx(

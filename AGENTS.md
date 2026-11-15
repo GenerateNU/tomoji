@@ -91,7 +91,7 @@ commands that exist today:
 | Command             | What it does                                            |
 | ------------------- | ------------------------------------------------------- |
 | `just setup`        | Install deps, create `.env.local` from the template     |
-| `just convex-env`   | Copy WorkOS and S3 settings onto your Convex deployment |
+| `just convex-env`   | Copy WorkOS, S3, and Stripe settings to your deployment |
 | `just fd`           | Frontend dev server — http://localhost:3000             |
 | `just bd`           | Convex dev — watches `convex/`, streams function logs   |
 | `just ci`           | typecheck + lint + format:check + test (what CI runs)   |

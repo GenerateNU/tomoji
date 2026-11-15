@@ -18,6 +18,8 @@ export const cn = createCn({
             "body",
             "body-sm",
             "body-xs",
+            "code",
+            "code-lg",
           ],
         },
       ],

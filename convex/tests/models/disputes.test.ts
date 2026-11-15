@@ -138,6 +138,51 @@ const pastRuling = {
 } as const;
 
 describe("createDispute", () => {
+  test("stores the opener's evidence files, deduplicated", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await seedAssignmentFixture(t);
+    const evidence = await t.run((ctx) =>
+      ctx.db.insert("mediaUploads", {
+        ownerUserId: fixture.creatorUserId,
+        assignmentId: fixture.assignmentId,
+        kind: "dispute-evidence" as const,
+        status: "complete" as const,
+        contentType: "image/png",
+        stagingKey: "staging/dispute-evidence/test",
+        permanentKey: "media/dispute-evidence/test",
+        sizeBytes: 1024,
+        grantExpiresAt: Date.now() + 60_000,
+      }),
+    );
+
+    const disputeId = await open(t, fixture, { evidenceMediaIds: [evidence, evidence] });
+
+    expect(await t.run((ctx) => ctx.db.get("disputes", disputeId))).toMatchObject({
+      evidenceMediaIds: [evidence],
+    });
+  });
+
+  test("refuses evidence the opener does not own", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await seedAssignmentFixture(t);
+    const theirs = await t.run((ctx) =>
+      ctx.db.insert("mediaUploads", {
+        ownerUserId: fixture.membership.userId,
+        assignmentId: fixture.assignmentId,
+        kind: "dispute-evidence" as const,
+        status: "complete" as const,
+        contentType: "image/png",
+        stagingKey: "staging/dispute-evidence/other",
+        permanentKey: "media/dispute-evidence/other",
+        sizeBytes: 1024,
+        grantExpiresAt: Date.now() + 60_000,
+      }),
+    );
+
+    await expectApiError(() => open(t, fixture, { evidenceMediaIds: [theirs] }), "not_found");
+    expect(await storedDisputes(t)).toEqual([]);
+  });
+
   test("stores an open dispute with the assignment's owners and trimmed text", async () => {
     const t = convexTest(schema, modules);
     const fixture = await seedAssignmentFixture(t);
@@ -601,16 +646,45 @@ describe("overrideDispute", () => {
 });
 
 describe("requireDispute", () => {
-  test("gives company users and operators the stored row", async () => {
+  test("gives company users and operators the stored row and the company's name", async () => {
     const t = convexTest(schema, modules);
     const fixture = await seedAssignmentFixture(t);
+    await t.run(
+      async (ctx) =>
+        await ctx.db.patch("companies", fixture.membership.companyId, { name: "Datadog" }),
+    );
     const disputeId = await seedDispute(t, fixture);
     const [stored] = await storedDisputes(t);
 
     for (const viewer of [companyOf(fixture), operator]) {
       const view = await t.run(async (ctx) => await requireDispute(ctx, viewer, disputeId));
-      expect(view).toEqual(stored);
+      expect(view).toEqual({ ...stored, companyName: "Datadog" });
     }
+  });
+
+  test("gives creators the dispute's evidence", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await seedAssignmentFixture(t);
+    const evidence = await t.run((ctx) =>
+      ctx.db.insert("mediaUploads", {
+        ownerUserId: fixture.creatorUserId,
+        assignmentId: fixture.assignmentId,
+        kind: "dispute-evidence" as const,
+        status: "complete" as const,
+        contentType: "application/pdf",
+        stagingKey: "staging/dispute-evidence/view",
+        permanentKey: "media/dispute-evidence/view",
+        sizeBytes: 1024,
+        grantExpiresAt: Date.now() + 60_000,
+      }),
+    );
+    const disputeId = await seedDispute(t, fixture, { evidenceMediaIds: [evidence] });
+
+    const view = await t.run(
+      async (ctx) => await requireDispute(ctx, creatorOf(fixture), disputeId),
+    );
+
+    expect(view.evidenceMediaIds).toEqual([evidence]);
   });
 
   test("gives creators who closed it and how, but no user IDs", async () => {

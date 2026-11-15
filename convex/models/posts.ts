@@ -1,11 +1,76 @@
-import { paginationOptsValidator, type PaginationResult } from "convex/server";
-import { v, type Infer } from "convex/values";
+import {
+  paginationOptsValidator,
+  type PaginationOptions,
+  type PaginationResult,
+} from "convex/server";
+import { ConvexError, v, type Infer } from "convex/values";
+import { internal } from "../_generated/api";
 import type { Doc, Id } from "../_generated/dataModel";
-import type { MutationCtx, QueryCtx } from "../_generated/server";
+import { env, type MutationCtx, type QueryCtx } from "../_generated/server";
 import { apiError } from "../lib/errors";
+import { EARNING_WINDOW_MS } from "../lib/earningsCalculator";
+import { DAY_MS } from "../lib/time";
 import { requireAssignment, type AssignmentViewer } from "./assignments";
 import { listOpportunityDeliverables } from "./deliverableDrafts";
 import { getLatestSubmission } from "./submissions";
+import { getXAccountByCreatorId } from "./xAccountLookup";
+import { postCaptionCheck } from "../schemas/posts.schema";
+import { normalizeCaption, type getXPostForCaptionCheck } from "../lib/xApi";
+import { holdPostEarnings, initializePostEarnings, recordPostViewSnapshot } from "./earningSources";
+import schema from "../schema";
+
+/** Client-facing post fields; earnings evidence and lookup reservations stay internal. */
+export const postView = schema
+  .doc("posts")
+  .pick(
+    "_id",
+    "_creationTime",
+    "submissionId",
+    "campaignId",
+    "url",
+    "xPostId",
+    "isActive",
+    "isVerified",
+    "postedAt",
+    "firstVerifiedAt",
+    "removedAt",
+    "captionCheck",
+    "views",
+    "viewsUpdatedAt",
+    "likes",
+    "comments",
+    "reposts",
+    "quotes",
+  );
+export type PostView = Infer<typeof postView>;
+
+export function toPostView(post: Doc<"posts">): PostView {
+  const result: PostView = {
+    _id: post._id,
+    _creationTime: post._creationTime,
+    submissionId: post.submissionId,
+    campaignId: post.campaignId,
+    url: post.url,
+    xPostId: post.xPostId,
+    isActive: post.isActive,
+    isVerified: post.isVerified,
+  };
+  for (const key of [
+    "postedAt",
+    "firstVerifiedAt",
+    "removedAt",
+    "captionCheck",
+    "views",
+    "viewsUpdatedAt",
+    "likes",
+    "comments",
+    "reposts",
+    "quotes",
+  ] as const) {
+    if (post[key] !== undefined) Object.assign(result, { [key]: post[key] });
+  }
+  return result;
+}
 
 /** The creator-supplied fields of a new post. */
 export const postCreate = v.object({
@@ -29,7 +94,7 @@ const X_HOSTS = new Set([
 // `<handle>/status/<id>`, `i/status/<id>`, or `i/web/status/<id>`, with any
 // trailing parts like `/photo/1`. A handle is 1-15 letters, digits, or
 // underscores. Post ids are numeric, which tells a post apart from other pages.
-const X_POST_PATH = /^\/(?:i(?:\/web)?|([A-Za-z0-9_]{1,15}))\/status\/(\d{1,25})(?:\/.*)?$/;
+const X_POST_PATH = /^\/(?:i(?:\/web)?|([A-Za-z0-9_]{1,15}))\/status\/([1-9]\d{0,18})(?:\/.*)?$/;
 
 /**
  * Reads an X post link into its id and canonical URL:
@@ -140,6 +205,7 @@ export async function createPost(
     xPostId,
     isActive: true,
     isVerified: false,
+    earningsTrackingVersion: 1,
   });
 }
 
@@ -223,7 +289,11 @@ export async function replacePost(
     throw apiError("invalid_state", { reason: "assignment_not_active" });
   }
   const { url, xPostId } = requirePostUrl(fields.url);
+  if (xPostId === post.xPostId) return post;
   await requirePostUnused(ctx, xPostId, post.submissionId);
+  // This post may have been verified before it became replaceable again.
+  // Hold any existing agreement; the helper is a no-op when none exists.
+  await holdPostEarnings(ctx, postId, "post_replaced");
   await ctx.db.patch("posts", postId, { isActive: false });
   const newPostId = await ctx.db.insert("posts", {
     submissionId: post.submissionId,
@@ -232,6 +302,11 @@ export async function replacePost(
     xPostId,
     isActive: true,
     isVerified: false,
+    ...(post.earningsTrackingVersion === undefined
+      ? {}
+      : { earningsTrackingVersion: post.earningsTrackingVersion }),
+    ...(post.firstVerifiedAt === undefined ? {} : { firstVerifiedAt: post.firstVerifiedAt }),
+    ...(post.earningsTimingUnknown ? { earningsTimingUnknown: true } : {}),
   });
   return (await ctx.db.get("posts", newPostId))!;
 }
@@ -260,11 +335,77 @@ export async function verifyPost(
   if (post.isVerified) {
     throw apiError("invalid_state", { reason: "post_already_verified" });
   }
+  if (post.removedAt !== undefined) {
+    throw apiError("invalid_state", { reason: "post_removed" });
+  }
   if (!Number.isSafeInteger(postedAt) || postedAt < 0 || postedAt > Date.now()) {
     throw apiError("invalid_state", { reason: "invalid_posted_at" });
   }
-  await ctx.db.patch("posts", postId, { isVerified: true, postedAt });
-  return { ...post, isVerified: true, postedAt };
+  const earnings = await initializePostEarnings(ctx, postId, Date.now());
+  const firstVerifiedAt = post.firstVerifiedAt ?? earnings?.startedAt;
+  const patch = {
+    isVerified: true,
+    postedAt,
+    ...(firstVerifiedAt === undefined ? { earningsTimingUnknown: true } : { firstVerifiedAt }),
+  };
+  await ctx.db.patch("posts", postId, patch);
+  // Re-verification keeps the original clock, so its reads are already scheduled.
+  if (post.firstVerifiedAt === undefined && firstVerifiedAt !== undefined) {
+    await scheduleEarningsReads(ctx, postId, firstVerifiedAt);
+  } else if (earnings !== null && earnings.postId !== postId) {
+    // A replacement: settlement keeps reading the original post and holds variable
+    // earnings for review, so the reviewer just gets one current reading of the new link.
+    await scheduleReadNow(ctx, postId);
+  }
+  return { ...post, ...patch };
+}
+
+/** Earnings settle the final period from a reading in the 5 minutes before the cutoff. */
+export const CUTOFF_READ_WINDOW_MS = 5 * 60 * 1000;
+// Read 4 minutes before the cutoff, leaving room for X's response, and again 2 minutes
+// before in case the first read failed, so even a slow retry lands before the cutoff.
+const CUTOFF_READ_OFFSETS_MS = [4 * 60 * 1000, 2 * 60 * 1000];
+
+/**
+ * Earnings reads run only while the sync is switched on. This checks the flag
+ * alone so X configuration can never fail a verification; the reads validate it
+ * when they run.
+ */
+function earningsReadsEnabled(): boolean {
+  return env.X_METRICS_SYNC_ENABLED === "true";
+}
+
+/**
+ * Schedules one X read of the post right away. It's skipped if the post gets a
+ * reading after this point anyway, as when the caption check that verified it
+ * also stored its counts.
+ */
+async function scheduleReadNow(ctx: MutationCtx, postId: Id<"posts">): Promise<void> {
+  if (!earningsReadsEnabled()) return;
+  await ctx.scheduler.runAfter(0, internal.xMetrics.collect, {
+    postIds: [postId],
+    readSince: Date.now(),
+  });
+}
+
+/**
+ * Schedules the X reads earnings need beyond the daily sync: one now, for the
+ * views at verification, and two just before the earnings window ends.
+ */
+async function scheduleEarningsReads(
+  ctx: MutationCtx,
+  postId: Id<"posts">,
+  firstVerifiedAt: number,
+): Promise<void> {
+  if (!earningsReadsEnabled()) return;
+  await scheduleReadNow(ctx, postId);
+  const cutoffAt = firstVerifiedAt + EARNING_WINDOW_MS;
+  for (const offset of CUTOFF_READ_OFFSETS_MS) {
+    await ctx.scheduler.runAt(cutoffAt - offset, internal.xMetrics.collectForCutoff, {
+      postId,
+      cutoffAt,
+    });
+  }
 }
 
 /**
@@ -280,7 +421,13 @@ export async function unverifyPost(ctx: MutationCtx, postId: Id<"posts">): Promi
   if (!post.isVerified) {
     throw apiError("invalid_state", { reason: "post_not_verified" });
   }
-  await ctx.db.patch("posts", postId, { isVerified: false, postedAt: undefined });
+  await holdPostEarnings(ctx, postId, "verification_changed");
+  await ctx.db.patch("posts", postId, {
+    isVerified: false,
+    postedAt: undefined,
+    captionCheck: "manualReview",
+    captionCheckStartedAt: undefined,
+  });
   // Read it back so the cleared field is absent rather than `undefined`.
   return (await ctx.db.get("posts", postId))!;
 }
@@ -311,6 +458,12 @@ export async function updatePostViews(
   requireActive(post);
   requireCount(views, "invalid_views");
   const patch = { views, viewsUpdatedAt: Date.now() };
+  await recordPostViewSnapshot(ctx, {
+    postId,
+    observedAt: patch.viewsUpdatedAt,
+    views,
+    sourceKey: `metrics:${patch.viewsUpdatedAt}`,
+  });
   await ctx.db.patch("posts", postId, patch);
   return { ...post, ...patch };
 }
@@ -341,7 +494,7 @@ export async function updatePostEngagement(
   if (post === null) throw apiError("not_found", { resource: "post" });
   requireActive(post);
   const patch: PostEngagement = {};
-  for (const field of ["likes", "comments", "reposts", "quotes"] as const) {
+  for (const field of ENGAGEMENT_FIELDS) {
     const count = engagement[field];
     if (count === undefined) continue;
     requireCount(count, "invalid_engagement", field);
@@ -422,4 +575,255 @@ export async function listPosts(
     )
     .order("desc")
     .paginate(paginationOpts);
+}
+
+/** Reads the approved caption for the current linked post before a paid X lookup. */
+export async function getPostCaptionInput(ctx: QueryCtx, postId: Id<"posts">) {
+  const post = await ctx.db.get("posts", postId);
+  if (post === null) throw apiError("not_found", { resource: "post" });
+  requireActive(post);
+  const submission = await ctx.db.get("submissions", post.submissionId);
+  if (submission?.status !== "approved")
+    throw apiError("invalid_state", { reason: "submission_not_approved" });
+  return { xPostId: post.xPostId, caption: submission.caption };
+}
+
+const captionCheckRetryMs = 30_000;
+
+export const creatorCaptionCheck = v.union(
+  v.literal("alreadyChecked"),
+  v.literal("inProgress"),
+  postCaptionCheck,
+);
+
+export const captionCheckReservation = v.union(
+  v.object({ status: creatorCaptionCheck }),
+  v.object({
+    status: v.literal("lookup"),
+    xPostId: v.string(),
+    startedAt: v.number(),
+  }),
+);
+
+/** Authorizes and reserves an X read; drafts with no caption go straight to manual review. */
+export async function startCreatorCaptionCheck(
+  ctx: MutationCtx,
+  creatorId: Id<"creators">,
+  postId: Id<"posts">,
+): Promise<Infer<typeof captionCheckReservation>> {
+  const { post, assignment } = await requirePostAccess(ctx, { role: "creator", creatorId }, postId);
+  requireActive(post);
+  if (assignment.status !== "active")
+    throw apiError("invalid_state", { reason: "assignment_not_active" });
+  if (post.isVerified || post.captionCheck === "match" || post.captionCheck === "manualReview")
+    return { status: "alreadyChecked" };
+  const submission = await ctx.db.get("submissions", post.submissionId);
+  if (submission?.status !== "approved")
+    throw apiError("invalid_state", { reason: "submission_not_approved" });
+  const account = submission.caption ? await getXAccountByCreatorId(ctx, creatorId) : null;
+  if (!submission.caption || account?.status !== "connected") {
+    await ctx.db.patch("posts", postId, { captionCheck: "manualReview" });
+    return { status: "manualReview" };
+  }
+  const startedAt = Date.now();
+  if (
+    post.captionCheckStartedAt !== undefined &&
+    startedAt - post.captionCheckStartedAt < captionCheckRetryMs
+  ) {
+    return { status: "inProgress" };
+  }
+  await ctx.db.patch("posts", postId, { captionCheckStartedAt: startedAt });
+  return { status: "lookup", xPostId: post.xPostId, startedAt };
+}
+
+/** Rechecks ownership and the active link before applying a result from X. */
+export async function finishCreatorCaptionCheck(
+  ctx: MutationCtx,
+  creatorId: Id<"creators">,
+  postId: Id<"posts">,
+  startedAt: number,
+  published: Awaited<ReturnType<typeof getXPostForCaptionCheck>>,
+): Promise<Infer<typeof creatorCaptionCheck>> {
+  const { post, assignment } = await requirePostAccess(ctx, { role: "creator", creatorId }, postId);
+  requireActive(post);
+  if (assignment.status !== "active")
+    throw apiError("invalid_state", { reason: "assignment_not_active" });
+  if (post.isVerified || post.captionCheck === "match" || post.captionCheck === "manualReview")
+    return "alreadyChecked";
+  if (post.captionCheckStartedAt !== startedAt) return "inProgress";
+  const submission = await ctx.db.get("submissions", post.submissionId);
+  if (submission?.status !== "approved" || !submission.caption)
+    throw apiError("invalid_state", { reason: "submission_not_approved" });
+  const account = await getXAccountByCreatorId(ctx, creatorId);
+  const sameAuthor = account?.status === "connected" && account.xUserId === published.authorId;
+  const status =
+    sameAuthor && normalizeCaption(submission.caption) === normalizeCaption(published.text)
+      ? "match"
+      : "mismatch";
+
+  // A caption match cannot verify a video's content. Extra media and reposts also need review.
+  if (
+    status === "match" &&
+    !submission.mediaId &&
+    !published.hasExtraContent &&
+    published.postedAt >= Math.floor(submission._creationTime / 1000) * 1000
+  ) {
+    await verifyPost(ctx, postId, { postedAt: published.postedAt });
+    // The reading at verification gives analytics day-zero counts and is the
+    // baseline earnings measure later views against.
+    if (published.views !== undefined) await updatePostViews(ctx, postId, published.views);
+    if (published.engagement !== undefined)
+      await updatePostEngagement(ctx, postId, published.engagement);
+  }
+  await ctx.db.patch("posts", postId, { captionCheck: status });
+  return status;
+}
+
+// The earnings window, measured from first verification, plus two days: the sync
+// runs daily at 00:00 UTC, so the first run after the window ends is at most a day
+// later. The second day keeps the post in that run even if it starts late, so its
+// final total is stored.
+const SYNC_MARGIN_DAYS = 2;
+const SYNC_WINDOW_MS = EARNING_WINDOW_MS + SYNC_MARGIN_DAYS * DAY_MS;
+
+/** What the daily X sync needs to fetch a post's counts and store them. */
+export const earningPost = v.object({ postId: v.id("posts"), xPostId: v.string() });
+export type EarningPost = Infer<typeof earningPost>;
+
+/**
+ * One page of posts the daily X sync fetches at `now`: verified, active, first verified
+ * within the sync window, not removed, and not on a cancelled assignment. Posts with an open
+ * dispute stay in. Posts with no recorded first verification (legacy timing) are skipped.
+ * Skipped posts make a page shorter than requested; `continueCursor` still moves past
+ * them, so paging covers every eligible post once.
+ */
+export async function listEarningPosts(
+  ctx: QueryCtx,
+  now: number,
+  paginationOpts: PaginationOptions,
+): Promise<PaginationResult<EarningPost>> {
+  const result = await ctx.db
+    .query("posts")
+    .withIndex("by_isVerified_and_isActive_and_firstVerifiedAt", (q) =>
+      q
+        .eq("isVerified", true)
+        .eq("isActive", true)
+        .gte("firstVerifiedAt", now - SYNC_WINDOW_MS),
+    )
+    .paginate(paginationOpts);
+  const cancelled = new Map<Id<"assignments">, boolean>();
+  const page: EarningPost[] = [];
+  for (const post of result.page) {
+    // A removed post is gone from X, so a lookup would only spend credits.
+    if (post.removedAt !== undefined) continue;
+    if (!(await isOnCancelledAssignment(ctx, post, cancelled))) {
+      page.push({ postId: post._id, xPostId: post.xPostId });
+    }
+  }
+  return { ...result, page };
+}
+
+/**
+ * Whether the post's assignment is cancelled; a missing submission or assignment
+ * counts as cancelled. Posts often share an assignment, so `cache` reads each once.
+ */
+async function isOnCancelledAssignment(
+  ctx: QueryCtx,
+  post: Doc<"posts">,
+  cache: Map<Id<"assignments">, boolean>,
+): Promise<boolean> {
+  const submission = await ctx.db.get("submissions", post.submissionId);
+  if (submission === null) return true;
+  let cancelled = cache.get(submission.assignmentId);
+  if (cancelled === undefined) {
+    const assignment = await ctx.db.get("assignments", submission.assignmentId);
+    cancelled = assignment === null || assignment.status === "cancelled";
+    cache.set(submission.assignmentId, cancelled);
+  }
+  return cancelled;
+}
+
+/**
+ * The verified, active posts among `postIds` the X collector should read now,
+ * skipping removed posts, cancelled assignments, and, with `readSince`, posts that already have a
+ * view reading at or after that time.
+ *
+ * @throws `invalid_state` for more than 100 posts, X's limit for one lookup.
+ */
+export async function listCollectionTargets(
+  ctx: QueryCtx,
+  postIds: Id<"posts">[],
+  readSince?: number,
+): Promise<EarningPost[]> {
+  if (postIds.length > 100) throw apiError("invalid_state", { reason: "too_many_posts" });
+  const cancelled = new Map<Id<"assignments">, boolean>();
+  const targets: EarningPost[] = [];
+  for (const postId of postIds) {
+    const post = await ctx.db.get("posts", postId);
+    if (post === null || !post.isActive || !post.isVerified) continue;
+    // A removed post is gone from X, so a lookup would only spend credits.
+    if (post.removedAt !== undefined) continue;
+    if (await isOnCancelledAssignment(ctx, post, cancelled)) continue;
+    if (readSince !== undefined) {
+      const recent = await ctx.db
+        .query("postViewSnapshots")
+        .withIndex("by_postId_and_observedAt", (q) =>
+          q.eq("postId", postId).gte("observedAt", readSince),
+        )
+        .first();
+      if (recent !== null) continue;
+    }
+    targets.push({ postId, xPostId: post.xPostId });
+  }
+  return targets;
+}
+
+const ENGAGEMENT_FIELDS = ["likes", "comments", "reposts", "quotes"] as const;
+
+/** One post's counts from the daily X sync. */
+export const syncedCounts = v.object({
+  postId: v.id("posts"),
+  views: v.number(),
+  engagement: postEngagement,
+});
+export type SyncedCounts = Infer<typeof syncedCounts>;
+
+/** What `saveSyncedCounts` stored, and which posts it skipped and why. */
+export const syncedCountsResult = v.object({
+  saved: v.number(),
+  skipped: v.array(v.object({ postId: v.id("posts"), reason: v.string() })),
+});
+export type SyncedCountsResult = Infer<typeof syncedCountsResult>;
+
+/**
+ * Stores the sync's counts for each post that's still active, skipping posts
+ * replaced or removed since they were listed. Each post is saved on its own: an
+ * expected failure (an invalid count, a snapshot conflict) skips just that post,
+ * and these are all raised before anything is written for it. Engagement is
+ * checked first so a bad engagement count can't leave the views saved alone.
+ */
+export async function saveSyncedCounts(
+  ctx: MutationCtx,
+  counts: SyncedCounts[],
+): Promise<SyncedCountsResult> {
+  let saved = 0;
+  const skipped: SyncedCountsResult["skipped"] = [];
+  for (const { postId, views, engagement } of counts) {
+    const post = await ctx.db.get("posts", postId);
+    if (post === null || !post.isActive) continue;
+    try {
+      for (const field of ENGAGEMENT_FIELDS) {
+        const count = engagement[field];
+        if (count !== undefined) requireCount(count, "invalid_engagement", field);
+      }
+      await updatePostViews(ctx, postId, views);
+      await updatePostEngagement(ctx, postId, engagement);
+      saved++;
+    } catch (error) {
+      if (!(error instanceof ConvexError)) throw error;
+      const data = error.data as { reason?: unknown; code?: unknown };
+      skipped.push({ postId, reason: String(data.reason ?? data.code) });
+    }
+  }
+  return { saved, skipped };
 }

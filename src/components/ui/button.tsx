@@ -1,67 +1,42 @@
 import { Button as ButtonPrimitive } from "@base-ui/react/button";
 import { cva, type VariantProps } from "class-variance-authority";
+import { iconProps, type IconComponent } from "@/lib/icons";
+import { focusRing, ghostFade, overlayOnDark, overlayOnLight } from "@/lib/styles";
 import { cn } from "@/lib/utils";
 
-// Figma "Button": Type (variant) × Tone × State. Hover and pressed tint the
-// fill (or fade the text, for ghost) rather than swapping colors.
+// Figma "Button": variants are named as in Figma. Filled buttons tint their
+// fill on hover and press with a gradient overlay; ghost buttons fade instead.
+// Every variant dims to 40% when disabled.
 const buttonVariants = cva(
-  "group/button inline-flex shrink-0 items-center justify-center rounded-lg border border-transparent bg-clip-padding font-medium whitespace-nowrap transition-colors outline-none select-none focus-visible:ring-3 focus-visible:ring-ring/50 disabled:pointer-events-none aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
+  cn(
+    "group/button inline-flex shrink-0 cursor-pointer items-center justify-center gap-1.5 rounded-sm font-medium whitespace-nowrap transition-[background-image,opacity] select-none disabled:cursor-not-allowed disabled:opacity-40 aria-invalid:ring-4 aria-invalid:ring-destructive/20 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
+    focusRing,
+  ),
   {
     variants: {
       variant: {
-        // Primary and ghost dim further when disabled, matching Figma.
-        default: "",
-        secondary: "disabled:opacity-50",
-        ghost: "disabled:opacity-40",
-        link: "text-primary underline-offset-4 hover:underline disabled:opacity-50",
-      },
-      tone: {
-        default: "",
-        destructive: "",
+        special: cn("bg-special text-special-foreground", overlayOnLight),
+        primary: cn("bg-primary text-primary-foreground", overlayOnDark),
+        "primary-subtle": cn("bg-blue-subtle text-primary", overlayOnLight),
+        "primary-ghost": cn("text-primary", ghostFade),
+        secondary: cn("bg-secondary text-secondary-foreground", overlayOnDark),
+        "secondary-subtle": cn("bg-gray-50 text-foreground", overlayOnLight),
+        "secondary-ghost": cn("text-foreground", ghostFade),
+        "destructive-subtle": cn("bg-red-100 text-red-700", overlayOnLight),
+        "destructive-ghost": cn("text-red-700", ghostFade),
+        link: "text-primary underline-offset-4 hover:underline",
       },
       size: {
-        sm: "h-8 gap-1 px-2.5 text-body-sm",
-        default: "h-9 gap-1.5 px-3 text-body",
-        lg: "h-10 gap-2 px-4 text-body",
-        "icon-sm": "size-8",
-        icon: "size-9",
-        "icon-lg": "size-10",
+        sm: "h-8.25 px-3 text-body",
+        default: "h-11.25 px-4 text-body",
+        // Alias of default, for callers who think in sm/md.
+        md: "h-11.25 px-4 text-body",
+        "icon-sm": "size-8.25",
+        icon: "size-11.25",
       },
     },
-    compoundVariants: [
-      {
-        variant: "default",
-        tone: "default",
-        className:
-          "bg-primary text-primary-foreground hover:bg-[color-mix(in_oklch,var(--primary),white_10%)] active:bg-[color-mix(in_oklch,var(--primary),white_20%)] disabled:opacity-40",
-      },
-      {
-        variant: "default",
-        tone: "destructive",
-        className:
-          "bg-destructive text-white hover:bg-[color-mix(in_oklch,var(--destructive),black_10%)] active:bg-[color-mix(in_oklch,var(--destructive),black_20%)] disabled:opacity-50",
-      },
-      {
-        variant: "secondary",
-        className:
-          "bg-secondary hover:bg-[color-mix(in_oklch,var(--secondary),black_10%)] active:bg-[color-mix(in_oklch,var(--secondary),black_20%)]",
-      },
-      { variant: "secondary", tone: "default", className: "text-secondary-foreground" },
-      { variant: "secondary", tone: "destructive", className: "text-red-700" },
-      {
-        variant: "ghost",
-        tone: "default",
-        className: "text-foreground hover:text-foreground/80 active:text-foreground/60",
-      },
-      {
-        variant: "ghost",
-        tone: "destructive",
-        className: "text-red-700 hover:text-red-700/80 active:text-red-700/60",
-      },
-    ],
     defaultVariants: {
-      variant: "default",
-      tone: "default",
+      variant: "primary",
       size: "default",
     },
   },
@@ -69,16 +44,38 @@ const buttonVariants = cva(
 
 function Button({
   className,
-  variant = "default",
-  tone = "default",
+  variant = "primary",
   size = "default",
+  icon: Icon,
+  trailingIcon: TrailingIcon,
+  fullWidth,
   ...props
-}: ButtonPrimitive.Props & VariantProps<typeof buttonVariants>) {
+}: ButtonPrimitive.Props &
+  VariantProps<typeof buttonVariants> & {
+    icon?: IconComponent;
+    trailingIcon?: IconComponent;
+    fullWidth?: boolean;
+  }) {
+  // Only replace children when an icon is present, so `render` elements that
+  // carry their own content keep working.
+  const withIcons =
+    Icon || TrailingIcon
+      ? {
+          children: (
+            <>
+              {Icon ? <Icon {...iconProps} /> : null}
+              {props.children}
+              {TrailingIcon ? <TrailingIcon {...iconProps} /> : null}
+            </>
+          ),
+        }
+      : null;
   return (
     <ButtonPrimitive
       data-slot="button"
-      className={cn(buttonVariants({ variant, tone, size, className }))}
+      className={cn(buttonVariants({ variant, size, className }), fullWidth && "w-full")}
       {...props}
+      {...withIcons}
     />
   );
 }

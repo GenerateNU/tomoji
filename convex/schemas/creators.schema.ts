@@ -16,6 +16,11 @@ export const followerRange = v.union(
 
 export const creatorsTable = defineTable({
   userId: v.id("users"),
+  // Retain legacy values until a cleanup migration has run on existing deployments.
+  // Profile routes neither accept nor expose these fields; X identity comes from xAccounts.
+  username: v.optional(v.string()),
+  xId: v.optional(v.string()),
+  phoneNumber: v.optional(v.string()),
   githubLink: v.optional(v.string()),
   linkedinLink: v.optional(v.string()),
   // Anything else the creator wants to show, capped at MAX_ADDITIONAL_LINKS.
@@ -27,12 +32,6 @@ export const creatorsTable = defineTable({
   // ISO 3166-1 alpha-2, validated against the country list.
   countryOfResidence: v.optional(v.string()),
   bannerMediaId: v.optional(v.id("mediaUploads")),
-  // Hides the creator from company-facing lists. Companies they have applied
-  // to or been assigned by can still open their profile. Optional so rows
-  // created before this field need no migration; read missing as "not private".
-  isPrivate: v.optional(v.boolean()),
-  // Legacy selections remain readable until backfilled into creatorNiches.
-  // New writes use association rows and remove this field atomically.
-  niches: v.optional(v.array(v.string())),
   followerRange: v.optional(followerRange),
+  onboardingCompletedAt: v.optional(v.number()),
 }).index("by_userId", ["userId"]);

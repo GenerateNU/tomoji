@@ -4,6 +4,7 @@ import {
   authedQuery,
   requireCallerViewer,
   companyMutation,
+  companyQuery,
   creatorMutation,
 } from "./lib/functions";
 import { requireCallerCreatorId } from "./models/users";
@@ -17,18 +18,19 @@ import {
   submissionView,
 } from "./models/submissions";
 import schema from "./schema";
+import { listSubmissionQueue, submissionQueue } from "./models/submissionQueue";
 
 /**
  * Submits a draft for one deliverable of the caller's own active assignment.
  * Each deliverable is reviewed on its own: one being pending or approved doesn't
- * block the others. Supply a completed owned video mediaId.
+ * block the others. Supply a completed owned video, a caption, or both.
  * AI drafts snapshot confirmed criteria and start background review when enabled.
  *
  * @throws `not_found` if the assignment doesn't exist or isn't the caller's, or
  * the deliverable isn't one of the assignment's opportunity.
  * @throws `invalid_state` if the assignment isn't active, a draft for that
  * deliverable is already approved, a draft field is blank or too long, or the
- * video is incomplete, or an AI video draft has no confirmed criteria.
+ * video is incomplete, or an AI draft has no confirmed criteria.
  * @throws `conflict` if a draft for that deliverable is already pending review.
  * @returns the new submission's id.
  */
@@ -103,4 +105,11 @@ export const list = authedQuery({
       args.paginationOpts,
     );
   },
+});
+
+/** Lists the latest drafts that belong to the caller's company's assignments. */
+export const listCompanyQueue = companyQuery({
+  args: {},
+  returns: submissionQueue,
+  handler: async (ctx) => await listSubmissionQueue(ctx, ctx.membership.companyId),
 });

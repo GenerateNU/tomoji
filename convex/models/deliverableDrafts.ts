@@ -5,11 +5,12 @@ import { apiError } from "../lib/errors";
 import { requireNonBlank } from "../lib/validation";
 import schema from "../schema";
 import { normalizeReviewCriteria } from "../lib/ai/validation";
+import { MAX_DELIVERABLE_EXAMPLES, requireSupportingMedia } from "./supportingMedia";
 
 /** The company-supplied fields of a deliverable. */
 export const deliverableCreate = schema
   .doc("deliverables")
-  .pick("title", "description", "reviewCriteria");
+  .pick("title", "description", "reviewCriteria", "exampleMediaIds");
 export type DeliverableCreate = Infer<typeof deliverableCreate>;
 
 /** Most deliverables one opportunity can have, so every read of them is bounded. */
@@ -33,6 +34,11 @@ export function normalizeDeliverable(fields: DeliverableCreate): DeliverableCrea
   };
   if (fields.reviewCriteria !== undefined) {
     normalized.reviewCriteria = normalizeReviewCriteria(fields.reviewCriteria);
+  }
+  // Only shape and count here; ownership needs the database, so
+  // `insertDeliverables` checks the files themselves.
+  if (fields.exampleMediaIds !== undefined) {
+    normalized.exampleMediaIds = fields.exampleMediaIds;
   }
   return normalized;
 }
@@ -76,9 +82,20 @@ export async function insertDeliverables(
   if (existingCount + drafts.length > MAX_DELIVERABLES) {
     throw apiError("invalid_state", { reason: "too_many_deliverables" });
   }
+  const member = await ctx.db.get("companyUsers", createdBy);
+  if (member === null) throw apiError("not_found", { resource: "companyUser" });
   const ids: Id<"deliverables">[] = [];
   for (const draft of drafts) {
     const row = { ...normalizeDeliverable(draft), opportunityId, createdBy };
+    if (row.exampleMediaIds !== undefined) {
+      row.exampleMediaIds = await requireSupportingMedia(
+        ctx,
+        member.userId,
+        "deliverable-example",
+        row.exampleMediaIds,
+        MAX_DELIVERABLE_EXAMPLES,
+      );
+    }
     ids.push(await ctx.db.insert("deliverables", row));
   }
   return ids;

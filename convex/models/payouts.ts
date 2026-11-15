@@ -85,6 +85,7 @@ export async function createPayout(ctx: MutationCtx, args: PayoutCreate): Promis
 
   const payoutId = await ctx.db.insert("payouts", {
     assignmentId: assignment._id,
+    deliverableId: submission.deliverableId,
     sourceKey,
     amount: args.amount,
     currency,
@@ -101,13 +102,17 @@ export async function createPayout(ctx: MutationCtx, args: PayoutCreate): Promis
   return (await ctx.db.get("payouts", payoutId))!;
 }
 
-/** The same public view for every role; internal deduplication and actor IDs stay private. */
+/** Server-resolved payout scope. Absent company role never grants approval permission. */
+export type PayoutViewer = ResourceViewer & { companyRole?: Doc<"companyUsers">["role"] };
+
+/** Public fields plus current review context; internal keys and actor IDs stay private. */
 export const payoutView = schema
   .doc("payouts")
   .pick(
     "_id",
     "_creationTime",
     "assignmentId",
+    "deliverableId",
     "creatorId",
     "companyId",
     "campaignId",
@@ -122,11 +127,18 @@ export const payoutView = schema
     "approvalSource",
     "paymentStatus",
     "transferredAt",
-  );
+  )
+  .extend({
+    review: v.object({ hasOpenDispute: v.boolean(), canApprove: v.boolean() }),
+  });
 export type PayoutView = Infer<typeof payoutView>;
 
 /** Selects fields explicitly so future stored fields are private by default. */
-function toPayoutView(payout: Doc<"payouts">): PayoutView {
+function toPayoutView(
+  payout: Doc<"payouts">,
+  viewer: PayoutViewer,
+  hasOpenAssignmentDispute: boolean,
+): PayoutView {
   return {
     _id: payout._id,
     _creationTime: payout._creationTime,
@@ -141,6 +153,16 @@ function toPayoutView(payout: Doc<"payouts">): PayoutView {
     approvalDueAt: payout.approvalDueAt,
     approvalStatus: payout.approvalStatus,
     paymentStatus: payout.paymentStatus,
+    review: {
+      hasOpenDispute: hasOpenAssignmentDispute,
+      canApprove:
+        viewer.role === "company" &&
+        viewer.companyId === payout.companyId &&
+        viewer.companyRole === "admin" &&
+        payout.approvalStatus === "pending" &&
+        !hasOpenAssignmentDispute,
+    },
+    ...(payout.deliverableId === undefined ? {} : { deliverableId: payout.deliverableId }),
     ...(payout.earningPeriod === undefined ? {} : { earningPeriod: payout.earningPeriod }),
     ...(payout.approvedAt === undefined ? {} : { approvedAt: payout.approvedAt }),
     ...(payout.approvalSource === undefined ? {} : { approvalSource: payout.approvalSource }),
@@ -151,14 +173,14 @@ function toPayoutView(payout: Doc<"payouts">): PayoutView {
 /** Reads historical ownership from the payout without requiring its live parents. */
 export async function requirePayout(
   ctx: QueryCtx,
-  viewer: ResourceViewer,
+  viewer: PayoutViewer,
   payoutId: Id<"payouts">,
 ): Promise<PayoutView> {
   const payout = await ctx.db.get("payouts", payoutId);
   if (payout === null || !canViewResource(viewer, payout)) {
     throw apiError("not_found", { resource: "payout" });
   }
-  return toPayoutView(payout);
+  return toPayoutView(payout, viewer, await hasOpenDispute(ctx, payout.assignmentId));
 }
 
 /** Approves an owned payout; the route supplies a verified company-admin membership. */
@@ -171,8 +193,15 @@ export async function approvePayout(
   if (payout === null || payout.companyId !== membership.companyId) {
     throw apiError("not_found", { resource: "payout" });
   }
-  if (payout.approvalStatus === "approved") return toPayoutView(payout);
-  if (await hasOpenDispute(ctx, payout.assignmentId)) {
+  const viewer: PayoutViewer = {
+    role: "company",
+    companyId: membership.companyId,
+    companyRole: membership.role,
+  };
+  const isDisputed = await hasOpenDispute(ctx, payout.assignmentId);
+  // Repeated approval preserves the original decision, even if a dispute opened later.
+  if (payout.approvalStatus === "approved") return toPayoutView(payout, viewer, isDisputed);
+  if (isDisputed) {
     throw apiError("invalid_state", { reason: "payout_disputed" });
   }
   const approval = {
@@ -182,7 +211,7 @@ export async function approvePayout(
     approvedAt: Date.now(),
   };
   await ctx.db.patch("payouts", payoutId, approval);
-  return toPayoutView({ ...payout, ...approval });
+  return toPayoutView({ ...payout, ...approval }, viewer, isDisputed);
 }
 
 export const payoutApprovalContinuation = v.object({ cursor: v.string(), cutoff: v.number() });
@@ -239,7 +268,7 @@ export type PayoutListFilters = Infer<typeof payoutListFilters>;
  */
 export async function listPayouts(
   ctx: QueryCtx,
-  viewer: ResourceViewer,
+  viewer: PayoutViewer,
   options: PayoutListFilters,
 ): Promise<PaginationResult<PayoutView>> {
   const { assignmentId, campaignId, paginationOpts } = options;
@@ -274,7 +303,20 @@ export async function listPayouts(
   const result = await query
     .order("desc")
     .paginate(hasParentScope ? withRowsReadCap(paginationOpts) : paginationOpts);
-  return { ...result, page: result.page.map(toPayoutView) };
+  // Enrich only the authorized page, once per assignment. Keep the native cursor
+  // and every row, including disputed payouts; a review hold is not a visibility filter.
+  const holds = new Map<Id<"assignments">, boolean>();
+  await Promise.all(
+    [...new Set(result.page.map((payout) => payout.assignmentId))].map(async (id) => {
+      holds.set(id, await hasOpenDispute(ctx, id));
+    }),
+  );
+  return {
+    ...result,
+    page: result.page.map((payout) =>
+      toPayoutView(payout, viewer, holds.get(payout.assignmentId)!),
+    ),
+  };
 }
 
 /** Paired indexes keep the same chronological ordering with or without a status filter. */

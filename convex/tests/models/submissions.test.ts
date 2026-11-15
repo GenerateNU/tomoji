@@ -1,6 +1,7 @@
 /// <reference types="vite/client" />
 import { convexTest } from "convex-test";
 import { afterEach, describe, expect, test, vi } from "vitest";
+import { api } from "../../_generated/api";
 import type { Doc, Id } from "../../_generated/dataModel";
 import {
   createSubmission,
@@ -817,19 +818,26 @@ describe("notifications", () => {
 
 test("paginated creator reads retain safe review outcomes on the second page", async () => {
   const t = convexTest(schema, modules);
-  const fixture = await seedAiReviewFixture(t);
+  const fixture = await seedAiReviewFixture(t, [
+    { id: "product", description: "Mention Driftwood." },
+    { id: "disclosure", description: "Disclose the paid partnership." },
+  ]);
   const result = aiReviewResultArgs();
   await prepareAiReviewEvaluation(t, fixture.attempt._id);
   await t.run(async (ctx) => {
     await finishAiReview(ctx, fixture.attempt._id, {
       ...result,
       results: [
+        { ...result.results[0], criterionId: "disclosure" },
         {
           ...result.results[0],
           outcome: "not_met",
           probabilities: { met: 0.02, not_met: 0.95, uncertain: 0.03 },
         },
       ],
+    });
+    await ctx.db.patch("deliverables", fixture.deliverableId, {
+      reviewCriteria: [{ id: "product", description: "Mention the new product." }],
     });
     await createSubmission(
       ctx,
@@ -866,10 +874,20 @@ test("paginated creator reads retain safe review outcomes on the second page", a
       status: "changesRequested",
       reviewerType: "ai",
       reviewedAt: expect.any(Number),
-      reviewNote: "Please address these spoken requirements: Mention Driftwood.",
-      aiReview: { status: "completed", results: [{ criterionId: "product", outcome: "not_met" }] },
+      reviewNote: "Please address these requirements: Mention Driftwood.",
+      aiReview: {
+        status: "completed",
+        results: [
+          { criterionId: "disclosure", outcome: "met" },
+          { criterionId: "product", outcome: "not_met" },
+        ],
+        failedCriteria: [{ id: "product", description: "Mention Driftwood." }],
+      },
     },
   ]);
+  expect(
+    await fixture.asCreator.query(api.submissions.get, { submissionId: fixture.submissionId }),
+  ).toEqual(second.page[0]);
 });
 
 test("company review is blocked while an enabled AI workflow is processing", async () => {

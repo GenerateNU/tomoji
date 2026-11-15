@@ -23,6 +23,12 @@ const result = await build({
         builder.onResolve({ filter: /^next\/image$/ }, () => ({
           path: resolve("e2e/fixtures/next-image.tsx"),
         }));
+        builder.onResolve({ filter: /^next\/navigation$/ }, () => ({
+          path: resolve("e2e/fixtures/settings-navigation.ts"),
+        }));
+        builder.onResolve({ filter: /^@\/app\/auth\/actions$/ }, () => ({
+          path: resolve("e2e/fixtures/settings-auth.ts"),
+        }));
       },
     },
   ],
@@ -37,5 +43,5 @@ const css = await postcss([tailwindcss()]).process(await readFile(cssPath, "utf8
 // Use local fallbacks so browser tests don't fetch fonts from Google.
 await writeFile(
   resolve(outputDirectory, "settings.css"),
-  `${css.css}\n:root { --font-inter: Arial, sans-serif; --font-geist-mono: monospace; }`,
+  `${css.css}\n:root { --font-host-grotesk: Arial, sans-serif; --font-geist-mono: monospace; }`,
 );

@@ -21,14 +21,26 @@ import {
   completeAssignment,
   creatorAssignment,
   creatorAssignmentListFilters,
+  creatorAssignmentOption,
+  creatorAssignmentSearch,
   declineAssignmentTerms,
   exportAssignmentCreatorsCsv,
   listAssignments,
   listCreatorAssignments,
   markAssignmentProductAccessDelivered,
   requireAssignment,
+  searchCreatorAssignments,
   toCreatorAssignment,
 } from "./models/assignments";
+import {
+  creatorAssignmentDetails,
+  creatorAssignmentFilterOptions,
+  creatorAssignmentSummaryFilters,
+  listCreatorAssignmentFilterOptions,
+  creatorAssignmentSummary,
+  getCreatorAssignmentDetails,
+  listCreatorAssignmentSummaries,
+} from "./models/creatorAssignments";
 import { requireCallerCreatorId } from "./models/users";
 import schema from "./schema";
 
@@ -108,6 +120,50 @@ export const listMine = creatorQuery({
   },
 });
 
+/** Lists the creator's assignments with display names for the assignments page. */
+export const listMineSummaries = creatorQuery({
+  args: creatorAssignmentSummaryFilters.fields,
+  returns: paginationResultValidator(creatorAssignmentSummary),
+  handler: async (ctx, args) => {
+    const creatorId = await requireCallerCreatorId(ctx, ctx.user);
+    return await listCreatorAssignmentSummaries(ctx, creatorId, args);
+  },
+});
+
+/** Lists opportunity options and counts for the creator's assignment workspace. */
+export const listMineFilterOptions = creatorQuery({
+  args: {},
+  returns: creatorAssignmentFilterOptions,
+  handler: async (ctx) => {
+    const creatorId = await requireCallerCreatorId(ctx, ctx.user);
+    return await listCreatorAssignmentFilterOptions(ctx, creatorId);
+  },
+});
+
+/** Gets the owned assignment workspace, including its brief and deliverables. */
+export const getMineDetails = creatorQuery({
+  args: { assignmentId: v.string() },
+  returns: v.union(creatorAssignmentDetails, v.null()),
+  handler: async (ctx, { assignmentId }) => {
+    const creatorId = await requireCallerCreatorId(ctx, ctx.user);
+    return await getCreatorAssignmentDetails(ctx, creatorId, assignmentId);
+  },
+});
+
+/**
+ * Searches the caller's assignments, in any status, by company name (substring,
+ * ignoring case; blank lists all). Returns up to 20, newest first, from their
+ * newest 200.
+ */
+export const searchMine = creatorQuery({
+  args: creatorAssignmentSearch.fields,
+  returns: v.array(creatorAssignmentOption),
+  handler: async (ctx, args) => {
+    const creatorId = await requireCallerCreatorId(ctx, ctx.user);
+    return await searchCreatorAssignments(ctx, creatorId, args.companyName);
+  },
+});
+
 /**
  * Gets one assignment. Creators see their own, company users see their
  * company's, and operators see all. Delivery actor IDs are omitted for creators.
@@ -130,7 +186,9 @@ export const get = authedQuery({
  * Returns the creator view, including delivery time but no delivery actor ID.
  *
  * @throws `not_found` if the assignment does not exist or is not the caller's.
- * @throws `invalid_state` if the assignment is not termsPending.
+ * @throws `invalid_state` if the assignment is not termsPending. Only claimed
+ * (ungated) assignments are ever termsPending; an accepted offer is created
+ * active.
  */
 export const acceptTerms = creatorMutation({
   args: { assignmentId: v.id("assignments") },
@@ -148,7 +206,8 @@ export const acceptTerms = creatorMutation({
  * Returns the creator view, including delivery time but no delivery actor ID.
  *
  * @throws `not_found` if the assignment does not exist or is not the caller's.
- * @throws `invalid_state` if the assignment is not termsPending.
+ * @throws `invalid_state` if the assignment is not termsPending. Only claimed
+ * (ungated) assignments are ever termsPending.
  */
 export const declineTerms = creatorMutation({
   args: { assignmentId: v.id("assignments") },
@@ -166,7 +225,8 @@ export const declineTerms = creatorMutation({
  *
  * @throws `not_found` if the assignment does not exist or belongs to another
  * company.
- * @throws `invalid_state` if the assignment is not termsPending.
+ * @throws `invalid_state` if the assignment is not termsPending. Only claimed
+ * (ungated) assignments are ever termsPending.
  */
 export const cancel = companyAdminMutation({
   args: { assignmentId: v.id("assignments") },

@@ -1,66 +1,12 @@
 import type { Doc, Id } from "../_generated/dataModel";
-import type { MutationCtx } from "../_generated/server";
-import { listCreatorNiches } from "./creatorNiches";
-import { listCreatorSkills } from "./creatorSkills";
-import { followerRangeFit, type FollowerRange } from "./followerRanges";
-import { getVisibleOpportunityCompany } from "./opportunities";
+import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { listOpportunityNiches } from "./opportunityNiches";
+import {
+  getCreatorSignals,
+  scoreOpportunityMatch,
+  type OpportunitySignals,
+} from "./opportunityMatch";
 import { listOpportunitySkills } from "./opportunitySkills";
-
-/**
- * How much each signal counts toward a match. Followers weigh most because reach
- * decides eligibility; niches least because briefs may not set them. Signals an
- * opportunity doesn't ask for are left out and the rest re-normalized, so the
- * weights only need to be right relative to each other.
- */
-export const SCORE_WEIGHTS = { followers: 0.45, skills: 0.35, niches: 0.2 } as const;
-
-export type CreatorSignals = {
-  niches: readonly string[];
-  skills: readonly string[];
-  followerRange?: FollowerRange;
-};
-
-export type OpportunitySignals = {
-  niches: readonly string[];
-  skills: readonly string[];
-  minFollowerRange?: FollowerRange;
-};
-
-/** Share of the opportunity's selections the creator also has. */
-function overlap(wanted: readonly string[], offered: readonly string[]): number {
-  const offeredSet = new Set(offered);
-  return wanted.filter((name) => offeredSet.has(name)).length / wanted.length;
-}
-
-/**
- * Scores how well an opportunity fits a creator, from 0 to 1. Only signals the
- * opportunity asks for count, so a brief with no skills isn't marked down for
- * it. A brief that asks for nothing scores 0 and falls back to deadline order.
- */
-export function scoreOpportunityMatch(
-  creator: CreatorSignals,
-  opportunity: OpportunitySignals,
-): number {
-  let total = 0;
-  let weight = 0;
-  if (opportunity.niches.length > 0) {
-    total += SCORE_WEIGHTS.niches * overlap(opportunity.niches, creator.niches);
-    weight += SCORE_WEIGHTS.niches;
-  }
-  if (opportunity.skills.length > 0) {
-    total += SCORE_WEIGHTS.skills * overlap(opportunity.skills, creator.skills);
-    weight += SCORE_WEIGHTS.skills;
-  }
-  // An under-1K minimum excludes nobody, so it isn't a requirement.
-  if (opportunity.minFollowerRange !== undefined && opportunity.minFollowerRange !== "under-1k") {
-    total +=
-      SCORE_WEIGHTS.followers *
-      followerRangeFit(creator.followerRange, opportunity.minFollowerRange);
-    weight += SCORE_WEIGHTS.followers;
-  }
-  return weight === 0 ? 0 : total / weight;
-}
 
 /**
  * Company users keep the creator row made when they first signed in, and
@@ -71,23 +17,12 @@ async function hasCreatorFeed(ctx: MutationCtx, creator: Doc<"creators">): Promi
   return user !== null && user.isActive && user.role === "creator";
 }
 
-async function getCreatorSignals(
-  ctx: MutationCtx,
-  creator: Doc<"creators">,
-): Promise<CreatorSignals> {
-  const [niches, skills] = await Promise.all([
-    listCreatorNiches(ctx, creator),
-    listCreatorSkills(ctx, creator._id),
-  ]);
-  return { niches, skills, followerRange: creator.followerRange };
-}
-
 async function getOpportunitySignals(
   ctx: MutationCtx,
   opportunity: Doc<"opportunities">,
 ): Promise<OpportunitySignals> {
   const [niches, skills] = await Promise.all([
-    listOpportunityNiches(ctx, opportunity),
+    listOpportunityNiches(ctx, opportunity._id),
     listOpportunitySkills(ctx, opportunity._id),
   ]);
   return { niches, skills, minFollowerRange: opportunity.minFollowerRange };
@@ -104,6 +39,18 @@ async function getOpportunityScore(
       q.eq("creatorId", creatorId).eq("opportunityId", opportunityId),
     )
     .unique();
+}
+
+/** Whether any creator has a score for this opportunity. */
+export async function hasOpportunityScores(
+  ctx: QueryCtx,
+  opportunityId: Id<"opportunities">,
+): Promise<boolean> {
+  const score = await ctx.db
+    .query("opportunityScores")
+    .withIndex("by_opportunityId", (q) => q.eq("opportunityId", opportunityId))
+    .first();
+  return score !== null;
 }
 
 /**
@@ -124,6 +71,15 @@ async function saveOpportunityScore(
   } else if (existing.score !== score) {
     await ctx.db.patch("opportunityScores", existing._id, { score });
   }
+}
+
+/**
+ * Open and paused briefs keep their scores; discovery hides paused ones, and
+ * those under a paused campaign or inactive company, when it reads them. That
+ * way pausing and resuming needn't rescore. Drafts and closed briefs have none.
+ */
+function isScored(opportunity: Doc<"opportunities"> | null): opportunity is Doc<"opportunities"> {
+  return opportunity !== null && (opportunity.status === "open" || opportunity.status === "paused");
 }
 
 const ROWS_PER_BATCH = 100;
@@ -172,8 +128,8 @@ const FINISHED_PAGE = { isDone: true, continueCursor: "" };
  * edit may have dropped them; each selection stage reads the creators who
  * picked that niche or skill, so the work grows with real matches rather than
  * with every creator. An opportunity that only sets a follower minimum has no
- * selections to look creators up by, so it isn't scored. If creators can no
- * longer see the opportunity, its scores are removed instead.
+ * selections to look creators up by, so it isn't scored. Once the opportunity
+ * is closed or removed, its scores are removed instead.
  */
 export async function scoreOpportunityForCreators(
   ctx: MutationCtx,
@@ -182,7 +138,7 @@ export async function scoreOpportunityForCreators(
   cursor: string | null,
 ): Promise<ScoringProgress> {
   const opportunity = await ctx.db.get("opportunities", opportunityId);
-  if (opportunity === null || (await getVisibleOpportunityCompany(ctx, opportunity)) === null) {
+  if (!isScored(opportunity)) {
     const scores = await ctx.db
       .query("opportunityScores")
       .withIndex("by_opportunityId", (q) => q.eq("opportunityId", opportunityId))
@@ -235,7 +191,7 @@ export async function scoreOpportunityForCreators(
  * "existing" stage rescores the opportunities they already have a score for,
  * dropping ones that closed or stopped matching; each selection stage reads the
  * opportunities that picked one of the creator's niches or skills, skipping
- * ones creators can't see. If the creator no longer has a feed, their scores
+ * drafts and closed ones. If the creator no longer has a feed, their scores
  * are removed.
  */
 export async function scoreCreatorOpportunities(
@@ -260,10 +216,9 @@ export async function scoreCreatorOpportunities(
   const stages = selectionStages(signals);
   const rescore = async (opportunityId: Id<"opportunities">) => {
     const opportunity = await ctx.db.get("opportunities", opportunityId);
-    const score =
-      opportunity !== null && (await getVisibleOpportunityCompany(ctx, opportunity)) !== null
-        ? scoreOpportunityMatch(signals, await getOpportunitySignals(ctx, opportunity))
-        : 0;
+    const score = isScored(opportunity)
+      ? scoreOpportunityMatch(signals, await getOpportunitySignals(ctx, opportunity))
+      : 0;
     await saveOpportunityScore(ctx, creatorId, opportunityId, score);
   };
 

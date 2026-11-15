@@ -6,6 +6,7 @@ createRoot(document.getElementById("root")!).render(
     <OpportunityTags
       niches={["data-analytics-business-intelligence", "databases"]}
       skills={["identity-access-management", "typescript"]}
+      languages={["english", "spanish"]}
     />
   </main>,
 );

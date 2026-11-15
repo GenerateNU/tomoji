@@ -102,26 +102,44 @@ export async function isOpportunityStarred(
 /** Most stars loaded in one read when flagging a page of briefs. */
 const MAX_STARS_READ = 1000;
 
-/** Adds `isStarred` for the creator to each brief, e.g. a page of the discovery feed. */
-export async function withStarredFlags(
+/**
+ * Returns which of the given opportunities the creator has starred. One bulk
+ * read of the creator's stars covers the common case; creators with more stars
+ * than that fall back to one lookup per opportunity.
+ */
+export async function listStarredOpportunityIds(
   ctx: QueryCtx,
   creatorId: Id<"creators">,
-  briefs: CreatorOpportunity[],
-): Promise<StarredCreatorOpportunity[]> {
-  // One read of the creator's stars instead of one lookup per brief.
+  opportunityIds: Id<"opportunities">[],
+): Promise<Set<Id<"opportunities">>> {
+  if (opportunityIds.length === 0) return new Set();
   const stars = await ctx.db
     .query("opportunityStars")
     .withIndex("by_creatorId", (q) => q.eq("creatorId", creatorId))
     .take(MAX_STARS_READ);
   if (stars.length === MAX_STARS_READ) {
     // Some stars weren't loaded, so a missing ID doesn't mean "not starred".
-    return await Promise.all(
-      briefs.map(async (brief) => ({
-        ...brief,
-        isStarred: await isOpportunityStarred(ctx, creatorId, brief._id),
-      })),
+    const flags = await Promise.all(
+      opportunityIds.map(
+        async (id) => [id, await isOpportunityStarred(ctx, creatorId, id)] as const,
+      ),
     );
+    return new Set(flags.filter(([, isStarred]) => isStarred).map(([id]) => id));
   }
-  const starred = new Set(stars.map((star) => star.opportunityId));
+  const wanted = new Set(opportunityIds);
+  return new Set(stars.map((star) => star.opportunityId).filter((id) => wanted.has(id)));
+}
+
+/** Adds `isStarred` for the creator to each brief, e.g. a page of the discovery feed. */
+export async function withStarredFlags(
+  ctx: QueryCtx,
+  creatorId: Id<"creators">,
+  briefs: CreatorOpportunity[],
+): Promise<StarredCreatorOpportunity[]> {
+  const starred = await listStarredOpportunityIds(
+    ctx,
+    creatorId,
+    briefs.map((brief) => brief._id),
+  );
   return briefs.map((brief) => ({ ...brief, isStarred: starred.has(brief._id) }));
 }

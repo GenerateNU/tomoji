@@ -192,9 +192,7 @@ describe("upsertUser", () => {
       firstName: "Ada",
       lastName: "Lovelace",
     });
-    expect(await t.run(async (ctx) => await ctx.db.query("creators").unique())).toMatchObject({
-      isPrivate: false,
-    });
+    expect(await t.run(async (ctx) => await ctx.db.query("creators").unique())).toMatchObject({});
   });
 
   test("is idempotent", async () => {
@@ -409,7 +407,7 @@ describe("upsertUser", () => {
         role: "creator",
         isActive: true,
       });
-      await ctx.db.insert("creators", { userId, isPrivate: false });
+      await ctx.db.insert("creators", { userId });
     });
 
     await t.run(async (ctx) =>

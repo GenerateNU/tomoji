@@ -41,13 +41,10 @@ export function Welcome() {
       </h1>
       {me.role === "creator" && (
         <nav aria-label="Get started" className="flex flex-wrap gap-3">
-          <Link href="/opportunities" className={buttonVariants({ size: "lg" })}>
+          <Link href="/opportunities" className={buttonVariants()}>
             Browse opportunities
           </Link>
-          <Link
-            href="/applications"
-            className={buttonVariants({ size: "lg", variant: "secondary" })}
-          >
+          <Link href="/applications" className={buttonVariants({ variant: "secondary-subtle" })}>
             My applications
           </Link>
         </nav>

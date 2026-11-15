@@ -119,15 +119,15 @@ export const completeUpload = action({
 });
 
 /** Reads an image object, checking it still matches the grant it was stored under. */
-async function readImageObject(
-  image: { key: string; contentType: string },
+async function readMediaObject(
+  media: { key: string; contentType: string },
   kind: MediaKind,
 ): Promise<{ contentType: string; bytes: ArrayBuffer }> {
   const config = readMediaConfig(env);
   let object: GetObjectCommandOutput;
   try {
     object = await createMediaS3Client(config).send(
-      new GetObjectCommand({ Bucket: config.bucket, Key: image.key }),
+      new GetObjectCommand({ Bucket: config.bucket, Key: media.key }),
     );
   } catch {
     throw apiError("upstream_failure");
@@ -136,7 +136,7 @@ async function readImageObject(
     object.ContentLength === undefined ||
     object.ContentLength < 1 ||
     object.ContentLength > mediaLimits[kind] ||
-    object.ContentType !== image.contentType ||
+    object.ContentType !== media.contentType ||
     object.Body === undefined
   ) {
     throw apiError("invalid_state", { reason: "invalid_media_object" });
@@ -150,7 +150,7 @@ async function readImageObject(
   if (bytes.length < 1 || bytes.length > mediaLimits[kind]) {
     throw apiError("invalid_state", { reason: "invalid_media_object" });
   }
-  return { contentType: image.contentType, bytes: Uint8Array.from(bytes).buffer };
+  return { contentType: media.contentType, bytes: Uint8Array.from(bytes).buffer };
 }
 
 /** Sends a current private picture through Convex; S3 never grants the browser GET access. */
@@ -160,7 +160,7 @@ export const getProfilePicture = action({
   handler: async (ctx, args): Promise<{ contentType: string; bytes: ArrayBuffer }> => {
     await requireIdentity(ctx);
     const picture = await ctx.runQuery(internal.mediaInternal.getProfilePicture, args);
-    return await readImageObject(picture, "profile-picture");
+    return await readMediaObject(picture, "profile-picture");
   },
 });
 
@@ -171,7 +171,7 @@ export const getCompanyMedia = action({
   handler: async (ctx, args): Promise<{ contentType: string; bytes: ArrayBuffer }> => {
     await requireIdentity(ctx);
     const media = await ctx.runQuery(internal.mediaInternal.getCompanyMedia, args);
-    return await readImageObject(media, media.kind);
+    return await readMediaObject(media, media.kind);
   },
 });
 
@@ -189,6 +189,32 @@ export const getVideoUrl = action({
       { expiresIn: videoReadTtlSeconds },
     );
     return { url, expiresAt: Date.now() + videoReadTtlSeconds * 1000 };
+  },
+});
+
+/**
+ * Sends a brief's example file through Convex, to anyone who may read that
+ * brief. The deliverable is named because nothing indexes media back to its
+ * row, and it is re-checked server side.
+ */
+export const getDeliverableExample = action({
+  args: { deliverableId: v.id("deliverables"), mediaId: v.id("mediaUploads") },
+  returns: v.object({ contentType: v.string(), bytes: v.bytes() }),
+  handler: async (ctx, args): Promise<{ contentType: string; bytes: ArrayBuffer }> => {
+    await requireIdentity(ctx);
+    const example = await ctx.runQuery(internal.mediaInternal.getDeliverableExample, args);
+    return await readMediaObject(example, "deliverable-example");
+  },
+});
+
+/** The same path for a dispute's evidence, which both sides and operators may read. */
+export const getDisputeEvidence = action({
+  args: { disputeId: v.id("disputes"), mediaId: v.id("mediaUploads") },
+  returns: v.object({ contentType: v.string(), bytes: v.bytes() }),
+  handler: async (ctx, args): Promise<{ contentType: string; bytes: ArrayBuffer }> => {
+    await requireIdentity(ctx);
+    const evidence = await ctx.runQuery(internal.mediaInternal.getDisputeEvidence, args);
+    return await readMediaObject(evidence, "dispute-evidence");
   },
 });
 

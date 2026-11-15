@@ -63,7 +63,7 @@ check existing data before deployment and approve any conversion or reconnection
 
 ## OAuth flow
 
-The frontend calls `start` and navigates to its authorization URL. X redirects to
+The frontend calls `start` and opens its authorization URL. X redirects to
 `GET /api/x/callback`. This Next.js handler reads the existing WorkOS session and
 immediately calls `complete` using that session's access token. The callback is
 separate from `/auth/callback` and cannot create a Tomoji session.
@@ -89,11 +89,37 @@ flow rather than replaying the callback. An unpersisted grant may still exist on
 The callback redirects to `/?x_link=connected|failed|denied|sign_in_required|already_linked`, with
 `Cache-Control: no-store` and `Referrer-Policy: no-referrer`. No provider payload,
 code, state, or token appears in that redirect. Signed-out callbacks require a new
-linking attempt after signing in. Settings currently shows only a disabled **Connect X**
-placeholder; it is not wired to this backend. Future connection controls should provide
-result messages and use `me` as the source of truth after returning.
+linking attempt after signing in. Connection controls use `me` as the source of truth;
+the redirect flag only explains the callback outcome.
 `already_linked` identifies only the specific account-ownership conflict, without
 exposing the other creator's identity. Other errors stay generic.
+
+### Connecting from Profile
+
+Profile's **Link X** / **Reconnect X** control opens authorization in a separate tab
+so unsaved profile edits remain in place. The tab is opened by the click before the
+asynchronous start call, with its opener removed. If the browser blocks it, no link
+attempt is started. The UI disables duplicate starts and reads the current `me`
+result before a new attempt, which invalidates any older attempt on the server.
+
+The profile subscribes to `me` and offers **Check connection** after authorization.
+Only verified connected metadata confirms success. A reconnect must return changed
+account identity or `updatedAt`, so an existing connection cannot falsely confirm
+a new attempt. Callback denial, failure, account conflicts, and expiry remain
+recoverable without discarding the profile draft; an interrupted tab is not proof
+of failure. Account reads and start requests have a 30-second UI timeout; late
+answers cannot navigate the tab or replace the current UI. A start still running
+on Convex remains locked for that client and creator until the original request
+settles, including across closing and reopening Profile. Editing and checking the
+current connection remain available. No callback code is replayed automatically.
+`Check connection` reads current client query state; it does not force a network
+refresh. Browser isolation can keep the returned authorization tab inaccessible,
+so callback-specific messages are best effort and the tab may remain open. The
+reactive account read and manual check provide the fallback.
+
+X connections save independently of the profile's Save and Cancel controls.
+Disconnect is not exposed in Profile. Browser
+tests use isolated OAuth and account fixtures; they do not authorize a live X app.
 
 Disconnect invalidates attempts and deletes local account/credential rows first,
 then attempts revocation of both tokens with bounded requests. Even when X is down
@@ -141,11 +167,10 @@ Post metrics come from X's public post lookup, which accepts the app-only bearer
 token, so the sync never decrypts creator credentials. Every read is billed against
 the team's X credits.
 
-Nothing calls the lookup yet: no cron runs and no post's counts are updated. The weekly
-fetch will run inside the payout cron, before payouts are calculated. The X field names
-below come from X's documentation and haven't been checked against a live response.
-Before enabling the sync anywhere, make one lookup for a post you own (about $0.005)
-and confirm `public_metrics` includes `impression_count`:
+The daily analytics sync (`xMetrics.sync`, cron `sync X post metrics` at 00:00 UTC) calls
+the lookup; earnings will request their own boundary readings. The X field names below
+come from X's documentation and haven't been checked against a live response. Before enabling the sync anywhere, make one lookup for a post you own (about
+$0.005) and confirm `public_metrics` includes `impression_count`:
 
 ```bash
 curl -s -H "Authorization: Bearer $X_BEARER_TOKEN" "https://api.x.com/2/tweets?ids=<post_id>&tweet.fields=public_metrics"
@@ -163,9 +188,59 @@ copies each setting that is filled in and rejects `X_METRICS_SYNC_ENABLED=true` 
 token, but it never clears a deployment value. To turn an enabled deployment off, run
 `bunx convex env set X_METRICS_SYNC_ENABLED false`.
 
-`X_POST_EARNING_DAYS` (30) is a placeholder for how long a post keeps earning after it
-goes live, pending product confirmation. Payouts run weekly, so a post is paid through
-the end of the week its last earning day falls in.
+Earnings last 30 days (`EARNING_WINDOW_MS`) from a post's first verification, not
+its publication. The stored earnings agreement determines the actual window; cancellation
+or confirmed removal can shorten it. Earnings are calculated every seven days, with a
+final partial period ending exactly at day 30. Collectors must use the agreement's
+verification baseline and period/cutoff timestamps, and retain delayed evidence needed
+to settle earlier earnings. See [Earnings rules](EARNINGS.md) for the calculation and
+evidence contract.
+
+The analytics sync uses the same clock. It runs daily at 00:00 UTC and reads verified,
+active posts whose `firstVerifiedAt` is within the last `EARNING_WINDOW_MS` + 2 days, so
+a post verified late is still followed for its whole earning window. The extra days keep
+a post in the first run after its window ends, even a late one, so its stored total
+covers day 30. If
+that run fails, the post keeps the previous day's total. Posts with no recorded first
+verification (legacy `earningsTimingUnknown` posts) are skipped. `posts.listEarning`
+(internal) returns the posts a page at a time.
+
+The daily sync keeps `posts` current for analytics, and every views save is also recorded
+as an earnings snapshot (`updatePostViews` → `postViewSnapshots`). A count lower than an
+earlier one in the earnings window holds that post's variable earnings for reconciliation.
+
+Earnings also need readings near the start and end of each window, so a post's first
+verification schedules extra reads through the same helper, but only while
+`X_METRICS_SYNC_ENABLED` is `"true"`:
+
+| Read                          | When                          | Function                                            |
+| ----------------------------- | ----------------------------- | --------------------------------------------------- |
+| Views at verification         | Immediately                   | `xMetrics.collect`                                  |
+| Views before the final cutoff | 4 and 2 minutes before day 30 | `xMetrics.collectForCutoff` (the second is a retry) |
+
+Settlement takes the final period's views from the latest reading in the 5 minutes before
+the cutoff; without one, the remaining earnings stay pending for admin review. The retry
+is skipped when the first read already landed in that window, and neither runs after the
+cutoff. Re-verification keeps the original clock, so it schedules nothing new.
+Replaced posts are held for review, and earnings reads aren't rescheduled for the new
+post: verifying a replacement schedules one `xMetrics.collect` read of the new link for
+the reviewer, and the daily sync follows it as usual. Weekly boundaries and early
+cutoffs (cancellation or removal) use the last daily reading before them. How settlement
+picks readings is defined in [Earnings rules](EARNINGS.md).
+The analytics sync skips posts on cancelled assignments and posts with a recorded removal
+(`removedAt`), since X no longer has them; posts with an open dispute stay in. Payouts decide eligibility separately: a cancellation stops accrual at its cutoff,
+and any readings earnings need around that cutoff come from the earnings flow, not this
+sync.
+
+Each run reads one page of 100 posts from `posts.listEarning`, looks them up in one X
+request, and stores views and engagement through `xMetrics.saveCounts`, skipping posts
+replaced since they were listed. It then schedules the next page with the same `now`
+until every page is done. Posts X leaves out keep their stored counts and are logged by
+reason. A page X can't answer, or whose counts can't be saved, is logged and skipped so
+it can't block later pages. A rate limit is logged and stops the run, since it applies to
+every page. Nothing is retried, since each read is billed; the next day's run reads the
+same posts again. With
+`X_METRICS_SYNC_ENABLED` off, the cron does nothing and calls nothing.
 
 `getXPostMetrics` looks up at most 100 post IDs per call through `GET /2/tweets` with
 `tweet.fields=public_metrics`. Each post's counts come back in two parts, stored
@@ -180,6 +255,14 @@ separately:
 `comments`, `reposts`, and `quotes`; quote posts are their own count and are never
 added to `reposts`. An unusable engagement count is left out on its own, keeping its
 stored value, so it can never hold back the views or the other counts.
+
+A creator's caption check (`posts.checkMyCaption`) asks for `public_metrics` in the same
+X request at no extra cost. When the match verifies the post, it stores the views and
+engagement, so analytics has counts from the moment of verification. Unusable counts are
+left out and never block verification. Like every views save, this reading is also
+recorded as an earnings snapshot (`postViewSnapshots`), so it serves as the reading at
+verification, and the immediate `xMetrics.collect` read that verification schedules is
+skipped. When the caption check had no usable views, that read still runs.
 
 One unusable post never fails the batch. Each such post is listed in `missing` with a
 reason:

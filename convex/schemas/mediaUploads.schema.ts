@@ -6,6 +6,8 @@ export const mediaKind = v.union(
   v.literal("company-profile-picture"),
   v.literal("company-banner"),
   v.literal("video-submission"),
+  v.literal("deliverable-example"),
+  v.literal("dispute-evidence"),
 );
 export type MediaKind = Infer<typeof mediaKind>;
 

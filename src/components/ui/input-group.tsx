@@ -13,7 +13,7 @@ function InputGroup({ className, ...props }: React.ComponentProps<"div">) {
       data-slot="input-group"
       role="group"
       className={cn(
-        "group/input-group relative flex h-11 w-full min-w-0 items-center rounded-lg border border-input bg-background transition-colors outline-none in-data-[slot=combobox-content]:focus-within:border-inherit in-data-[slot=combobox-content]:focus-within:ring-0 has-disabled:bg-muted has-disabled:opacity-50 has-[[data-slot=input-group-control]:focus-visible]:border-foreground has-[[data-slot=input-group-control]:focus-visible]:inset-ring-1 has-[[data-slot=input-group-control]:focus-visible]:inset-ring-foreground has-[[data-slot][aria-invalid=true]]:border-destructive has-[[data-slot][aria-invalid=true]]:inset-ring-1 has-[[data-slot][aria-invalid=true]]:inset-ring-destructive has-[>[data-align=block-end]]:h-auto has-[>[data-align=block-end]]:flex-col has-[>[data-align=block-start]]:h-auto has-[>[data-align=block-start]]:flex-col has-[>textarea]:h-auto has-[>[data-align=block-end]]:[&>input]:pt-3 has-[>[data-align=block-start]]:[&>input]:pb-3 has-[>[data-align=inline-end]]:[&>input]:pr-2 has-[>[data-align=inline-start]]:[&>input]:pl-2",
+        "group/input-group relative flex h-11.75 w-full min-w-0 items-center rounded-sm border border-gray-300 bg-gray-0 transition-shadow outline-none in-data-[slot=combobox-content]:focus-within:border-inherit in-data-[slot=combobox-content]:focus-within:ring-0 has-disabled:opacity-40 has-[[data-slot=input-group-control]:focus-visible]:border-blue-primary has-[[data-slot=input-group-control]:focus-visible]:inset-ring has-[[data-slot=input-group-control]:focus-visible]:inset-ring-blue-primary has-[[data-slot=input-group-control]:focus-visible]:ring-4 has-[[data-slot=input-group-control]:focus-visible]:ring-blue-primary/25 in-data-[slot=combobox-content]:has-[[data-slot=input-group-control]:focus-visible]:ring-0 in-data-[slot=combobox-content]:has-[[data-slot=input-group-control]:focus-visible]:outline-none in-data-[slot=combobox-content]:has-[[data-slot=input-group-control]:focus-visible]:inset-ring-0 has-[[data-slot][aria-invalid=true]]:border-red-600 has-[[data-slot][aria-invalid=true]]:bg-red-50 has-[[data-slot][aria-invalid=true]]:inset-ring has-[[data-slot][aria-invalid=true]]:inset-ring-red-600 has-[>[data-align=block-end]]:h-auto has-[>[data-align=block-end]]:flex-col has-[>[data-align=block-start]]:h-auto has-[>[data-align=block-start]]:flex-col has-[>textarea]:h-auto has-[>[data-align=block-end]]:[&>input]:pt-3 has-[>[data-align=block-start]]:[&>input]:pb-3 has-[>[data-align=inline-end]]:[&>input]:pr-2 has-[>[data-align=inline-start]]:[&>input]:pl-2",
         className,
       )}
       {...props}
@@ -79,7 +79,7 @@ const inputGroupButtonVariants = cva("flex items-center gap-2 text-body-sm shado
 function InputGroupButton({
   className,
   type = "button",
-  variant = "ghost",
+  variant = "secondary-ghost",
   size = "xs",
   ...props
 }: Omit<React.ComponentProps<typeof Button>, "size" | "type"> &
@@ -114,7 +114,7 @@ function InputGroupInput({ className, ...props }: React.ComponentProps<"input">)
     <Input
       data-slot="input-group-control"
       className={cn(
-        "h-full flex-1 rounded-none border-0 bg-transparent shadow-none ring-0 focus-visible:inset-ring-0 disabled:bg-transparent aria-invalid:inset-ring-0",
+        "h-full flex-1 rounded-none border-0 bg-transparent shadow-none outline-none focus-visible:ring-0 focus-visible:outline-none disabled:bg-transparent aria-invalid:bg-transparent aria-invalid:outline-none",
         className,
       )}
       {...props}
@@ -127,7 +127,7 @@ function InputGroupTextarea({ className, ...props }: React.ComponentProps<"texta
     <Textarea
       data-slot="input-group-control"
       className={cn(
-        "flex-1 resize-none rounded-none border-0 bg-transparent shadow-none ring-0 focus-visible:inset-ring-0 disabled:bg-transparent aria-invalid:inset-ring-0",
+        "flex-1 resize-none rounded-none border-0 bg-transparent shadow-none outline-none focus-visible:ring-0 focus-visible:outline-none disabled:bg-transparent aria-invalid:bg-transparent aria-invalid:outline-none",
         className,
       )}
       {...props}

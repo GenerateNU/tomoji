@@ -22,15 +22,18 @@ A deployment that still holds legacy rows will have its schema push rejected, an
 the backfill that fixed those rows has been removed. See
 [Recovering an unmigrated deployment](#recovering-an-unmigrated-deployment).
 
-The creator profile rework drops `username`, `xId`, and `phoneNumber` from
-`creators`, also without a migration. See
+The creator profile rework no longer uses `username`, `xId`, and `phoneNumber` on
+`creators`. The schema temporarily accepts these optional legacy fields so older
+deployments can sync without losing data. There is no cleanup migration yet. See
 [Dropping the legacy creator columns](#dropping-the-legacy-creator-columns).
 
 Schema validation remains enabled throughout; no record deletion is needed.
 
-These steps assume only users and creators are populated and workflow tables are
-empty. Populated legacy workflow tables need a separate conversion plan.
-Preserve a snapshot before migrating data you need to keep.
+The identity-recovery procedures below assume only users and creators are
+populated and workflow tables are empty. Populated legacy workflow tables need
+a separate conversion plan; the earnings-schedule backfill supports existing
+earnings agreements as described in its own section. Preserve a snapshot before
+migrating data you need to keep.
 
 Progress is keyed by the full exported function path, so renaming a dated file
 or its export starts fresh progress and rescans every record.
@@ -49,7 +52,7 @@ Alternatively, use `just bd` to deploy and watch the backend, and run the migrat
 command in a second terminal after deployment succeeds.
 
 `runAll` removes legacy user profile-picture URLs (see the compatibility rollout
-below), then moves legacy creator niches into association rows. It skips
+below), scores open opportunities, then initializes earnings schedules. It skips
 completed migrations and resumes interrupted ones.
 
 Available migrations:
@@ -57,11 +60,12 @@ Available migrations:
 - [2026_10_07_remove_user_profile_pictures.ts](../convex/migrations/2026_10_07_remove_user_profile_pictures.ts)
   exports `removeUserProfilePictures`. It drops the legacy `profilePicture` URL
   from each user, preserving `profilePictureMediaId` and every other field.
-- [2026_10_25_backfill_creator_niches.ts](../convex/migrations/2026_10_25_backfill_creator_niches.ts)
-  exports `backfillCreatorNiches`. It moves a creator's legacy `niches` array into
-  `creatorNiches` association rows through `updateCreatorNiches`, which also
-  removes the legacy field. Creators without the field are left alone, so it is
-  safe to rerun.
+- [2026_11_14_score_open_opportunities.ts](../convex/migrations/2026_11_14_score_open_opportunities.ts)
+  exports `scoreOpenOpportunities`. It schedules scoring for open opportunities.
+- [2026_11_11_backfill_earnings_schedules.ts](../convex/migrations/2026_11_11_backfill_earnings_schedules.ts)
+  exports `backfillEarningsSchedules`. It creates scheduling metadata for existing
+  earnings agreements in batches of 25, preserving existing schedules and all
+  earning obligations. See [Backfill earnings schedules](#backfill-earnings-schedules).
 
 These preserve document IDs and relationships. To select one migration, use `run`
 with its full function path:
@@ -76,7 +80,7 @@ added after an earlier completed run:
 
 ```bash
 bunx convex run --deployment dev migrations/runner:run \
-  '{"fn":"migrations/2026_10_25_backfill_creator_niches:backfillCreatorNiches","reset":true}'
+  '{"fn":"migrations/2026_10_07_remove_user_profile_pictures:removeUserProfilePictures","reset":true}'
 ```
 
 Passing `{"reset":true}` to `runAll` resets the entire registered sequence.
@@ -84,11 +88,11 @@ Passing `{"reset":true}` to `runAll` resets the entire registered sequence.
 Add `"dryRun": true` to preview one batch without saving changes. The intentional
 `DRY RUN` result rolls the batch back. Preview each migration separately, since a
 dry run does not execute the full sequence. For example, preview the first batch
-of the niche backfill even if it has already completed:
+of the profile-picture migration even if it has already completed:
 
 ```bash
 bunx convex run --deployment dev migrations/runner:run \
-  '{"fn":"migrations/2026_10_25_backfill_creator_niches:backfillCreatorNiches","dryRun":true,"reset":true}'
+  '{"fn":"migrations/2026_10_07_remove_user_profile_pictures:removeUserProfilePictures","dryRun":true,"reset":true}'
 ```
 
 ## Check completion and resume
@@ -97,7 +101,7 @@ The runner can return before scheduled batches finish. Check status:
 
 ```bash
 bunx convex run --deployment dev --component migrations lib:getStatus \
-  '{"names":["migrations/2026_10_07_remove_user_profile_pictures:removeUserProfilePictures","migrations/2026_10_25_backfill_creator_niches:backfillCreatorNiches"]}'
+  '{"names":["migrations/2026_10_07_remove_user_profile_pictures:removeUserProfilePictures"]}'
 ```
 
 Wait until each entry reports `isDone: true` and `state: "success"`. If a batch
@@ -110,6 +114,38 @@ no legacy `niches` array.
 
 Repeat deployment, migration, and verification for each teammate's personal
 development database.
+
+## Backfill earnings schedules
+
+After deploying the scheduling schema to the selected personal development
+deployment, run only this backfill:
+
+```bash
+bunx convex run --deployment dev migrations/runner:run \
+  '{"fn":"migrations/2026_11_11_backfill_earnings_schedules:backfillEarningsSchedules"}'
+bunx convex run --deployment dev --component migrations lib:getStatus \
+  '{"names":["migrations/2026_11_11_backfill_earnings_schedules:backfillEarningsSchedules"]}'
+```
+
+Wait for `isDone: true` and `state: "success"`. An interrupted run resumes through
+the same command; `reset: true` safely rescans agreements without overwriting
+existing schedule progress, retry metadata, or errors. Previewing with `dryRun:
+true` rolls back the batch, including new schedule rows.
+
+Each existing `deliverableEarnings` row gets one `earningsSchedules` row. New
+schedules use the original stored verification window and any cancellation or
+removal cutoff. Invalid timing or missing assignment context is recorded as
+`needsAttention`, allowing other agreements to proceed. No agreement or clock is
+inferred for legacy posts lacking verified timing.
+
+Verify schedule coverage and inspect `needsAttention` reasons. The backfill itself
+preserves agreements, calculation records, and payouts. Existing calculation
+records remain authoritative: an already-settled agreement can be initialized at
+its first due date for the runner to reconcile idempotently. Once the earnings
+cron is deployed, newly backfilled due schedules become eligible immediately and
+can create obligations for review. Neither the backfill nor the runner sends
+payments. See [scheduled execution](EARNINGS.md#scheduled-execution-and-recovery)
+for retry behavior and recovery.
 
 ## Troubleshooting deployment
 
@@ -162,6 +198,13 @@ a deployment that never ran it, so each removal is recorded here.
   `creator_<userId>` value with `creator_` plus a random suffix. Removed with
   `creators.username` and its `by_username` index, which the creator profile
   rework deleted.
+- `2026_10_25_backfill_opportunity_niches.ts` and
+  `2026_10_25_backfill_creator_niches.ts` exported `backfillOpportunityNiches`
+  and `backfillCreatorNiches`. Each moved a legacy `niches` array into
+  association rows, through `updateOpportunityNiches` and `updateCreatorNiches`,
+  which also removed the legacy field. Removed with the two `niches` columns
+  themselves. `creators.isPrivate` was dropped in the same change and never had
+  a migration.
 
 ### Recovering an unmigrated deployment
 
@@ -183,15 +226,17 @@ The legacy shape is `name: v.optional(v.string())` plus `firstName` and
 
 ### Dropping the legacy creator columns
 
-The creator profile rework removes `username`, `xId`, and `phoneNumber` from
-`creators` with no migration, so a deployment whose creator rows still carry any
-of them will have its schema push rejected. There is no backfill to run.
+The schema temporarily retains `username`, `xId`, and `phoneNumber` as optional
+strings so existing creator records remain valid during deployment. Profile routes
+do not accept or return these legacy values; verified X identity comes from
+`xAccounts`. Deploying this compatibility schema does not remove any stored values.
 
-Wiping and reseeding is the quickest fix for a development deployment. To keep
-the data, add a dated migration that `ctx.db.replace`s each creator row without
-the three fields, following [Add a migration](#add-a-migration), and temporarily
-restore them as `v.optional` in `convex/schemas/creators.schema.ts` so the
-compatible backend deploys first.
+Before removing these schema fields, preserve a snapshot and add a dated cleanup
+migration that `ctx.db.replace`s each creator row without the three fields,
+preserving document IDs and all other fields. Follow [Add a migration](#add-a-migration),
+run it with the compatibility schema deployed, and verify completion before
+dropping the optional validators. No creator cleanup is currently registered in
+`runAll`.
 
 ## Add a migration
 

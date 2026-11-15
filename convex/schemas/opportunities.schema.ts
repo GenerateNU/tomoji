@@ -17,11 +17,9 @@ export const opportunitiesTable = defineTable({
   description: v.string(),
   isGated: v.boolean(),
   usesAiReviewDefault: v.boolean(),
-  targetApplicant: v.string(),
   maxSlots: v.number(),
   // Future assignment mutations must maintain this count transactionally.
   numFilledSlots: v.number(),
-  maxApplications: v.number(),
   deadline: v.number(), // Unix milliseconds at exact :00/:30 UTC; enforced by the model.
   status: opportunityStatus,
   // Default compensation: integer cents; CPM is cents per 1,000 eligible views.
@@ -29,12 +27,9 @@ export const opportunitiesTable = defineTable({
   cpmRateCents: v.number(),
   paymentCapCents: v.number(),
   contentRequirements: v.string(),
-  prohibitedClaims: v.string(),
-  disclosureRequirements: v.string(),
-  usageRights: v.string(),
+  // What the company checks a draft against, shown to creators and given to the AI reviewer.
+  reviewPolicy: v.string(),
   productAccessLink: v.optional(v.string()),
-  // Legacy selections remain readable until backfilled into opportunityNiches.
-  niches: v.optional(v.array(v.string())),
   // Smallest reach the company wants. Ranks creators below it lower; never hides the brief.
   minFollowerRange: v.optional(followerRange),
 })
@@ -42,4 +37,6 @@ export const opportunitiesTable = defineTable({
   .index("by_campaignId_and_status", ["campaignId", "status"])
   .index("by_campaignId_and_deadline", ["campaignId", "deadline"])
   .index("by_createdBy", ["createdBy"])
-  .index("by_status_and_deadline", ["status", "deadline"]);
+  .index("by_status_and_deadline", ["status", "deadline"])
+  // Creators search open briefs by title in discovery.
+  .searchIndex("search_title", { searchField: "title", filterFields: ["status"] });

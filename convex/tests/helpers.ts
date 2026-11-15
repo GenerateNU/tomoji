@@ -18,6 +18,8 @@ import { getCreatorByUserId } from "../models/creators";
 import { upsertXAccount, type XAccountLink } from "../models/xAccounts";
 import { encryptXTokens } from "../lib/xTokenEncryption";
 import { createCampaign } from "../models/campaigns";
+import { createPost, verifyPost } from "../models/posts";
+import { recordPostViewSnapshot } from "../models/earningSources";
 import { createOpportunity, type OpportunityCreate } from "../models/opportunities";
 import { finalizeMediaUpload, reserveMediaUpload } from "../models/media";
 import { applyMembership, getUserByWorkosId, requireUser, upsertUser } from "../models/users";
@@ -417,17 +419,13 @@ export function opportunityArgs(
     status: "open",
     isGated: false,
     usesAiReviewDefault: true,
-    targetApplicant: "Skincare creators",
     maxSlots: 5,
-    maxApplications: 5,
     deadline: Math.ceil((Date.now() + 86_400_000) / 1_800_000) * 1_800_000,
     fixedFeeCents: 10_000,
     cpmRateCents: 500,
     paymentCapCents: 25_000,
     contentRequirements: "One 30-second video",
-    prohibitedClaims: "No medical claims",
-    disclosureRequirements: "Disclose the paid partnership",
-    usageRights: "Organic reposting for 30 days",
+    reviewPolicy: "Disclose the paid partnership. No medical claims.",
     deliverables: [deliverableArgs()],
     ...overrides,
   };
@@ -497,7 +495,7 @@ export async function seedGatedOpportunity(t: TestConvex, opts: SeedGatedOpportu
   const seeded = await seedOpportunity(
     t,
     { subject: opts.subject ?? "company_owner", orgId: opts.orgId },
-    { isGated: true, maxSlots: 10, maxApplications: 10 },
+    { isGated: true, maxSlots: 10 },
   );
   const patch = opts.opportunity;
   if (patch !== undefined) {
@@ -640,6 +638,7 @@ export async function seedAiReviewFixture(
   reviewCriteria: NonNullable<DeliverableCreate["reviewCriteria"]> = [
     { id: "product", description: "Mention Driftwood." },
   ],
+  draft: Partial<SubmissionDraft> = {},
 ): Promise<
   AssignmentFixture & {
     mediaId: Id<"mediaUploads">;
@@ -653,8 +652,7 @@ export async function seedAiReviewFixture(
       title: "Driftwood launch demo",
       description: "Demonstrate a first deployment using Driftwood CLI.",
       contentRequirements: "Explain how Driftwood simplifies deployment.",
-      prohibitedClaims: "Do not promise zero downtime.",
-      disclosureRequirements: "Disclose the paid partnership.",
+      reviewPolicy: "Disclose the paid partnership. Do not promise zero downtime.",
       deliverables: [
         deliverableArgs({
           title: "CLI demo",
@@ -666,7 +664,7 @@ export async function seedAiReviewFixture(
   });
   const mediaId = fixture.mediaId;
   const submissionId = await t.run((ctx) =>
-    createSubmission(ctx, fixture.creatorId, submissionArgs(fixture, { mediaId })),
+    createSubmission(ctx, fixture.creatorId, submissionArgs(fixture, draft)),
   );
   const attempt = await t.run((ctx) =>
     ctx.db
@@ -995,4 +993,59 @@ export async function prepareAiReviewEvaluation(
     await recordAiTranscriptionJob(ctx, attemptId, "job-1");
     await saveAiTranscription(ctx, attemptId, aiTranscriptionArgs());
   });
+}
+
+export const DAY = 86_400_000;
+export const EARNINGS_TEST_START = Date.UTC(2026, 10, 11, 12);
+
+/** Real verification creates the agreement and schedule; metric evidence is supplied explicitly. */
+export async function seedScheduledEarnings(
+  t: TestConvex,
+  terms: { fixedFeeCents?: number; cpmRateCents?: number; paymentCapCents?: number } = {},
+) {
+  const fixture = await seedAssignmentFixture(t);
+  const startedAt = Date.now();
+  await t.run((ctx) =>
+    ctx.db.patch("assignments", fixture.assignmentId, {
+      fixedFeeCents: 10_000,
+      cpmRateCents: 10_000,
+      paymentCapCents: 20_000,
+      ...terms,
+    }),
+  );
+  const submissionId = await seedSubmission(t, fixture, "approved");
+  const xPostId = BigInt(`0x${crypto.randomUUID().replaceAll("-", "")}`)
+    .toString()
+    .slice(0, 19);
+  const postId = await t.run(async (ctx) => {
+    const id = await createPost(ctx, fixture.creatorId, {
+      submissionId,
+      url: `https://x.com/creator/status/${xPostId}`,
+    });
+    await verifyPost(ctx, id, { postedAt: startedAt - 1000 });
+    return id;
+  });
+  const { earningsId, scheduleId } = await t.run(async (ctx) => {
+    const earnings = (await ctx.db
+      .query("deliverableEarnings")
+      .withIndex("by_assignmentId_and_deliverableId", (q) =>
+        q.eq("assignmentId", fixture.assignmentId).eq("deliverableId", fixture.deliverableId),
+      )
+      .unique())!;
+    const schedule = (await ctx.db
+      .query("earningsSchedules")
+      .withIndex("by_earningsId", (q) => q.eq("earningsId", earnings._id))
+      .unique())!;
+    return { earningsId: earnings._id, scheduleId: schedule._id };
+  });
+  const snapshot = (day: number, views: number) =>
+    t.run((ctx) =>
+      recordPostViewSnapshot(ctx, {
+        postId,
+        observedAt: startedAt + day * DAY,
+        views,
+        sourceKey: `test:day:${day}`,
+      }),
+    );
+  return { ...fixture, postId, earningsId, scheduleId, startedAt, snapshot };
 }

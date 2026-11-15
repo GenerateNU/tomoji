@@ -8,9 +8,9 @@ This document outlines how we organize and develop the Next.js frontend for Tomo
 src/
   app/                       Next.js routes and layouts
     layout.tsx               fonts and providers
-    signup/, login/, etc     sign-in pages, no nav bar
+    signup/, login/, etc     sign-in pages, no sidebar
     (protected)/
-      layout.tsx             nav bar
+      layout.tsx             sidebar shell (features/navigation)
       page.tsx               home (/) — where sign-in lands
       error.tsx              error boundary for signed-in pages
       <route>/               pages requiring sign-in
@@ -26,6 +26,17 @@ src/
 e2e/                         Playwright browser tests
   fixtures/                  per-spec entry points and stubbed backend responses
 ```
+
+### The signed-in shell
+
+`(protected)/layout.tsx` renders `AppShell` (`features/navigation/components/app-shell.tsx`), which
+wraps every signed-in page in the sidebar and supplies the page's `<main>`. Pages don't add their own.
+Nav items come from `components/app-sidebar.tsx` by account type (creator, company, operator); an item
+with an `href` is a link and an item without one is shown disabled as "coming soon", so give a nav item
+its `href` when its page ships. Below `md` the sidebar becomes a top bar with a navigation drawer; the
+sidebar sits in its own error boundary so a failed account read doesn't take the page down with it.
+Notifications open in the bell popover on the desktop home page or mobile top bar.
+The standalone `/notifications` page and its account-menu entry have been removed.
 
 ### Where should new files go?
 
@@ -48,6 +59,60 @@ does not run it.
 ## Routes
 
 Our routes should describe the resource being accessed rather than the role of the person accessing it, so keep URLs independent of user roles. For example, `/opportunities` serves as the discovery feed for creators and the company's opportunity list for company users. The page determines which component to render based on the current user.
+
+### Creator profile and settings
+
+The creator account menu opens Profile in a dialog over the current page; `/profile`
+also provides a direct page entry. Profile owns the creator's editable personal
+details, content preferences, and portfolio links. Save uses `creators.update` for
+supported fields; Cancel discards the draft. The joined date, follower/post/like
+statistics, and content type currently use hardcoded frontend demo data
+to match the design. Content-type edits stay in the open profile session and
+reset when it is reopened or refreshed; they are never sent to Convex. A save
+that only changes preview data does not call a backend mutation. Country, language,
+niche, and skill options reuse the shared predefined catalogs bundled with the app.
+The profile editor keeps space below its fixed header while fields scroll. Date of
+birth uses separate month, day, and year inputs with fixed slash separators and
+text-sized widths, including placeholders. A calendar control on the left offers
+native date selection and stays in sync with manual entry. Two
+digits advance to the next segment; clicking or tabbing away preserves incomplete
+segments without adding leading zeroes. Save rejects incomplete formats, impossible
+dates, future dates, and underage dates.
+
+`/settings` separates Payment and General. General displays the account email and
+uses the existing WorkOS server actions to request a password-reset email or sign
+out. The reset confirmation appears only after the request succeeds. Payment starts
+or resumes Stripe onboarding and displays the creator's connection status. See
+[Stripe payouts](STRIPE.md) for configuration and return-flow details.
+In the Profile editor, Change photo validates
+and previews an image locally; Save uploads it through the existing S3 media flow.
+Cancel before Save discards the selected image without uploading. Photo completion
+and profile-field updates are separate operations: if only the photo saves, the error
+explains that result, and retry does not upload it again. Link X opens authorization
+in a separate tab to preserve the current draft and reads verified connection state
+from `xAccounts.me`. X linking is independent of the Profile Save/Cancel controls.
+
+Browser tests use isolated Convex and authentication fixtures. Their screenshots
+verify layout and interaction states, not live Stripe, WorkOS email, X authorization,
+or S3 behavior.
+
+### The operator dashboard
+
+Tomoji staff get their own nav (`operatorNavItems`) over four routes: `/` (platform
+counts, the open dispute queue, and two trend widgets), `/users`,
+`/companies`, and `/disputes`. `/` and `/disputes` are shared routes that pick their
+component from `users.me`; `/users` and `/companies` are operator-only and say so
+through `RequireAccount`.
+
+Everything operator-specific lives in `features/operator/`. Rows open a modal rather
+than a detail route, `useTablePage` slices fixed-size pages out of a Convex paginated
+query, and `directory-chrome.tsx` holds the header, search box, skeleton rows, and
+pager the three directories share.
+
+Two home widgets — signups over time and companies by activity — read their figures
+from `lib/analytics-data.ts` rather than the database, because neither has a backing
+query yet: signup history needs a time-bucketed read, and ranking companies needs a
+per-company rollup. Swap each constant for its query once those exist.
 
 ## Component Design
 

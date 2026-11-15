@@ -63,7 +63,8 @@ async function finishReview(t: TestConvex, attemptId: Id<"aiReviewAttempts">) {
 test("runs the queued review end to end using mocked S3 and providers", async () => {
   const t = convexTest(schema, modules);
   workflowTest.register(t);
-  const fixture = await seedAiReviewFixture(t);
+  const caption = "Introducing Driftwood. #ad";
+  const fixture = await seedAiReviewFixture(t, undefined, { caption });
   vi.stubEnv("AI_REVIEW_ENABLED", "true");
   vi.mocked(fetch)
     .mockResolvedValueOnce(Response.json({ id: "job-1" }))
@@ -82,10 +83,12 @@ test("runs the queued review end to end using mocked S3 and providers", async ()
   });
   expect(fetch).toHaveBeenCalledTimes(3);
   const jevBody = JSON.parse(String(vi.mocked(fetch).mock.calls[2][1]?.body));
-  expect(jevBody.state.context).toEqual(fixture.attempt.context);
+  expect(jevBody.state).toMatchObject({ caption, context: fixture.attempt.context });
+  expect(jevBody.state.transcript).not.toBe("");
   const view = await fixture.asCreator.query(api.submissions.get, {
     submissionId: fixture.submissionId,
   });
+  expect(view.caption).toBe(caption);
   expect(view.aiReview).toEqual({
     status: "completed",
     results: [{ criterionId: "product", outcome: "met" }],
@@ -202,6 +205,23 @@ test("uncertain speech remains pending and notifies the company once", async () 
     reason: "review_failed",
   });
   expect(await memberNotifications(t, fixture.membership)).toEqual(notifications);
+});
+
+test("reviews a submitted caption without a video or an X lookup", async () => {
+  const t = convexTest(schema, modules);
+  workflowTest.register(t);
+  const caption = "A full tutorial for Driftwood. #ad";
+  const fixture = await seedAiReviewFixture(t, undefined, { mediaId: undefined, caption });
+  vi.stubEnv("AI_REVIEW_ENABLED", "true");
+  vi.mocked(fetch).mockResolvedValueOnce(jevReviewResponse({ answers: metAnswers }));
+
+  await t.run((ctx) => enqueueAiReview(ctx, fixture.attempt._id));
+
+  expect(await finishReview(t, fixture.attempt._id)).toMatchObject({ status: "completed" });
+  expect(fetch).toHaveBeenCalledTimes(1);
+  const [url, request] = vi.mocked(fetch).mock.calls[0];
+  expect(url).toBe("https://api.typesafe.ai/v1/systemone");
+  expect(JSON.parse(String(request?.body)).state).toMatchObject({ caption, transcript: "" });
 });
 
 test("silence falls back without sending empty evidence to Jev", async () => {

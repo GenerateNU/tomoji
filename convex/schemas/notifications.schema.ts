@@ -10,6 +10,10 @@ export const notificationType = v.union(
   v.literal("assignmentCancelled"),
   v.literal("submissionApproved"),
   v.literal("submissionChangesRequested"),
+  v.literal("payoutStripeSetupNeeded"), // Charging found their Stripe account not ready.
+  v.literal("payoutDisputed"), // Also to operators: a company disputed a payout charge.
+  // To Tomoji operators
+  v.literal("payoutChargedTwice"), // Two attempts both charged; one needs refunding.
   // To the company member who created the opportunity or campaign
   v.literal("applicationReceived"),
   v.literal("applicationAccepted"),
@@ -22,6 +26,10 @@ export const notificationType = v.union(
   v.literal("opportunityClosed"), // Deadline cron only.
   v.literal("campaignClosed"), // End-date cron only.
   v.literal("applicationOfferExpired"),
+  v.literal("payoutPaymentFailed"), // The company's card was missing or declined.
+  // To Tomoji operators about payout charges reversed outside Tomoji
+  v.literal("payoutDisputeClosed"),
+  v.literal("payoutRefunded"),
   // To everyone on a dispute except whoever acted: both sides and Tomoji
   v.literal("disputeOpened"),
   v.literal("disputeResolved"),
@@ -60,6 +68,11 @@ export const notificationTargetKind = {
   assignmentCancelled: "assignment",
   submissionApproved: "submission",
   submissionChangesRequested: "submission",
+  payoutStripeSetupNeeded: "assignment", // Payouts have no page; their assignment does.
+  payoutChargedTwice: "assignment",
+  payoutDisputed: "assignment",
+  payoutDisputeClosed: "assignment",
+  payoutRefunded: "assignment",
   applicationReceived: "application",
   applicationAccepted: "assignment", // Opens the assignment the acceptance created.
   applicationDeclined: "application",
@@ -71,6 +84,7 @@ export const notificationTargetKind = {
   opportunityClosed: "opportunity",
   campaignClosed: "campaign",
   applicationOfferExpired: "application",
+  payoutPaymentFailed: "assignment",
   disputeOpened: "dispute",
   disputeResolved: "dispute",
   disputeOverridden: "dispute",

@@ -10,7 +10,13 @@ import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { apiError } from "../lib/errors";
 import { canViewResource, type ResourceViewer } from "../lib/authz";
 import schema from "../schema";
+import { assignmentStatus } from "../schemas/assignments.schema";
 import { creatorName, notifyCompanyUser, notifyCreator } from "./notifications";
+import { recordAssignmentEarningsCancellation } from "./earningSources";
+import { bringForwardAssignmentEarningsSchedules } from "./earningsSchedules";
+import { describeMatch, getCreatorSignals } from "./opportunityMatch";
+import { listOpportunityNiches } from "./opportunityNiches";
+import { listOpportunitySkills } from "./opportunitySkills";
 
 /**
  * Creates a creator's assignment on an open, ungated opportunity.
@@ -45,7 +51,25 @@ export async function claimAssignment(
   if (opportunity.isGated) {
     throw apiError("invalid_state", { reason: "opportunity_gated" });
   }
-  const assignmentId = await createAssignment(ctx, opportunity, campaign, creatorId);
+  // An open spot is taken on the spot, with no company review, so the creator
+  // must meet the follower minimum and have every skill. Applying never checks this.
+  const creator = await ctx.db.get("creators", creatorId);
+  if (creator === null) throw apiError("not_found", { resource: "creator" });
+  const [niches, skills] = await Promise.all([
+    listOpportunityNiches(ctx, opportunity._id),
+    listOpportunitySkills(ctx, opportunity._id),
+  ]);
+  const match = describeMatch(await getCreatorSignals(ctx, creator), {
+    niches,
+    skills,
+    minFollowerRange: opportunity.minFollowerRange,
+  });
+  if (!match.isEligible) {
+    throw apiError("invalid_state", { reason: "not_eligible" });
+  }
+  const assignmentId = await createAssignment(ctx, opportunity, campaign, creatorId, {
+    status: "termsPending",
+  });
   // Only claims notify here; an accepted offer is reported by `acceptApplication`.
   await notifyCompanyUser(ctx, opportunity.createdBy, {
     type: "assignmentClaimed",
@@ -61,10 +85,10 @@ export function assignmentTarget(assignmentId: Id<"assignments">) {
 }
 
 /**
- * Creates the assignment for a creator who accepted an offer on a gated
- * opportunity. Call it in the same mutation that marks the application
- * accepted; it does not read or check the application. Offers can be accepted
- * while the opportunity or campaign is paused.
+ * Creates the active assignment for a creator who accepted an offer (and its
+ * terms) on a gated opportunity. Call it in the same mutation that marks the
+ * application accepted; it does not read or check the application. Offers can
+ * be accepted while the opportunity or campaign is paused.
  *
  * @throws `not_found` if the opportunity does not exist.
  * @throws `invalid_state` if the opportunity is a draft or closed, is ungated,
@@ -73,7 +97,10 @@ export function assignmentTarget(assignmentId: Id<"assignments">) {
  */
 export async function createAssignmentFromOffer(
   ctx: MutationCtx,
-  args: { opportunityId: Id<"opportunities">; creatorId: Id<"creators"> },
+  args: {
+    opportunityId: Id<"opportunities">;
+    creatorId: Id<"creators">;
+  },
 ): Promise<Id<"assignments">> {
   const { opportunity, campaign } = await requireOpportunityWithCampaign(ctx, args.opportunityId);
   if (opportunity.status !== "open" && opportunity.status !== "paused") {
@@ -82,7 +109,9 @@ export async function createAssignmentFromOffer(
   if (!opportunity.isGated) {
     throw apiError("invalid_state", { reason: "opportunity_not_gated" });
   }
-  return await createAssignment(ctx, opportunity, campaign, args.creatorId);
+  return await createAssignment(ctx, opportunity, campaign, args.creatorId, {
+    status: "active",
+  });
 }
 
 async function requireOpportunityWithCampaign(
@@ -98,8 +127,9 @@ async function requireOpportunityWithCampaign(
 }
 
 /**
- * Takes a slot and inserts a termsPending assignment with the opportunity's
- * current terms, so later opportunity edits do not change the deal.
+ * Takes a slot and inserts an assignment with the opportunity's current terms,
+ * so later opportunity edits do not change the deal. Claims start
+ * `termsPending`; accepted offers start `active`.
  *
  * The slot check and increment read and write the opportunity in this
  * transaction, so when two creators race for the last slot Convex retries the
@@ -110,6 +140,7 @@ async function createAssignment(
   opportunity: Doc<"opportunities">,
   campaign: Doc<"campaigns">,
   creatorId: Id<"creators">,
+  initial: { status: "termsPending" } | { status: "active" },
 ): Promise<Id<"assignments">> {
   // One assignment per creator per opportunity, whatever its status. The index
   // is not unique, so this check is what blocks double claims and retries.
@@ -135,7 +166,7 @@ async function createAssignment(
     cpmRateCents: opportunity.cpmRateCents,
     paymentCapCents: opportunity.paymentCapCents,
     usesAiReview: opportunity.usesAiReviewDefault,
-    status: "termsPending",
+    ...initial,
   });
   await ctx.db.patch("opportunities", opportunity._id, {
     numFilledSlots: opportunity.numFilledSlots + 1,
@@ -158,6 +189,7 @@ export const creatorAssignment = schema
     "paymentCapCents",
     "usesAiReview",
     "status",
+    "cancelledAt",
     "productAccessDeliveredAt",
   );
 export type CreatorAssignment = Infer<typeof creatorAssignment>;
@@ -180,6 +212,7 @@ export function toCreatorAssignment(assignment: Doc<"assignments">): CreatorAssi
   if (assignment.productAccessDeliveredAt !== undefined) {
     result.productAccessDeliveredAt = assignment.productAccessDeliveredAt;
   }
+  if (assignment.cancelledAt !== undefined) result.cancelledAt = assignment.cancelledAt;
   return result;
 }
 
@@ -462,8 +495,70 @@ export async function listCreatorAssignments(
   return await mergedStream(streams, ["_creationTime"]).paginate(options.paginationOpts);
 }
 
+// Creators have few assignments, so match in memory instead of a search index.
+const ASSIGNMENT_SEARCH_SCAN_LIMIT = 200;
+const ASSIGNMENT_SEARCH_RESULT_LIMIT = 20;
+
+export const creatorAssignmentSearch = v.object({
+  companyName: v.optional(v.string()),
+});
+
+/** A creator's assignment, labeled for a picker. */
+export const creatorAssignmentOption = v.object({
+  assignmentId: v.id("assignments"),
+  companyId: v.id("companies"),
+  companyName: v.string(),
+  opportunityTitle: v.string(),
+  status: assignmentStatus,
+});
+export type CreatorAssignmentOption = Infer<typeof creatorAssignmentOption>;
+
+/** See `assignments.searchMine`. */
+export async function searchCreatorAssignments(
+  ctx: QueryCtx,
+  creatorId: Id<"creators">,
+  companyName: string | undefined,
+): Promise<CreatorAssignmentOption[]> {
+  const needle = companyName?.trim().toLowerCase() ?? "";
+  const streams = [...PHASE_STATUSES.current, ...PHASE_STATUSES.past].map((status) =>
+    stream(ctx.db, schema)
+      .query("assignments")
+      .withIndex("by_creatorId_and_status", (q) =>
+        q.eq("creatorId", creatorId).eq("status", status),
+      )
+      .order("desc"),
+  );
+  const assignments = await mergedStream(streams, ["_creationTime"]).take(
+    ASSIGNMENT_SEARCH_SCAN_LIMIT,
+  );
+
+  const companyNames = new Map<Id<"companies">, string | null>();
+  const options: CreatorAssignmentOption[] = [];
+  for (const assignment of assignments) {
+    if (!companyNames.has(assignment.companyId)) {
+      const company = await ctx.db.get("companies", assignment.companyId);
+      companyNames.set(assignment.companyId, company?.name ?? null);
+    }
+    const name = companyNames.get(assignment.companyId);
+    if (name == null || !name.toLowerCase().includes(needle)) continue;
+    const opportunity = await ctx.db.get("opportunities", assignment.opportunityId);
+    if (opportunity === null) continue;
+    options.push({
+      assignmentId: assignment._id,
+      companyId: assignment.companyId,
+      companyName: name,
+      opportunityTitle: opportunity.title,
+      status: assignment.status,
+    });
+    if (options.length === ASSIGNMENT_SEARCH_RESULT_LIMIT) break;
+  }
+  return options;
+}
+
 /**
- * Accepts the terms on the creator's own assignment, making it active.
+ * Accepts the terms on the creator's own assignment, making it active. Only
+ * claimed (ungated) assignments are ever termsPending; an accepted offer is
+ * created active.
  *
  * @throws `not_found` if the assignment does not exist or is not the
  * creator's.
@@ -479,7 +574,8 @@ export async function acceptAssignmentTerms(
     { role: "creator", creatorId },
     assignmentId,
   );
-  await ctx.db.patch("assignments", assignment._id, { status: "active" });
+  const patch = { status: "active" as const };
+  await ctx.db.patch("assignments", assignment._id, patch);
   const opportunity = await ctx.db.get("opportunities", assignment.opportunityId);
   if (opportunity !== null) {
     await notifyCompanyUser(ctx, opportunity.createdBy, {
@@ -488,7 +584,7 @@ export async function acceptAssignmentTerms(
       target: assignmentTarget(assignment._id),
     });
   }
-  return { ...assignment, status: "active" };
+  return { ...assignment, ...patch };
 }
 
 /**
@@ -574,17 +670,25 @@ export async function cancelAssignment(
   ctx: MutationCtx,
   assignment: Doc<"assignments">,
 ): Promise<Doc<"assignments">> {
-  if (assignment.status !== "termsPending" && assignment.status !== "active") {
+  // The persisted state protects the cutoff and slot count even if a trusted caller
+  // holds a document read before an earlier cancellation.
+  const current = await ctx.db.get("assignments", assignment._id);
+  if (current === null) throw apiError("not_found", { resource: "assignment" });
+  if (current.status !== "termsPending" && current.status !== "active") {
     throw apiError("invalid_state", { reason: "assignment_not_cancellable" });
   }
-  await ctx.db.patch("assignments", assignment._id, { status: "cancelled" });
-  const opportunity = await ctx.db.get("opportunities", assignment.opportunityId);
+  // Settlement uses this cutoff to exclude later views while preserving accrued earnings.
+  const cancelledAt = Date.now();
+  await ctx.db.patch("assignments", assignment._id, { status: "cancelled", cancelledAt });
+  await recordAssignmentEarningsCancellation(ctx, assignment._id, cancelledAt);
+  await bringForwardAssignmentEarningsSchedules(ctx, assignment._id);
+  const opportunity = await ctx.db.get("opportunities", current.opportunityId);
   if (opportunity !== null && opportunity.numFilledSlots > 0) {
     await ctx.db.patch("opportunities", opportunity._id, {
       numFilledSlots: opportunity.numFilledSlots - 1,
     });
   }
-  return { ...assignment, status: "cancelled" };
+  return { ...current, status: "cancelled", cancelledAt };
 }
 
 /**

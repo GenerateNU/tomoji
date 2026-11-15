@@ -1,11 +1,12 @@
 import { paginationOptsValidator, type PaginationResult } from "convex/server";
 import { v, type Infer } from "convex/values";
+import { internal } from "../_generated/api";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { stream } from "convex-helpers/server/stream";
 import { apiError } from "../lib/errors";
 import { requireUrl } from "../lib/urls";
-import { withRowsReadCap } from "../lib/pagination";
+import { APPLICATION_SWEEP_BATCH, withRowsReadCap } from "../lib/pagination";
 import { requireNonBlank, isHalfHourTimestamp } from "../lib/validation";
 import { requireMembership } from "./companyUsers";
 import {
@@ -17,12 +18,19 @@ import {
 } from "./deliverableDrafts";
 import { notifyCompanyUser, notifyCreator } from "./notifications";
 import { requireNiche } from "./niches";
+import { requireSkill } from "./skills";
+import { describeMatch, getCreatorSignals, type CreatorSignals } from "./opportunityMatch";
 import {
   hasOpportunityNiche,
   listOpportunityNiches,
   updateOpportunityNiches,
 } from "./opportunityNiches";
-import { listOpportunitySkills, updateOpportunitySkills } from "./opportunitySkills";
+import { listOpportunityLanguages, updateOpportunityLanguages } from "./opportunityLanguages";
+import {
+  hasOpportunitySkill,
+  listOpportunitySkills,
+  updateOpportunitySkills,
+} from "./opportunitySkills";
 import schema from "../schema";
 import { followerRange } from "../schemas/creators.schema";
 
@@ -33,7 +41,10 @@ export const opportunityCreate = schema
     status: v.union(v.literal("draft"), v.literal("open")),
     // Required to create it open; a draft can get them later through `deliverables.create`.
     deliverables: v.optional(v.array(deliverableCreate)),
+    // Selections are association rows, not columns, so they are inputs of their own.
+    niches: v.optional(v.array(v.string())),
     skills: v.optional(v.array(v.string())),
+    languages: v.optional(v.array(v.string())),
   });
 
 export type OpportunityCreate = Infer<typeof opportunityCreate>;
@@ -41,6 +52,7 @@ export type OpportunityCreate = Infer<typeof opportunityCreate>;
 export const opportunityView = schema.doc("opportunities").extend({
   niches: v.array(v.string()),
   skills: v.array(v.string()),
+  languages: v.array(v.string()),
 });
 export type OpportunityView = Infer<typeof opportunityView>;
 
@@ -49,11 +61,12 @@ export async function getOpportunityView(
   ctx: QueryCtx | MutationCtx,
   opportunity: Doc<"opportunities">,
 ): Promise<OpportunityView> {
-  const [niches, skills] = await Promise.all([
-    listOpportunityNiches(ctx, opportunity),
+  const [niches, skills, languages] = await Promise.all([
+    listOpportunityNiches(ctx, opportunity._id),
     listOpportunitySkills(ctx, opportunity._id),
+    listOpportunityLanguages(ctx, opportunity._id),
   ]);
-  return { ...opportunity, niches, skills };
+  return { ...opportunity, niches, skills, languages };
 }
 
 // Allowlist creator fields so new stored fields do not become public by default.
@@ -66,29 +79,43 @@ export const creatorOpportunity = schema
     "description",
     "isGated",
     "usesAiReviewDefault",
-    "targetApplicant",
     "maxSlots",
     "numFilledSlots",
-    "maxApplications",
     "deadline",
     "status",
     "fixedFeeCents",
     "cpmRateCents",
     "paymentCapCents",
     "contentRequirements",
-    "prohibitedClaims",
-    "disclosureRequirements",
-    "usageRights",
+    "reviewPolicy",
+    "minFollowerRange",
   )
-  .extend({ companyName: v.string(), niches: v.array(v.string()), skills: v.array(v.string()) });
+  .extend({
+    companyName: v.string(),
+    // Shown on feed cards; fetched through `media.getCompanyMedia`.
+    companyLogoMediaId: v.optional(v.id("mediaUploads")),
+    companyBannerMediaId: v.optional(v.id("mediaUploads")),
+    niches: v.array(v.string()),
+    skills: v.array(v.string()),
+    languages: v.array(v.string()),
+  });
 
 export type CreatorOpportunity = Infer<typeof creatorOpportunity>;
+
+/**
+ * Whether creators must accept the opportunity's terms and conditions (its
+ * review policy) before an offer can be accepted. A blank policy means no
+ * terms step.
+ */
+export function hasReviewPolicy(opportunity: Pick<Doc<"opportunities">, "reviewPolicy">): boolean {
+  return opportunity.reviewPolicy.trim() !== "";
+}
 
 /** Builds the allowlisted creator-facing brief from an opportunity and its company. */
 export function toCreatorOpportunity(
   opportunity: Doc<"opportunities">,
-  company: Doc<"companies">,
-  selections: Pick<OpportunityView, "niches" | "skills">,
+  company: Pick<Doc<"companies">, "name">,
+  selections: Pick<OpportunityView, "niches" | "skills" | "languages">,
 ): CreatorOpportunity {
   return {
     _id: opportunity._id,
@@ -97,22 +124,32 @@ export function toCreatorOpportunity(
     description: opportunity.description,
     isGated: opportunity.isGated,
     usesAiReviewDefault: opportunity.usesAiReviewDefault,
-    targetApplicant: opportunity.targetApplicant,
     maxSlots: opportunity.maxSlots,
     numFilledSlots: opportunity.numFilledSlots,
-    maxApplications: opportunity.maxApplications,
     deadline: opportunity.deadline,
     status: opportunity.status,
     fixedFeeCents: opportunity.fixedFeeCents,
     cpmRateCents: opportunity.cpmRateCents,
     paymentCapCents: opportunity.paymentCapCents,
     contentRequirements: opportunity.contentRequirements,
-    prohibitedClaims: opportunity.prohibitedClaims,
-    disclosureRequirements: opportunity.disclosureRequirements,
-    usageRights: opportunity.usageRights,
+    reviewPolicy: opportunity.reviewPolicy,
+    minFollowerRange: opportunity.minFollowerRange,
     companyName: company.name,
     niches: selections.niches,
     skills: selections.skills,
+    languages: selections.languages,
+  };
+}
+
+/** Adds the company's logo and banner IDs, when it has them, for feed cards. */
+function withCompanyMedia(
+  brief: CreatorOpportunity,
+  company: Doc<"companies">,
+): CreatorOpportunity {
+  return {
+    ...brief,
+    ...(company.profilePictureMediaId && { companyLogoMediaId: company.profilePictureMediaId }),
+    ...(company.bannerMediaId && { companyBannerMediaId: company.bannerMediaId }),
   };
 }
 
@@ -130,7 +167,10 @@ export async function getOpportunity(
   if (company === null) {
     throw apiError("not_found", { resource: "opportunity" });
   }
-  return toCreatorOpportunity(opportunity, company, await getOpportunityView(ctx, opportunity));
+  return withCompanyMedia(
+    toCreatorOpportunity(opportunity, company, await getOpportunityView(ctx, opportunity)),
+    company,
+  );
 }
 
 // Deliverables change through the `deliverables` routes.
@@ -158,38 +198,51 @@ async function applyOpportunityClose(
 ): Promise<Doc<"opportunities">> {
   if (opportunity.status === "closed") return opportunity;
   await ctx.db.patch("opportunities", opportunity._id, { status: "closed" });
-  await notifyWaitingApplicants(ctx, opportunity);
+  // Enqueued rather than inline: the deadline cron closes up to 50 opportunities
+  // in one transaction, and an opportunity's applications are unbounded.
+  await ctx.scheduler.runAfter(0, internal.opportunities.notifyClosed, {
+    opportunityId: opportunity._id,
+    cursor: null,
+  });
   return { ...opportunity, status: "closed" };
 }
 
 /**
- * Tells each creator with a pending or offered application that the
- * opportunity closed, since neither can go further. An opportunity never has
- * more than `maxApplications` applications, so this is bounded.
+ * Tells one bounded batch of creators with a pending or offered application
+ * that the opportunity closed, since neither can go further. Returns the
+ * cursor to continue from, or `null` when the batch was the last one.
+ *
+ * Unlike the full sweep this leaves the applications alone, so it cannot
+ * advance by status and pages by cursor instead. It walks every application on
+ * the opportunity and skips the ones that are already resolved; the cursor is
+ * stable because nothing here writes to an indexed field. A continuation that
+ * fails and runs again can renotify its own page, which is why the close
+ * notice has to stay safe to deliver more than once.
  */
-async function notifyWaitingApplicants(
+export async function notifyWaitingApplicantsBatch(
   ctx: MutationCtx,
-  opportunity: Doc<"opportunities">,
-): Promise<void> {
-  for (const status of ["pending", "offered"] as const) {
-    const waiting = await ctx.db
-      .query("applications")
-      .withIndex("by_opportunityId_and_status", (q) =>
-        q.eq("opportunityId", opportunity._id).eq("status", status),
-      )
-      .take(opportunity.maxApplications);
-    for (const application of waiting) {
-      await notifyCreator(ctx, application.creatorId, {
-        type: "applicationOpportunityClosed",
-        title: `${opportunity.title} has closed`,
-        target: {
-          kind: "application",
-          applicationId: application._id,
-          opportunityId: opportunity._id,
-        },
-      });
-    }
+  opportunityId: Id<"opportunities">,
+  cursor: string | null,
+): Promise<string | null> {
+  const opportunity = await ctx.db.get("opportunities", opportunityId);
+  if (opportunity === null) return null;
+  const page = await ctx.db
+    .query("applications")
+    .withIndex("by_opportunityId_and_status", (q) => q.eq("opportunityId", opportunityId))
+    .paginate({ numItems: APPLICATION_SWEEP_BATCH, cursor });
+  for (const application of page.page) {
+    if (application.status !== "pending" && application.status !== "offered") continue;
+    await notifyCreator(ctx, application.creatorId, {
+      type: "applicationOpportunityClosed",
+      title: `${opportunity.title} has closed`,
+      target: {
+        kind: "application",
+        applicationId: application._id,
+        opportunityId,
+      },
+    });
   }
+  return page.isDone ? null : page.continueCursor;
 }
 
 /** Permanently closes an owned published opportunity, preserving existing commitments. */
@@ -205,10 +258,13 @@ export async function closeOpportunity(
   return await applyOpportunityClose(ctx, opportunity);
 }
 
-/** Closes a bounded batch of overdue published opportunities and reports whether more may remain. */
-export async function closeExpiredOpportunities(ctx: MutationCtx): Promise<boolean> {
+/** Closes a bounded batch of overdue published opportunities, returning them and whether more may remain. */
+export async function closeExpiredOpportunities(
+  ctx: MutationCtx,
+): Promise<{ closedIds: Id<"opportunities">[]; hasMore: boolean }> {
   const now = Date.now();
   const batchSize = 50;
+  const closedIds: Id<"opportunities">[] = [];
   let hasMore = false;
   for (const status of ["open", "paused"] as const) {
     const opportunities = await ctx.db
@@ -217,6 +273,7 @@ export async function closeExpiredOpportunities(ctx: MutationCtx): Promise<boole
       .take(batchSize);
     for (const opportunity of opportunities) {
       await applyOpportunityClose(ctx, opportunity);
+      closedIds.push(opportunity._id);
       // A manual close is the company's own action; only the deadline close is news to them.
       await notifyCompanyUser(ctx, opportunity.createdBy, {
         type: "opportunityClosed",
@@ -226,7 +283,7 @@ export async function closeExpiredOpportunities(ctx: MutationCtx): Promise<boole
     }
     hasMore ||= opportunities.length === batchSize;
   }
-  return hasMore;
+  return { closedIds, hasMore };
 }
 
 /** Loads an owned opportunity and its campaign for company lifecycle transitions. */
@@ -336,14 +393,20 @@ export async function publishOpportunity(
     throw apiError("invalid_state", { reason: "deliverables_required" });
   }
   // Validate the target state so a deadline allowed on a draft must still be future at publication.
-  const normalized = validateOpportunityFields({ ...opportunity, status: "open" });
+  const normalized = validateOpportunityFields({
+    ...opportunity,
+    status: "open",
+  });
   if (campaign.endsAt !== undefined && opportunity.deadline > campaign.endsAt) {
     throw apiError("invalid_state", { reason: "deadline_after_campaign_end" });
   }
   if (opportunity.usesAiReviewDefault) {
     requireAiReviewCriteria(true, await listOpportunityDeliverables(ctx, opportunityId));
   }
-  await ctx.db.patch("opportunities", opportunityId, { status: "open", ...normalized });
+  await ctx.db.patch("opportunities", opportunityId, {
+    status: "open",
+    ...normalized,
+  });
   return { ...opportunity, status: "open", ...normalized };
 }
 
@@ -367,7 +430,9 @@ export async function removeOpportunity(
     .withIndex("by_opportunityId_and_status", (q) => q.eq("opportunityId", opportunityId))
     .take(1);
   if (applications.length > 0 || assignments.length > 0) {
-    throw apiError("invalid_state", { reason: "opportunity_has_workflow_history" });
+    throw apiError("invalid_state", {
+      reason: "opportunity_has_workflow_history",
+    });
   }
   // Deliverables are part of the brief, not workflow history, so they go with it.
   for (const deliverable of await listOpportunityDeliverables(ctx, opportunityId)) {
@@ -375,6 +440,7 @@ export async function removeOpportunity(
   }
   await updateOpportunityNiches(ctx, opportunityId, []);
   await updateOpportunitySkills(ctx, opportunityId, []);
+  await updateOpportunityLanguages(ctx, opportunityId, []);
   await ctx.db.delete("opportunities", opportunityId);
 }
 
@@ -392,20 +458,11 @@ export async function updateOpportunity(
   );
 
   const patch: Partial<OpportunityCreate> = {};
-  for (const field of [
-    "title",
-    "description",
-    "targetApplicant",
-    "contentRequirements",
-    "prohibitedClaims",
-    "disclosureRequirements",
-    "usageRights",
-  ] as const) {
+  for (const field of ["title", "description", "contentRequirements", "reviewPolicy"] as const) {
     if (updates[field] !== undefined) patch[field] = updates[field];
   }
   for (const field of [
     "maxSlots",
-    "maxApplications",
     "deadline",
     "fixedFeeCents",
     "cpmRateCents",
@@ -421,7 +478,9 @@ export async function updateOpportunity(
     patch.productAccessLink =
       updates.productAccessLink === null
         ? undefined
-        : requireUrl(updates.productAccessLink, { reason: "invalid_product_access_link" });
+        : requireUrl(updates.productAccessLink, {
+            reason: "invalid_product_access_link",
+          });
   }
   if (updates.minFollowerRange !== undefined) {
     patch.minFollowerRange = updates.minFollowerRange ?? undefined;
@@ -447,14 +506,21 @@ export async function updateOpportunity(
 
   const niches =
     updates.niches === undefined
-      ? await listOpportunityNiches(ctx, opportunity)
+      ? await listOpportunityNiches(ctx, opportunityId)
       : await updateOpportunityNiches(ctx, opportunityId, updates.niches);
   const skills =
     updates.skills === undefined
       ? await listOpportunitySkills(ctx, opportunityId)
       : await updateOpportunitySkills(ctx, opportunityId, updates.skills);
-  await ctx.db.patch("opportunities", opportunityId, { ...patch, ...normalized });
-  return { ...updated, ...normalized, niches, skills };
+  const languages =
+    updates.languages === undefined
+      ? await listOpportunityLanguages(ctx, opportunityId)
+      : await updateOpportunityLanguages(ctx, opportunityId, updates.languages);
+  await ctx.db.patch("opportunities", opportunityId, {
+    ...patch,
+    ...normalized,
+  });
+  return { ...updated, ...normalized, niches, skills, languages };
 }
 
 export const opportunityList = schema
@@ -465,9 +531,22 @@ export const opportunityList = schema
     paginationOpts: paginationOptsValidator,
   });
 
-export const opportunityDiscover = opportunityList
-  .pick("paginationOpts")
-  .extend({ niche: v.optional(v.string()) });
+/**
+ * Discovery filters. Within niches or skills a brief needs any one of them;
+ * across filters it needs all. `isGated` picks briefs that need an
+ * application (true) or let creators claim a spot (false). `applied` keeps
+ * only briefs the caller has applied to, and `eligible` only briefs whose
+ * follower minimum and skills the caller meets. `search` matches title words, best
+ * match first, instead of deadline order.
+ */
+export const opportunityDiscover = opportunityList.pick("paginationOpts").extend({
+  search: v.optional(v.string()),
+  niches: v.optional(v.array(v.string())),
+  skills: v.optional(v.array(v.string())),
+  isGated: v.optional(v.boolean()),
+  applied: v.optional(v.boolean()),
+  eligible: v.optional(v.boolean()),
+});
 
 /**
  * Returns the creator-facing brief if creators may see the opportunity: it's
@@ -480,7 +559,10 @@ export async function getVisibleCreatorOpportunity(
   const company = await getVisibleOpportunityCompany(ctx, opportunity);
   return company === null
     ? null
-    : toCreatorOpportunity(opportunity, company, await getOpportunityView(ctx, opportunity));
+    : withCompanyMedia(
+        toCreatorOpportunity(opportunity, company, await getOpportunityView(ctx, opportunity)),
+        company,
+      );
 }
 
 /**
@@ -504,22 +586,232 @@ export async function getVisibleOpportunityCompany(
   return company !== null && company.isActive ? company : null;
 }
 
-/** Discovers open briefs across active companies without ranking or application eligibility rules. */
+/**
+ * A discovery cursor names the section it continues: the creator's scored
+ * matches, best first, then every other open brief by deadline.
+ */
+type DiscoverCursor = { section: "matches" | "rest"; cursor: string | null };
+
+function parseDiscoverCursor(cursor: string | null): DiscoverCursor {
+  if (cursor === null) return { section: "matches", cursor: null };
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(cursor);
+  } catch {
+    throw apiError("invalid_state", { reason: "invalid_cursor" });
+  }
+  if (
+    Array.isArray(parsed) &&
+    (parsed[0] === "matches" || parsed[0] === "rest") &&
+    (parsed[1] === null || typeof parsed[1] === "string")
+  ) {
+    return { section: parsed[0], cursor: parsed[1] };
+  }
+  throw apiError("invalid_state", { reason: "invalid_cursor" });
+}
+
+function formatDiscoverCursor({ section, cursor }: DiscoverCursor): string {
+  return JSON.stringify([section, cursor]);
+}
+
+async function hasOpportunityScore(
+  ctx: QueryCtx,
+  creatorId: Id<"creators">,
+  opportunityId: Id<"opportunities">,
+): Promise<boolean> {
+  const score = await ctx.db
+    .query("opportunityScores")
+    .withIndex("by_creatorId_and_opportunityId", (q) =>
+      q.eq("creatorId", creatorId).eq("opportunityId", opportunityId),
+    )
+    .unique();
+  return score !== null;
+}
+
+async function hasApplied(
+  ctx: QueryCtx,
+  creatorId: Id<"creators">,
+  opportunityId: Id<"opportunities">,
+): Promise<boolean> {
+  const application = await ctx.db
+    .query("applications")
+    .withIndex("by_opportunityId_and_creatorId", (q) =>
+      q.eq("opportunityId", opportunityId).eq("creatorId", creatorId),
+    )
+    .first();
+  return application !== null;
+}
+
+/**
+ * Builds the check a brief must pass to appear in discovery: visible to
+ * creators and matching every filter. Returns the creator-facing brief, or
+ * `null` to leave it out.
+ */
+function discoverFilter(
+  ctx: QueryCtx,
+  options: Infer<typeof opportunityDiscover>,
+  creatorId?: Id<"creators">,
+  signals?: CreatorSignals,
+): (opportunity: Doc<"opportunities">) => Promise<CreatorOpportunity | null> {
+  const niches = options.niches?.map(requireNiche) ?? [];
+  const skills = options.skills?.map(requireSkill) ?? [];
+  return async (opportunity) => {
+    if (options.isGated !== undefined && opportunity.isGated !== options.isGated) return null;
+    if (
+      niches.length > 0 &&
+      !(await anyAsync(niches, (name) => hasOpportunityNiche(ctx, opportunity._id, name)))
+    ) {
+      return null;
+    }
+    if (
+      skills.length > 0 &&
+      !(await anyAsync(skills, (name) => hasOpportunitySkill(ctx, opportunity._id, name)))
+    ) {
+      return null;
+    }
+    if (options.applied === true) {
+      if (creatorId === undefined || !(await hasApplied(ctx, creatorId, opportunity._id))) {
+        return null;
+      }
+    }
+    const brief = await getVisibleCreatorOpportunity(ctx, opportunity);
+    if (brief !== null && options.eligible === true) {
+      if (signals === undefined || !describeMatch(signals, brief).isEligible) return null;
+    }
+    return brief;
+  };
+}
+
+async function anyAsync<T>(items: T[], check: (item: T) => Promise<boolean>): Promise<boolean> {
+  for (const item of items) if (await check(item)) return true;
+  return false;
+}
+
+/** Search results read per query; enough for a feed, well under Convex's 1,024 cap. */
+const MAX_SEARCH_RESULTS = 200;
+
+/**
+ * Pages through the best title matches. Search results can't be streamed, so
+ * this reads the top matches, filters them, and pages by position: the cursor
+ * is how many filtered results earlier pages returned.
+ */
+async function searchOpportunities(
+  ctx: QueryCtx,
+  search: string,
+  options: Infer<typeof opportunityDiscover>,
+  filter: (opportunity: Doc<"opportunities">) => Promise<CreatorOpportunity | null>,
+): Promise<PaginationResult<CreatorOpportunity>> {
+  const matches = await ctx.db
+    .query("opportunities")
+    .withSearchIndex("search_title", (q) => q.search("title", search).eq("status", "open"))
+    .take(MAX_SEARCH_RESULTS);
+  const briefs = (await Promise.all(matches.map(filter))).filter((brief) => brief !== null);
+  const { cursor, numItems } = options.paginationOpts;
+  const start = cursor === null ? 0 : Number(cursor);
+  if (!Number.isSafeInteger(start) || start < 0) {
+    throw apiError("invalid_state", { reason: "invalid_cursor" });
+  }
+  const end = start + numItems;
+  return {
+    page: briefs.slice(start, end),
+    isDone: end >= briefs.length,
+    continueCursor: String(Math.min(end, briefs.length)),
+  };
+}
+
+/**
+ * Discovers open briefs across active companies, narrowed by the discovery
+ * filters. With a creator, briefs that match their profile come first, best
+ * match first; the rest follow by deadline. Without one, every brief is in
+ * deadline order. A search orders by title relevance instead.
+ *
+ * Cursors, end cursors, and split cursors all name the section they belong
+ * to, and each section's stream gets the caller's full pagination options. So
+ * `usePaginatedQuery` can pin each loaded page to its range: a brief whose
+ * score changes moves into whichever loaded page now covers it, instead of
+ * showing twice or not at all.
+ */
 export async function discoverOpportunities(
   ctx: QueryCtx,
   options: Infer<typeof opportunityDiscover>,
+  creatorId?: Id<"creators">,
 ): Promise<PaginationResult<CreatorOpportunity>> {
-  const niche = options.niche === undefined ? undefined : requireNiche(options.niche);
-  // Filter inside the stream so hidden or off-niche opportunities don't leave
-  // pages short or empty. Keep deadline ordering while checking indexed associations.
-  return await stream(ctx.db, schema)
+  // Eligibility compares each brief with the caller's profile, read once here.
+  const creator =
+    options.eligible === true && creatorId !== undefined
+      ? await ctx.db.get("creators", creatorId)
+      : null;
+  const signals = creator === null ? undefined : await getCreatorSignals(ctx, creator);
+  const filter = discoverFilter(ctx, options, creatorId, signals);
+  const search = options.search?.trim() ?? "";
+  if (search !== "") return await searchOpportunities(ctx, search, options, filter);
+  const paginationOpts = withRowsReadCap(options.paginationOpts);
+  const visible = async (opportunity: Doc<"opportunities"> | null) =>
+    opportunity === null ? null : await filter(opportunity);
+  const rest = stream(ctx.db, schema)
     .query("opportunities")
     .withIndex("by_status_and_deadline", (q) => q.eq("status", "open"))
     .map(async (opportunity) => {
-      if (niche !== undefined && !(await hasOpportunityNiche(ctx, opportunity, niche))) return null;
-      return await getVisibleCreatorOpportunity(ctx, opportunity);
-    })
-    .paginate(withRowsReadCap(options.paginationOpts));
+      // Matches were listed already.
+      if (creatorId !== undefined && (await hasOpportunityScore(ctx, creatorId, opportunity._id))) {
+        return null;
+      }
+      return await visible(opportunity);
+    });
+
+  if (creatorId === undefined) return await rest.paginate(paginationOpts);
+
+  const start = parseDiscoverCursor(paginationOpts.cursor);
+  const end = paginationOpts.endCursor ? parseDiscoverCursor(paginationOpts.endCursor) : null;
+  const inSection = (
+    section: DiscoverCursor["section"],
+    page: PaginationResult<CreatorOpportunity>,
+  ): PaginationResult<CreatorOpportunity> => ({
+    ...page,
+    continueCursor: formatDiscoverCursor({ section, cursor: page.continueCursor }),
+    splitCursor: page.splitCursor && formatDiscoverCursor({ section, cursor: page.splitCursor }),
+  });
+  // A rest section that starts at its beginning ends this page right after the matches.
+  const endsAtMatches = end?.section === "rest" && end.cursor === null;
+
+  let matches: CreatorOpportunity[] = [];
+  if (start.section === "matches") {
+    // Filter inside the stream so hidden or off-niche matches don't leave pages short.
+    const page = await stream(ctx.db, schema)
+      .query("opportunityScores")
+      .withIndex("by_creatorId_and_score", (q) => q.eq("creatorId", creatorId))
+      .order("desc")
+      .map(async (score) => await visible(await ctx.db.get("opportunities", score.opportunityId)))
+      .paginate({
+        ...paginationOpts,
+        cursor: start.cursor,
+        endCursor: end?.section === "matches" ? end.cursor : undefined,
+      });
+    if (end?.section === "matches" || !page.isDone) {
+      return inSection("matches", { ...page, isDone: false });
+    }
+    // The matches ran out; the rest list starts after them, on this page if there's room.
+    const room = paginationOpts.numItems - page.page.length;
+    if (endsAtMatches || (end === null && room <= 0)) {
+      return {
+        page: page.page,
+        isDone: false,
+        continueCursor: formatDiscoverCursor({ section: "rest", cursor: null }),
+      };
+    }
+    matches = page.page;
+  }
+
+  const restPage = await rest.paginate({
+    ...paginationOpts,
+    numItems: Math.max(paginationOpts.numItems - matches.length, 1),
+    cursor: start.section === "rest" ? start.cursor : null,
+    endCursor: end?.section === "rest" ? end.cursor : undefined,
+    // Each brief here also looks up the creator's score, which the stream
+    // doesn't count, so it may scan half as many briefs.
+    maximumRowsRead: Math.ceil((paginationOpts.maximumRowsRead ?? 0) / 2),
+  });
+  return inSection("rest", { ...restPage, page: [...matches, ...restPage.page] });
 }
 
 /** Lists the company's opportunities, optionally scoped to an owned campaign and status. */
@@ -583,7 +875,7 @@ export async function createOpportunity(
   if (campaign.endsAt !== undefined && fields.deadline > campaign.endsAt) {
     throw apiError("invalid_state", { reason: "deadline_after_campaign_end" });
   }
-  const { niches, skills, ...storedFields } = brief;
+  const { niches, skills, languages, ...storedFields } = brief;
   const productAccess =
     fields.productAccessLink === undefined
       ? {}
@@ -604,6 +896,7 @@ export async function createOpportunity(
   await insertDeliverables(ctx, opportunityId, membership._id, deliverables, 0);
   if (niches !== undefined) await updateOpportunityNiches(ctx, opportunityId, niches);
   if (skills !== undefined) await updateOpportunitySkills(ctx, opportunityId, skills);
+  if (languages !== undefined) await updateOpportunityLanguages(ctx, opportunityId, languages);
   return opportunityId;
 }
 
@@ -618,16 +911,17 @@ function validateOpportunityFields(
   const description = requireNonBlank(fields.description, "description");
   for (const field of ["fixedFeeCents", "cpmRateCents", "paymentCapCents"] as const) {
     if (!Number.isSafeInteger(fields[field]) || fields[field] < 0) {
-      throw apiError("invalid_state", { reason: "invalid_compensation", field });
+      throw apiError("invalid_state", {
+        reason: "invalid_compensation",
+        field,
+      });
     }
   }
-  for (const field of ["maxSlots", "maxApplications"] as const) {
-    if (!Number.isSafeInteger(fields[field]) || fields[field] <= 0) {
-      throw apiError("invalid_state", { reason: "invalid_capacity", field });
-    }
-  }
-  if (fields.maxApplications > fields.maxSlots) {
-    throw apiError("invalid_state", { reason: "invalid_capacity", field: "maxApplications" });
+  if (!Number.isSafeInteger(fields.maxSlots) || fields.maxSlots <= 0) {
+    throw apiError("invalid_state", {
+      reason: "invalid_capacity",
+      field: "maxSlots",
+    });
   }
   validateOpportunityDeadline(fields.deadline);
   if (fields.status === "open" && fields.deadline <= Date.now()) {
@@ -654,7 +948,9 @@ export async function requireOpportunity(
   }
   if (caller.user.role === "company") {
     if (caller.orgId === null) {
-      throw apiError("misconfigured", { reason: "company account has no organization" });
+      throw apiError("misconfigured", {
+        reason: "company account has no organization",
+      });
     }
     const membership = await requireMembership(ctx, caller.user._id, caller.orgId);
     if (membership.companyId !== opportunity.companyId) {

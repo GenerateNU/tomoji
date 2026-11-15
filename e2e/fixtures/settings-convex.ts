@@ -5,27 +5,24 @@ import type { Id } from "../../convex/_generated/dataModel";
 
 type Call = { name: string; args: Record<string, unknown> };
 type Profile = FunctionReturnType<typeof api.creators.me>;
+type XAccount = FunctionReturnType<typeof api.xAccounts.me>;
 
 const listeners = new Set<() => void>();
 let revision = 0;
+let xAccount: XAccount = null;
 let profile: Profile = {
   creatorId: "test-creator" as Id<"creators">,
+  joinedAt: Date.UTC(2026, 10, 1),
   firstName: "Zahra",
   lastName: "Wibisana",
   email: "zahra@example.test",
   githubLink: "https://github.com/zahra",
   countryOfResidence: "ID",
   additionalLinks: [],
-  isPrivate: false,
   niches: [],
   skills: [],
+  languages: [],
 };
-// A small stand-in for the real ISO list; the picker only needs a few rows.
-const COUNTRIES = [
-  { code: "ID", name: "Indonesia" },
-  { code: "JP", name: "Japan" },
-  { code: "US", name: "United States of America" },
-];
 const calls: Call[] = [];
 const queries: Call[] = [];
 const failures = new Map<string, Error[]>();
@@ -39,6 +36,8 @@ let session = {
   userLoading: parameters.get("account") === "loading",
   profileLoading: parameters.get("profile") === "loading",
   failedQuery: parameters.get("failedQuery") ?? "",
+  // The creator's Stripe account status, `notStarted` unless the URL names one.
+  stripe: parameters.get("stripeStatus") ?? "notStarted",
 };
 
 function notify() {
@@ -59,6 +58,11 @@ export const fixture = {
   },
   setProfile(updates: Partial<Profile>) {
     profile = { ...profile, ...updates };
+    notify();
+  },
+  setXAccount(account: XAccount) {
+    xAccount = account;
+    profile = { ...profile, xId: account?.xUserId };
     notify();
   },
   failNext(name: string) {
@@ -97,6 +101,35 @@ export function useQuery(reference: FunctionReference<"query">, args: unknown) {
   return queryResult(reference, args);
 }
 
+const client = {
+  async query(reference: FunctionReference<"query">, args: unknown) {
+    const name = getFunctionName(reference);
+    if (delays.has(name)) await delays.get(name)!.promise;
+    return queryResult(reference, args);
+  },
+};
+
+export function useConvex() {
+  return client;
+}
+
+// The shell's notification panel shares this stable empty page across renders.
+const emptyNotifications: never[] = [];
+
+export function usePaginatedQuery(reference: FunctionReference<"query">, args: unknown) {
+  useRevision();
+  const name = getFunctionName(reference);
+  if (name !== "notifications:list") throw new Error(`Unexpected paginated query: ${name}`);
+  if (args !== "skip" && !queries.some((query) => query.name === name)) {
+    queries.push({ name, args: args as Record<string, unknown> });
+  }
+  return {
+    results: emptyNotifications,
+    status: args === "skip" ? ("LoadingFirstPage" as const) : ("Exhausted" as const),
+    loadMore() {},
+  };
+}
+
 export function useQueries(
   requests: Record<string, { query: FunctionReference<"query">; args: unknown }>,
 ) {
@@ -119,6 +152,9 @@ function queryResult(reference: FunctionReference<"query">, args: unknown) {
     queries.push({ name, args: args as Record<string, unknown> });
   }
   if (session.failedQuery === name) throw new Error("Simulated query failure");
+  if (name === "notifications:unreadCount") return 0;
+  if (name === "xAccounts:me") return xAccount;
+  if (name === "stripeAccounts:me") return { status: session.stripe };
   if (name === "users:me") {
     if (!session.isAuthenticated) throw new Error("Signed-out visitors must not query users.me");
     if (session.userLoading) return undefined;
@@ -126,8 +162,10 @@ function queryResult(reference: FunctionReference<"query">, args: unknown) {
       synced: session.synced,
       role: session.role,
       userId: "test-user",
-      firstName: "Zahra",
-      lastName: "Wibisana",
+      firstName: profile.firstName,
+      lastName: profile.lastName,
+      email: profile.email,
+      profilePictureMediaId: profile.profilePictureMediaId,
     };
   }
   if (name === "creators:me") {
@@ -135,9 +173,6 @@ function queryResult(reference: FunctionReference<"query">, args: unknown) {
       throw new Error("Only a synced creator must request creators.me");
     }
     return session.profileLoading ? undefined : profile;
-  }
-  if (name === "countries:list") {
-    return COUNTRIES;
   }
   throw new Error(`Unexpected query: ${name}`);
 }
@@ -152,6 +187,12 @@ function operation(reference: FunctionReference<"mutation" | "action">) {
       if (delays.has(name)) await delays.get(name)!.promise;
       const failure = failures.get(name)?.shift();
       if (failure) throw failure;
+      if (name === "xAccounts:start") {
+        return {
+          authorizationUrl: "https://x.com/i/oauth2/authorize?state=fixture",
+          expiresAt: Date.now() + 600_000,
+        };
+      }
       if (name === "creators:update") {
         profile = {
           ...profile,
@@ -165,10 +206,12 @@ function operation(reference: FunctionReference<"mutation" | "action">) {
             ? { additionalLinks: args.additionalLinks as string[] }
             : {}),
           ...(args.dateOfBirth !== undefined ? { dateOfBirth: args.dateOfBirth as number } : {}),
+          ...(args.languages !== undefined ? { languages: args.languages as string[] } : {}),
+          ...(args.niches !== undefined ? { niches: args.niches as string[] } : {}),
+          ...(args.skills !== undefined ? { skills: args.skills as string[] } : {}),
           ...("countryOfResidence" in args
             ? { countryOfResidence: (args.countryOfResidence as string | null) ?? undefined }
             : {}),
-          ...(args.isPrivate !== undefined ? { isPrivate: args.isPrivate as boolean } : {}),
         };
         notify();
         return profile;
@@ -199,6 +242,13 @@ function operation(reference: FunctionReference<"mutation" | "action">) {
             ),
             (character) => character.charCodeAt(0),
           ).buffer,
+        };
+      }
+      if (name === "stripeAccounts:onboardingLink") {
+        // Same origin, so the test can watch the browser leave for "Stripe".
+        // Echoes `returnPath` so the test can check where Stripe sends them back.
+        return {
+          url: `${location.origin}/stripe-onboarding?returnPath=${String(args.returnPath)}`,
         };
       }
       throw new Error(`Unexpected operation: ${name}`);

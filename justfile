@@ -92,13 +92,25 @@ setup:
 convex-env:
     @bun scripts/set-convex-env.ts
 
-# Fill your dev deployment with demo data for every frontend flow
-seed *EMAIL:
-    @bunx convex run seed:run '{{ if EMAIL == "" { "{}" } else { "{\"creatorEmail\":\"" + EMAIL + "\"}" } }}'
+# Create the demo workspace on the opted-in dev deployment (optional JSON arguments)
+seed ARGS="{}":
+    @bunx convex run seed:run {{quote(ARGS)}}
 
-# Remove everything `just seed` created, leaving accounts and companies alone
+# Delete the demo workspace so a later seed can rebuild it for another account
 seed-clear:
-    @bunx convex run seed:clear
+    @bunx convex run seed:clearDemo
+
+# Ensure the demo workspace has enough open briefs to test pagination
+seed-more COUNT="30":
+    @bunx convex run seed:more {{quote('{"count": ' + COUNT + '}')}}
+
+# Fill a company's submission review queue, uploading VIDEOS as the submitted content
+seed-review EMAIL *VIDEOS:
+    @bunx convex run seed:seedReviewQueue "$(bun scripts/seed-review-queue.ts {{quote(EMAIL)}} {{VIDEOS}})"
+
+# Delete that company's review-queue campaigns so it can be rebuilt
+seed-review-clear EMAIL:
+    @bunx convex run seed:clearReviewQueue {{quote('{"companyAdminEmail": "' + EMAIL + '"}')}}
 
 # Print the webhook URL to send a TL, who creates your WorkOS webhook
 webhook-url:

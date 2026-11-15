@@ -72,7 +72,7 @@ export function InviteTeammate() {
         </DialogTrigger>
         <DialogContent
           showCloseButton={false}
-          className="max-h-[calc(100dvh-2rem)] overflow-y-auto rounded-2xl p-6 sm:max-w-xl sm:p-8"
+          className="max-h-[calc(100dvh-2rem)] overflow-y-auto rounded-2xl p-6 text-sm sm:max-w-xl sm:p-8"
         >
           <DialogTitle className="text-2xl font-semibold">Invite a teammate</DialogTitle>
           <DialogDescription className="mt-2 text-sm text-muted-foreground">
@@ -122,7 +122,7 @@ export function InviteTeammate() {
             <FormAlert message={error} />
             <DialogClose
               disabled={pending}
-              render={<Button variant="secondary" className="min-h-11" />}
+              render={<Button variant="secondary-subtle" className="min-h-11" />}
             >
               Cancel
             </DialogClose>

@@ -102,6 +102,22 @@ describe("disputes.get", () => {
     expect(companyView.openedBy).toBe(fixture.membership.userId);
   });
 
+  test("names the company for every side", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await seedAssignmentFixture(t);
+    await t.run(
+      async (ctx) =>
+        await ctx.db.patch("companies", fixture.membership.companyId, { name: "Cloudflare" }),
+    );
+    const disputeId = await seedDispute(t, fixture);
+    const asOperator = await seedOperator(t, "dg-operator");
+
+    for (const client of [fixture.asCreator, fixture.asCompany, asOperator]) {
+      const view = await client.query(api.disputes.get, { disputeId });
+      expect(view.companyName).toBe("Cloudflare");
+    }
+  });
+
   test("conceals another company's dispute", async () => {
     const t = convexTest(schema, modules);
     const fixture = await seedAssignmentFixture(t);

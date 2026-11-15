@@ -1,14 +1,14 @@
 "use client";
 
-import { api } from "@convex/_generated/api";
 import type { Id } from "@convex/_generated/dataModel";
-import { useMutation } from "convex/react";
 import { useState } from "react";
 import { errorMessage } from "@/lib/errors";
+import { useSetStarred } from "../hooks/use-star-mutations";
 
 /**
- * Toggles the creator's star. The feed updates on its own once the mutation
- * lands, because Convex queries are live; `pending` only blocks double taps.
+ * Toggles the creator's star. It flips immediately through an optimistic
+ * update shared with every view of this opportunity; the mutation runs in the
+ * background and Convex rolls the star back if it fails.
  */
 export function StarButton({
   opportunityId,
@@ -19,21 +19,18 @@ export function StarButton({
   title: string;
   isStarred: boolean;
 }) {
-  const star = useMutation(api.opportunities.star);
-  const unstar = useMutation(api.opportunities.unstar);
-  const [pending, setPending] = useState(false);
+  const setStarred = useSetStarred();
   const [error, setError] = useState<string | null>(null);
 
-  async function toggle() {
-    setPending(true);
+  function toggle() {
     setError(null);
-    try {
-      await (isStarred ? unstar : star)({ opportunityId });
-    } catch (caught) {
-      setError(errorMessage(caught, { not_found: "This opportunity is no longer open." }));
-    } finally {
-      setPending(false);
-    }
+    setStarred(opportunityId, !isStarred).catch((caught: unknown) => {
+      setError(
+        errorMessage(caught, {
+          not_found: "This opportunity is no longer open.",
+        }),
+      );
+    });
   }
 
   return (
@@ -41,10 +38,9 @@ export function StarButton({
       <button
         type="button"
         onClick={toggle}
-        disabled={pending}
         aria-pressed={isStarred}
         aria-label={isStarred ? `Unstar ${title}` : `Star ${title}`}
-        className="rounded-sm outline-none focus-visible:ring-3 focus-visible:ring-ring/50 disabled:opacity-50"
+        className="rounded-sm outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
       >
         {/* eslint-disable-next-line @next/next/no-img-element -- fixed-size design icon */}
         <img

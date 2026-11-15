@@ -1,7 +1,8 @@
 import { paginationResultValidator } from "convex/server";
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
-import { internalMutation } from "./_generated/server";
+import type { Id } from "./_generated/dataModel";
+import { internalMutation, type MutationCtx } from "./_generated/server";
 import {
   authedQuery,
   companyMutation,
@@ -13,6 +14,7 @@ import { findOrgId } from "./lib/identity";
 import {
   closeOpportunity,
   closeExpiredOpportunities,
+  notifyWaitingApplicantsBatch,
   createOpportunity,
   discoverOpportunities,
   getOpportunity,
@@ -33,22 +35,32 @@ import {
   isOpportunityStarred,
   listStarredOpportunities,
   starOpportunity,
-  starredCreatorOpportunity,
   starredOpportunityList,
   unstarOpportunity,
   withStarredFlags,
 } from "./models/opportunityStars";
+import { creatorFeedOpportunity, withCreatorProgress } from "./models/opportunityFeed";
+import { hasOpportunityScores } from "./models/opportunityScores";
 import { requireCallerCreatorId } from "./models/users";
+
+/** Rescores the opportunity for creators in the background, or clears its scores once closed. */
+async function scheduleScoring(ctx: MutationCtx, opportunityId: Id<"opportunities">) {
+  await ctx.scheduler.runAfter(0, internal.opportunityScores.scoreOpportunity, { opportunityId });
+}
+
+/** Clears a closed opportunity's scores, skipping the job when it has none. */
+async function scheduleScoreCleanup(ctx: MutationCtx, opportunityId: Id<"opportunities">) {
+  if (await hasOpportunityScores(ctx, opportunityId)) await scheduleScoring(ctx, opportunityId);
+}
 
 /** Closes an owned published opportunity permanently without cancelling existing assignments. */
 export const close = companyMutation({
   args: { opportunityId: v.id("opportunities") },
   returns: opportunityView,
   handler: async (ctx, { opportunityId }) => {
-    return await getOpportunityView(
-      ctx,
-      await closeOpportunity(ctx, ctx.membership, opportunityId),
-    );
+    const opportunity = await closeOpportunity(ctx, ctx.membership, opportunityId);
+    await scheduleScoreCleanup(ctx, opportunityId);
+    return await getOpportunityView(ctx, opportunity);
   },
 });
 
@@ -57,8 +69,29 @@ export const closeExpired = internalMutation({
   args: {},
   returns: v.null(),
   handler: async (ctx) => {
-    const hasMore = await closeExpiredOpportunities(ctx);
+    const { closedIds, hasMore } = await closeExpiredOpportunities(ctx);
+    for (const opportunityId of closedIds) await scheduleScoreCleanup(ctx, opportunityId);
     if (hasMore) await ctx.scheduler.runAfter(0, internal.opportunities.closeExpired, {});
+    return null;
+  },
+});
+
+/**
+ * Tells one batch of waiting applicants that the opportunity closed and
+ * reschedules itself while more remain. Enqueued by every close, manual or at
+ * the deadline, because an opportunity's applications are unbounded.
+ */
+export const notifyClosed = internalMutation({
+  args: { opportunityId: v.id("opportunities"), cursor: v.union(v.string(), v.null()) },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const cursor = await notifyWaitingApplicantsBatch(ctx, args.opportunityId, args.cursor);
+    if (cursor !== null) {
+      await ctx.scheduler.runAfter(0, internal.opportunities.notifyClosed, {
+        opportunityId: args.opportunityId,
+        cursor,
+      });
+    }
     return null;
   },
 });
@@ -92,10 +125,9 @@ export const publish = companyMutation({
   args: { opportunityId: v.id("opportunities") },
   returns: opportunityView,
   handler: async (ctx, { opportunityId }) => {
-    return await getOpportunityView(
-      ctx,
-      await publishOpportunity(ctx, ctx.membership, opportunityId),
-    );
+    const opportunity = await publishOpportunity(ctx, ctx.membership, opportunityId);
+    await scheduleScoring(ctx, opportunityId);
+    return await getOpportunityView(ctx, opportunity);
   },
 });
 
@@ -114,18 +146,29 @@ export const update = companyMutation({
   args: { opportunityId: v.id("opportunities"), ...opportunityUpdate.fields },
   returns: opportunityView,
   handler: async (ctx, { opportunityId, ...updates }) => {
-    return await updateOpportunity(ctx, ctx.membership, opportunityId, updates);
+    const opportunity = await updateOpportunity(ctx, ctx.membership, opportunityId, updates);
+    // Drafts have no scores; publishing scores them.
+    const { niches, skills, minFollowerRange } = updates;
+    const changesSignals = [niches, skills, minFollowerRange].some((field) => field !== undefined);
+    if (opportunity.status !== "draft" && changesSignals) {
+      await scheduleScoring(ctx, opportunityId);
+    }
+    return opportunity;
   },
 });
 
-/** Returns a creator's paginated discovery feed of visible open opportunity briefs. */
+/**
+ * Returns a creator's paginated discovery feed of visible open opportunity
+ * briefs, each with the caller's star, application, and assignment.
+ */
 export const discover = creatorQuery({
   args: opportunityDiscover.fields,
-  returns: paginationResultValidator(starredCreatorOpportunity),
+  returns: paginationResultValidator(creatorFeedOpportunity),
   handler: async (ctx, args) => {
     const creatorId = await requireCallerCreatorId(ctx, ctx.user);
-    const result = await discoverOpportunities(ctx, args);
-    return { ...result, page: await withStarredFlags(ctx, creatorId, result.page) };
+    const result = await discoverOpportunities(ctx, args, creatorId);
+    const starred = await withStarredFlags(ctx, creatorId, result.page);
+    return { ...result, page: await withCreatorProgress(ctx, creatorId, starred) };
   },
 });
 
@@ -160,10 +203,11 @@ export const unstar = creatorMutation({
  */
 export const listStarred = creatorQuery({
   args: starredOpportunityList.fields,
-  returns: paginationResultValidator(starredCreatorOpportunity),
+  returns: paginationResultValidator(creatorFeedOpportunity),
   handler: async (ctx, args) => {
     const creatorId = await requireCallerCreatorId(ctx, ctx.user);
-    return await listStarredOpportunities(ctx, creatorId, args);
+    const result = await listStarredOpportunities(ctx, creatorId, args);
+    return { ...result, page: await withCreatorProgress(ctx, creatorId, result.page) };
   },
 });
 
@@ -184,14 +228,18 @@ export const create = companyMutation({
   args: opportunityCreate.fields,
   returns: v.id("opportunities"),
   handler: async (ctx, args) => {
-    return await createOpportunity(ctx, ctx.membership, args);
+    const opportunityId = await createOpportunity(ctx, ctx.membership, args);
+    // Scoring looks creators up by shared niches and skills; without any there is nothing to do.
+    const hasSelections = (args.niches?.length ?? 0) + (args.skills?.length ?? 0) > 0;
+    if (args.status === "open" && hasSelections) await scheduleScoring(ctx, opportunityId);
+    return opportunityId;
   },
 });
 
 /** Returns a creator-facing brief or a complete opportunity with selections for its company/operators. */
 export const get = authedQuery({
   args: { opportunityId: v.id("opportunities") },
-  returns: v.union(opportunityView, starredCreatorOpportunity),
+  returns: v.union(opportunityView, creatorFeedOpportunity),
   handler: async (ctx, args) => {
     const opportunity = await getOpportunity(ctx, args.opportunityId, {
       user: ctx.user,
@@ -199,9 +247,10 @@ export const get = authedQuery({
     });
     // Company users and operators retain private fields; only creator briefs carry `companyName`.
     if (!("companyName" in opportunity)) return opportunity;
-    // Creators also get whether they've starred it.
+    // Creators also get their star, application, and assignment for it.
     const creatorId = await requireCallerCreatorId(ctx, ctx.user);
     const isStarred = await isOpportunityStarred(ctx, creatorId, args.opportunityId);
-    return { ...opportunity, isStarred };
+    const [brief] = await withCreatorProgress(ctx, creatorId, [{ ...opportunity, isStarred }]);
+    return brief;
   },
 });

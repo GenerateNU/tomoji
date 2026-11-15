@@ -18,6 +18,9 @@ const result = await build({
         builder.onResolve({ filter: /^convex\/react$/ }, () => ({
           path: resolve("e2e/fixtures/notifications-convex.ts"),
         }));
+        builder.onResolve({ filter: /^next\/link$/ }, () => ({
+          path: resolve("e2e/fixtures/next-link.tsx"),
+        }));
       },
     },
   ],

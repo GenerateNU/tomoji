@@ -6,10 +6,14 @@ import {
   finalizeMediaUpload,
   requireOwnedMediaUpload,
   requireReadableCompanyMedia,
+  requireReadableDeliverableExample,
+  requireReadableDisputeEvidence,
   requireReadableProfilePicture,
   requireReadableVideo,
   reserveMediaUpload,
 } from "./models/media";
+import { requireCallerViewer } from "./lib/functions";
+import { findOrgId } from "./lib/identity";
 import { requireUser } from "./models/users";
 import schema from "./schema";
 import { mediaKind } from "./schemas/mediaUploads.schema";
@@ -100,5 +104,35 @@ export const getVideo = internalQuery({
     const upload = await requireReadableVideo(ctx, user, args.mediaId);
     if (upload.permanentKey === undefined) throw apiError("misconfigured");
     return { key: upload.permanentKey };
+  },
+});
+
+/** A brief's example file, readable by anyone who may read that brief. */
+export const getDeliverableExample = internalQuery({
+  args: { deliverableId: v.id("deliverables"), mediaId: v.id("mediaUploads") },
+  returns: v.object({ key: v.string(), contentType: v.string() }),
+  handler: async (ctx, args) => {
+    const { identity, user } = await requireUser(ctx);
+    const upload = await requireReadableDeliverableExample(
+      ctx,
+      { user, orgId: findOrgId(identity) },
+      args.deliverableId,
+      args.mediaId,
+    );
+    if (upload.permanentKey === undefined) throw apiError("misconfigured");
+    return { key: upload.permanentKey, contentType: upload.contentType };
+  },
+});
+
+/** A dispute's evidence file, readable by both sides and operators. */
+export const getDisputeEvidence = internalQuery({
+  args: { disputeId: v.id("disputes"), mediaId: v.id("mediaUploads") },
+  returns: v.object({ key: v.string(), contentType: v.string() }),
+  handler: async (ctx, args) => {
+    const { user } = await requireUser(ctx);
+    const viewer = await requireCallerViewer(ctx, user);
+    const upload = await requireReadableDisputeEvidence(ctx, viewer, args.disputeId, args.mediaId);
+    if (upload.permanentKey === undefined) throw apiError("misconfigured");
+    return { key: upload.permanentKey, contentType: upload.contentType };
   },
 });

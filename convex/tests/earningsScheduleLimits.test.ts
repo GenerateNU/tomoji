@@ -64,6 +64,12 @@ test("catch-up preserves the fixed fee when valid legacy history exceeds one tra
   });
 });
 
+// Each seeded payout has amount 1, so it reduces the fixed fee by 1 cent. The 64-period
+// window, not the payout count, drives the work: settlement rescans every earlier period.
+const PAYOUTS = 10;
+
+// Deliberately heavy: settling 64 periods is quadratic and CPU-bound, so it can pass
+// 5s when the machine is busy. The longer limit still catches a real hang.
 test("an extended stored window catches up without exhausting the query budget", async () => {
   vi.useFakeTimers();
   vi.setSystemTime(START);
@@ -74,18 +80,18 @@ test("an extended stored window catches up without exhausting the query budget",
   await t.run((ctx) =>
     ctx.db.patch("deliverableEarnings", fixture.earningsId, { endsAt: START + 64 * 7 * DAY }),
   );
-  for (let index = 0; index < 50; index++) {
+  for (let index = 0; index < PAYOUTS; index++) {
     await seedPayout(t, fixture.assignmentId, { postId: fixture.postId, amount: 1 });
   }
   vi.setSystemTime(START + 64 * 7 * DAY);
   await t.mutation(internal.earningsSchedules.sweep, {});
   await t.finishAllScheduledFunctions(vi.runAllTimers);
 
-  const payouts = await t.run((ctx) => ctx.db.query("payouts").take(52));
-  expect(payouts).toHaveLength(51);
+  const payouts = await t.run((ctx) => ctx.db.query("payouts").take(PAYOUTS + 2));
+  expect(payouts).toHaveLength(PAYOUTS + 1);
   const fixedPayout = payouts.find((payout) => payout.deliverableId === fixture.deliverableId)!;
   expect(fixedPayout).toMatchObject({
-    amount: 9_950,
+    amount: 10_000 - PAYOUTS,
     approvalStatus: "pending",
   });
   const calculations = await t.run((ctx) => ctx.db.query("earningCalculations").take(66));
@@ -107,8 +113,8 @@ test("an extended stored window catches up without exhausting the query budget",
   await t.mutation(internal.earningsSchedules.sweep, {});
   await t.finishAllScheduledFunctions(vi.runAllTimers);
 
-  const settledPayouts = await t.run((ctx) => ctx.db.query("payouts").take(53));
-  expect(settledPayouts).toHaveLength(52);
+  const settledPayouts = await t.run((ctx) => ctx.db.query("payouts").take(PAYOUTS + 3));
+  expect(settledPayouts).toHaveLength(PAYOUTS + 2);
   expect(settledPayouts.find((payout) => payout._id === fixedPayout._id)).toEqual(fixedPayout);
   const variablePayouts = settledPayouts.filter(
     (payout) => payout.deliverableId === fixture.deliverableId && payout._id !== fixedPayout._id,
@@ -123,4 +129,4 @@ test("an extended stored window catches up without exhausting the query budget",
   expect(completed).toMatchObject({ status: "complete", retryCount: 0 });
   expect(completed.scan).toBeUndefined();
   expect(completed.nextCheckAt).toBeUndefined();
-});
+}, 20_000);

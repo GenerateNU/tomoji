@@ -1,14 +1,10 @@
 "use client";
 
-import { api } from "@convex/_generated/api";
-import { useQuery } from "convex-helpers/react/cache/hooks";
-import { useAction } from "convex/react";
+import type { api } from "@convex/_generated/api";
 import type { FunctionReturnType } from "convex/server";
-import { ConvexError } from "convex/values";
 import Link from "next/link";
-import { useState } from "react";
 import { BrandButton } from "@/components/brand-button";
-import { errorMessage } from "@/lib/errors";
+import { useStripeOnboarding } from "@/features/stripe/hooks/use-stripe-onboarding";
 
 type StripeStatus = FunctionReturnType<typeof api.stripeAccounts.me>["status"];
 
@@ -47,27 +43,12 @@ const COPY: Record<
 
 /** Tells a creator what's left before they can be paid. Hidden once Stripe is ready. */
 export function StripeSetupBanner() {
-  const account = useQuery(api.stripeAccounts.me);
-  const onboardingLink = useAction(api.stripeAccounts.onboardingLink);
-  const [pending, setPending] = useState(false);
-  // "country" when the profile has no country yet, which gets a link to fix it.
-  const [error, setError] = useState<string | null>(null);
+  // Stripe sends the creator back here; the hook also renews an expired link.
+  // `error` is "country" when the profile has no country yet, which gets a link to fix it.
+  const { status, connect, pending, error } = useStripeOnboarding("/earnings");
 
-  if (account === undefined || account.status === "ready") return null;
-  const copy = COPY[account.status];
-
-  async function connect() {
-    setPending(true);
-    setError(null);
-    try {
-      const { url } = await onboardingLink();
-      // Stays pending while the browser leaves for Stripe.
-      window.location.assign(url);
-    } catch (caught) {
-      setPending(false);
-      setError(isCountryMissing(caught) ? "country" : errorMessage(caught));
-    }
-  }
+  if (status === undefined || status === "ready") return null;
+  const copy = COPY[status];
 
   return (
     <section
@@ -99,22 +80,15 @@ export function StripeSetupBanner() {
         <BrandButton
           brand="stripe"
           variant="primary"
-          label={account.status === "actionRequired" ? "Continue on" : "Connect"}
+          label={status === "actionRequired" ? "Continue on" : "Connect"}
           disabled={pending}
           aria-busy={pending}
-          onClick={connect}
+          onClick={() => void connect()}
           // The wordmark's box leaves room for the "p" below the line, so it
           // reads high next to the label; this lines it up with "Connect".
           className="self-start sm:self-auto [&_svg]:translate-y-0.5"
         />
       )}
     </section>
-  );
-}
-
-function isCountryMissing(error: unknown): boolean {
-  return (
-    error instanceof ConvexError &&
-    (error.data as { reason?: unknown } | null)?.reason === "country_required"
   );
 }

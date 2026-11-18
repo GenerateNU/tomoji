@@ -78,10 +78,11 @@ jobs:
         run: |
           set -euo pipefail
           bunx vercel@63.1.2 deploy --prebuilt --prod --token="$VERCEL_TOKEN" \
-            --meta release="${{ github.event.release.tag_name || inputs.ref }}" \
+            --meta release="$DEPLOY_REF" \
             --meta commit="$DEPLOY_SHA"
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          DEPLOY_REF: ${{ github.event.release.tag_name || inputs.ref }}
 
       - name: Check the site answers
         env:
@@ -99,10 +100,13 @@ jobs:
           exit 1
 
       - name: Summarize
+        env:
+          DEPLOY_REF: ${{ github.event.release.tag_name || inputs.ref }}
+          PUBLIC_FRONTEND_URL: ${{ vars.PUBLIC_FRONTEND_URL }}
         run: |
           {
             echo "### Deployed to production"
             echo ""
-            echo "- Ref: \`${{ github.event.release.tag_name || inputs.ref }}\` (\`${DEPLOY_SHA:0:7}\`)"
-            echo "- Frontend: ${{ vars.PUBLIC_FRONTEND_URL }}"
+            echo "- Ref: \`${DEPLOY_REF}\` (\`${DEPLOY_SHA:0:7}\`)"
+            echo "- Frontend: ${PUBLIC_FRONTEND_URL}"
           } >> "$GITHUB_STEP_SUMMARY"

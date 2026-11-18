@@ -234,6 +234,19 @@ describe("notifyCompanyUser", () => {
     expect(rows).toMatchObject([content]);
   });
 
+  test("skips a member who left the company", async () => {
+    const t = convexTest(schema, modules);
+    const { membership } = await seedMembership(t, "company_a");
+    const content = await closedContent(t);
+    await t.run(
+      async (ctx) => await ctx.db.patch("companyUsers", membership._id, { isActive: false }),
+    );
+
+    await t.run(async (ctx) => await notifyCompanyUser(ctx, membership._id, content));
+
+    expect(await t.run(async (ctx) => await ctx.db.query("notifications").take(1))).toEqual([]);
+  });
+
   test("skips a member that no longer exists", async () => {
     const t = convexTest(schema, modules);
     const { membership } = await seedMembership(t, "company_a");

@@ -6,7 +6,11 @@ import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { stream } from "convex-helpers/server/stream";
 import { apiError } from "../lib/errors";
 import { requireUrl } from "../lib/urls";
-import { APPLICATION_SWEEP_BATCH, withRowsReadCap } from "../lib/pagination";
+import {
+  APPLICATION_SWEEP_BATCH,
+  DEFAULT_MAXIMUM_ROWS_READ,
+  withRowsReadCap,
+} from "../lib/pagination";
 import { requireNonBlank, isHalfHourTimestamp } from "../lib/validation";
 import { requireMembership } from "./companyUsers";
 import {
@@ -773,6 +777,10 @@ export async function discoverOpportunities(
   });
   // A rest section that starts at its beginning ends this page right after the matches.
   const endsAtMatches = end?.section === "rest" && end.cursor === null;
+  // A page pinned to end in the rest list owns every match after its start, so
+  // it reads them all: capping them at numItems would drop matches a rescore
+  // added after the page loaded, since the next page starts past the matches.
+  const pinnedPastMatches = end?.section === "rest" ? paginationOpts.endCursor : undefined;
 
   let matches: CreatorOpportunity[] = [];
   if (start.section === "matches") {
@@ -784,9 +792,24 @@ export async function discoverOpportunities(
       .map(async (score) => await visible(await ctx.db.get("opportunities", score.opportunityId)))
       .paginate({
         ...paginationOpts,
+        numItems: pinnedPastMatches
+          ? (paginationOpts.maximumRowsRead ?? DEFAULT_MAXIMUM_ROWS_READ)
+          : paginationOpts.numItems,
         cursor: start.cursor,
         endCursor: end?.section === "matches" ? end.cursor : undefined,
       });
+    if (pinnedPastMatches && !page.isDone) {
+      // Too many to read at once: keep the pinned end and have the client split
+      // the page where this read stopped.
+      const splitCursor = formatDiscoverCursor({ section: "matches", cursor: page.continueCursor });
+      return {
+        page: page.page,
+        isDone: false,
+        continueCursor: pinnedPastMatches,
+        splitCursor,
+        pageStatus: "SplitRequired",
+      };
+    }
     if (end?.section === "matches" || !page.isDone) {
       return inSection("matches", { ...page, isDone: false });
     }

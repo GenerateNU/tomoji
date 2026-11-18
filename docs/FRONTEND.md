@@ -149,10 +149,17 @@ When we call `useQuery`, Convex establishes a real-time subscription over a WebS
 | When should we create custom hooks?                                        | Custom hooks are useful when they encapsulate actual logic, such as pagination defaults, mutation error handling, or converting filter state into query arguments.                            |
 | How do we handle pagination?                                               | Use `usePaginatedQuery`. Our backend list queries use cursor-based pagination, and cursors are tied to the filters that generated them. Whenever filters change, we need to reset pagination. |
 
+Queries that page through convex-helpers streams (`stream(...).paginate()`, such as
+`opportunities.discover`) need `usePaginatedQuery` from `convex-helpers/react`. It
+reruns each loaded page pinned to its end cursor. The `convex/react` hook doesn't, so
+when rows move between pages, as a rescore after a profile edit does, pages overlap
+or skip rows.
+
 For example, we could create a custom hook to standardize pagination behavior across opportunity feeds:
 
 ```ts
 // features/opportunities/hooks/use-opportunity-feed.ts
+import { usePaginatedQuery } from "convex-helpers/react";
 
 export function useOpportunityFeed() {
   return usePaginatedQuery(api.opportunities.discover, {}, { initialNumItems: 20 });

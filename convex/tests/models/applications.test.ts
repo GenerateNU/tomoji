@@ -1074,6 +1074,19 @@ describe("notifications", () => {
     expect(await memberNotifications(t, teammate)).toEqual([]);
   });
 
+  test("a new application doesn't notify an opportunity creator who left the company", async () => {
+    const t = convexTest(schema, modules);
+    const { membership, opportunityId } = await seedGatedOpportunity(t);
+    // What removeMembership leaves behind when WorkOS removes them.
+    await t.run(
+      async (ctx) => await ctx.db.patch("companyUsers", membership._id, { isActive: false }),
+    );
+
+    await applyAs(t, await seedCreatorId(t, "creator_a"), opportunityId);
+
+    expect(await memberNotifications(t, membership)).toEqual([]);
+  });
+
   test("an offer notifies the creator", async () => {
     const t = convexTest(schema, modules);
     const { creatorId, applicationId, opportunityId } = await seedOffered(t);

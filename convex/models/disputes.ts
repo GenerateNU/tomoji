@@ -315,14 +315,14 @@ async function notifyDisputeParties(
   }
 
   // The opportunity's owner, plus the member who opened the dispute if that's
-  // someone else. Members who have left the company aren't told.
+  // someone else. notifyCompanyUser skips members who have left the company.
   const members = [await ctx.db.get("companyUsers", opportunity.createdBy)];
   if (dispute.openedByRole === "company") {
     const opener = await getCompanyUser(ctx, dispute.openedBy, dispute.companyId);
     if (opener !== null && opener._id !== opportunity.createdBy) members.push(opener);
   }
   for (const member of members) {
-    if (member?.isActive && member.userId !== actor.userId) {
+    if (member !== null && member.userId !== actor.userId) {
       await notifyCompanyUser(ctx, member._id, notification);
     }
   }

@@ -1,7 +1,6 @@
 "use client";
 
 import Link from "next/link";
-import { buttonVariants } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { SignedOutNotice } from "@/features/auth/components/signed-out-notice";
 import { useMe } from "../hooks/use-me";
@@ -39,16 +38,6 @@ export function Welcome() {
       <h1 className="text-2xl font-semibold tracking-tight">
         {me.firstName ? `Welcome, ${me.firstName}` : "Welcome"}
       </h1>
-      {me.role === "creator" && (
-        <nav aria-label="Get started" className="flex flex-wrap gap-3">
-          <Link href="/opportunities" className={buttonVariants()}>
-            Browse opportunities
-          </Link>
-          <Link href="/applications" className={buttonVariants({ variant: "secondary-subtle" })}>
-            My applications
-          </Link>
-        </nav>
-      )}
       {me.role === "company" && (
         <Link
           href="/campaigns"

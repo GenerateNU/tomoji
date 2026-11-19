@@ -11,10 +11,13 @@ export function ProfileDialog({
   open,
   onOpenChange,
   finalFocus,
+  startEditing,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   finalFocus?: RefObject<HTMLElement | null>;
+  /** Opens the editor instead of the profile view. */
+  startEditing?: boolean;
 }) {
   const [pending, setPending] = useState(false);
   const [attempt, setAttempt] = useState(0);
@@ -55,7 +58,7 @@ export function ProfileDialog({
               </div>
             )}
           >
-            <ProfileContent onPendingChange={setPending} />
+            <ProfileContent onPendingChange={setPending} startEditing={startEditing} />
           </ErrorBoundary>
         )}
       </DialogContent>

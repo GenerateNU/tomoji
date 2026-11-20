@@ -127,6 +127,19 @@ export function usePaginatedQuery(reference: FunctionReference<"query">, args: u
     if (session.feed === "loading") {
       return { results: emptyNotifications, status: "LoadingFirstPage" as const, loadMore() {} };
     }
+    // Like a page cut short by the server's row-read cap: empty but not done.
+    // The sample feed only arrives once the caller asks for more.
+    if (session.feed === "sparse") {
+      return {
+        results: emptyNotifications,
+        status: "CanLoadMore" as const,
+        loadMore(numItems: number) {
+          calls.push({ name: "opportunities:discover.loadMore", args: { numItems } });
+          session = { ...session, feed: "sample" };
+          notify();
+        },
+      };
+    }
     return {
       results: session.feed === "empty" ? emptyNotifications : FEED,
       status: "Exhausted" as const,

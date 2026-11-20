@@ -180,3 +180,44 @@ test("cards match the design's 378px height", async ({ page }) => {
   // 118 banner + 16 top + 24 company + 28 badge + 32 title + 44 pay + 45 button + 24 bottom + 4 × 12 gaps.
   for (const height of heights) expect(height).toBeCloseTo(378, 0);
 });
+
+test("a short first page loads more instead of claiming nothing is open", async ({ page }) => {
+  await openHome(page, "?feed=sparse");
+  const row = page.getByRole("list", { name: "Recommended opportunities", exact: true });
+  await expect(row.getByRole("listitem")).toHaveCount(6);
+  await expect(page.getByText("There are no open opportunities right now.")).toHaveCount(0);
+  expect(
+    await page.evaluate(() =>
+      window.shellFixture.calls.some((call) => call.name === "opportunities:discover.loadMore"),
+    ),
+  ).toBe(true);
+});
+
+test("reaching 100% keeps the open profile editor and its draft", async ({ page }) => {
+  await openHome(page);
+  await page.getByRole("button", { name: "Complete my profile", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "Your profile", exact: true });
+  const github = dialog.getByLabel("GitHub profile", { exact: true });
+  await github.fill("https://github.com/unsaved-draft");
+
+  // Linking X saves on its own; here it is the last item, so completion hits 100%.
+  await page.evaluate(() =>
+    window.shellFixture.setProfile({
+      profilePictureMediaId: "picture" as never,
+      xId: "123456789",
+      dateOfBirth: Date.UTC(1995, 0, 15),
+      languages: ["english"],
+      niches: ["generative-ai-llms"],
+      skills: ["python"],
+    }),
+  );
+
+  await expect(dialog).toBeVisible();
+  await expect(github).toHaveValue("https://github.com/unsaved-draft");
+
+  // Once closed, the finished card goes away.
+  await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "Complete your profile" })).toHaveCount(0);
+});

@@ -27,7 +27,10 @@ export function ProfileCompletionCard() {
       </div>
     );
   }
-  if (completion.percent >= 100) return null;
+  // Hide a finished card only once the editor is closed. X linking saves on its
+  // own, so completion can reach 100% mid-edit; unmounting then would close the
+  // dialog and drop the unsaved draft.
+  if (completion.percent >= 100 && !open) return null;
 
   return (
     <section

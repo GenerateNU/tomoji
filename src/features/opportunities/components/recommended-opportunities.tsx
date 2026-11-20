@@ -20,9 +20,22 @@ const CARD_WIDTH = "w-[calc((100%-2rem)/3)] min-w-[300px] shrink-0";
 
 /** A scrolling row of the creator's best-matched open opportunities, for the home page. */
 export function RecommendedOpportunities() {
-  const feed = usePaginatedQuery(api.opportunities.discover, {}, { initialNumItems: ROW_SIZE });
-  const opportunities = feed.results.slice(0, ROW_SIZE);
-  const loading = feed.status === "LoadingFirstPage";
+  const { results, status, loadMore } = usePaginatedQuery(
+    api.opportunities.discover,
+    {},
+    { initialNumItems: ROW_SIZE },
+  );
+  const opportunities = results.slice(0, ROW_SIZE);
+  // Discovery caps the rows a page may read, so a page can come back short, or
+  // empty, while more remain (hidden matches are skipped, not counted). Keep
+  // asking until the row is full or the feed runs out, and only call the feed
+  // empty once it has.
+  useEffect(() => {
+    if (status === "CanLoadMore" && results.length < ROW_SIZE) {
+      loadMore(ROW_SIZE - results.length);
+    }
+  }, [status, results.length, loadMore]);
+  const loading = opportunities.length === 0 && status !== "Exhausted";
   const [selectedId, setSelectedId] = useState<Id<"opportunities"> | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
 

@@ -15,3 +15,18 @@ export function invitationTokenFrom(params: URLSearchParams): string | null {
   }
   return null;
 }
+
+/**
+ * What an invitation hand-off asks WorkOS for.
+ *
+ * `provider: "authkit"` is required twice over: the SDK rejects a request with
+ * no provider, connection or organization, and it allows `screenHint` only for
+ * authkit. It is also what we want — the hosted AuthKit page is the thing that
+ * can take a password from someone who has none yet.
+ *
+ * Kept here, apart from the route plumbing, so the shape the SDK has to accept
+ * can be tested without pulling in Next.
+ */
+export function inviteAuthorizeIntent(invitationToken: string) {
+  return { provider: "authkit", invitationToken, screenHint: "sign-up" } as const;
+}

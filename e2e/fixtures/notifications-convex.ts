@@ -165,3 +165,10 @@ export function useMutation(reference: FunctionReference<"mutation">) {
     update();
   };
 }
+
+/** No private media exists in this isolated notification fixture. */
+export function useAction() {
+  return async () => {
+    throw new Error("Fixture has no private media");
+  };
+}

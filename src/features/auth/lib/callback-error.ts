@@ -6,6 +6,7 @@ import { NextResponse, type NextRequest } from "next/server";
  */
 const NOTICES: Record<string, string | undefined> = {
   google: "Google sign-in didn't finish. Try again.",
+  invite: "That invitation link didn't work. Ask for a new one.",
 };
 
 /** The notice to show for `/login?error=…`, or null when there is nothing to say. */
@@ -17,10 +18,11 @@ export function signInNotice(error: string | string[] | undefined): string | nul
  * Where a failed AuthKit callback lands.
  *
  * AuthKit's default is a raw JSON body, which is a dead end. This sends people
- * to the ordinary log in page instead, with no notice: the usual way to get
- * here is accepting an invitation, which never sets the PKCE cookie
- * `handleAuth` requires, and in that case the account was created fine. Saying
- * anything went wrong would be inaccurate, so the form speaks for itself.
+ * to the ordinary log in page instead, with no notice, because what brings them
+ * here is usually harmless: a stale or replayed callback, or a second visit to
+ * one already spent. Our own flows never reach this — /auth/callback hands
+ * Google and invitation callbacks to their own handlers first, each of which
+ * reports its own failure.
  */
 export async function authKitFailure({
   error,

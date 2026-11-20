@@ -95,3 +95,19 @@ for (const width of [390, 1512]) {
     await expect(trigger).toBeFocused();
   });
 }
+
+test("a failed star stays readable inside a narrow card", async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 844 });
+  await openFeed(page, "?star-error");
+  const card = page
+    .getByRole("article")
+    .filter({ has: page.getByRole("heading", { name: "GPT-4 Turbo", exact: true }) });
+  const star = card.getByRole("button", { name: "Star GPT-4 Turbo", exact: true });
+  await star.click();
+  const error = card.getByRole("alert");
+  await expect(error).toContainText("Your account is still being set up.");
+  const cardBox = await card.boundingBox();
+  const errorBox = await error.boundingBox();
+  expect(errorBox!.x + errorBox!.width).toBeLessThanOrEqual(cardBox!.x + cardBox!.width - 24);
+  await expect.poll(async () => (await star.locator("img").boundingBox())?.width).toBe(18);
+});

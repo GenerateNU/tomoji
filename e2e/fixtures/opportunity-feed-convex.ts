@@ -1,4 +1,5 @@
 import { getFunctionName, type FunctionReference } from "convex/server";
+import { ConvexError } from "convex/values";
 
 /** Feed items shaped like `opportunities.discover`; no calls reach a Convex deployment. */
 const DAY = 86_400_000;
@@ -161,9 +162,15 @@ export function useQuery(reference: FunctionReference<"query">, args?: unknown) 
 }
 
 export function useMutation() {
-  const mutation = Object.assign(async () => null, {
-    withOptimisticUpdate: () => mutation,
-  });
+  const mutation = Object.assign(
+    async () => {
+      if (params().has("star-error")) throw new ConvexError({ code: "not_synced" });
+      return null;
+    },
+    {
+      withOptimisticUpdate: () => mutation,
+    },
+  );
   return mutation;
 }
 

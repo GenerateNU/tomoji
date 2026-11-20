@@ -34,13 +34,13 @@ export function StarButton({
   }
 
   return (
-    <span className="inline-flex shrink-0 items-center gap-2">
+    <span className="inline-flex max-w-full items-center gap-2">
       <button
         type="button"
         onClick={toggle}
         aria-pressed={isStarred}
         aria-label={isStarred ? `Unstar ${title}` : `Star ${title}`}
-        className="rounded-sm outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
+        className="shrink-0 rounded-sm outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
       >
         {/* eslint-disable-next-line @next/next/no-img-element -- fixed-size design icon */}
         <img
@@ -48,6 +48,7 @@ export function StarButton({
             isStarred ? "/icons/opportunities/star-fill.svg" : "/icons/opportunities/star-line.svg"
           }
           alt=""
+          className="max-w-none"
           width={18}
           height={18}
         />

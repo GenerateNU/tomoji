@@ -66,13 +66,7 @@ export function OfferFooter({
         Offer declined
       </Button>
     );
-  } else if (timing === "accepted") {
-    actions = (
-      <Button disabled className={buttonClass}>
-        Offer accepted
-      </Button>
-    );
-  } else if (timing === "none") {
+  } else if (timing === "none" || timing === "accepted") {
     actions = null;
   } else {
     actions = (

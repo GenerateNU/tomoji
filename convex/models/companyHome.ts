@@ -289,19 +289,25 @@ export async function getCompanyEarnings(
   range: CompanyHomeRange,
 ): Promise<Infer<typeof companyEarnings>> {
   requireRange(range);
-  /** Keeps outstanding approvals across all periods and bounds each status read. */
-  const read = (status: "pending" | "approved") =>
-    ctx.db
-      .query("payouts")
-      .withIndex("by_companyId_and_approvalStatus_and_reviewRequestedAt", (q) => {
-        const scoped = q.eq("companyId", membership.companyId).eq("approvalStatus", status);
-        return status === "pending"
-          ? scoped
-          : scoped.gte("reviewRequestedAt", range.from).lt("reviewRequestedAt", range.to);
-      })
-      .order("desc")
-      .take(PAYOUT_LIMIT + 1);
-  const [pendingRows, approvedRows] = await Promise.all([read("pending"), read("approved")]);
+  const pendingQuery = ctx.db
+    .query("payouts")
+    .withIndex("by_companyId_and_approvalStatus_and_reviewRequestedAt", (q) =>
+      q.eq("companyId", membership.companyId).eq("approvalStatus", "pending"),
+    )
+    .order("desc")
+    .take(PAYOUT_LIMIT + 1);
+  const approvedQuery = ctx.db
+    .query("payouts")
+    .withIndex("by_companyId_and_approvalStatus_and_approvedAt", (q) =>
+      q
+        .eq("companyId", membership.companyId)
+        .eq("approvalStatus", "approved")
+        .gte("approvedAt", range.from)
+        .lt("approvedAt", range.to),
+    )
+    .order("desc")
+    .take(PAYOUT_LIMIT + 1);
+  const [pendingRows, approvedRows] = await Promise.all([pendingQuery, approvedQuery]);
   const pending = pendingRows.slice(0, PAYOUT_LIMIT);
   const approved = approvedRows.slice(0, PAYOUT_LIMIT);
   const pendingCreators = new Set(pending.map((p) => p.creatorId));

@@ -55,6 +55,11 @@ export const payoutsTable = defineTable({
     "approvalStatus",
     "reviewRequestedAt",
   ])
+  .index("by_companyId_and_approvalStatus_and_approvedAt", [
+    "companyId",
+    "approvalStatus",
+    "approvedAt",
+  ])
   .index("by_assignmentId_and_reviewRequestedAt", ["assignmentId", "reviewRequestedAt"])
   .index("by_assignmentId_and_approvalStatus_and_reviewRequestedAt", [
     "assignmentId",

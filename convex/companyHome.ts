@@ -12,6 +12,9 @@ import {
   getCompanyOverview,
 } from "./models/companyHome";
 
+// Company members may read their company's dashboard. Payout approval remains
+// admin-only and is enforced independently by payouts.approve.
+
 /**
  * Current open campaigns and verified active-post views, plus spend and observed
  * view history in [from, to), a period of at most 31 days. Spend is gross payout

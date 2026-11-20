@@ -375,6 +375,32 @@ describe("getCompanyDrafts", () => {
 });
 
 describe("getCompanyEarnings", () => {
+  test("uses approval time for period totals across request-date boundaries", async () => {
+    const t = convexTest(schema, modules);
+    const fixture = await seedAssignmentFixture(t);
+    await seedPayout(t, fixture.assignmentId, {
+      amount: 1_000,
+      approvalStatus: "approved",
+      reviewRequestedAt: from - DAY,
+      approvedAt: from,
+    });
+    await seedPayout(t, fixture.assignmentId, {
+      amount: 2_000,
+      approvalStatus: "approved",
+      reviewRequestedAt: from - DAY,
+      approvedAt: range.to - 1,
+    });
+    await seedPayout(t, fixture.assignmentId, {
+      amount: 9_000,
+      approvalStatus: "approved",
+      reviewRequestedAt: from,
+      approvedAt: range.to,
+    });
+    const earnings = await t.run((ctx) => getCompanyEarnings(ctx, fixture.membership, range));
+    expect(earnings.approvedInPeriod.amounts).toEqual([{ currency: "usd", amount: 3_000 }]);
+    expect(earnings.creators).toEqual({ pending: 0, approved: 1, total: 1 });
+  });
+
   test("marks capped payout totals instead of claiming they are complete", async () => {
     const t = convexTest(schema, modules);
     const fixture = await seedAssignmentFixture(t);
@@ -384,6 +410,7 @@ describe("getCompanyEarnings", () => {
         postId,
         amount: 100,
         approvalStatus: "approved",
+        approvedAt: from,
         reviewRequestedAt: from,
         transferredAt: from,
         paymentStatus: "transferred",

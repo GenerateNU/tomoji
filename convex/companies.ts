@@ -1,12 +1,24 @@
 import { paginationOptsValidator, paginationResultValidator } from "convex/server";
 import { v, type Infer } from "convex/values";
 import type { Doc } from "./_generated/dataModel";
-import { companyAdminMutation, operatorMutation, operatorQuery } from "./lib/functions";
+import {
+  companyAdminMutation,
+  companyQuery,
+  operatorMutation,
+  operatorQuery,
+} from "./lib/functions";
 import { createCompany, listCompanies, requireCompany, updateCompany } from "./models/companies";
 import schema from "./schema";
 
 /** A company as returned to operators. `workosId` is internal and left out. */
 const companyView = schema.doc("companies").omit("workosId");
+
+/** The current member's company profile, used by company home and its brand header. */
+export const me = companyQuery({
+  args: {},
+  returns: companyView,
+  handler: async (ctx) => toCompanyView(await requireCompany(ctx, ctx.membership.companyId)),
+});
 
 /**
  * Picks fields explicitly so `workosId`, or any field added later, is only

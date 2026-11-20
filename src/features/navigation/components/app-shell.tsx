@@ -32,6 +32,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { NotificationBell } from "@/features/notifications/components/notifications-panel";
 import { ProfileDialog } from "@/features/profile/components/profile-dialog";
 import { useProfilePicture } from "@/features/profile/hooks/use-profile-picture";
+import { CompanyBrand } from "@/features/users/components/company-brand";
 import type { Me } from "@/features/users/hooks/use-me";
 import { useMediaQuery } from "@/hooks/use-media-query";
 import { iconProps } from "@/lib/icons";
@@ -152,8 +153,12 @@ function SyncedChrome({ me }: { me: SyncedMe }) {
   return (
     <>
       <div className="sticky top-0 z-30 flex h-14 shrink-0 items-center justify-between border-b border-gray-100 bg-gray-10 px-4 md:hidden">
-        <Link href="/" aria-label="ohani home" className={cn("rounded-xs", focusRing)}>
-          <Logo size={16} />
+        <Link
+          href="/"
+          aria-label={me.role === "company" ? "Company home" : "ohani home"}
+          className={cn("rounded-xs", focusRing)}
+        >
+          {me.role === "company" ? <CompanyBrand /> : <Logo size={16} />}
         </Link>
         <div className="flex items-center gap-1">
           {/* Home only, and one bell at a time; from md up it sits at the page's top right instead. */}
@@ -182,6 +187,7 @@ function SyncedChrome({ me }: { me: SyncedMe }) {
           collapsed={collapsed}
           onCollapsedChange={setCollapsed}
           logoHref="/"
+          brand={me.role === "company" ? <CompanyBrand collapsed={collapsed} /> : undefined}
         />
       </div>
 
@@ -213,6 +219,7 @@ function SyncedChrome({ me }: { me: SyncedMe }) {
               collapsed={false}
               showToggle={false}
               logoHref="/"
+              brand={me.role === "company" ? <CompanyBrand /> : undefined}
               onNavigate={() => setDrawerPath(null)}
               className="w-full"
             />
@@ -285,7 +292,12 @@ function PageBell() {
   const isDesktop = useMediaQuery("(min-width: 768px)");
   if (!isDesktop || me instanceof Error || !me?.synced || pathname !== "/") return null;
   return (
-    <div className="absolute top-8 right-8 z-20 md:top-11">
+    <div
+      className={cn(
+        "absolute top-8 right-8 z-20 md:top-11",
+        me.role === "company" && "md:top-14 md:right-14",
+      )}
+    >
       <NotificationBell />
     </div>
   );

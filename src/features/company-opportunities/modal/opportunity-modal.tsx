@@ -33,6 +33,8 @@ export type CompanyOpportunityModalProps = {
   onOpenChange: (open: boolean) => void;
   /** Shows the "Edit opportunity" button; the caller opens its own editor. */
   onEdit?: () => void;
+  /** Opens the matching workflow when entered from Home. */
+  initialTab?: "assignments" | "applications";
 };
 
 // Figma calls a deliverable an "assignment". In the backend an assignment is
@@ -99,6 +101,7 @@ function OpportunityModalContent({
   open,
   onOpenChange,
   onEdit,
+  initialTab = "assignments",
 }: CompanyOpportunityModalProps & { opportunityId: Id<"opportunities"> }) {
   const fetched = useQuery(api.opportunities.get, { opportunityId });
   // Only creators get the brief view (it carries `companyName`); a company
@@ -124,7 +127,7 @@ function OpportunityModalContent({
   );
   const now = useNow();
   const [view, setView] = useState<View>({ kind: "list" });
-  const [tab, setTab] = useState("assignments");
+  const [tab, setTab] = useState<string>(initialTab);
 
   const common = { open, onOpenChange, className: MODAL_CLASS, titleSize: "lg" } as const;
 

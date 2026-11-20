@@ -119,7 +119,10 @@ test("account menu links to Settings and missing routes are not exposed as worki
     "href",
     "/assignments",
   );
-  await expect(page.getByRole("link", { name: "Earnings", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "Earnings", exact: true })).toHaveAttribute(
+    "href",
+    "/earnings",
+  );
 });
 
 test("account query failure preserves fallback navigation and recovers", async ({ page }) => {

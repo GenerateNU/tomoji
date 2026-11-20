@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useRef } from "react";
+import type { ReactNode } from "react";
 import {
   RiAuctionFill,
   RiAuctionLine,
@@ -282,6 +283,7 @@ export function AppSidebar<Id extends string>({
   onNavigate,
   showToggle = true,
   logoHref,
+  brand,
   className,
 }: {
   items: readonly NavEntry<Id>[];
@@ -295,19 +297,21 @@ export function AppSidebar<Id extends string>({
   showToggle?: boolean;
   /** Makes the logo a link home. */
   logoHref?: string;
+  /** Optional company branding; other account types retain the Ohani logo. */
+  brand?: ReactNode;
   className?: string;
 }) {
-  const logo = <SpellingLogo collapsed={collapsed} size={16} />;
+  const logo = brand ?? <SpellingLogo collapsed={collapsed} size={16} />;
   return (
     <Sidebar collapsed={collapsed} className={className}>
-      <SidebarContent>
-        <SidebarHeader>
+      <SidebarContent className={brand ? "gap-4" : undefined}>
+        <SidebarHeader className={brand ? "px-2" : undefined}>
           {logoHref ? (
             <Link
               href={logoHref}
-              aria-label="ohani home"
+              aria-label={brand ? "Company home" : "ohani home"}
               onClick={() => onNavigate?.()}
-              className={cn("rounded-xs", focusRing)}
+              className={cn("min-w-0 rounded-xs", focusRing)}
             >
               {logo}
             </Link>

@@ -155,6 +155,9 @@ function queryResult(reference: FunctionReference<"query">, args: unknown) {
   if (name === "notifications:unreadCount") return 0;
   if (name === "xAccounts:me") return xAccount;
   if (name === "stripeAccounts:me") return { status: session.stripe };
+  if (name === "companies:me") {
+    return { _id: "company-fixture", _creationTime: 0, name: "Fixture company", isActive: true };
+  }
   if (name === "users:me") {
     if (!session.isAuthenticated) throw new Error("Signed-out visitors must not query users.me");
     if (session.userLoading) return undefined;

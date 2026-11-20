@@ -1,11 +1,11 @@
 import type { NextRequest } from "next/server";
 import { safeNext } from "./access";
-import { invitationTokenFrom } from "./invitation-token";
+import { inviteAuthorizeIntent, invitationTokenFrom } from "./invitation-token";
 import {
   attemptFor,
   finish,
   finishPkceSignIn,
-  startPkceSignIn,
+  startPkceSignInCarrying,
   type PkceAttempt,
 } from "./pkce-attempt";
 
@@ -29,11 +29,11 @@ export async function startInviteAcceptance(request: NextRequest): Promise<Respo
   // A bare /auth/invite is someone following a stale or hand-edited link.
   if (token === null) return finish(request, COOKIE, "/login?error=invite");
 
-  return await startPkceSignIn(COOKIE, safeNext(request.nextUrl.searchParams.get("next")), {
-    invitationToken: token,
-    // The invitee has no password yet, so open the screen that sets one.
-    screenHint: "sign-up",
-  });
+  return await startPkceSignInCarrying(
+    COOKIE,
+    safeNext(request.nextUrl.searchParams.get("next")),
+    inviteAuthorizeIntent(token),
+  );
 }
 
 /** The invitation attempt this callback belongs to, or null if it isn't one of ours. */

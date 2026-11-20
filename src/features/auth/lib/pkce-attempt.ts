@@ -37,12 +37,55 @@ export async function startPkceSignIn(
       redirectUri: process.env.NEXT_PUBLIC_WORKOS_REDIRECT_URI!,
     },
   );
+  return redirectCarryingAttempt(url, cookie, { state, codeVerifier, next: safeNext(next) });
+}
 
+/**
+ * The same, for a sign-in whose authorize URL has to carry something extra.
+ *
+ * `getAuthorizationUrlWithPKCE` makes its own state and verifier but reads
+ * neither `invitationToken` nor `state` from its options, so anything passed
+ * alongside is dropped without complaint. It is also documented as being for
+ * public clients that cannot hold a secret, which we are not. This builds the
+ * URL with the plain builder instead and supplies state and PKCE explicitly.
+ */
+export async function startPkceSignInCarrying(
+  cookie: string,
+  next: string,
+  intent: AuthorizeIntent,
+): Promise<Response> {
+  const state = randomUrlSafe(16);
+  const codeVerifier = randomUrlSafe(32);
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(codeVerifier));
+  const url = getWorkOS().userManagement.getAuthorizationUrl({
+    ...intent,
+    clientId: process.env.WORKOS_CLIENT_ID!,
+    redirectUri: process.env.NEXT_PUBLIC_WORKOS_REDIRECT_URI!,
+    state,
+    codeChallenge: base64Url(new Uint8Array(digest)),
+    codeChallengeMethod: "S256",
+  });
+  return redirectCarryingAttempt(url, cookie, { state, codeVerifier, next: safeNext(next) });
+}
+
+function base64Url(bytes: Uint8Array): string {
+  return btoa(String.fromCharCode(...bytes))
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/, "");
+}
+
+function randomUrlSafe(size: number): string {
+  return base64Url(crypto.getRandomValues(new Uint8Array(size)));
+}
+
+/** Redirects to WorkOS with the one-time attempt cookie the callback will need. */
+function redirectCarryingAttempt(url: string, cookie: string, attempt: PkceAttempt): Response {
   const response = NextResponse.redirect(url);
   response.headers.set("cache-control", "no-store");
   // The callback checks `state` against this cookie (CSRF) and needs the
   // verifier to exchange the code (PKCE).
-  response.cookies.set(cookie, JSON.stringify({ state, codeVerifier, next: safeNext(next) }), {
+  response.cookies.set(cookie, JSON.stringify(attempt), {
     httpOnly: true,
     sameSite: "lax",
     secure: process.env.NODE_ENV === "production",

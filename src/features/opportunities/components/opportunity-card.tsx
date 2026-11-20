@@ -23,15 +23,16 @@ export function OpportunityCard({
   const primary = action.kind === "apply" || action.kind === "claim";
   return (
     <article className="flex flex-col overflow-hidden rounded-lg bg-gray-0 shadow-card">
-      <div className="aspect-[386/118] w-full bg-gray-100">
+      {/* Fill width, fixed height, as in the design; the image crops to fit. */}
+      <div className="h-[118px] w-full shrink-0 bg-gray-100">
         {banner && (
           // eslint-disable-next-line @next/next/no-img-element -- blob URL from a private upload
           <img src={banner} alt="" className="size-full object-cover" />
         )}
       </div>
-      <div className="flex flex-1 flex-col gap-4 p-6">
+      <div className="flex flex-1 flex-col gap-3 px-6 pt-4 pb-6">
         <div className="flex items-center gap-2">
-          <CompanyAvatar name={opportunity.companyName} size="xs" />
+          <CompanyAvatar name={opportunity.companyName} />
           <p className="truncate text-body text-gray-950">{opportunity.companyName}</p>
         </div>
         <div className="flex flex-wrap gap-2">

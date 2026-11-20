@@ -4,8 +4,10 @@ import { ProfileSkeleton } from "./profile-skeleton";
 
 export function ProfileContent({
   onPendingChange,
+  startEditing,
 }: {
   onPendingChange?: (pending: boolean) => void;
+  startEditing?: boolean;
 }) {
   return (
     <RequireAccount
@@ -15,7 +17,7 @@ export function ProfileContent({
       fallback={<ProfileSkeleton />}
       unsynced="We’re finishing setting up your account. Your profile will appear here shortly."
     >
-      <CreatorProfile onPendingChange={onPendingChange} />
+      <CreatorProfile onPendingChange={onPendingChange} startEditing={startEditing} />
     </RequireAccount>
   );
 }

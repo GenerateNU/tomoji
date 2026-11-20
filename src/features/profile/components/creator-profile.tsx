@@ -241,11 +241,14 @@ function ProfileView({
 /** The same own-profile view and editor serve the page and account-menu dialog. */
 export function CreatorProfile({
   onPendingChange,
+  startEditing = false,
 }: {
   onPendingChange?: (pending: boolean) => void;
+  /** Opens straight in the editor, as "Complete my profile" on the home page does. */
+  startEditing?: boolean;
 }) {
   const result = useQuery(api.creators.me, {});
-  const [editing, setEditing] = useState(false);
+  const [editing, setEditing] = useState(startEditing);
   const [saved, setSaved] = useState("");
   const [contentTypes, setContentTypes] = useState<string[]>([...PROFILE_PREVIEW.contentTypes]);
   if (result === undefined) return <ProfileSkeleton />;

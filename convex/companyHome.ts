@@ -28,7 +28,7 @@ export const overview = companyQuery({
 });
 
 /**
- * Unexpired offers, earliest expiry first; five previews and a bounded count.
+ * Unexpired offers, earliest expiry first; at most 100 rows and a bounded count.
  * Advance `asOf` with the display clock so offers expire without a database write.
  */
 export const offers = companyQuery({

@@ -17,6 +17,32 @@ const modules = import.meta.glob("../**/*.ts");
 
 const firstPage = { paginationOpts: { cursor: null, numItems: 10 } };
 
+describe("companies.me", () => {
+  test("returns only the current member's company without its WorkOS id", async () => {
+    const t = convexTest(schema, modules);
+    const member = await seedUser(t, {
+      subject: "company-home",
+      org: { id: "org_home", name: "Home company" },
+    });
+    await seedUser(t, {
+      subject: "other-home",
+      org: { id: "org_other_home", name: "Other company" },
+    });
+    const company = await member.query(api.companies.me, {});
+    expect(company.name).toBe("Home company");
+    expect(company).not.toHaveProperty("workosId");
+  });
+
+  test("rejects creators", async () => {
+    const t = convexTest(schema, modules);
+    await expectApiError(
+      () =>
+        seedUser(t, { subject: "company-home-creator" }).then((c) => c.query(api.companies.me, {})),
+      "forbidden",
+    );
+  });
+});
+
 async function companyFor(t: TestConvex, orgId: string) {
   const company = await t.run(async (ctx) => await getCompanyByWorkosId(ctx, orgId));
   if (company === null) throw new Error(`expected a company for ${orgId}`);

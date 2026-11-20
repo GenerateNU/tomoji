@@ -235,7 +235,7 @@ describe("getCompanyOverview", () => {
 });
 
 describe("getCompanyOffers", () => {
-  test("counts only the company's unexpired offers and returns the five soonest expiries", async () => {
+  test("counts only the company's unexpired offers and returns offers by soonest expiry", async () => {
     const t = convexTest(schema, modules);
     const fixture = await seedAssignmentFixture(t);
     const foreign = await seedCampaign(t, { subject: "foreign", orgId: "org_foreign" });
@@ -269,7 +269,7 @@ describe("getCompanyOffers", () => {
 
     expect(offers.count).toBe(7);
     expect(offers.rows.map((row) => row.expiresAt)).toEqual(
-      [1, 2, 3, 4, 5].map((n) => now + n * DAY),
+      [1, 2, 3, 4, 5, 6, 7].map((n) => now + n * DAY),
     );
     expect(offers.isPartial).toBe(false);
   });
@@ -291,7 +291,7 @@ describe("getCompanyOffers", () => {
     });
     const offers = await t.run((ctx) => getCompanyOffers(ctx, fixture.membership.companyId, from));
     expect(offers).toMatchObject({ count: 100, isPartial: true });
-    expect(offers.rows).toHaveLength(5);
+    expect(offers.rows).toHaveLength(100);
     expect(
       (await t.run((ctx) => getCompanyOffers(ctx, fixture.membership.companyId, range.to))).count,
     ).toBe(0);

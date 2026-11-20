@@ -194,7 +194,7 @@ export const companyOffers = v.object({
   isPartial: v.boolean(),
 });
 
-/** Counts unexpired company offers and joins the five soonest-expiring previews. */
+/** Returns a bounded offer list; Home previews five and its detail modal shows the remaining rows. */
 export async function getCompanyOffers(
   ctx: QueryCtx,
   companyId: Id<"companies">,
@@ -208,7 +208,7 @@ export async function getCompanyOffers(
     )
     .take(OFFER_LIMIT + 1);
   const previews: Infer<typeof offerPreview>[] = [];
-  for (const row of rows.slice(0, 5)) {
+  for (const row of rows.slice(0, OFFER_LIMIT)) {
     if (row.offerExpiresAt === undefined) continue;
     const [opportunity, creator] = await Promise.all([
       ctx.db.get("opportunities", row.opportunityId),

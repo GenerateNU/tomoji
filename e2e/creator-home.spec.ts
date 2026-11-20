@@ -141,3 +141,42 @@ test("creator home on desktop and mobile", async ({ page }, testInfo) => {
     });
   }
 });
+
+test("three opportunity cards fill the row on desktop", async ({ page }) => {
+  await page.setViewportSize({ width: 1512, height: 982 });
+  await openHome(page);
+  const row = page.getByRole("list", { name: "Recommended opportunities", exact: true });
+  const { rowWidth, cardWidths } = await row.evaluate((element) => {
+    const padding = parseFloat(getComputedStyle(element).paddingLeft) * 2;
+    return {
+      rowWidth: element.clientWidth - padding,
+      cardWidths: [...element.children].map((card) => card.getBoundingClientRect().width),
+    };
+  });
+  // Three cards and two 16px gaps span the row exactly, as in the design.
+  for (const width of cardWidths) expect(width).toBeCloseTo((rowWidth - 32) / 3, 0);
+});
+
+test("card banners keep the design's fixed 118px height", async ({ page }) => {
+  await page.setViewportSize({ width: 1512, height: 982 });
+  await openHome(page);
+  const card = page
+    .getByRole("list", { name: "Recommended opportunities", exact: true })
+    .getByRole("article")
+    .first();
+  const bannerHeight = await card.evaluate(
+    (article) => article.firstElementChild!.getBoundingClientRect().height,
+  );
+  expect(bannerHeight).toBe(118);
+});
+
+test("cards match the design's 378px height", async ({ page }) => {
+  await page.setViewportSize({ width: 1512, height: 982 });
+  await openHome(page);
+  const heights = await page
+    .getByRole("list", { name: "Recommended opportunities", exact: true })
+    .getByRole("article")
+    .evaluateAll((cards) => cards.map((card) => card.getBoundingClientRect().height));
+  // 118 banner + 16 top + 24 company + 28 badge + 32 title + 44 pay + 45 button + 24 bottom + 4 × 12 gaps.
+  for (const height of heights) expect(height).toBeCloseTo(378, 0);
+});

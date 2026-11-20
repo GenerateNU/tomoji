@@ -40,8 +40,8 @@ export function ProfileCompletionCard() {
           Complete your profile
         </h2>
         <p className="text-body-sm text-gray-500">
-          Your profile is {completion.percent}% complete. Finish it so companies can see your full
-          potential.
+          Your profile is {completion.percent}% complete. Finish creating your profile and get
+          companies to see your full potential.
         </p>
       </div>
       <Button ref={trigger} variant="primary-subtle" onClick={() => setOpen(true)}>

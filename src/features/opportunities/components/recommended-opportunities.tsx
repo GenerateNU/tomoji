@@ -15,6 +15,8 @@ import { OpportunityModal } from "./opportunity-modal";
 
 // Discovery lists the creator's best matches first, so its first page is the row.
 const ROW_SIZE = 8;
+// Three cards fill the row, as in the design; below 300px each, the row scrolls instead.
+const CARD_WIDTH = "w-[calc((100%-2rem)/3)] min-w-[300px] shrink-0";
 
 /** A scrolling row of the creator's best-matched open opportunities, for the home page. */
 export function RecommendedOpportunities() {
@@ -90,7 +92,7 @@ export function RecommendedOpportunities() {
       {loading ? (
         <div className="flex gap-4 overflow-hidden" aria-hidden>
           {[0, 1, 2].map((key) => (
-            <Skeleton key={key} className="h-[22rem] w-72 shrink-0 rounded-lg" />
+            <Skeleton key={key} className={`h-[378px] rounded-lg ${CARD_WIDTH}`} />
           ))}
         </div>
       ) : opportunities.length === 0 ? (
@@ -104,7 +106,7 @@ export function RecommendedOpportunities() {
           className="-m-4 flex snap-x snap-mandatory scroll-p-4 gap-4 overflow-x-auto p-4 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
         >
           {opportunities.map((opportunity) => (
-            <li key={opportunity._id} className="flex w-72 shrink-0 snap-start *:w-full">
+            <li key={opportunity._id} className={`flex snap-start *:w-full ${CARD_WIDTH}`}>
               <OpportunityCard
                 opportunity={opportunity}
                 onOpen={(opportunityId) => {

@@ -108,7 +108,8 @@ The rule lives in `convex/models/profileCompletion.ts`, so every caller gets the
 percentage. At 100% the card disappears.
 
 Below it, "Opportunities for you" shows the first page of `opportunities.discover`, which
-lists the creator's best-scored matches first, as a row that scrolls sideways with
+lists the creator's best-scored matches first. Three cards fill the row (each at least
+300px, so narrower screens show fewer), and it scrolls sideways with
 previous/next buttons. Cards open the same opportunity modal as the feed.
 
 ### The operator dashboard

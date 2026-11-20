@@ -27,25 +27,26 @@ export function OpportunityTable({
   onOpen: (opportunityId: Id<"opportunities">) => void;
 }) {
   return (
-    <Table bare className="min-w-[880px]">
+    <Table bare className="min-w-[1184px]">
       <TableHeader>
-        <TableHead className="w-[30%]">Opportunity</TableHead>
-        <TableHead className="w-[17%]">Company</TableHead>
+        <TableHead className="py-3">Opportunity</TableHead>
+        <TableHead className="w-40">Company</TableHead>
         <TableHead className="w-28">Posted</TableHead>
         {/* Dates stay whole, so this column doesn't shrink. */}
         <TableHead className="w-44">Deadline</TableHead>
-        <TableHead className="w-48">Type</TableHead>
+        <TableHead className="w-48 pr-8">Type</TableHead>
         <TableHead className="w-44">Compensation</TableHead>
       </TableHeader>
       <TableBody>
         {opportunities.map((opportunity) => {
           const [access] = feedTags(opportunity);
           return (
-            <TableRow key={opportunity._id}>
+            <TableRow key={opportunity._id} className="[&>td]:py-4">
               <TableCell type="custom">
                 <button
                   type="button"
                   onClick={() => onOpen(opportunity._id)}
+                  title={opportunity.title}
                   className={cn(
                     "min-w-0 cursor-pointer truncate rounded-xs text-left font-medium underline-offset-4 hover:underline",
                     focusRing,
@@ -65,7 +66,7 @@ export function OpportunityTable({
               </TableCell>
               <TableCell>{formatPostedAgo(opportunity._creationTime, now)}</TableCell>
               <TableCell>{formatDeadline(opportunity.deadline, { withYear: true })}</TableCell>
-              <TableCell type="custom">
+              <TableCell type="custom" className="pr-8">
                 <Badge size="md">{access.label}</Badge>
               </TableCell>
               <TableCell>{formatPay(opportunity, " • ")}</TableCell>

@@ -35,7 +35,9 @@ function brief(
     _id: `opportunity${index}`,
     _creationTime: now - (index + 1) * 3 * DAY,
     description:
-      "Plan, write and review code with an AI pair programmer. Create short, original videos showing practical workflows.",
+      "Plan, write and review code with an AI pair programmer. Create short, original videos showing practical workflows. ".repeat(
+        index === 5 ? 20 : 1,
+      ),
     usesAiReviewDefault: true,
     maxSlots: fields.maxSlots ?? 10,
     numFilledSlots: fields.numFilledSlots ?? 0,
@@ -159,7 +161,10 @@ export function useQuery(reference: FunctionReference<"query">, args?: unknown) 
 }
 
 export function useMutation() {
-  return async () => null;
+  const mutation = Object.assign(async () => null, {
+    withOptimisticUpdate: () => mutation,
+  });
+  return mutation;
 }
 
 export function useAction() {

@@ -34,7 +34,7 @@ export function StarButton({
   }
 
   return (
-    <span className="inline-flex items-center gap-2">
+    <span className="inline-flex shrink-0 items-center gap-2">
       <button
         type="button"
         onClick={toggle}

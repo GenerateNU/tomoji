@@ -12,6 +12,7 @@ import {
 } from "@remixicon/react";
 import type { Doc } from "@convex/_generated/dataModel";
 import type { IconComponent } from "@/lib/icons";
+import { formatRelativeTime } from "@/lib/relative-time";
 
 /** The icon that names each notification's event, per the Activity Item guidance. */
 export const NOTIFICATION_ICONS = {
@@ -46,9 +47,23 @@ export const NOTIFICATION_ICONS = {
 
 /**
  * The page a notification opens, or null when its target has no page yet.
- * Routes don't encode the viewer's role; each page decides what to show.
+ * Company events open company queues; creator events open their assignment or application pages.
  */
-export function notificationHref(target: Doc<"notifications">["target"]): string | null {
+export function notificationHref(
+  target: Doc<"notifications">["target"],
+  company = false,
+): string | null {
+  // The company routes differ from the creator's application and assignment pages.
+  if (company) {
+    if (target.kind === "submission" || target.kind === "assignment") return "/submissions";
+    if (
+      target.kind === "application" ||
+      target.kind === "opportunity" ||
+      target.kind === "campaign"
+    )
+      return "/campaigns";
+    return null;
+  }
   switch (target.kind) {
     case "application":
       return "/applications";
@@ -77,6 +92,15 @@ export function formatNotificationTime(time: number, now = new Date()) {
     .replace(/\s/g, "")
     .toLowerCase();
   return `${day} at ${clock}`;
+}
+
+/** Company activity uses relative time, with the prior calendar day labeled Yesterday. */
+export function formatCompanyNotificationTime(time: number, now: number): string {
+  const yesterday = new Date(now);
+  yesterday.setDate(yesterday.getDate() - 1);
+  return new Date(time).toDateString() === yesterday.toDateString()
+    ? "Yesterday"
+    : formatRelativeTime(time, now);
 }
 
 /** The unread query stops counting at 100, which reads as "99+". */

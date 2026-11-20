@@ -109,6 +109,7 @@ function SignOutButton() {
   );
 }
 
+/** Role-specific navigation with company notifications scoped to the current membership. */
 function SyncedChrome({ me }: { me: SyncedMe }) {
   const pathname = usePathname();
   const [collapsed, setCollapsed] = useSidebarCollapsed();
@@ -162,7 +163,12 @@ function SyncedChrome({ me }: { me: SyncedMe }) {
         </Link>
         <div className="flex items-center gap-1">
           {/* Home only, and one bell at a time; from md up it sits at the page's top right instead. */}
-          {!isDesktop && pathname === "/" && <NotificationBell />}
+          {!isDesktop && pathname === "/" && (
+            <NotificationBell
+              key={me.role === "company" ? `${me.userId}:${me.orgId}` : me.userId}
+              company={me.role === "company"}
+            />
+          )}
           <button
             ref={navigationTrigger}
             type="button"
@@ -295,10 +301,13 @@ function PageBell() {
     <div
       className={cn(
         "absolute top-8 right-8 z-20 md:top-11",
-        me.role === "company" && "md:top-14 md:right-14",
+        me.role === "company" && "md:top-14 md:right-16",
       )}
     >
-      <NotificationBell />
+      <NotificationBell
+        key={me.role === "company" ? `${me.userId}:${me.orgId}` : me.userId}
+        company={me.role === "company"}
+      />
     </div>
   );
 }

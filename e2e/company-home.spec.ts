@@ -145,6 +145,147 @@ test("preserves the creator home", async ({ page }) => {
   await expect(page.getByRole("region", { name: "Spend", exact: true })).toBeHidden();
 });
 
+test("company notifications show real earnings and open the existing payout review", async ({
+  page,
+}) => {
+  await openHome(page, "notifications");
+  await page.getByRole("button", { name: "Notifications, 3 unread", exact: true }).click();
+  const panel = page.getByRole("dialog", { name: "Notifications" });
+  await expect(panel.getByRole("region", { name: "Earnings awaiting review" })).toContainText(
+    "$2,410",
+  );
+  await expect(panel.getByText("Approval due Friday, October 16")).toBeVisible();
+  await panel.getByRole("button", { name: "Review payouts", exact: true }).click();
+  await expect(panel).toBeHidden();
+  await expect(page.getByRole("dialog", { name: "Review Earnings", exact: true })).toBeVisible();
+  expect(await page.evaluate(() => window.companyHomeFixture.calls)).toEqual([]);
+  await page.keyboard.press("Escape");
+  await expect(
+    page.getByRole("button", { name: "Notifications, 3 unread", exact: true }),
+  ).toBeFocused();
+});
+
+test("an empty company inbox uses the Figma empty copy without an earnings reminder", async ({
+  page,
+}) => {
+  await openHome(page, "empty");
+  await page.getByRole("button", { name: "Notifications", exact: true }).click();
+  const panel = page.getByRole("dialog", { name: "Notifications" });
+  await expect(panel.getByText("Nothing new", { exact: true })).toBeVisible();
+  await expect(panel.getByText("Offers, submissions and payouts will show up here.")).toBeVisible();
+  await expect(panel.getByRole("button", { name: /^Unreads/ })).toBeHidden();
+  await expect(panel.getByRole("region", { name: "Earnings awaiting review" })).toBeHidden();
+});
+
+test("held earnings explain the dispute without promising an automatic payment", async ({
+  page,
+}) => {
+  await openHome(page, "notifications-held");
+  await page.getByRole("button", { name: "Notifications, 3 unread", exact: true }).click();
+  const panel = page.getByRole("dialog", { name: "Notifications" });
+  await expect(panel.getByRole("region", { name: "Earnings awaiting review" })).toContainText(
+    "Earnings on hold",
+  );
+  await expect(panel.getByText("Autopay", { exact: false })).toBeHidden();
+  await panel.getByRole("button", { name: "Review payouts", exact: true }).click();
+  await expect(page.getByRole("dialog", { name: "Review Earnings" })).toContainText(
+    "On hold during an open dispute",
+  );
+  await expect(page.getByRole("button", { name: "Approve", exact: true })).toBeHidden();
+});
+
+test("members can inspect the reminder and payout details without approval controls", async ({
+  page,
+}) => {
+  await openHome(page, "member");
+  await page.getByRole("button", { name: "Notifications", exact: true }).click();
+  await page.getByRole("button", { name: "Review payouts", exact: true }).click();
+  await expect(page.getByRole("dialog", { name: "Review Earnings" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Approve", exact: true })).toBeHidden();
+});
+
+test("the reminder stays loaded during refresh and disappears after the last approval", async ({
+  page,
+}) => {
+  await openHome(page, "notifications");
+  await page.getByRole("button", { name: "Notifications, 3 unread", exact: true }).click();
+  const reminder = page.getByRole("region", { name: "Earnings awaiting review" });
+  await expect(reminder).toContainText("$2,410");
+  await page.evaluate(() => window.companyHomeFixture.beginRefresh());
+  await expect(reminder).toContainText("$2,410");
+  await expect(page.getByRole("status", { name: "Loading earnings reminder" })).toBeHidden();
+  await page.evaluate(() => window.companyHomeFixture.endRefresh());
+  await page.evaluate(() => window.companyHomeFixture.completeEarnings());
+  await expect(reminder).toBeHidden();
+  await expect(
+    page.getByRole("dialog", { name: "Notifications" }).getByRole("listitem"),
+  ).toHaveCount(6);
+});
+
+test("an earnings error leaves company notifications usable and can be retried", async ({
+  page,
+}) => {
+  await openHome(page, "notifications");
+  await page.getByRole("button", { name: "Notifications, 3 unread", exact: true }).click();
+  await page.evaluate(() => window.companyHomeFixture.failEarnings());
+  const panel = page.getByRole("dialog", { name: "Notifications" });
+  await expect(panel.getByRole("alert")).toContainText("Couldn’t load earnings.");
+  await expect(panel.getByRole("listitem")).toHaveCount(6);
+  await page.evaluate(() => window.companyHomeFixture.ready());
+  await panel.getByRole("button", { name: "Try earnings again" }).click();
+  await expect(panel.getByRole("region", { name: "Earnings awaiting review" })).toContainText(
+    "$2,410",
+  );
+});
+
+test("company updates use company routes and can be marked read through the row menu", async ({
+  page,
+}) => {
+  await openHome(page, "notifications");
+  await page.getByRole("button", { name: "Notifications, 3 unread", exact: true }).click();
+  const panel = page.getByRole("dialog", { name: "Notifications" });
+  await expect(panel.getByRole("link", { name: /Brittany Broski resubmitted/ })).toHaveAttribute(
+    "href",
+    "/submissions",
+  );
+  await expect(
+    panel.getByRole("link", { name: /Your offer to Leana Gonzalez expired/ }),
+  ).toHaveAttribute("href", "/campaigns");
+  await expect(panel.getByText("1 hour ago", { exact: false })).toBeVisible();
+  await panel
+    .getByRole("button", {
+      name: "Options for Brittany Broski resubmitted “Debugging with Opus”",
+      exact: true,
+    })
+    .click();
+  await page.getByRole("menuitem", { name: "Mark as read", exact: true }).click();
+  await expect(panel).toBeVisible();
+  await expect(panel.getByRole("button", { name: "Unreads 2", exact: true })).toBeVisible();
+  expect(await page.evaluate(() => window.companyHomeFixture.calls)).toEqual([
+    { name: "notifications:markRead", args: { notificationId: "notification-0" } },
+  ]);
+});
+
+test("the company panel and payout review fit mobile and restore keyboard focus", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openHome(page, "notifications");
+  const bell = page.getByRole("button", { name: "Notifications, 3 unread", exact: true });
+  await bell.click();
+  const panel = page.getByRole("dialog", { name: "Notifications" });
+  await expect(panel.getByRole("button", { name: "Review payouts", exact: true })).toBeVisible();
+  const box = await panel.boundingBox();
+  expect(box!.x).toBeGreaterThanOrEqual(0);
+  expect(box!.x + box!.width).toBeLessThanOrEqual(390);
+  expect(box!.height).toBeLessThanOrEqual(844);
+  await panel.getByRole("button", { name: "Review payouts", exact: true }).click();
+  await expect(page.getByRole("dialog", { name: "Review Earnings" })).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(bell).toBeFocused();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+});
+
 test("captures desktop and mobile without horizontal overflow", async ({ page }) => {
   await openHome(page);
   await expect(page.getByRole("heading", { name: "Welcome back, Aaron!" })).toBeVisible();

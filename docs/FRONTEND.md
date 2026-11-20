@@ -38,6 +38,16 @@ sidebar sits in its own error boundary so a failed account read doesn't take the
 Notifications open in the bell popover on the desktop home page or mobile top bar.
 The standalone `/notifications` page and its account-menu entry have been removed.
 
+The company panel shows an earnings reminder while approvals are outstanding, using
+the same `companyHome.earnings` summary as Home. It displays actual approval deadlines
+and dispute holds rather than a fixed autopay date. Review payouts opens the shared
+earnings dialog; only the existing server-authorized approval controls can change a
+payout. Opening the reminder does not mark activity read. Company activity opens the
+Submissions or Campaigns queue, and each row menu can mark an update read in place.
+An empty company inbox shows “Nothing new”; creator notifications keep their existing
+destinations and timestamp format. Loaded results remain visible during refresh, and
+an earnings-query failure can be retried without losing the activity list.
+
 ### Where should new files go?
 
 When adding a new file, use these guidelines to decide where it belongs:

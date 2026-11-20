@@ -22,7 +22,7 @@ export function HomeCard({ title, children }: { title: string; children: ReactNo
   return (
     <section
       aria-label={title}
-      className="flex min-w-0 flex-col items-start gap-5 rounded-lg bg-gray-0 p-6 shadow-raised xl:min-h-125"
+      className="flex min-w-0 flex-col items-start gap-5 rounded-lg bg-gray-0 p-6 shadow-page xl:min-h-125"
     >
       <h3 className="text-xl leading-[27px] font-medium text-gray-950">{title}</h3>
       {children}

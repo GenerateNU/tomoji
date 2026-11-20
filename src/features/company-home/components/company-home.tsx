@@ -34,8 +34,8 @@ function SummaryCard({
     <section
       aria-label={title}
       className={cn(
-        "flex min-w-0 flex-col items-start gap-3 rounded-lg bg-gray-0 p-5 shadow-raised",
-        compact ? "min-h-41" : "min-h-46.75",
+        "flex min-w-0 flex-col items-start gap-3 rounded-lg bg-gray-0 p-5 shadow-page",
+        compact ? "min-h-40.75" : "min-h-46.5",
       )}
     >
       <h2 className="text-body font-normal text-gray-600">{title}</h2>
@@ -51,7 +51,7 @@ function EarningsTask({ earnings, now }: { earnings: Earnings; now: number }) {
   return (
     <div className="flex w-full flex-col gap-3">
       <div className="flex flex-wrap items-center gap-2">
-        <p className="text-heading-md leading-[38px] font-medium">
+        <p className="text-heading-md leading-[37px] font-medium">
           <MoneyAmounts amounts={earnings.pending.amounts} />
         </p>
         <p className="text-body text-gray-500">
@@ -138,7 +138,7 @@ function CompanyHomeContent({ firstName, canCreate }: { firstName: string; canCr
         </header>
         <div className="grid gap-5 xl:grid-cols-3">
           <SummaryCard title="Spend" compact={quiet}>
-            <p className="text-heading-md leading-[38px] font-medium">
+            <p className="text-heading-md leading-[37px] font-medium">
               <MoneyAmounts amounts={overview.spend.amounts} />
             </p>
             <p className="text-body-sm text-gray-500">
@@ -148,7 +148,7 @@ function CompanyHomeContent({ firstName, canCreate }: { firstName: string; canCr
             </p>
           </SummaryCard>
           <SummaryCard title="Performance" compact={quiet}>
-            <p className="text-heading-md leading-[38px] font-medium">
+            <p className="text-heading-md leading-[37px] font-medium">
               {overview.performance.views === null
                 ? "Views unavailable"
                 : `${overview.performance.views.toLocaleString("en-US", { notation: "compact", maximumFractionDigits: 1 })} Views`}
@@ -156,7 +156,7 @@ function CompanyHomeContent({ firstName, canCreate }: { firstName: string; canCr
             <HomePerformance performance={overview.performance} />
           </SummaryCard>
           <SummaryCard title="Campaigns" compact={quiet}>
-            <p className="text-heading-md leading-[38px] font-medium">
+            <p className="text-heading-md leading-[37px] font-medium">
               {overview.liveCampaigns.value}
               {overview.liveCampaigns.capped ? "+" : ""} live
             </p>
@@ -165,7 +165,7 @@ function CompanyHomeContent({ firstName, canCreate }: { firstName: string; canCr
                 size="sm"
                 variant="primary-subtle"
                 icon={RiAddLine}
-                className="mt-2"
+                className="mt-2 min-w-47.25"
                 render={<Link href="/campaigns/new" />}
                 nativeButton={false}
               >
@@ -205,6 +205,7 @@ function CompanyHomeContent({ firstName, canCreate }: { firstName: string; canCr
               <EmptyTask title="No offers out">Offers you send will show up here.</EmptyTask>
             )}
             <Button
+              className="min-w-27.5"
               size="sm"
               variant="primary-subtle"
               onClick={() => setDetails({ kind: "offers" })}
@@ -240,6 +241,7 @@ function CompanyHomeContent({ firstName, canCreate }: { firstName: string; canCr
               </EmptyTask>
             )}
             <Button
+              className="min-w-37.25"
               size="sm"
               variant="primary-subtle"
               render={<Link href="/submissions" />}
@@ -255,6 +257,7 @@ function CompanyHomeContent({ firstName, canCreate }: { firstName: string; canCr
               <EmptyTask title="Nothing to approve">Earnings appear once posts are live.</EmptyTask>
             )}
             <Button
+              className="min-w-36"
               size="sm"
               variant="primary-subtle"
               onClick={() => setDetails({ kind: "earnings" })}

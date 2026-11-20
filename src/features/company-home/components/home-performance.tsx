@@ -21,8 +21,8 @@ export function HomePerformance({ performance }: { performance: Overview["perfor
     p.views === null
       ? null
       : {
-          x: 6 + ((p.at - first) / (last - first || 1)) * 316,
-          y: 50 - ((p.views - min) / (max - min || 1)) * 40,
+          x: 6 + ((p.at - first) / (last - first || 1)) * 332,
+          y: 48 - ((p.views - min) / (max - min || 1)) * 38,
         },
   );
   const segments: { x: number; y: number }[][] = [];
@@ -39,7 +39,7 @@ export function HomePerformance({ performance }: { performance: Overview["perfor
     <svg
       role="img"
       aria-labelledby={titleId}
-      viewBox="0 0 328 64"
+      viewBox="0 0 344 64"
       preserveAspectRatio="none"
       className="h-16 w-full overflow-visible"
     >
@@ -52,7 +52,7 @@ export function HomePerformance({ performance }: { performance: Overview["perfor
             <g key={index}>
               <path
                 d={`${line} L${segment.at(-1)!.x},58 L${segment[0].x},58 Z`}
-                className="fill-blue-subtle"
+                className="fill-blue-primary/10"
               />
               <path
                 d={line}
@@ -64,7 +64,7 @@ export function HomePerformance({ performance }: { performance: Overview["perfor
             </g>
           );
         })}
-      {end && <circle cx={end.x} cy={end.y} r="4" className="fill-blue-primary" />}
+      {end && <circle cx={end.x} cy={end.y} r="4.5" className="fill-blue-primary" />}
     </svg>
   );
 }

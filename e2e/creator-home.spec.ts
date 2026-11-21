@@ -221,3 +221,16 @@ test("reaching 100% keeps the open profile editor and its draft", async ({ page 
   await expect(page.getByRole("dialog")).toHaveCount(0);
   await expect(page.getByRole("heading", { name: "Complete your profile" })).toHaveCount(0);
 });
+
+test("a failed card shows a retry and leaves the rest of Home working", async ({ page }) => {
+  await openHome(page, "?failedQuery=creators:completion");
+  const alert = page.getByRole("alert");
+  await expect(alert).toBeVisible();
+  // The other card still loads.
+  await expect(page.getByRole("list", { name: "Recommended opportunities" })).toBeVisible();
+
+  // Once the read recovers, Retry brings the card back.
+  await page.evaluate(() => window.shellFixture.setSession({ failedQuery: "" }));
+  await page.getByRole("button", { name: "Retry", exact: true }).click();
+  await expect(completionRing(page)).toBeVisible();
+});

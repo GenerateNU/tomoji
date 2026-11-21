@@ -4,14 +4,13 @@ import type { OwnCreatorProfile } from "./creators";
 // Kept free of database imports so the browser-test double can use the same rule.
 
 /**
- * The profile items that count toward completion, in the order the home card
- * lists them. Every item weighs the same. The links count as one item, since
- * not every creator has a GitHub or LinkedIn. Name and email are always set,
- * so they are left out.
+ * The profile items that count toward completion.
+ * Every item weighs the same.
+ * Links count as one item, since not every creator has a GitHub or LinkedIn.
+ * Name and email are always set, so they are excluded.
  *
- * Only items a creator can fill in from the profile editor count, or they could
- * never reach 100%. The banner and follower range are stored but nothing sets
- * them yet; add them here once the editor does.
+ * The banner and follower range are stored but nothing sets
+ * them yet, we can add them here once/if the editor does.
  */
 export const PROFILE_COMPLETION_ITEMS = [
   "profilePicture",
@@ -37,11 +36,19 @@ export const profileCompletion = v.object({
 export type ProfileCompletion = Infer<typeof profileCompletion>;
 type ProfileCompletionItem = (typeof PROFILE_COMPLETION_ITEMS)[number];
 
-/** Says which completion items a creator's own profile has filled, and what share that is. */
-export function measureProfileCompletion(profile: OwnCreatorProfile): ProfileCompletion {
+/**
+ * Says which completion items a creator's own profile has filled.
+ * `xConnected` comes from the X account's status: a linked
+ * account whose access lapsed (`reconnect_required`) still sets `xId` but
+ * doesn't count until the creator reconnects.
+ */
+export function measureProfileCompletion(
+  profile: OwnCreatorProfile,
+  { xConnected }: { xConnected: boolean },
+): ProfileCompletion {
   const filled: Record<ProfileCompletionItem, boolean> = {
     profilePicture: profile.profilePictureMediaId !== undefined,
-    xAccount: profile.xId !== undefined,
+    xAccount: profile.xId !== undefined && xConnected,
     portfolioLink:
       profile.githubLink !== undefined ||
       profile.linkedinLink !== undefined ||

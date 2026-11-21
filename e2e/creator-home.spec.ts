@@ -43,6 +43,17 @@ function completionRing(page: Page) {
   return page.getByRole("progressbar", { name: "Profile completion", exact: true });
 }
 
+// X only counts toward completion while the linked account is connected.
+const connectedXAccount = {
+  xAccountId: "x-account",
+  xUserId: "123456789",
+  username: "zahra",
+  displayName: "Zahra",
+  linkedAt: 0,
+  updatedAt: 0,
+  status: "connected",
+};
+
 test("Complete my profile opens the editor, and saving updates the percentage", async ({
   page,
 }) => {
@@ -83,12 +94,15 @@ test("a complete profile hides the completion card", async ({ page }) => {
   await page.evaluate(() =>
     window.shellFixture.setProfile({
       profilePictureMediaId: "picture" as never,
-      xId: "123456789",
       dateOfBirth: Date.UTC(1995, 0, 15),
       languages: ["english"],
       niches: ["generative-ai-llms"],
       skills: ["python"],
     }),
+  );
+  await page.evaluate(
+    (account) => window.shellFixture.setXAccount(account as never),
+    connectedXAccount,
   );
 
   await expect(page.getByRole("heading", { name: "Complete your profile" })).toHaveCount(0);
@@ -204,12 +218,15 @@ test("reaching 100% keeps the open profile editor and its draft", async ({ page 
   await page.evaluate(() =>
     window.shellFixture.setProfile({
       profilePictureMediaId: "picture" as never,
-      xId: "123456789",
       dateOfBirth: Date.UTC(1995, 0, 15),
       languages: ["english"],
       niches: ["generative-ai-llms"],
       skills: ["python"],
     }),
+  );
+  await page.evaluate(
+    (account) => window.shellFixture.setXAccount(account as never),
+    connectedXAccount,
   );
 
   await expect(dialog).toBeVisible();

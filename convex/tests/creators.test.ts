@@ -443,6 +443,19 @@ describe("creators.completion", () => {
     );
   });
 
+  test("doesn't count an X account that needs reconnecting", async () => {
+    const t = convexTest(schema, modules);
+    const asCreator = await seedUser(t, { subject: "creator_completion_reconnect" });
+    const { account } = await seedXAccount(t, "creator_completion_reconnect");
+    await t.run(async (ctx) => {
+      await ctx.db.patch("xAccounts", account.xAccountId, { status: "reconnect_required" });
+    });
+
+    const completion = await asCreator.query(api.creators.completion, {});
+
+    expect(completion.items.find((entry) => entry.item === "xAccount")?.isComplete).toBe(false);
+  });
+
   test("rejects a company caller", async () => {
     const t = convexTest(schema, modules);
     const asCompany = await seedUser(t, {

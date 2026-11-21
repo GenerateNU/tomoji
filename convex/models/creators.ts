@@ -15,6 +15,7 @@ import { requireCountry } from "./countries";
 import { requireAdultBirthdate } from "../lib/birthdate";
 import schema from "../schema";
 import { followerRange, MAX_ADDITIONAL_LINKS } from "../schemas/creators.schema";
+import { measureProfileCompletion, ProfileCompletion } from "./profileCompletion";
 
 /**
  * What anyone who may see a creator gets, companies included. Private fields
@@ -191,6 +192,16 @@ export async function requireCreatorProfile(
   user: Doc<"users">,
 ): Promise<OwnCreatorProfile> {
   return await getOwnCreatorProfile(ctx, user, await requireCreatorRow(ctx, user));
+}
+
+/** Returns how complete a creator's own profile is, counting X only while it's connected. */
+export async function requireCreatorProfileCompletion(
+  ctx: QueryCtx | MutationCtx,
+  user: Doc<"users">,
+): Promise<ProfileCompletion> {
+  const profile = await requireCreatorProfile(ctx, user);
+  const account = await getXAccountByCreatorId(ctx, profile.creatorId);
+  return measureProfileCompletion(profile, { xConnected: account?.status === "connected" });
 }
 
 /** Returns one cursor-paginated page of active creator profiles. */

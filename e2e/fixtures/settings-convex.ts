@@ -202,7 +202,9 @@ function queryResult(reference: FunctionReference<"query">, args: unknown) {
     return session.profileLoading ? undefined : profile;
   }
   if (name === "creators:completion") {
-    return session.profileLoading ? undefined : measureProfileCompletion(profile);
+    return session.profileLoading
+      ? undefined
+      : measureProfileCompletion(profile, { xConnected: xAccount?.status === "connected" });
   }
   throw new Error(`Unexpected query: ${name}`);
 }

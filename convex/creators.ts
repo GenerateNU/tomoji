@@ -6,13 +6,14 @@ import {
   completeCreatorOnboarding,
   creatorProfile,
   creatorProfileUpdate,
-  ownCreatorProfile,
   listCreators,
+  ownCreatorProfile,
   requireCreatorProfile,
   requireCreatorProfileById,
+  requireCreatorProfileCompletion,
   updateCreatorProfile,
 } from "./models/creators";
-import { measureProfileCompletion, profileCompletion } from "./models/profileCompletion";
+import { profileCompletion } from "./models/profileCompletion";
 
 /** Returns all user-facing fields in the authenticated creator's profile. */
 export const me = creatorQuery({
@@ -31,7 +32,7 @@ export const completion = creatorQuery({
   args: {},
   returns: profileCompletion,
   handler: async (ctx) => {
-    return measureProfileCompletion(await requireCreatorProfile(ctx, ctx.user));
+    return await requireCreatorProfileCompletion(ctx, ctx.user);
   },
 });
 

@@ -237,6 +237,9 @@ test("reaching 100% keeps the open profile editor and its draft", async ({ page 
   await page.keyboard.press("Escape");
   await expect(page.getByRole("dialog")).toHaveCount(0);
   await expect(page.getByRole("heading", { name: "Complete your profile" })).toHaveCount(0);
+  // Its "Complete my profile" button went with it, so focus moves to the page heading
+  // rather than falling back to the top of the document.
+  await expect(page.getByRole("heading", { name: "Home", level: 1 })).toBeFocused();
 });
 
 test("a failed card shows a retry and leaves the rest of Home working", async ({ page }) => {

@@ -2,7 +2,7 @@
 
 import { api } from "@convex/_generated/api";
 import { useQuery } from "convex/react";
-import { useRef, useState } from "react";
+import { useRef, useState, type RefObject } from "react";
 import { ProgressRing } from "@/components/progress-ring";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -12,7 +12,16 @@ import { ProfileDialog } from "./profile-dialog";
  * The home page's nudge to finish the profile. It opens the profile pop-up
  * straight in the editor, and disappears once every item is filled.
  */
-export function ProfileCompletionCard() {
+export function ProfileCompletionCard({
+  focusWhenDone,
+}: {
+  /**
+   * Where focus goes when the editor closes on a finished profile. The card,
+   * and the button that opened the editor, disappear at that moment, so focus
+   * can't return to them.
+   */
+  focusWhenDone?: RefObject<HTMLElement | null>;
+}) {
   const completion = useQuery(api.creators.completion, {});
   const [open, setOpen] = useState(false);
   const trigger = useRef<HTMLButtonElement>(null);
@@ -50,7 +59,12 @@ export function ProfileCompletionCard() {
       <Button ref={trigger} variant="primary-subtle" onClick={() => setOpen(true)}>
         Complete my profile
       </Button>
-      <ProfileDialog open={open} onOpenChange={setOpen} finalFocus={trigger} startEditing />
+      <ProfileDialog
+        open={open}
+        onOpenChange={setOpen}
+        finalFocus={completion.percent >= 100 && focusWhenDone ? focusWhenDone : trigger}
+        startEditing
+      />
     </section>
   );
 }

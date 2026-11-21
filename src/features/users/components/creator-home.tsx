@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type ReactNode } from "react";
+import { useRef, useState, type ReactNode } from "react";
 import { ErrorBoundary } from "@/components/error-boundary";
 import { Button } from "@/components/ui/button";
 import { RecommendedOpportunities } from "@/features/opportunities/components/recommended-opportunities";
@@ -42,12 +42,16 @@ function HomeCard({ name, children }: { name: string; children: ReactNode }) {
  * matches the Opportunities feed.
  */
 export function CreatorHome() {
+  // Focusable from script only (tabIndex -1), so it's a landing spot without a tab stop.
+  const heading = useRef<HTMLHeadingElement>(null);
   return (
     <div className="flex w-full flex-col gap-10 px-4 py-12 sm:px-10 lg:px-16 lg:py-16">
-      <h1 className="text-heading-lg text-gray-950">Home</h1>
+      <h1 ref={heading} tabIndex={-1} className="text-heading-lg text-gray-950">
+        Home
+      </h1>
       <div className="flex flex-col gap-4">
         <HomeCard name="Profile completion">
-          <ProfileCompletionCard />
+          <ProfileCompletionCard focusWhenDone={heading} />
         </HomeCard>
         <HomeCard name="Opportunities for you">
           <RecommendedOpportunities />

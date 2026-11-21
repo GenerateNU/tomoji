@@ -51,9 +51,13 @@ export function RecommendedOpportunities() {
     });
   }, []);
   useEffect(() => {
-    measure();
-    window.addEventListener("resize", measure);
-    return () => window.removeEventListener("resize", measure);
+    const element = row.current;
+    if (element === null) return;
+    // Watch the row itself, not the window: collapsing the sidebar changes the
+    // row's width without a window resize. The observer also fires once on start.
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    return () => observer.disconnect();
   }, [measure, opportunities.length]);
 
   function scrollBy(direction: 1 | -1) {

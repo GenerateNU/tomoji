@@ -42,6 +42,8 @@ let session = {
   stripe: parameters.get("stripeStatus") ?? "notStarted",
   // The home page's opportunity row: the sample feed unless `?feed=empty` or `?feed=loading`.
   feed: parameters.get("feed") ?? "sample",
+  // Caps how many briefs the row gets, e.g. `?feedSize=3`; all of them by default.
+  feedSize: Number(parameters.get("feedSize")) || undefined,
 };
 
 function notify() {
@@ -145,9 +147,10 @@ export function usePaginatedQuery(reference: FunctionReference<"query">, args: u
         session.feed === "empty"
           ? emptyNotifications
           : // Like the server: `actedOn: false` drops briefs the creator applied to or claimed.
-            (args as { actedOn?: boolean }).actedOn === false
-            ? FEED.filter((brief) => brief.application === null && brief.assignment === null)
-            : FEED,
+            ((args as { actedOn?: boolean }).actedOn === false
+              ? FEED.filter((brief) => brief.application === null && brief.assignment === null)
+              : FEED
+            ).slice(0, session.feedSize),
       status: "Exhausted" as const,
       loadMore() {},
     };

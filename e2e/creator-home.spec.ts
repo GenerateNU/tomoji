@@ -251,3 +251,16 @@ test("a failed card shows a retry and leaves the rest of Home working", async ({
   await page.getByRole("button", { name: "Retry", exact: true }).click();
   await expect(completionRing(page)).toBeVisible();
 });
+
+test("arrows update when the row changes width without a window resize", async ({ page }) => {
+  // At this width, three cards overflow with the sidebar open and fit once it collapses.
+  await page.setViewportSize({ width: 1240, height: 900 });
+  await openHome(page, "?feedSize=3");
+  const next = page.getByRole("button", { name: "Next opportunities", exact: true });
+  await expect(next).toBeEnabled();
+
+  await page.getByRole("button", { name: "Collapse sidebar", exact: true }).click();
+  // Move off the sidebar so hovering doesn't peek it open again.
+  await page.mouse.move(900, 600);
+  await expect(next).toBeDisabled();
+});

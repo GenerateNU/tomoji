@@ -65,13 +65,13 @@ describe("measureProfileCompletion", () => {
 
   test("reaches 100 with only what the profile editor can set", () => {
     const completion = measureProfileCompletion(
-        {
-          ...onboarded,
-          profilePictureMediaId: "picture" as Id<"mediaUploads">,
-          xId: "123456789",
-          githubLink: "https://github.com/ada",
-        },
-        { xConnected: true },
+      {
+        ...onboarded,
+        profilePictureMediaId: "picture" as Id<"mediaUploads">,
+        xId: "123456789",
+        githubLink: "https://github.com/ada",
+      },
+      { xConnected: true },
     );
 
     expect(completion.percent).toBe(100);

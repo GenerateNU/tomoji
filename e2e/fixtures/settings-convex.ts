@@ -141,7 +141,13 @@ export function usePaginatedQuery(reference: FunctionReference<"query">, args: u
       };
     }
     return {
-      results: session.feed === "empty" ? emptyNotifications : FEED,
+      results:
+        session.feed === "empty"
+          ? emptyNotifications
+          : // Like the server: `actedOn: false` drops briefs the creator applied to or claimed.
+            (args as { actedOn?: boolean }).actedOn === false
+            ? FEED.filter((brief) => brief.application === null && brief.assignment === null)
+            : FEED,
       status: "Exhausted" as const,
       loadMore() {},
     };

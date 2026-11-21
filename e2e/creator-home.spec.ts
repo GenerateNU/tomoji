@@ -113,7 +113,7 @@ test("the opportunity row scrolls with its arrows", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 900 });
   await openHome(page);
   const row = page.getByRole("list", { name: "Recommended opportunities", exact: true });
-  await expect(row.getByRole("listitem")).toHaveCount(6);
+  await expect(row.getByRole("listitem")).toHaveCount(4);
 
   const previous = page.getByRole("button", { name: "Previous opportunities", exact: true });
   const next = page.getByRole("button", { name: "Next opportunities", exact: true });
@@ -198,7 +198,7 @@ test("cards match the design's 378px height", async ({ page }) => {
 test("a short first page loads more instead of claiming nothing is open", async ({ page }) => {
   await openHome(page, "?feed=sparse");
   const row = page.getByRole("list", { name: "Recommended opportunities", exact: true });
-  await expect(row.getByRole("listitem")).toHaveCount(6);
+  await expect(row.getByRole("listitem")).toHaveCount(4);
   await expect(page.getByText("There are no open opportunities right now.")).toHaveCount(0);
   expect(
     await page.evaluate(() =>

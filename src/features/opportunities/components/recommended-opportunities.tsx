@@ -14,6 +14,7 @@ import { OpportunityCard } from "./opportunity-card";
 import { OpportunityModal } from "./opportunity-modal";
 
 // Discovery lists the creator's best matches first, so its first page is the row.
+// Briefs they've already applied to or claimed are left out: the row is for new ones.
 const ROW_SIZE = 8;
 // Three cards fill the row, as in the design; below 300px each, the row scrolls instead.
 const CARD_WIDTH = "w-[calc((100%-2rem)/3)] min-w-[300px] shrink-0";
@@ -22,7 +23,7 @@ const CARD_WIDTH = "w-[calc((100%-2rem)/3)] min-w-[300px] shrink-0";
 export function RecommendedOpportunities() {
   const { results, status, loadMore } = usePaginatedQuery(
     api.opportunities.discover,
-    {},
+    { actedOn: false },
     { initialNumItems: ROW_SIZE },
   );
   const opportunities = results.slice(0, ROW_SIZE);

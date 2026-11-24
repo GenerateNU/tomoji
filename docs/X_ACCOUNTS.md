@@ -169,8 +169,13 @@ the team's X credits.
 
 The daily analytics sync (`xMetrics.sync`, cron `sync X post metrics` at 00:00 UTC) calls
 the lookup; earnings will request their own boundary readings. The X field names below
-come from X's documentation and haven't been checked against a live response. Before enabling the sync anywhere, make one lookup for a post you own (about
-$0.005) and confirm `public_metrics` includes `impression_count`:
+were checked against the live X API on Nov 22, 2026: the sync's batch lookup returned
+`impression_count`, `like_count`, `reply_count`, `retweet_count`, and `quote_count`. The
+caption check's single-post lookup spells reposts `repost_count` instead, so both
+spellings are read. That check used a post from 2006, which reports
+`impression_count: 0` because it predates impression tracking. The first time the sync
+runs in a test environment, look at one recent post's numbers before enabling it for
+real. To check by hand, make one lookup for a post you own (about $0.005):
 
 ```bash
 curl -s -H "Authorization: Bearer $X_BEARER_TOKEN" "https://api.x.com/2/tweets?ids=<post_id>&tweet.fields=public_metrics"
@@ -246,14 +251,15 @@ same posts again. With
 `tweet.fields=public_metrics`. Each post's counts come back in two parts, stored
 separately:
 
-| Part         | X fields                                                    | Stored by                | Used for  |
-| ------------ | ----------------------------------------------------------- | ------------------------ | --------- |
-| `views`      | `impression_count`                                          | `posts.updateViews`      | Payouts   |
-| `engagement` | `like_count`, `reply_count`, `retweet_count`, `quote_count` | `posts.updateEngagement` | Analytics |
+| Part         | X fields                                                                      | Stored by                | Used for  |
+| ------------ | ----------------------------------------------------------------------------- | ------------------------ | --------- |
+| `views`      | `impression_count`                                                            | `posts.updateViews`      | Payouts   |
+| `engagement` | `like_count`, `reply_count`, `repost_count` or `retweet_count`, `quote_count` | `posts.updateEngagement` | Analytics |
 
 `posts.updateViews` also records `viewsUpdatedAt`. Engagement maps to `likes`,
-`comments`, `reposts`, and `quotes`; quote posts are their own count and are never
-added to `reposts`. An unusable engagement count is left out on its own, keeping its
+`comments`, `reposts`, and `quotes`. Reposts come from `repost_count` (single-post
+lookup) or, when that is missing or unusable, `retweet_count` (batch lookup). Quote
+posts are their own count and are never added to `reposts`. An unusable engagement count is left out on its own, keeping its
 stored value, so it can never hold back the views or the other counts.
 
 A creator's caption check (`posts.checkMyCaption`) asks for `public_metrics` in the same

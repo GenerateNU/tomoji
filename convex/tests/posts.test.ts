@@ -544,11 +544,13 @@ describe("posts.checkMyCaption", () => {
     });
   });
 
+  // The single-post lookup spells reposts `repost_count` (checked live Nov 22, 2026);
+  // the batch lookup the sync uses says `retweet_count`.
   const publicMetrics = {
     impression_count: 1250,
     like_count: 38,
     reply_count: 3,
-    retweet_count: 7,
+    repost_count: 7,
     quote_count: 1,
   };
 

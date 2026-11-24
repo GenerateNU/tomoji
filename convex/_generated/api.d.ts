@@ -71,6 +71,7 @@ import type * as models_countries from "../models/countries.js";
 import type * as models_creatorAssignments from "../models/creatorAssignments.js";
 import type * as models_creatorLanguages from "../models/creatorLanguages.js";
 import type * as models_creatorNiches from "../models/creatorNiches.js";
+import type * as models_creatorPosts from "../models/creatorPosts.js";
 import type * as models_creatorSkills from "../models/creatorSkills.js";
 import type * as models_creators from "../models/creators.js";
 import type * as models_deliverableDrafts from "../models/deliverableDrafts.js";
@@ -200,6 +201,7 @@ declare const fullApi: ApiFromModules<{
   "models/creatorAssignments": typeof models_creatorAssignments;
   "models/creatorLanguages": typeof models_creatorLanguages;
   "models/creatorNiches": typeof models_creatorNiches;
+  "models/creatorPosts": typeof models_creatorPosts;
   "models/creatorSkills": typeof models_creatorSkills;
   "models/creators": typeof models_creators;
   "models/deliverableDrafts": typeof models_deliverableDrafts;

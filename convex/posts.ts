@@ -6,6 +6,7 @@ import { requireIdentity } from "./lib/authz";
 import { action, env, internalMutation, internalQuery } from "./_generated/server";
 import {
   authedQuery,
+  creatorQuery,
   creatorMutation,
   creatorContext,
   operatorMutation,
@@ -36,6 +37,15 @@ import {
   updatePostViews,
   verifyPost,
 } from "./models/posts";
+import {
+  creatorPostDetail,
+  creatorPostList,
+  getCreatorPost,
+  getViewHistory,
+  listCreatorPosts,
+  viewHistory as viewHistoryResult,
+  viewHistoryArgs,
+} from "./models/creatorPosts";
 import { requireCallerCreatorId } from "./models/users";
 import schema from "./schema";
 import { getXPostForCaptionCheck, getXPostText, normalizeCaption } from "./lib/xApi";
@@ -93,6 +103,51 @@ export const list = authedQuery({
   handler: async (ctx, args) => {
     const result = await listPosts(ctx, await requireCallerViewer(ctx, ctx.user), args);
     return { ...result, page: result.page.map(toPostView) };
+  },
+});
+
+/**
+ * The calling creator's active posts for the Posts page, newest first, with
+ * each post's brief, company, current X counts, and earnings so far. Earnings
+ * follow the deliverable, so a replacement post keeps what the one before it
+ * earned. Reads the creator's 50 most recent assignments per status and 2,000
+ * most recent payouts; `isPartial` says more exist.
+ */
+export const listMine = creatorQuery({
+  args: {},
+  returns: creatorPostList,
+  handler: async (ctx) => {
+    return await listCreatorPosts(ctx, await requireCallerCreatorId(ctx, ctx.user));
+  },
+});
+
+/**
+ * One of the calling creator's active posts, with the assignment's agreed
+ * terms and each payout it has earned, oldest first.
+ *
+ * @throws `not_found` if the post doesn't exist, was replaced, or isn't the caller's.
+ */
+export const getMine = creatorQuery({
+  args: { postId: v.id("posts") },
+  returns: creatorPostDetail,
+  handler: async (ctx, { postId }) => {
+    return await getCreatorPost(ctx, await requireCallerCreatorId(ctx, ctx.user), postId);
+  },
+});
+
+/**
+ * How the calling creator's views grew since `from` (null for all time), across
+ * all their active posts or just `postId`. Only views keep a history; likes and
+ * other engagement are current totals on the post. Reads at most 4,000 view
+ * counts; `isPartial` says more exist.
+ *
+ * @throws `not_found` if `postId` doesn't exist, was replaced, or isn't the caller's.
+ */
+export const viewHistory = creatorQuery({
+  args: viewHistoryArgs.fields,
+  returns: viewHistoryResult,
+  handler: async (ctx, args) => {
+    return await getViewHistory(ctx, await requireCallerCreatorId(ctx, ctx.user), args);
   },
 });
 

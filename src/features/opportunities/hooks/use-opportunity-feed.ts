@@ -1,5 +1,8 @@
 import { api } from "@convex/_generated/api";
-import { usePaginatedQuery } from "convex/react";
+// Not convex/react's: discovery pages through streams, which only keep their
+// boundaries when each loaded page is rerun with its end cursor pinned. Without
+// that, a rescore after a profile edit makes pages overlap or skip briefs.
+import { usePaginatedQuery } from "convex-helpers/react";
 import type { FeedFilters, FeedOpportunity } from "../lib/types";
 
 const PAGE_SIZE = 12;

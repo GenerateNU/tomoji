@@ -312,6 +312,26 @@ test("an unusable engagement count drops only that count, never the views", asyn
   expect(result.missing).toEqual([]);
 });
 
+test("reposts are read under either spelling X uses, and quotes never count as reposts", async () => {
+  // The single-post lookup says `repost_count`; the batch lookup says `retweet_count`.
+  stubX({
+    data: [
+      xPost("1", { retweet_count: undefined, repost_count: 9 }),
+      xPost("2", { repost_count: 9 }),
+      xPost("3", { repost_count: -1 }),
+      xPost("4", { retweet_count: undefined, quote_count: 5 }),
+    ],
+  });
+  const result = await getXPostMetrics(token, ["1", "2", "3", "4"]);
+  expect(result.found).toEqual([
+    found("1", { reposts: 9 }),
+    found("2", { reposts: 9 }),
+    found("3"),
+    found("4", { reposts: undefined, quotes: 5 }),
+  ]);
+  expect(result.found[3]!.engagement).not.toHaveProperty("reposts");
+});
+
 test("problem types X doesn't document are logged so a format change gets noticed", async () => {
   const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
   try {

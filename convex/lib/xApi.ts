@@ -299,13 +299,14 @@ function postResult(xPostId: string, value: unknown): XPostResult | undefined {
   const views = count(metrics.impression_count);
   if (views === undefined) return undefined;
   const engagement: PostEngagement = {};
-  for (const [field, xField] of [
-    ["likes", "like_count"],
-    ["comments", "reply_count"],
-    ["reposts", "retweet_count"],
-    ["quotes", "quote_count"],
+  for (const [field, value] of [
+    ["likes", count(metrics.like_count)],
+    ["comments", count(metrics.reply_count)],
+    // The single-post lookup (caption check) says `repost_count`; the batch lookup
+    // (sync) says `retweet_count`. Quotes are their own count, never added here.
+    ["reposts", count(metrics.repost_count) ?? count(metrics.retweet_count)],
+    ["quotes", count(metrics.quote_count)],
   ] as const) {
-    const value = count(metrics[xField]);
     if (value !== undefined) engagement[field] = value;
   }
   return { xPostId, views, engagement };

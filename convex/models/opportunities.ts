@@ -89,6 +89,7 @@ export const creatorOpportunity = schema
     "contentRequirements",
     "reviewPolicy",
     "minFollowerRange",
+    "assignmentLengthDays",
   )
   .extend({
     companyName: v.string(),
@@ -134,6 +135,9 @@ export function toCreatorOpportunity(
     contentRequirements: opportunity.contentRequirements,
     reviewPolicy: opportunity.reviewPolicy,
     minFollowerRange: opportunity.minFollowerRange,
+    ...(opportunity.assignmentLengthDays !== undefined && {
+      assignmentLengthDays: opportunity.assignmentLengthDays,
+    }),
     companyName: company.name,
     niches: selections.niches,
     skills: selections.skills,
@@ -175,11 +179,19 @@ export async function getOpportunity(
 
 // Deliverables change through the `deliverables` routes.
 export const opportunityUpdate = opportunityCreate
-  .omit("campaignId", "status", "productAccessLink", "minFollowerRange", "deliverables")
+  .omit(
+    "campaignId",
+    "status",
+    "productAccessLink",
+    "minFollowerRange",
+    "assignmentLengthDays",
+    "deliverables",
+  )
   .partial()
   .extend({
     productAccessLink: v.optional(v.union(v.string(), v.null())),
     minFollowerRange: v.optional(v.union(followerRange, v.null())),
+    assignmentLengthDays: v.optional(v.union(v.number(), v.null())),
   });
 
 export type OpportunityUpdate = Infer<typeof opportunityUpdate>;
@@ -484,6 +496,9 @@ export async function updateOpportunity(
   }
   if (updates.minFollowerRange !== undefined) {
     patch.minFollowerRange = updates.minFollowerRange ?? undefined;
+  }
+  if (updates.assignmentLengthDays !== undefined) {
+    patch.assignmentLengthDays = updates.assignmentLengthDays ?? undefined;
   }
   const updated = { ...opportunity, ...patch };
   if (updated.usesAiReviewDefault) {
@@ -900,6 +915,9 @@ export async function createOpportunity(
   return opportunityId;
 }
 
+/** Longest assignment a company can set: a year. */
+export const MAX_ASSIGNMENT_LENGTH_DAYS = 365;
+
 /** Validates shared write bounds and returns the normalized brief text. */
 function validateOpportunityFields(
   fields: Omit<OpportunityCreate, "status"> & Pick<Doc<"opportunities">, "status">,
@@ -921,6 +939,16 @@ function validateOpportunityFields(
     throw apiError("invalid_state", {
       reason: "invalid_capacity",
       field: "maxSlots",
+    });
+  }
+  const length = fields.assignmentLengthDays;
+  if (
+    length !== undefined &&
+    (!Number.isSafeInteger(length) || length < 1 || length > MAX_ASSIGNMENT_LENGTH_DAYS)
+  ) {
+    throw apiError("invalid_state", {
+      reason: "invalid_assignment_length",
+      field: "assignmentLengthDays",
     });
   }
   validateOpportunityDeadline(fields.deadline);

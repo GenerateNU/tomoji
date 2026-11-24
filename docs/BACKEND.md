@@ -179,6 +179,20 @@ Campaign end dates and offer expiries share `isHalfHourTimestamp` and `HALF_HOUR
 from `lib/validation.ts`. Callers retain their own optionality, future-time checks,
 and error reasons.
 
+## Assignment length and due dates
+
+`opportunities.assignmentLengthDays` is the optional number of whole days a creator has to
+finish an assignment (1–365; otherwise `invalid_state` / `invalid_assignment_length`).
+Create sets it, update changes it, and `null` clears it. Creators see it on the brief.
+
+- **Copied, like compensation.** Each assignment stores the opportunity's length when it is
+  created, so later edits to the brief don't change existing deals.
+- **The clock starts at activation.** `assignments.dueAt` is set when the assignment becomes
+  `active`: when the creator accepts the terms of a claimed spot, or when an offer is
+  accepted. A `termsPending` claim has no due date yet.
+- **Not enforced.** No length means no due date. Nothing cancels or flags an overdue
+  assignment yet; clients compare `dueAt` to their own clock.
+
 ## Opportunity discovery
 
 `opportunities.discover` lists open briefs creators can see, in deadline order. Filters

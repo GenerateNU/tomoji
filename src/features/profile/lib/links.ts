@@ -1,4 +1,5 @@
 import { MAX_ADDITIONAL_LINKS } from "@convex/schemas/creators.schema";
+import { findDuplicateLink } from "@convex/lib/links";
 
 type LinkResult = { ok: true; value: string | null } | { ok: false; error: string };
 type LinksResult =
@@ -59,6 +60,14 @@ export function parseAdditionalLinks(inputs: string[]): LinksResult {
       };
     }
     links.push(url.href);
+  }
+  const duplicate = findDuplicateLink(links);
+  if (duplicate !== null) {
+    return {
+      ok: false,
+      error: "You've already added this link.",
+      index: entered[duplicate].index,
+    };
   }
   return { ok: true, value: links };
 }

@@ -43,6 +43,7 @@ import type * as lib_earningsCalculator from "../lib/earningsCalculator.js";
 import type * as lib_errors from "../lib/errors.js";
 import type * as lib_functions from "../lib/functions.js";
 import type * as lib_identity from "../lib/identity.js";
+import type * as lib_links from "../lib/links.js";
 import type * as lib_mediaUploadPolicy from "../lib/mediaUploadPolicy.js";
 import type * as lib_pagination from "../lib/pagination.js";
 import type * as lib_s3 from "../lib/s3.js";
@@ -172,6 +173,7 @@ declare const fullApi: ApiFromModules<{
   "lib/errors": typeof lib_errors;
   "lib/functions": typeof lib_functions;
   "lib/identity": typeof lib_identity;
+  "lib/links": typeof lib_links;
   "lib/mediaUploadPolicy": typeof lib_mediaUploadPolicy;
   "lib/pagination": typeof lib_pagination;
   "lib/s3": typeof lib_s3;

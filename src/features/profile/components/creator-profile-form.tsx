@@ -86,6 +86,16 @@ export function CreatorProfileForm({
     setSaveError("");
   }
 
+  /** A duplicate error depends on every row, so editing one clears them all. */
+  function clearLinkErrors() {
+    setErrors((current) =>
+      Object.fromEntries(
+        Object.entries(current).map(([key, value]) => [key, key.startsWith("link-") ? "" : value]),
+      ),
+    );
+    setSaveError("");
+  }
+
   async function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (submitting.current || photo.validating || unchanged) return;
@@ -349,7 +359,7 @@ export function CreatorProfileForm({
                     setLinks((current) =>
                       current.map((link, item) => (item === index ? event.target.value : link)),
                     );
-                    clearError(`link-${index}`);
+                    clearLinkErrors();
                   }}
                 />
                 <Button

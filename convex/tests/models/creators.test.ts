@@ -10,6 +10,7 @@ import {
   hasCreatorActivity,
   listCreators,
   completeCreatorOnboarding,
+  requireAdditionalLinks,
   requireCreatorProfile,
   requireCreatorProfileById,
   updateCreatorProfile,
@@ -801,5 +802,35 @@ describe("hasCreatorActivity", () => {
     await seedXAccount(t, "other_x_creator");
 
     expect(await t.run(async (ctx) => await hasCreatorActivity(ctx, idleId))).toBe(false);
+  });
+});
+
+describe("requireAdditionalLinks", () => {
+  test.each([
+    ["the same link", ["https://example.com/a", "https://example.com/a"]],
+    ["host case", ["https://Example.com/a", "https://example.com/a"]],
+    ["a trailing slash", ["https://example.com", "https://example.com/"]],
+    ["a trailing slash on a path", ["https://example.com/me/", "https://example.com/me"]],
+  ])("rejects links that differ only by %s", async (_, links) => {
+    await expectApiError(
+      async () => requireAdditionalLinks(links),
+      "invalid_state",
+      "duplicate_link",
+    );
+  });
+
+  test("keeps distinct links", () => {
+    expect(requireAdditionalLinks(["https://example.com/a", "https://example.com/b"])).toEqual([
+      "https://example.com/a",
+      "https://example.com/b",
+    ]);
+  });
+
+  test("still reports an unusable link as invalid_link", async () => {
+    await expectApiError(
+      async () => requireAdditionalLinks(["http://example.com"]),
+      "invalid_state",
+      "invalid_link",
+    );
   });
 });

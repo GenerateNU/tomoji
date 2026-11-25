@@ -10,7 +10,7 @@ import { TextField } from "@/components/text-field";
 import { Button } from "@/components/ui/button";
 import { iconProps } from "@/lib/icons";
 import { useOnboardingDraft } from "../hooks/use-onboarding-draft";
-import { linkError, normalizeLink } from "../lib/validation";
+import { additionalLinkErrors, linkError, normalizeLink } from "../lib/validation";
 import { OnboardingShell, StepHeading } from "./onboarding-shell";
 import { ProfilePreview } from "./profile-preview";
 import { StepActions } from "./step-actions";
@@ -40,12 +40,8 @@ export function PortfolioStep({
   const [pending, setPending] = useState(false);
 
   function setLink(index: number, value: string) {
-    setErrors((current) => ({
-      ...current,
-      additional: Object.fromEntries(
-        Object.entries(current.additional).filter(([key]) => Number(key) !== index),
-      ),
-    }));
+    // A duplicate error depends on every row, so editing one clears them all.
+    setErrors((current) => ({ ...current, additional: {} }));
     setDraft({
       additionalLinks: draft.additionalLinks.map((link, position) =>
         position === index ? value : link,
@@ -55,13 +51,7 @@ export function PortfolioStep({
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
-    const additional: Record<number, string> = {};
-    draft.additionalLinks.forEach((link, index) => {
-      // A blank extra row is simply dropped rather than reported.
-      if (link.trim() === "") return;
-      const message = linkError(link);
-      if (message !== null) additional[index] = message;
-    });
+    const additional = additionalLinkErrors(draft.additionalLinks);
     const found: Errors = {
       github: linkError(draft.githubLink) ?? undefined,
       linkedin: linkError(draft.linkedinLink) ?? undefined,
@@ -151,13 +141,15 @@ export function PortfolioStep({
                 type="button"
                 aria-label={`Remove link ${index + 1}`}
                 className="mt-9 shrink-0 cursor-pointer rounded-xs p-1 text-gray-500 transition-colors outline-none hover:text-gray-950 focus-visible:ring-4 focus-visible:ring-blue-primary/25"
-                onClick={() =>
+                onClick={() => {
+                  // Rows shift up, so per-row errors would land on the wrong link.
+                  setErrors((current) => ({ ...current, additional: {} }));
                   setDraft({
                     additionalLinks: draft.additionalLinks.filter(
                       (_, position) => position !== index,
                     ),
-                  })
-                }
+                  });
+                }}
               >
                 <RiDeleteBinLine {...iconProps} size={18} />
               </button>

@@ -4,6 +4,8 @@
  * designs; the server checks the same rules again on save.
  */
 
+import { findDuplicateLink } from "@convex/lib/links";
+
 /** Unix ms at UTC midnight for a `MM/DD/YYYY` date, or null if it isn't one. */
 export function parseBirthdate(value: string): number | null {
   const match = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(value.trim());
@@ -56,4 +58,22 @@ export function normalizeLink(value: string): string | null {
 export function linkError(value: string, message = "Enter a valid URL"): string | null {
   if (value.trim() === "") return null;
   return normalizeLink(value) === null ? message : null;
+}
+
+/**
+ * Per-row messages for the extra links, keyed by row. Blank rows are skipped
+ * rather than reported; a repeat is marked on its later row.
+ */
+export function additionalLinkErrors(links: string[]): Record<number, string> {
+  const errors: Record<number, string> = {};
+  const valid: { link: string; index: number }[] = [];
+  links.forEach((value, index) => {
+    if (value.trim() === "") return;
+    const link = normalizeLink(value);
+    if (link === null) errors[index] = "Enter a valid URL";
+    else valid.push({ link, index });
+  });
+  const duplicate = findDuplicateLink(valid.map((entry) => entry.link));
+  if (duplicate !== null) errors[valid[duplicate].index] = "You've already added this link.";
+  return errors;
 }

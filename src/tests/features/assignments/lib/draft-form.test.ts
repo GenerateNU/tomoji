@@ -14,6 +14,13 @@ describe("validateDraft", () => {
     });
   });
 
+  test("names both problems when the draft is empty", () => {
+    expect(validateDraft({ notes: "", caption: "", hasVideo: false })).toEqual({
+      notes: "Add draft notes.",
+      content: "Add a caption or a video.",
+    });
+  });
+
   test.each([
     ["a caption", { caption: "Launch day", hasVideo: false }],
     ["a video", { caption: "", hasVideo: true }],

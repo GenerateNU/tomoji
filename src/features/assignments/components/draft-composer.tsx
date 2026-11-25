@@ -19,7 +19,8 @@ import { DialogClose, DialogDescription, DialogTitle } from "@/components/ui/dia
 import { Textarea } from "@/components/ui/textarea";
 import { errorMessage } from "@/lib/errors";
 import { createMediaUpload, type MediaUploadPhase } from "@/lib/media-upload";
-import { validateDraft, type DraftFormErrors } from "../lib/draft-form";
+import { cn } from "@/lib/utils";
+import { validateDraft } from "../lib/draft-form";
 import { aiReviewStatusLabel } from "./assignment-status";
 import { SubmissionPreview } from "./submission-preview";
 import {
@@ -93,7 +94,7 @@ export function DraftComposer({
   const notesErrorId = useId();
   const captionRef = useRef<HTMLTextAreaElement>(null);
   const notesRef = useRef<HTMLTextAreaElement>(null);
-  const [touched, setTouched] = useState<Partial<Record<keyof DraftFormErrors, boolean>>>({});
+  const [attempted, setAttempted] = useState(false);
   const [caption, setCaption] = useState(previous?.caption ?? "");
   const [notes, setNotes] = useState(previous?.draftDescription ?? "");
   const [file, setFile] = useState<File | null>(null);
@@ -104,9 +105,8 @@ export function DraftComposer({
   const attempt = useRef<AbortController | null>(null);
   const readOnly = phase !== undefined;
   const errors = validateDraft({ notes, caption, hasVideo: file !== null });
-  const shown = (field: keyof DraftFormErrors) => (touched[field] ? errors[field] : undefined);
-  const contentError = shown("content");
-  const notesError = shown("notes");
+  const contentError = attempted ? errors.content : undefined;
+  const notesError = attempted ? errors.notes : undefined;
 
   useEffect(() => {
     return () => {
@@ -138,7 +138,7 @@ export function DraftComposer({
     const text = caption.trim();
     const videoUpload = upload.current;
     if (errors.content || errors.notes) {
-      setTouched({ content: true, notes: true });
+      setAttempted(true);
       (errors.content ? captionRef : notesRef).current?.focus();
       return;
     }
@@ -333,7 +333,10 @@ export function DraftComposer({
               disabled={readOnly}
               onClick={() => fileInput.current?.click()}
               aria-describedby={contentError ? contentErrorId : undefined}
-              className="flex min-h-42 w-full flex-col items-center justify-center gap-1 rounded-md border border-dashed border-gray-300 p-4 hover:bg-gray-25"
+              className={cn(
+                "flex min-h-42 w-full flex-col items-center justify-center gap-1 rounded-md border border-dashed border-gray-300 p-4 hover:bg-gray-25",
+                contentError && "border-red-600 bg-red-50 hover:bg-red-50",
+              )}
             >
               <span
                 aria-hidden
@@ -346,7 +349,7 @@ export function DraftComposer({
             </button>
           )}
           {contentError && (
-            <p id={contentErrorId} className="text-body-sm text-red-600">
+            <p id={contentErrorId} className="text-body-sm text-red-700">
               {contentError}
             </p>
           )}
@@ -365,7 +368,6 @@ export function DraftComposer({
             maxLength={MAX_NOTES_LENGTH}
             disabled={readOnly}
             onChange={(event) => setNotes(event.target.value)}
-            onBlur={() => setTouched((current) => ({ ...current, notes: true }))}
             placeholder="Tell the reviewer what you’re submitting"
             required
             aria-invalid={notesError ? true : undefined}
@@ -373,7 +375,7 @@ export function DraftComposer({
             className="min-h-14"
           />
           {notesError && (
-            <p id={notesErrorId} className="mt-2 text-body-sm text-red-600">
+            <p id={notesErrorId} className="mt-2 text-body-sm text-red-700">
               {notesError}
             </p>
           )}

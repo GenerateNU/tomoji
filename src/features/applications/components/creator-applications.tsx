@@ -9,10 +9,12 @@ import { ErrorBoundary } from "@/components/error-boundary";
 import { Button } from "@/components/ui/button";
 import { TableBody, TableCard, TableHead, TableHeader } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsCount, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { useLinkedItem } from "@/hooks/use-linked-item";
 import { useMediaQuery } from "@/hooks/use-media-query";
 import { useNow } from "@/hooks/use-now";
 import { useStableQuery } from "@/hooks/use-stable-query";
 import { cn } from "@/lib/utils";
+import { applicationTab, type ApplicationStatus } from "../lib/application-status";
 import {
   useApplicationsTable,
   type ApplicationSortKey,
@@ -119,7 +121,13 @@ function NeverHadState({ tab }: { tab: ApplicationTab }) {
   );
 }
 
-function ApplicationsContent({ table }: { table: ApplicationsTable }) {
+function ApplicationsContent({
+  table,
+  linkedApplicationId,
+}: {
+  table: ApplicationsTable;
+  linkedApplicationId?: string;
+}) {
   const isWide = useMediaQuery("(min-width: 768px)");
   const now = useNow();
   const resultsRef = useRef<HTMLElement>(null);
@@ -155,6 +163,28 @@ function ApplicationsContent({ table }: { table: ApplicationsTable }) {
         setModalOpen(true);
       }
     : undefined;
+
+  // A linked offer opens whichever tab is showing, then moves to the tab that
+  // lists it once its status loads. A bad or someone else's ID shows the
+  // modal's unavailable state.
+  const [syncTabFor, setSyncTabFor] = useState<Id<"applications"> | null>(null);
+  const changeModalOpen = useLinkedItem(linkedApplicationId, {
+    onOpen: (id) => {
+      const applicationId = id as Id<"applications">;
+      setOpenApplicationId(applicationId);
+      setModalOpen(true);
+      setSyncTabFor(applicationId);
+    },
+    onOpenChange: setModalOpen,
+  });
+
+  // Only the linked offer moves the tab, and only once; a row opened from the
+  // table is already on its tab.
+  function onOfferStatus(status: ApplicationStatus) {
+    if (syncTabFor === null || syncTabFor !== openApplicationId) return;
+    setSyncTabFor(null);
+    table.setTab(applicationTab(status));
+  }
 
   // Back to the title that opened the offer, or to the results when the row has
   // left the tab, e.g. after the offer was accepted.
@@ -265,10 +295,11 @@ function ApplicationsContent({ table }: { table: ApplicationsTable }) {
       <OfferModal
         applicationId={openApplicationId}
         open={modalOpen}
-        onOpenChange={setModalOpen}
+        onOpenChange={changeModalOpen}
         finalFocus={returnFocus}
+        onStatus={onOfferStatus}
         onAccepted={({ deliverableCount }) => {
-          setModalOpen(false);
+          changeModalOpen(false);
           setAccepted({ deliverableCount });
           setAcceptedOpen(true);
         }}
@@ -287,8 +318,11 @@ function ApplicationsContent({ table }: { table: ApplicationsTable }) {
   );
 }
 
-/** The calling creator's applications: tabs with counts, search, filters, sortable rows, and pages. */
-export function CreatorApplications() {
+/**
+ * The calling creator's applications: tabs with counts, search, filters, sortable rows, and pages.
+ * `linkedApplicationId` comes from `?application=<id>` and opens that offer.
+ */
+export function CreatorApplications({ linkedApplicationId }: { linkedApplicationId?: string }) {
   const table = useApplicationsTable();
   // Remounting the boundary is what clears a failed read.
   const [attempt, setAttempt] = useState(0);
@@ -308,7 +342,7 @@ export function CreatorApplications() {
           />
         )}
       >
-        <ApplicationsContent table={table} />
+        <ApplicationsContent table={table} linkedApplicationId={linkedApplicationId} />
       </ErrorBoundary>
     </div>
   );

@@ -16,6 +16,7 @@ import { TextField } from "@/components/text-field";
 import { Button } from "@/components/ui/button";
 import { Segment, SegmentedControl } from "@/components/ui/segmented-control";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
+import { useLinkedItem } from "@/hooks/use-linked-item";
 import { useOpportunityFeed } from "../hooks/use-opportunity-feed";
 import { NO_FEED_FILTERS, type FeedFilters, type FeedView } from "../lib/types";
 import { FeedSkeleton } from "./feed-skeleton";
@@ -25,8 +26,11 @@ import { OpportunityModal } from "./opportunity-modal";
 import { OpportunityCard } from "./opportunity-card";
 import { OpportunityTable } from "./opportunity-table";
 
-/** The creator's discovery feed: search, filters, grid or list view, and starring. */
-export function CreatorFeed() {
+/**
+ * The creator's discovery feed: search, filters, grid or list view, and starring.
+ * `linkedOpportunityId` comes from `?opportunity=<id>` and opens that opportunity.
+ */
+export function CreatorFeed({ linkedOpportunityId }: { linkedOpportunityId?: string }) {
   const [view, setView] = useState<FeedView>("grid");
   const [filters, setFilters] = useState<FeedFilters>(NO_FEED_FILTERS);
   // Kept after closing so the dialog keeps its content while it animates out.
@@ -53,6 +57,13 @@ export function CreatorFeed() {
     setSelectedId(opportunityId);
     setModalOpen(true);
   }
+
+  // The modal loads by ID, so a linked opportunity opens even when it isn't on
+  // the loaded page; a bad or hidden ID shows the modal's unavailable state.
+  const changeModalOpen = useLinkedItem(linkedOpportunityId, {
+    onOpen: (id) => openOpportunity(id as Id<"opportunities">),
+    onOpenChange: setModalOpen,
+  });
 
   return (
     <div className="flex w-full flex-col gap-10 px-4 py-12 sm:px-10 lg:px-16 lg:py-16">
@@ -163,7 +174,11 @@ export function CreatorFeed() {
       </section>
 
       {selectedId !== null && (
-        <OpportunityModal opportunityId={selectedId} open={modalOpen} onOpenChange={setModalOpen} />
+        <OpportunityModal
+          opportunityId={selectedId}
+          open={modalOpen}
+          onOpenChange={changeModalOpen}
+        />
       )}
     </div>
   );

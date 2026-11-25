@@ -175,7 +175,7 @@ function NotificationsPanelContent({
           <ul className="flex flex-col gap-2">
             {results.map((notification) => {
               const unread = !notification.isRead;
-              const href = notificationHref(notification.target);
+              const href = notificationHref(notification);
               const item = (
                 <ActivityItem
                   icon={NOTIFICATION_ICONS[notification.type]}

@@ -60,6 +60,17 @@ does not run it.
 
 Our routes should describe the resource being accessed rather than the role of the person accessing it, so keep URLs independent of user roles. For example, `/opportunities` serves as the discovery feed for creators and the company's opportunity list for company users. The page determines which component to render based on the current user.
 
+### Linking to one item
+
+Pages that show items in a modal open one from a query parameter, so notifications and shared
+links land on the item rather than the list: `/opportunities?opportunity=<id>` and
+`/applications?application=<id>` (the offer, switched to the tab that lists it). The page reads the
+parameter from `searchParams` and passes it down; `useLinkedItem` (`hooks/use-linked-item.ts`)
+opens it and drops the parameter when the modal closes. The modal loads the item by ID, so it works
+when the item isn't on the loaded page, and an ID that's gone or not the viewer's shows the modal's
+"unavailable" state. `notificationHref` (`features/notifications/lib/notification-display.ts`) maps
+each notification to its link.
+
 ### Creator profile and settings
 
 The creator account menu opens Profile in a dialog over the current page; `/profile`

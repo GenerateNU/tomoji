@@ -44,21 +44,46 @@ export const NOTIFICATION_ICONS = {
   payoutRefunded: RiRefundLine,
 } satisfies Record<Doc<"notifications">["type"], IconComponent>;
 
+/** Application notifications that open the offer itself. */
+const OFFER_TYPES = new Set<Doc<"notifications">["type"]>([
+  "applicationOffered",
+  "applicationOfferExpired",
+]);
+
+/** Application notifications sent to the company member, not the creator. */
+const COMPANY_APPLICATION_TYPES = new Set<Doc<"notifications">["type"]>([
+  "applicationReceived",
+  "applicationDeclined",
+]);
+
 /**
  * The page a notification opens, or null when its target has no page yet.
  * Routes don't encode the viewer's role; each page decides what to show.
+ * Query parameters open one item in a page's modal; the page reads them.
  */
-export function notificationHref(target: Doc<"notifications">["target"]): string | null {
+export function notificationHref({
+  type,
+  target,
+}: Pick<Doc<"notifications">, "type" | "target">): string | null {
   switch (target.kind) {
     case "application":
-      return "/applications";
+      if (OFFER_TYPES.has(type)) {
+        return `/applications?application=${encodeURIComponent(target.applicationId)}`;
+      }
+      // Company applicants live in an opportunity's modal under its campaign, and
+      // the target has no campaignId to reach it, so this opens the campaign list.
+      if (COMPANY_APPLICATION_TYPES.has(type)) return "/campaigns";
+      // There is no single-application view yet; the opportunity shows its status.
+      return `/opportunities?opportunity=${encodeURIComponent(target.opportunityId)}`;
     case "assignment":
     case "submission":
       return `/assignments/${target.assignmentId}`;
     case "opportunity":
-      return "/opportunities";
-    case "campaign":
+      // Only company members get opportunity notifications (opportunityClosed);
+      // like applicants above, their opportunities sit under a campaign.
       return "/campaigns";
+    case "campaign":
+      return `/campaigns/${encodeURIComponent(target.campaignId)}`;
     case "dispute":
       return null;
   }

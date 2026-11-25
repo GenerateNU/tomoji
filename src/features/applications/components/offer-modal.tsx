@@ -5,14 +5,12 @@ import type { Id } from "@convex/_generated/dataModel";
 import type { AcceptedOffer, ApplicationDetail } from "@convex/models/applications";
 import { useQuery } from "convex/react";
 import { useEffect, useRef, useState, type ComponentProps } from "react";
-import { ErrorBoundary } from "@/components/error-boundary";
 import { Modal } from "@/components/modal";
-import { Button } from "@/components/ui/button";
+import { ModalLoadBoundary } from "@/components/modal-load-boundary";
 import { CompanyAvatar, getInitials } from "@/components/ui/avatar";
 import { Tag } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useCompanyLogo } from "@/hooks/use-company-logo";
-import { errorCode } from "@/lib/errors";
 import { useOfferClock } from "../hooks/use-offer-clock";
 import { formatOfferDeadline } from "../lib/format";
 import { offerStatusTag, offerTiming } from "../lib/offer";
@@ -28,6 +26,8 @@ type OfferModalProps = {
   finalFocus?: ComponentProps<typeof Modal>["finalFocus"];
   /** Called with the new assignment details once the offer has been accepted. */
   onAccepted: (result: AcceptedOffer) => void;
+  /** Called with the offer's status once it loads and whenever it changes. */
+  onStatus?: (status: ApplicationDetail["status"]) => void;
 };
 
 const OVERLAY = "backdrop-blur-xs";
@@ -49,8 +49,13 @@ function OfferContent({
   onOpenChange,
   finalFocus,
   onAccepted,
+  onStatus,
 }: OfferModalProps & { applicationId: Id<"applications"> }) {
   const detail = useQuery(api.applications.getMineDetail, open ? { applicationId } : "skip");
+  const status = detail?.status;
+  useEffect(() => {
+    if (status !== undefined) onStatus?.(status);
+  }, [status, onStatus]);
   // Offers are timed to the minute, and to the second once urgent.
   const now = useOfferClock(detail?.status, detail?.offerExpiresAt);
   const [step, setStep] = useState<"offer" | "terms">("offer");
@@ -162,33 +167,17 @@ export function OfferModal({
   onOpenChange,
   finalFocus,
   onAccepted,
+  onStatus,
 }: OfferModalProps) {
-  // Remounting the boundary is what clears a failed read.
-  const [attempt, setAttempt] = useState(0);
   if (applicationId === null) return null;
   return (
-    <ErrorBoundary
-      key={`${applicationId}:${attempt}`}
-      fallback={(error) => (
-        <Modal
-          open={open}
-          onOpenChange={onOpenChange}
-          finalFocus={finalFocus}
-          overlayClassName={OVERLAY}
-          title="Offer unavailable"
-          footer={
-            errorCode(error) === "not_found" ? undefined : (
-              <Button onClick={() => setAttempt((value) => value + 1)}>Try again</Button>
-            )
-          }
-        >
-          <p className="text-body text-gray-700">
-            {errorCode(error) === "not_found"
-              ? "This offer is no longer available."
-              : "We couldn’t load this offer."}
-          </p>
-        </Modal>
-      )}
+    <ModalLoadBoundary
+      noun="offer"
+      itemKey={applicationId}
+      open={open}
+      onOpenChange={onOpenChange}
+      finalFocus={finalFocus}
+      overlayClassName={OVERLAY}
     >
       <OfferContent
         applicationId={applicationId}
@@ -196,7 +185,8 @@ export function OfferModal({
         onOpenChange={onOpenChange}
         finalFocus={finalFocus}
         onAccepted={onAccepted}
+        onStatus={onStatus}
       />
-    </ErrorBoundary>
+    </ModalLoadBoundary>
   );
 }

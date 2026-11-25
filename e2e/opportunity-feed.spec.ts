@@ -18,12 +18,15 @@ test.afterAll(() => {
   if (fixtureDirectory) rmSync(fixtureDirectory, { recursive: true, force: true });
 });
 
-/** Renders the creator feed with fixture briefs; labelled a fixture preview, not live data. */
-async function openFeed(page: Page, query = "") {
+/** Serves the creator feed with fixture briefs; labelled a fixture preview, not live data. */
+async function serveFeed(page: Page, query = "") {
   await page.route("http://opportunity-feed.test/**", async (route) => {
     const path = new URL(route.request().url()).pathname;
     if (path === "/fixture.js")
-      await route.fulfill({ contentType: "application/javascript", body: bundle });
+      await route.fulfill({
+        contentType: "application/javascript",
+        body: bundle,
+      });
     else if (path === "/fixture.css") await route.fulfill({ contentType: "text/css", body: css });
     else
       await route.fulfill({
@@ -32,6 +35,10 @@ async function openFeed(page: Page, query = "") {
       });
   });
   await page.goto(`http://opportunity-feed.test/${query}`);
+}
+
+async function openFeed(page: Page, query = "") {
+  await serveFeed(page, query);
   await expect(page.getByRole("heading", { name: "Opportunities", level: 1 })).toBeVisible();
 }
 
@@ -59,4 +66,20 @@ test("shows a skeleton while loading and a message when nothing is open", async 
   await expect(page.getByLabel("Loading opportunities")).toBeVisible();
   await openFeed(page, "?empty");
   await expect(page.getByText("There are no open opportunities right now.")).toBeVisible();
+});
+
+test("a link with an opportunity ID opens that opportunity", async ({ page }) => {
+  await serveFeed(page, "?opportunity=opportunity2");
+  const dialog = page.getByRole("dialog");
+  await expect(dialog.getByRole("heading", { name: /Bard AI/ })).toBeVisible();
+  await dialog.getByRole("button", { name: "Cancel" }).click();
+  await expect(dialog).toBeHidden();
+  await expect(page.getByRole("heading", { name: "Opportunities", level: 1 })).toBeVisible();
+});
+
+test("a link to a missing opportunity says it's unavailable", async ({ page }) => {
+  await serveFeed(page, "?opportunity=gone");
+  const dialog = page.getByRole("dialog", { name: "Opportunity unavailable" });
+  await expect(dialog.getByText("This opportunity is no longer available.")).toBeVisible();
+  await expect(dialog.getByRole("button", { name: "Try again" })).toHaveCount(0);
 });

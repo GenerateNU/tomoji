@@ -7,6 +7,7 @@ import Link from "next/link";
 import { useRef, useState, type FormEvent } from "react";
 import { CountdownButton } from "@/components/countdown-button";
 import { Modal } from "@/components/modal";
+import { ModalLoadBoundary } from "@/components/modal-load-boundary";
 import { TextAreaField } from "@/components/text-area-field";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -20,6 +21,12 @@ import { OpportunityDetails, OpportunitySummary } from "./opportunity-details";
 
 const NOTE_MAX_LENGTH = 200;
 const NOTE_FORM_ID = "application-note-form";
+
+type OpportunityModalProps = {
+  opportunityId: Id<"opportunities">;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+};
 
 function Heading({ opportunity }: { opportunity: FeedOpportunity }) {
   // The creator's own progress if there is any, otherwise how to get in.
@@ -126,15 +133,7 @@ function Terms({ companyName }: { companyName: string }) {
  * spot shows the terms first; the spot is only taken once they're accepted.
  * A claim whose terms are still pending reopens on the terms.
  */
-export function OpportunityModal({
-  opportunityId,
-  open,
-  onOpenChange,
-}: {
-  opportunityId: Id<"opportunities">;
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-}) {
+function OpportunityContent({ opportunityId, open, onOpenChange }: OpportunityModalProps) {
   const opportunity = useQuery(api.opportunities.get, open ? { opportunityId } : "skip");
   const [step, setStep] = useState<"details" | "terms" | "sent" | "claimed">("details");
   const [submitting, setSubmitting] = useState(false);
@@ -326,5 +325,23 @@ export function OpportunityModal({
         />
       )}
     </Modal>
+  );
+}
+
+/**
+ * The creator's pop-up for one opportunity. It reads the opportunity itself, so
+ * it opens from a link even when the opportunity isn't on the loaded feed page;
+ * one that no longer exists or isn't visible to the creator says so instead.
+ */
+export function OpportunityModal(props: OpportunityModalProps) {
+  return (
+    <ModalLoadBoundary
+      noun="opportunity"
+      itemKey={props.opportunityId}
+      open={props.open}
+      onOpenChange={props.onOpenChange}
+    >
+      <OpportunityContent {...props} />
+    </ModalLoadBoundary>
   );
 }

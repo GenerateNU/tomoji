@@ -308,7 +308,12 @@ export async function completeCreatorOnboarding(
   );
 }
 
-/** Updates the editable fields in a creator's own profile and returns the complete profile. */
+/**
+ * Updates the editable fields in a creator's own profile and returns the complete profile.
+ *
+ * @throws `invalid_state` with `duplicate_link` when an extra link repeats
+ * another extra link or the GitHub or LinkedIn link.
+ */
 export async function updateCreatorProfile(
   ctx: MutationCtx,
   user: Doc<"users">,
@@ -338,6 +343,20 @@ export async function updateCreatorProfile(
       reason: "invalid_linkedin_link",
       hosts: ["linkedin.com"],
     });
+  }
+  if (
+    updates.additionalLinks !== undefined ||
+    "githubLink" in updates ||
+    "linkedinLink" in updates
+  ) {
+    // Fields left out of the update keep their saved values, so compare against those.
+    const final = { ...creator, ...patch };
+    if (
+      findDuplicateLink(final.additionalLinks ?? [], [final.githubLink, final.linkedinLink]) !==
+      null
+    ) {
+      throw apiError("invalid_state", { reason: "duplicate_link" });
+    }
   }
   if ("countryOfResidence" in updates) {
     patch.countryOfResidence =

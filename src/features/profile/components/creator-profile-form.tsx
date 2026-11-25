@@ -18,7 +18,12 @@ import { Label } from "@/components/ui/label";
 import { errorMessage } from "@/lib/errors";
 import { parseBirthdate, toDateInputValue } from "../lib/birthdate";
 import { parseGithubLink } from "../lib/github-link";
-import { parseAdditionalLinks, parseLinkedinLink } from "../lib/links";
+import {
+  DUPLICATE_LINK_ERROR,
+  duplicateLinkRow,
+  parseAdditionalLinks,
+  parseLinkedinLink,
+} from "../lib/links";
 import { PREVIEW_CONTENT_TYPES } from "../lib/profile-preview";
 import { useProfilePhotoDraft } from "../hooks/use-profile-photo-draft";
 import { CreatorProfileHeader } from "./creator-profile-header";
@@ -81,6 +86,20 @@ export function CreatorProfileForm({
   const unchanged =
     profileUnchanged && sameValues(contentTypes, previewContentTypes) && !photo.dirty;
 
+  // Shown as soon as a duplicate is on screen, including one already saved
+  // before this check existed, rather than only after a save attempt.
+  const githubLink = parseGithubLink(github);
+  const linkedinLink = parseLinkedinLink(linkedin);
+  const duplicateRow = duplicateLinkRow(links, [
+    githubLink.ok ? githubLink.value : null,
+    linkedinLink.ok ? linkedinLink.value : null,
+  ]);
+  function linkError(index: number): string {
+    return (
+      errors[`link-${index}`] || (index === duplicateRow ? DUPLICATE_LINK_ERROR : "")
+    );
+  }
+
   function clearError(field: string) {
     setErrors((current) => ({ ...current, [field]: "" }));
     setSaveError("");
@@ -106,7 +125,10 @@ export function CreatorProfileForm({
     const birthdateResult = parseBirthdate(birthdate);
     const githubResult = parseGithubLink(github);
     const linkedinResult = parseLinkedinLink(linkedin);
-    const linksResult = parseAdditionalLinks(links);
+    const linksResult = parseAdditionalLinks(links, [
+      githubResult.ok ? githubResult.value : null,
+      linkedinResult.ok ? linkedinResult.value : null,
+    ]);
     const invalid: Record<string, string> = {};
     if (!birthdateResult.ok) invalid.dateOfBirth = birthdateResult.error;
     else if (birthdateResult.value === null && initial.dateOfBirth !== undefined)
@@ -309,6 +331,7 @@ export function CreatorProfileForm({
                 onChange={(event) => {
                   setGithub(event.target.value);
                   clearError("github");
+                  clearLinkErrors();
                 }}
               />
               {errors.github && (
@@ -331,6 +354,7 @@ export function CreatorProfileForm({
                 onChange={(event) => {
                   setLinkedin(event.target.value);
                   clearError("linkedin");
+                  clearLinkErrors();
                 }}
               />
               {errors.linkedin && (
@@ -351,9 +375,9 @@ export function CreatorProfileForm({
                   value={value}
                   disabled={pending}
                   placeholder="https://example.com"
-                  aria-invalid={!!errors[`link-${index}`]}
+                  aria-invalid={!!linkError(index)}
                   aria-describedby={
-                    errors[`link-${index}`] ? `${id}-link-${index}-error` : undefined
+                    linkError(index) ? `${id}-link-${index}-error` : undefined
                   }
                   onChange={(event) => {
                     setLinks((current) =>
@@ -376,13 +400,13 @@ export function CreatorProfileForm({
                   }}
                 />
               </div>
-              {errors[`link-${index}`] && (
+              {linkError(index) && (
                 <p
                   id={`${id}-link-${index}-error`}
                   role="alert"
                   className="text-body-sm text-red-700"
                 >
-                  {errors[`link-${index}`]}
+                  {linkError(index)}
                 </p>
               )}
             </div>

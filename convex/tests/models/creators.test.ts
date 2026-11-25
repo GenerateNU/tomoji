@@ -392,6 +392,77 @@ describe("completeCreatorOnboarding", () => {
 });
 
 describe("updateCreatorProfile", () => {
+  test("rejects an extra link that repeats the LinkedIn link in the same update", async () => {
+    const t = convexTest(schema, modules);
+    await seedUser(t, { subject: "model_creator_link_repeats_linkedin" });
+    const user = await requireSeededUser(t, "model_creator_link_repeats_linkedin");
+
+    await expectApiError(
+      () =>
+        t.run((ctx) =>
+          updateCreatorProfile(ctx, user, {
+            linkedinLink: "https://www.linkedin.com/in/creator",
+            additionalLinks: ["https://WWW.linkedin.com/in/creator/"],
+          }),
+        ),
+      "invalid_state",
+      "duplicate_link",
+    );
+  });
+
+  test("rejects an extra link that repeats the saved GitHub link", async () => {
+    const t = convexTest(schema, modules);
+    await seedUser(t, { subject: "model_creator_link_repeats_github" });
+    const user = await requireSeededUser(t, "model_creator_link_repeats_github");
+    await t.run((ctx) =>
+      updateCreatorProfile(ctx, user, { githubLink: "https://github.com/creator" }),
+    );
+
+    await expectApiError(
+      () =>
+        t.run((ctx) =>
+          updateCreatorProfile(ctx, user, { additionalLinks: ["https://github.com/creator"] }),
+        ),
+      "invalid_state",
+      "duplicate_link",
+    );
+  });
+
+  test("rejects a new GitHub link that repeats a saved extra link", async () => {
+    const t = convexTest(schema, modules);
+    await seedUser(t, { subject: "model_creator_github_repeats_link" });
+    const user = await requireSeededUser(t, "model_creator_github_repeats_link");
+    await t.run((ctx) =>
+      updateCreatorProfile(ctx, user, { additionalLinks: ["https://github.com/creator"] }),
+    );
+
+    await expectApiError(
+      () =>
+        t.run((ctx) =>
+          updateCreatorProfile(ctx, user, { githubLink: "https://github.com/creator" }),
+        ),
+      "invalid_state",
+      "duplicate_link",
+    );
+  });
+
+  test("ignores a saved link that isn't a URL when checking repeats", async () => {
+    const t = convexTest(schema, modules);
+    await seedUser(t, { subject: "model_creator_legacy_link" });
+    const user = await requireSeededUser(t, "model_creator_legacy_link");
+    await t.run(async (ctx) => {
+      const creator = await getCreatorByUserId(ctx, user._id);
+      if (creator === null) throw new Error("expected seeded creator");
+      await ctx.db.patch("creators", creator._id, { githubLink: "creator" });
+    });
+
+    const profile = await t.run((ctx) =>
+      updateCreatorProfile(ctx, user, { additionalLinks: ["https://creator.example.com"] }),
+    );
+
+    expect(profile.additionalLinks).toEqual(["https://creator.example.com/"]);
+  });
+
   test("updates supplied fields and preserves omitted fields", async () => {
     const t = convexTest(schema, modules);
     await seedUser(t, { subject: "model_creator_update" });

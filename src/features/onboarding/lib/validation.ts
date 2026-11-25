@@ -62,18 +62,36 @@ export function linkError(value: string, message = "Enter a valid URL"): string 
 
 /**
  * Per-row messages for the extra links, keyed by row. Blank rows are skipped
- * rather than reported; a repeat is marked on its later row.
+ * rather than reported; a repeat is marked on its later row. `otherLinks` are
+ * the GitHub and LinkedIn fields as typed, which an extra link may not repeat.
  */
-export function additionalLinkErrors(links: string[]): Record<number, string> {
+export function additionalLinkErrors(
+  links: string[],
+  otherLinks: readonly string[] = [],
+): Record<number, string> {
   const errors: Record<number, string> = {};
-  const valid: { link: string; index: number }[] = [];
   links.forEach((value, index) => {
-    if (value.trim() === "") return;
-    const link = normalizeLink(value);
-    if (link === null) errors[index] = "Enter a valid URL";
-    else valid.push({ link, index });
+    const message = linkError(value);
+    if (message !== null) errors[index] = message;
   });
-  const duplicate = findDuplicateLink(valid.map((entry) => entry.link));
-  if (duplicate !== null) errors[valid[duplicate].index] = "You've already added this link.";
+  const duplicate = duplicateLinkRow(links, otherLinks);
+  if (duplicate !== null) errors[duplicate] = DUPLICATE_LINK_ERROR;
   return errors;
+}
+
+export const DUPLICATE_LINK_ERROR = "You've already added this link.";
+
+/**
+ * The row whose link repeats an earlier row or the GitHub/LinkedIn field, or
+ * null. Blank and invalid rows are skipped, so this can run on every render
+ * and flag a duplicate before the creator tries to continue.
+ */
+export function duplicateLinkRow(
+  links: string[],
+  otherLinks: readonly string[] = [],
+): number | null {
+  return findDuplicateLink(
+    links.map((link) => normalizeLink(link) ?? ""),
+    otherLinks.map((link) => normalizeLink(link)),
+  );
 }

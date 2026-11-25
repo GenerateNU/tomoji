@@ -10,7 +10,13 @@ import { TextField } from "@/components/text-field";
 import { Button } from "@/components/ui/button";
 import { iconProps } from "@/lib/icons";
 import { useOnboardingDraft } from "../hooks/use-onboarding-draft";
-import { additionalLinkErrors, linkError, normalizeLink } from "../lib/validation";
+import {
+  additionalLinkErrors,
+  DUPLICATE_LINK_ERROR,
+  duplicateLinkRow,
+  linkError,
+  normalizeLink,
+} from "../lib/validation";
 import { OnboardingShell, StepHeading } from "./onboarding-shell";
 import { ProfilePreview } from "./profile-preview";
 import { StepActions } from "./step-actions";
@@ -38,6 +44,11 @@ export function PortfolioStep({
   const completeOnboarding = useMutation(api.creators.completeOnboarding);
   const [errors, setErrors] = useState<Errors>({ additional: {} });
   const [pending, setPending] = useState(false);
+  // Shown as soon as a duplicate is on screen, not only after Continue.
+  const duplicateRow = duplicateLinkRow(draft.additionalLinks, [
+    draft.githubLink,
+    draft.linkedinLink,
+  ]);
 
   function setLink(index: number, value: string) {
     // A duplicate error depends on every row, so editing one clears them all.
@@ -51,7 +62,10 @@ export function PortfolioStep({
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
-    const additional = additionalLinkErrors(draft.additionalLinks);
+    const additional = additionalLinkErrors(draft.additionalLinks, [
+      draft.githubLink,
+      draft.linkedinLink,
+    ]);
     const found: Errors = {
       github: linkError(draft.githubLink) ?? undefined,
       linkedin: linkError(draft.linkedinLink) ?? undefined,
@@ -111,7 +125,7 @@ export function PortfolioStep({
             error={errors.github}
             onChange={(event) => {
               setDraft({ githubLink: event.target.value });
-              setErrors((current) => ({ ...current, github: undefined }));
+              setErrors((current) => ({ ...current, github: undefined, additional: {} }));
             }}
           />
           <TextField
@@ -122,7 +136,7 @@ export function PortfolioStep({
             error={errors.linkedin}
             onChange={(event) => {
               setDraft({ linkedinLink: event.target.value });
-              setErrors((current) => ({ ...current, linkedin: undefined }));
+              setErrors((current) => ({ ...current, linkedin: undefined, additional: {} }));
             }}
           />
 
@@ -134,7 +148,10 @@ export function PortfolioStep({
                 placeholder="Enter URL"
                 inputMode="url"
                 value={link}
-                error={errors.additional[index]}
+                error={
+                  errors.additional[index] ??
+                  (index === duplicateRow ? DUPLICATE_LINK_ERROR : undefined)
+                }
                 onChange={(event) => setLink(index, event.target.value)}
               />
               <button

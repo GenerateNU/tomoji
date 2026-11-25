@@ -96,6 +96,22 @@ Browser tests use isolated Convex and authentication fixtures. Their screenshots
 verify layout and interaction states, not live Stripe, WorkOS email, X authorization,
 or S3 behavior.
 
+### The creator home
+
+`/` gives creators `CreatorHome` (`features/users/components/creator-home.tsx`). Until
+the profile is complete, a card shows `creators.completion` as a ring and opens the
+Profile dialog straight in the editor (`startEditing`). Eight items count equally: photo,
+linked X account, any one portfolio link, date of birth, country, languages, niches,
+and skills. Name and email are always set, so they don't count. Banner and follower
+range are left out until the editor can set them; otherwise no one could reach 100%.
+The rule lives in `convex/models/profileCompletion.ts`, so every caller gets the same
+percentage. At 100% the card disappears.
+
+Below it, "Opportunities for you" shows the first page of `opportunities.discover`, which
+lists the creator's best-scored matches first. Three cards fill the row (each at least
+300px, so narrower screens show fewer), and it scrolls sideways with
+previous/next buttons. Cards open the same opportunity modal as the feed.
+
 ### The operator dashboard
 
 Tomoji staff get their own nav (`operatorNavItems`) over four routes: `/` (platform

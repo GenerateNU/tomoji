@@ -57,7 +57,7 @@ function brief(
   };
 }
 
-const FEED = [
+export const FEED = [
   brief(0, {
     title: "Claude Opus 5.5",
     companyName: "Anthropic",

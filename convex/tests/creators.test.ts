@@ -420,3 +420,55 @@ describe("creators.update", () => {
     );
   });
 });
+
+describe("creators.completion", () => {
+  test("reports the caller's own completion with each item's state", async () => {
+    const t = convexTest(schema, modules);
+    const asCreator = await seedUser(t, { subject: "creator_completion" });
+    await seedXAccount(t, "creator_completion");
+    await t.run(async (ctx) => {
+      const user = await getUserByWorkosId(ctx, "creator_completion");
+      if (user === null) throw new Error("expected seeded user");
+      await updateCreatorProfile(ctx, user, {
+        dateOfBirth: Date.UTC(1990, 0, 1),
+        countryOfResidence: "us",
+      });
+    });
+
+    const completion = await asCreator.query(api.creators.completion, {});
+
+    expect(completion.percent).toBe(38);
+    expect(completion.items.filter((entry) => entry.isComplete).map((entry) => entry.item)).toEqual(
+      ["xAccount", "dateOfBirth", "countryOfResidence"],
+    );
+  });
+
+  test("doesn't count an X account that needs reconnecting", async () => {
+    const t = convexTest(schema, modules);
+    const asCreator = await seedUser(t, { subject: "creator_completion_reconnect" });
+    const { account } = await seedXAccount(t, "creator_completion_reconnect");
+    await t.run(async (ctx) => {
+      await ctx.db.patch("xAccounts", account.xAccountId, { status: "reconnect_required" });
+    });
+
+    const completion = await asCreator.query(api.creators.completion, {});
+
+    expect(completion.items.find((entry) => entry.item === "xAccount")?.isComplete).toBe(false);
+  });
+
+  test("rejects a company caller", async () => {
+    const t = convexTest(schema, modules);
+    const asCompany = await seedUser(t, {
+      subject: "creator_completion_company",
+      org: { id: "org_creator_completion" },
+    });
+
+    await expectApiError(() => asCompany.query(api.creators.completion, {}), "forbidden");
+  });
+
+  test("rejects a signed-out caller", async () => {
+    const t = convexTest(schema, modules);
+
+    await expectApiError(() => t.query(api.creators.completion, {}), "not_authenticated");
+  });
+});

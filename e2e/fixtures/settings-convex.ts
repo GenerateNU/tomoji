@@ -2,6 +2,8 @@ import { useSyncExternalStore } from "react";
 import { getFunctionName, type FunctionReference, type FunctionReturnType } from "convex/server";
 import type { api } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
+import { measureProfileCompletion } from "../../convex/models/profileCompletion";
+import { FEED } from "./opportunity-feed-convex";
 
 type Call = { name: string; args: Record<string, unknown> };
 type Profile = FunctionReturnType<typeof api.creators.me>;
@@ -38,6 +40,10 @@ let session = {
   failedQuery: parameters.get("failedQuery") ?? "",
   // The creator's Stripe account status, `notStarted` unless the URL names one.
   stripe: parameters.get("stripeStatus") ?? "notStarted",
+  // The home page's opportunity row: the sample feed unless `?feed=empty` or `?feed=loading`.
+  feed: parameters.get("feed") ?? "sample",
+  // Caps how many briefs the row gets, e.g. `?feedSize=3`; all of them by default.
+  feedSize: Number(parameters.get("feedSize")) || undefined,
 };
 
 function notify() {
@@ -119,6 +125,36 @@ const emptyNotifications: never[] = [];
 export function usePaginatedQuery(reference: FunctionReference<"query">, args: unknown) {
   useRevision();
   const name = getFunctionName(reference);
+  if (name === "opportunities:discover") {
+    if (session.feed === "loading") {
+      return { results: emptyNotifications, status: "LoadingFirstPage" as const, loadMore() {} };
+    }
+    // Like a page cut short by the server's row-read cap: empty but not done.
+    // The sample feed only arrives once the caller asks for more.
+    if (session.feed === "sparse") {
+      return {
+        results: emptyNotifications,
+        status: "CanLoadMore" as const,
+        loadMore(numItems: number) {
+          calls.push({ name: "opportunities:discover.loadMore", args: { numItems } });
+          session = { ...session, feed: "sample" };
+          notify();
+        },
+      };
+    }
+    return {
+      results:
+        session.feed === "empty"
+          ? emptyNotifications
+          : // Like the server: `actedOn: false` drops briefs the creator applied to or claimed.
+            ((args as { actedOn?: boolean }).actedOn === false
+              ? FEED.filter((brief) => brief.application === null && brief.assignment === null)
+              : FEED
+            ).slice(0, session.feedSize),
+      status: "Exhausted" as const,
+      loadMore() {},
+    };
+  }
   if (name !== "notifications:list") throw new Error(`Unexpected paginated query: ${name}`);
   if (args !== "skip" && !queries.some((query) => query.name === name)) {
     queries.push({ name, args: args as Record<string, unknown> });
@@ -173,6 +209,11 @@ function queryResult(reference: FunctionReference<"query">, args: unknown) {
       throw new Error("Only a synced creator must request creators.me");
     }
     return session.profileLoading ? undefined : profile;
+  }
+  if (name === "creators:completion") {
+    return session.profileLoading
+      ? undefined
+      : measureProfileCompletion(profile, { xConnected: xAccount?.status === "connected" });
   }
   throw new Error(`Unexpected query: ${name}`);
 }
@@ -257,5 +298,9 @@ function operation(reference: FunctionReference<"mutation" | "action">) {
   return operations.get(name)!;
 }
 
-export const useMutation = operation;
+export function useMutation(reference: FunctionReference<"mutation">) {
+  const run = operation(reference);
+  // Optimistic updates (the star button's) are skipped; the fixture's writes are instant anyway.
+  return Object.assign(run, { withOptimisticUpdate: () => run });
+}
 export const useAction = operation;

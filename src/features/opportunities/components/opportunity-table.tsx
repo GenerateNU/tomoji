@@ -60,7 +60,7 @@ export function OpportunityTable({
                 />
               </TableCell>
               <TableCell type="custom">
-                <CompanyAvatar name={opportunity.companyName} size="xs" />
+                <CompanyAvatar name={opportunity.companyName} />
                 <span className="truncate">{opportunity.companyName}</span>
               </TableCell>
               <TableCell>{formatPostedAgo(opportunity._creationTime, now)}</TableCell>

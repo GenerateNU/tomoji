@@ -27,7 +27,7 @@ function Heading({ opportunity }: { opportunity: FeedOpportunity }) {
   return (
     <span className="flex flex-col gap-4">
       <span className="flex items-center gap-2 text-body font-normal">
-        <CompanyAvatar name={opportunity.companyName} size="xs" />
+        <CompanyAvatar name={opportunity.companyName} />
         {opportunity.companyName}
       </span>
       <span className="flex flex-wrap items-center gap-3">

@@ -549,6 +549,8 @@ export const opportunityDiscover = opportunityList.pick("paginationOpts").extend
   skills: v.optional(v.array(v.string())),
   isGated: v.optional(v.boolean()),
   applied: v.optional(v.boolean()),
+  // false keeps briefs the caller hasn't applied to or claimed; true keeps only those.
+  actedOn: v.optional(v.boolean()),
   eligible: v.optional(v.boolean()),
 });
 
@@ -646,6 +648,22 @@ async function hasApplied(
   return application !== null;
 }
 
+/** True when the creator has an application on the opportunity or holds an assignment on it. */
+async function hasActedOn(
+  ctx: QueryCtx,
+  creatorId: Id<"creators">,
+  opportunityId: Id<"opportunities">,
+): Promise<boolean> {
+  if (await hasApplied(ctx, creatorId, opportunityId)) return true;
+  const assignment = await ctx.db
+    .query("assignments")
+    .withIndex("by_opportunityId_and_creatorId", (q) =>
+      q.eq("opportunityId", opportunityId).eq("creatorId", creatorId),
+    )
+    .first();
+  return assignment !== null;
+}
+
 /**
  * Builds the check a brief must pass to appear in discovery: visible to
  * creators and matching every filter. Returns the creator-facing brief, or
@@ -677,6 +695,9 @@ function discoverFilter(
       if (creatorId === undefined || !(await hasApplied(ctx, creatorId, opportunity._id))) {
         return null;
       }
+    }
+    if (options.actedOn !== undefined && creatorId !== undefined) {
+      if ((await hasActedOn(ctx, creatorId, opportunity._id)) !== options.actedOn) return null;
     }
     const brief = await getVisibleCreatorOpportunity(ctx, opportunity);
     if (brief !== null && options.eligible === true) {

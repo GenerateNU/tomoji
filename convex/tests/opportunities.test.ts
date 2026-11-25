@@ -905,6 +905,37 @@ describe("opportunities.discover", () => {
     });
   });
 
+  test("actedOn filters by whether the caller applied to or claimed the brief", async () => {
+    const t = convexTest(schema, modules);
+    const applied = await seedOpportunity(t, { subject: "acted_applied" });
+    const claimed = await seedOpportunity(t, { subject: "acted_claimed" });
+    const untouched = await seedOpportunity(t, { subject: "acted_untouched" });
+    const asCreator = await seedUser(t, { subject: "acted_creator" });
+    const creatorId = await seedCreatorId(t, "acted_creator");
+    await t.run(
+      async (ctx) =>
+        await ctx.db.insert("applications", {
+          opportunityId: applied.opportunityId,
+          creatorId,
+          companyId: applied.membership.companyId,
+          status: "pending",
+        }),
+    );
+    await seedAssignment(t, { opportunityId: claimed.opportunityId, creatorId });
+    const ids = async (actedOn: boolean) =>
+      (
+        await asCreator.query(api.opportunities.discover, {
+          actedOn,
+          paginationOpts: { numItems: 10, cursor: null },
+        })
+      ).page
+        .map((brief) => brief._id)
+        .sort();
+
+    expect(await ids(false)).toEqual([untouched.opportunityId]);
+    expect(await ids(true)).toEqual([applied.opportunityId, claimed.opportunityId].sort());
+  });
+
   test("says how well each brief matches the caller's profile", async () => {
     const t = convexTest(schema, modules);
     const owner = await seedOpportunity(

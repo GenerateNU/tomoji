@@ -2,15 +2,19 @@ import Image from "next/image";
 import { EmptyState } from "@/components/empty-state";
 import { Button } from "@/components/ui/button";
 
-/** What the feed shows when no opportunity matches, with a way back to everything. */
+/**
+ * What a list of opportunities shows when it's empty. With no props it says
+ * nothing is open; the feed passes `filtered` and `onClear` for a way back to everything.
+ */
 export function NoOpportunities({
-  starredOnly,
-  filtered,
+  starredOnly = false,
+  filtered = false,
   onClear,
 }: {
-  starredOnly: boolean;
-  filtered: boolean;
-  onClear: () => void;
+  starredOnly?: boolean;
+  filtered?: boolean;
+  /** Shown as "Clear search and filters" when `filtered`. */
+  onClear?: () => void;
 }) {
   if (filtered) {
     return (
@@ -20,9 +24,11 @@ export function NoOpportunities({
           <p className="text-body-lg font-medium text-gray-700">No opportunities match</p>
           <p className="text-body text-gray-500">Try a different keyword or clear some filters.</p>
         </div>
-        <Button size="sm" onClick={onClear}>
-          Clear search and filters
-        </Button>
+        {onClear && (
+          <Button size="sm" onClick={onClear}>
+            Clear search and filters
+          </Button>
+        )}
       </div>
     );
   }

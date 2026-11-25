@@ -6,12 +6,14 @@ import {
   completeCreatorOnboarding,
   creatorProfile,
   creatorProfileUpdate,
-  ownCreatorProfile,
   listCreators,
+  ownCreatorProfile,
   requireCreatorProfile,
   requireCreatorProfileById,
+  requireCreatorProfileCompletion,
   updateCreatorProfile,
 } from "./models/creators";
+import { profileCompletion } from "./models/profileCompletion";
 
 /** Returns all user-facing fields in the authenticated creator's profile. */
 export const me = creatorQuery({
@@ -19,6 +21,18 @@ export const me = creatorQuery({
   returns: ownCreatorProfile,
   handler: async (ctx) => {
     return await requireCreatorProfile(ctx, ctx.user);
+  },
+});
+
+/**
+ * Returns how complete the authenticated creator's profile is: a whole percent
+ * and each item that counts toward it, in display order.
+ */
+export const completion = creatorQuery({
+  args: {},
+  returns: profileCompletion,
+  handler: async (ctx) => {
+    return await requireCreatorProfileCompletion(ctx, ctx.user);
   },
 });
 

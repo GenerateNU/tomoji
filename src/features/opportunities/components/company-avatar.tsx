@@ -1,24 +1,15 @@
-import { cn } from "@/lib/utils";
-
-const SIZES = {
-  xs: "size-5.5 rounded-xs text-body-xs",
-  sm: "size-8 rounded-sm text-body-sm",
-} as const;
+import { CompanyAvatar as DesignSystemCompanyAvatar } from "@/components/ui/avatar";
 
 /**
- * Placeholder company mark from the design: a gray square with the first
- * letter of the name, until companies have logos on the feed.
+ * The company mark on opportunity cards, rows, and the modal: the design
+ * system's 24px company avatar with the first letter of the name, until
+ * companies have logos on the feed. Hidden from screen readers because the
+ * company name always sits beside it.
  */
-export function CompanyAvatar({ name, size }: { name: string; size: keyof typeof SIZES }) {
+export function CompanyAvatar({ name }: { name: string }) {
   return (
-    <span
-      aria-hidden
-      className={cn(
-        "flex shrink-0 items-center justify-center bg-gray-50 font-medium text-gray-700",
-        SIZES[size],
-      )}
-    >
-      {name.slice(0, 1).toUpperCase()}
+    <span aria-hidden className="flex shrink-0">
+      <DesignSystemCompanyAvatar size={24} initials={name.slice(0, 1).toUpperCase()} />
     </span>
   );
 }

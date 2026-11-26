@@ -5,6 +5,7 @@
  */
 
 import { findDuplicateLink } from "@convex/lib/links";
+import { DUPLICATE_LINK_ERROR } from "@/features/profile/lib/links";
 
 /** Unix ms at UTC midnight for a `MM/DD/YYYY` date, or null if it isn't one. */
 export function parseBirthdate(value: string): number | null {
@@ -78,8 +79,6 @@ export function additionalLinkErrors(
   if (duplicate !== null) errors[duplicate] = DUPLICATE_LINK_ERROR;
   return errors;
 }
-
-export const DUPLICATE_LINK_ERROR = "You've already added this link.";
 
 /**
  * The row whose link repeats an earlier row or the GitHub/LinkedIn field, or

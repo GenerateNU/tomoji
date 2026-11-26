@@ -392,6 +392,24 @@ describe("completeCreatorOnboarding", () => {
 });
 
 describe("updateCreatorProfile", () => {
+  test.each([
+    ["the same link", ["https://example.com/a", "https://example.com/a"]],
+    ["host case", ["https://Example.com/a", "https://example.com/a"]],
+    ["a trailing slash", ["https://example.com", "https://example.com/"]],
+    ["a trailing slash on a path", ["https://example.com/me/", "https://example.com/me"]],
+  ])("rejects extra links that differ only by %s", async (label, additionalLinks) => {
+    const t = convexTest(schema, modules);
+    const subject = `model_creator_duplicate_${label.replaceAll(" ", "_")}`;
+    await seedUser(t, { subject });
+    const user = await requireSeededUser(t, subject);
+
+    await expectApiError(
+      () => t.run((ctx) => updateCreatorProfile(ctx, user, { additionalLinks })),
+      "invalid_state",
+      "duplicate_link",
+    );
+  });
+
   test("rejects an extra link that repeats the LinkedIn link in the same update", async () => {
     const t = convexTest(schema, modules);
     await seedUser(t, { subject: "model_creator_link_repeats_linkedin" });
@@ -877,19 +895,6 @@ describe("hasCreatorActivity", () => {
 });
 
 describe("requireAdditionalLinks", () => {
-  test.each([
-    ["the same link", ["https://example.com/a", "https://example.com/a"]],
-    ["host case", ["https://Example.com/a", "https://example.com/a"]],
-    ["a trailing slash", ["https://example.com", "https://example.com/"]],
-    ["a trailing slash on a path", ["https://example.com/me/", "https://example.com/me"]],
-  ])("rejects links that differ only by %s", async (_, links) => {
-    await expectApiError(
-      async () => requireAdditionalLinks(links),
-      "invalid_state",
-      "duplicate_link",
-    );
-  });
-
   test("keeps distinct links", () => {
     expect(requireAdditionalLinks(["https://example.com/a", "https://example.com/b"])).toEqual([
       "https://example.com/a",

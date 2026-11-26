@@ -240,20 +240,18 @@ async function hasCompanyRelationship(
 /**
  * Trims and checks the free-form links on a profile.
  *
- * @throws `invalid_state` with `too_many_links` above the cap, `invalid_link`
- * if one is not an https URL, or `duplicate_link` if two point at the same
- * place (ignoring host case and a trailing `/`).
+ * Repeats are checked in `updateCreatorProfile`, against the GitHub and
+ * LinkedIn links too.
+ *
+ * @throws `invalid_state` with `too_many_links` above the cap, or
+ * `invalid_link` if one is not an https URL.
  */
 export function requireAdditionalLinks(links: string[]): string[] {
   const trimmed = links.map((link) => link.trim()).filter((link) => link !== "");
   if (trimmed.length > MAX_ADDITIONAL_LINKS) {
     throw apiError("invalid_state", { reason: "too_many_links", max: MAX_ADDITIONAL_LINKS });
   }
-  const checked = trimmed.map((link) => requireUrl(link, { reason: "invalid_link" }));
-  if (findDuplicateLink(checked) !== null) {
-    throw apiError("invalid_state", { reason: "duplicate_link" });
-  }
-  return checked;
+  return trimmed.map((link) => requireUrl(link, { reason: "invalid_link" }));
 }
 
 /** Clearing a link is allowed; keeping an unusable one is not. */

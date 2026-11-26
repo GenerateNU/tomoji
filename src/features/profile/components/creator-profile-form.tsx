@@ -88,16 +88,16 @@ export function CreatorProfileForm({
 
   // Shown as soon as a duplicate is on screen, including one already saved
   // before this check existed, rather than only after a save attempt.
-  const githubLink = parseGithubLink(github);
-  const linkedinLink = parseLinkedinLink(linkedin);
-  const duplicateRow = duplicateLinkRow(links, [
-    githubLink.ok ? githubLink.value : null,
-    linkedinLink.ok ? linkedinLink.value : null,
-  ]);
+  // Parsed once per render and reused by save(), which runs with these same values.
+  const githubResult = parseGithubLink(github);
+  const linkedinResult = parseLinkedinLink(linkedin);
+  const otherLinks = [
+    githubResult.ok ? githubResult.value : null,
+    linkedinResult.ok ? linkedinResult.value : null,
+  ];
+  const duplicateRow = duplicateLinkRow(links, otherLinks);
   function linkError(index: number): string {
-    return (
-      errors[`link-${index}`] || (index === duplicateRow ? DUPLICATE_LINK_ERROR : "")
-    );
+    return errors[`link-${index}`] || (index === duplicateRow ? DUPLICATE_LINK_ERROR : "");
   }
 
   function clearError(field: string) {
@@ -123,12 +123,7 @@ export function CreatorProfileForm({
       return;
     }
     const birthdateResult = parseBirthdate(birthdate);
-    const githubResult = parseGithubLink(github);
-    const linkedinResult = parseLinkedinLink(linkedin);
-    const linksResult = parseAdditionalLinks(links, [
-      githubResult.ok ? githubResult.value : null,
-      linkedinResult.ok ? linkedinResult.value : null,
-    ]);
+    const linksResult = parseAdditionalLinks(links, otherLinks);
     const invalid: Record<string, string> = {};
     if (!birthdateResult.ok) invalid.dateOfBirth = birthdateResult.error;
     else if (birthdateResult.value === null && initial.dateOfBirth !== undefined)
@@ -376,9 +371,7 @@ export function CreatorProfileForm({
                   disabled={pending}
                   placeholder="https://example.com"
                   aria-invalid={!!linkError(index)}
-                  aria-describedby={
-                    linkError(index) ? `${id}-link-${index}-error` : undefined
-                  }
+                  aria-describedby={linkError(index) ? `${id}-link-${index}-error` : undefined}
                   onChange={(event) => {
                     setLinks((current) =>
                       current.map((link, item) => (item === index ? event.target.value : link)),

@@ -10,9 +10,9 @@ import { TextField } from "@/components/text-field";
 import { Button } from "@/components/ui/button";
 import { iconProps } from "@/lib/icons";
 import { useOnboardingDraft } from "../hooks/use-onboarding-draft";
+import { DUPLICATE_LINK_ERROR } from "@/features/profile/lib/links";
 import {
   additionalLinkErrors,
-  DUPLICATE_LINK_ERROR,
   duplicateLinkRow,
   linkError,
   normalizeLink,

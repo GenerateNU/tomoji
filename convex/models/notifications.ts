@@ -54,6 +54,8 @@ export async function notifyCreator(
 /**
  * Notifies one company member's user. Company-side notifications go to a single
  * member, such as `opportunity.createdBy`, not to everyone in the company.
+ * Members who have left the company aren't told: their user may have joined
+ * another company since, and the company's activity isn't theirs to see.
  */
 export async function notifyCompanyUser(
   ctx: MutationCtx,
@@ -61,7 +63,7 @@ export async function notifyCompanyUser(
   content: NotificationContent,
 ): Promise<void> {
   const member = await ctx.db.get("companyUsers", companyUserId);
-  if (member !== null) await createNotification(ctx, member.userId, content);
+  if (member?.isActive) await createNotification(ctx, member.userId, content);
 }
 
 /** There are only a handful of operators; this keeps the read bounded. */

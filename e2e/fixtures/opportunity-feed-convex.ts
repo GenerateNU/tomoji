@@ -1,4 +1,5 @@
 import { getFunctionName, type FunctionReference } from "convex/server";
+import { ConvexError } from "convex/values";
 
 /** Feed items shaped like `opportunities.discover`; no calls reach a Convex deployment. */
 const DAY = 86_400_000;
@@ -138,13 +139,21 @@ export function usePaginatedQuery(reference: FunctionReference<"query">, args: u
 
 export function useQuery(reference: FunctionReference<"query">, args?: unknown) {
   switch (getFunctionName(reference)) {
-    case "opportunities:get":
+    case "opportunities:get": {
       if (args === "skip") return undefined;
-      return FEED.find((o) => o._id === (args as { opportunityId: string }).opportunityId);
+      const { opportunityId } = args as { opportunityId: string };
+      const found = FEED.find((o) => o._id === opportunityId);
+      // Like the server: a missing or hidden opportunity reads as not found.
+      if (!found) throw new ConvexError({ code: "not_found", reason: "opportunity" });
+      return found;
+    }
     case "niches:list":
       return [
         { name: "generative-ai-llms", label: "Generative AI & LLMs" },
-        { name: "developer-tools-productivity", label: "Developer Tools & Productivity" },
+        {
+          name: "developer-tools-productivity",
+          label: "Developer Tools & Productivity",
+        },
       ];
     case "skills:list":
       return [
@@ -158,9 +167,7 @@ export function useQuery(reference: FunctionReference<"query">, args?: unknown) 
   }
 }
 
-export function useMutation() {
-  return async () => null;
-}
+export { useMutation } from "./mutation-double";
 
 export function useAction() {
   // Company media never loads here, so cards show the banner placeholder.

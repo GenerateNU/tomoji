@@ -3,6 +3,16 @@ import { OpportunitiesPage } from "@/features/opportunities/components/opportuni
 
 export const metadata: Metadata = { title: "Opportunities · Tomoji" };
 
-export default function Page() {
-  return <OpportunitiesPage />;
+/** `?opportunity=<id>` opens that opportunity, e.g. from a notification. */
+export default async function Page({
+  searchParams,
+}: {
+  searchParams: Promise<{ opportunity?: string | string[] }>;
+}) {
+  const { opportunity } = await searchParams;
+  return (
+    <OpportunitiesPage
+      linkedOpportunityId={typeof opportunity === "string" ? opportunity : undefined}
+    />
+  );
 }

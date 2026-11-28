@@ -55,7 +55,7 @@ test("the bell shows the unread count and opens the panel newest first", async (
   await expect(panel.getByRole("listitem")).toHaveCount(5);
 });
 
-test("clicking a notification opens its page, marks it read, and closes the panel", async ({
+test("clicking an offer notification opens that offer, marks it read, and closes the panel", async ({
   page,
 }) => {
   await openBell(page);
@@ -66,10 +66,13 @@ test("clicking a notification opens its page, marks it read, and closes the pane
   await expect(panel).toBeHidden();
   await expect(page.getByRole("button", { name: "Notifications, 3 unread" })).toBeVisible();
   expect(await page.evaluate(() => window.notificationsFixture.navigations)).toEqual([
-    "/applications",
+    "/applications?application=application",
   ]);
   expect(await page.evaluate(() => window.notificationsFixture.calls)).toEqual([
-    { name: "notifications:markRead", args: { notificationId: "notification-0" } },
+    {
+      name: "notifications:markRead",
+      args: { notificationId: "notification-0" },
+    },
   ]);
 });
 
@@ -89,7 +92,10 @@ test("submission and assignment notifications open the assignment, read ones wit
     "/assignments/assignment",
   ]);
   expect(await page.evaluate(() => window.notificationsFixture.calls)).toEqual([
-    { name: "notifications:markRead", args: { notificationId: "notification-1" } },
+    {
+      name: "notifications:markRead",
+      args: { notificationId: "notification-1" },
+    },
   ]);
 });
 
@@ -123,7 +129,7 @@ test("a failed read still opens the page and leaves the notification unread", as
   const panel = page.getByRole("dialog", { name: "Notifications" });
   await panel.getByRole("link", { name: /Owala Pastels/ }).click();
   expect(await page.evaluate(() => window.notificationsFixture.navigations)).toEqual([
-    "/applications",
+    "/applications?application=application",
   ]);
   await expect(page.getByRole("button", { name: "Notifications, 4 unread" })).toBeVisible();
 });

@@ -14,8 +14,12 @@ const result = await build({
     {
       name: "opportunity-feed-service-double",
       setup(builder) {
-        builder.onResolve({ filter: /^convex\/react$/ }, () => ({
+        // The feed pages through convex-helpers' usePaginatedQuery; the double stands in for both.
+        builder.onResolve({ filter: /^(convex|convex-helpers)\/react$/ }, () => ({
           path: resolve("e2e/fixtures/opportunity-feed-convex.ts"),
+        }));
+        builder.onResolve({ filter: /^next\/navigation$/ }, () => ({
+          path: resolve("e2e/fixtures/next-navigation.ts"),
         }));
         builder.onResolve({ filter: /^next\/image$/ }, () => ({
           path: resolve("e2e/fixtures/next-image.tsx"),

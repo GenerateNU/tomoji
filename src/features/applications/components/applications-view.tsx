@@ -3,7 +3,7 @@ import { ApplicationsPageSkeleton } from "./applications-page-skeleton";
 import { CreatorApplications } from "./creator-applications";
 
 /** Picks the applications view for the signed-in user's role. */
-export function ApplicationsView() {
+export function ApplicationsView({ linkedApplicationId }: { linkedApplicationId?: string }) {
   return (
     <RequireAccount
       role="creator"
@@ -12,7 +12,7 @@ export function ApplicationsView() {
       loading="Loading applications…"
       wrongRole="This page lists a creator's own applications."
     >
-      <CreatorApplications />
+      <CreatorApplications linkedApplicationId={linkedApplicationId} />
     </RequireAccount>
   );
 }

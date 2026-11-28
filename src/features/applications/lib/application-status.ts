@@ -12,3 +12,21 @@ export const APPLICATION_STATUS_LABELS: Record<ApplicationStatus, string> = {
   offerExpired: "Offer expired",
   opportunityFull: "Opportunity full",
 };
+
+/**
+ * The Applications tab that lists an application in each status. Mirrors the
+ * server's `APPLICATION_TAB_STATUSES`; a test keeps the two in step.
+ */
+const TAB_BY_STATUS = {
+  pending: "applications",
+  rejected: "applications",
+  opportunityFull: "applications",
+  offered: "offers",
+  offerExpired: "offers",
+  declined: "offers",
+  accepted: "accepted",
+} as const satisfies Record<ApplicationStatus, string>;
+
+export function applicationTab(status: ApplicationStatus) {
+  return TAB_BY_STATUS[status];
+}

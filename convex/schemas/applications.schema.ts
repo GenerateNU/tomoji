@@ -24,4 +24,5 @@ export const applicationsTable = defineTable({
   .index("by_opportunityId_and_creatorId", ["opportunityId", "creatorId"])
   .index("by_opportunityId_and_status", ["opportunityId", "status"])
   .index("by_creatorId_and_status", ["creatorId", "status"])
+  .index("by_companyId_and_status_and_offerExpiresAt", ["companyId", "status", "offerExpiresAt"])
   .index("by_status_and_offerExpiresAt", ["status", "offerExpiresAt"]);

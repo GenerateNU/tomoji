@@ -294,8 +294,8 @@ export function CreatorApplications() {
   const [attempt, setAttempt] = useState(0);
 
   return (
-    <div className="flex flex-col gap-6 md:gap-8">
-      <h1 className="text-heading-sm font-medium text-gray-950 md:text-heading-md">Applications</h1>
+    <div className="flex flex-col gap-6 md:gap-11">
+      <h1 className="text-heading-lg font-medium text-gray-950">Applications</h1>
       <ErrorBoundary
         key={attempt}
         fallback={() => (

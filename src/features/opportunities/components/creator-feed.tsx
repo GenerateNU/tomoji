@@ -56,7 +56,7 @@ export function CreatorFeed() {
 
   return (
     <div className="flex w-full flex-col gap-10 px-4 py-12 sm:px-10 lg:px-16 lg:py-16">
-      <h1 className="text-heading-lg text-gray-950">Opportunities</h1>
+      <h1 className="text-heading-lg font-medium text-gray-950">Opportunities</h1>
 
       <section aria-label="Filters" className="flex flex-wrap items-end gap-3">
         <TextField

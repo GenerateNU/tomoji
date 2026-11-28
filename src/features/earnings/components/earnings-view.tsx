@@ -15,7 +15,7 @@ export function EarningsView() {
       loading="Loading your earnings…"
     >
       <div className="flex flex-col gap-10">
-        <h1 className="text-heading-lg text-gray-950">Earnings</h1>
+        <h1 className="text-heading-lg font-medium text-gray-950">Earnings</h1>
         <StripeSetupBanner />
         <div className="flex flex-col gap-12">
           <EarningsOverview />

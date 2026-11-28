@@ -48,7 +48,7 @@ export function CompanyCampaigns() {
     <div className="flex w-full flex-col gap-8 px-4 py-12 sm:px-10 lg:px-16 lg:py-16">
       <header className="flex flex-wrap items-end justify-between gap-4">
         <div className="flex flex-col gap-1">
-          <h1 className="text-heading-lg text-gray-950">Campaigns</h1>
+          <h1 className="text-heading-lg font-medium text-gray-950">Campaigns</h1>
           <p className="text-body text-gray-500">Manage and track your creator campaigns</p>
         </div>
         {isAdmin && (

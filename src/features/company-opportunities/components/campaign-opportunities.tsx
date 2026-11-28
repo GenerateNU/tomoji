@@ -78,7 +78,7 @@ export function CampaignOpportunities({
   return (
     <div className="flex min-w-0 flex-1 flex-col gap-8 px-4 py-10 sm:px-10 lg:px-12 lg:py-12">
       <header className="flex flex-col gap-1">
-        <h1 className="text-heading-lg text-gray-950">Opportunities</h1>
+        <h1 className="text-heading-lg font-medium text-gray-950">Opportunities</h1>
         <p className="text-body text-gray-500">Manage and track your campaign’s opportunities</p>
       </header>
 

@@ -34,7 +34,7 @@ export function CreatorDisputes() {
     <div className="flex flex-col gap-10">
       <div className="flex flex-wrap items-center justify-between gap-4">
         <h1 className="text-heading-lg font-medium text-gray-950">Disputes</h1>
-        <Button onClick={() => setCreating(true)}>
+        <Button className="-my-1" onClick={() => setCreating(true)}>
           <RiAddLine {...iconProps} />
           Create Dispute
         </Button>

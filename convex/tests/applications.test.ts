@@ -344,6 +344,30 @@ describe("applications.accept", () => {
     ).toMatchObject({ _id: accepted.assignmentId, status: "active" });
   });
 
+  test("starts the assignment's clock from the opportunity's length", async () => {
+    const t = convexTest(schema, modules);
+    const { asCreator, applicationId, opportunityId } = await seedOfferedApplication(t);
+    await t.run(
+      async (ctx) =>
+        await ctx.db.patch("opportunities", opportunityId, { assignmentLengthDays: 7 }),
+    );
+
+    const before = Date.now();
+    const accepted = await asCreator.mutation(api.applications.accept, {
+      applicationId,
+      acceptedTerms: true,
+    });
+    const after = Date.now();
+
+    const assignment = await asCreator.query(api.assignments.get, {
+      assignmentId: accepted.assignmentId,
+    });
+    const week = 7 * 24 * 60 * 60 * 1000;
+    expect(assignment.assignmentLengthDays).toBe(7);
+    expect(assignment.dueAt).toBeGreaterThanOrEqual(before + week);
+    expect(assignment.dueAt).toBeLessThanOrEqual(after + week);
+  });
+
   test("returns deliverableCount equal to the opportunity's deliverables", async () => {
     const t = convexTest(schema, modules);
     const { asCreator, applicationId, opportunityId } = await seedOfferedApplication(t, [

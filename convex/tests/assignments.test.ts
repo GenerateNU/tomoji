@@ -774,6 +774,48 @@ describe("assignments.acceptTerms", () => {
   });
 });
 
+describe("assignment length", () => {
+  const DAY = 24 * 60 * 60 * 1000;
+
+  test("copies the opportunity's length on claim and starts the clock when terms are accepted", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(t, { subject: "owner" }, { assignmentLengthDays: 14 });
+    const asCreator = await seedUser(t, { subject: "creator" });
+
+    const assignmentId = await asCreator.mutation(api.assignments.claim, {
+      opportunityId: owner.opportunityId,
+    });
+    const claimed = await t.run(async (ctx) => await ctx.db.get("assignments", assignmentId));
+    expect(claimed).toMatchObject({ assignmentLengthDays: 14 });
+    // Pending terms aren't a commitment yet, so there is no due date.
+    expect(claimed).not.toHaveProperty("dueAt");
+
+    // Later edits to the brief don't move an existing deal's due date.
+    await owner.asCompany.mutation(api.opportunities.update, {
+      opportunityId: owner.opportunityId,
+      assignmentLengthDays: 3,
+    });
+    vi.advanceTimersByTime(DAY);
+    const accepted = await asCreator.mutation(api.assignments.acceptTerms, { assignmentId });
+
+    expect(accepted).toMatchObject({ assignmentLengthDays: 14, dueAt: Date.now() + 14 * DAY });
+  });
+
+  test("leaves assignments without a due date when the opportunity has no length", async () => {
+    const t = convexTest(schema, modules);
+    const owner = await seedOpportunity(t, { subject: "owner" });
+    const asCreator = await seedUser(t, { subject: "creator" });
+    const assignmentId = await asCreator.mutation(api.assignments.claim, {
+      opportunityId: owner.opportunityId,
+    });
+
+    const accepted = await asCreator.mutation(api.assignments.acceptTerms, { assignmentId });
+
+    expect(accepted).not.toHaveProperty("assignmentLengthDays");
+    expect(accepted).not.toHaveProperty("dueAt");
+  });
+});
+
 describe("assignments.declineTerms", () => {
   test.each([false, true])(
     "cancels the calling creator's assignment with delivered=%s while hiding the audit actor",

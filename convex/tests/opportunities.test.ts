@@ -1183,6 +1183,45 @@ describe("opportunities.list", () => {
   });
 });
 
+describe("opportunity assignment length", () => {
+  test("stores, shows creators, and clears the number of days an assignment runs", async () => {
+    const t = convexTest(schema, modules);
+    const { asCompany, campaignId } = await seedCampaign(t, { subject: "op_owner" });
+    const opportunityId = await asCompany.mutation(
+      api.opportunities.create,
+      opportunityArgs(campaignId, { assignmentLengthDays: 10 }),
+    );
+    const asCreator = await seedUser(t, { subject: "creator" });
+
+    expect(await asCreator.query(api.opportunities.get, { opportunityId })).toMatchObject({
+      assignmentLengthDays: 10,
+    });
+
+    await asCompany.mutation(api.opportunities.update, {
+      opportunityId,
+      assignmentLengthDays: null,
+    });
+    expect(await asCompany.query(api.opportunities.get, { opportunityId })).not.toHaveProperty(
+      "assignmentLengthDays",
+    );
+  });
+
+  test.each([0, -1, 1.5, 366])("rejects a length of %s days", async (days) => {
+    const t = convexTest(schema, modules);
+    const { asCompany, campaignId } = await seedCampaign(t, { subject: "op_owner" });
+
+    await expectApiError(
+      () =>
+        asCompany.mutation(
+          api.opportunities.create,
+          opportunityArgs(campaignId, { assignmentLengthDays: days }),
+        ),
+      "invalid_state",
+      "invalid_assignment_length",
+    );
+  });
+});
+
 describe("opportunities.create", () => {
   test("rejects an inactive company through the shared membership guard", async () => {
     const t = convexTest(schema, modules);

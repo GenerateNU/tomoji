@@ -22,6 +22,9 @@ export const assignmentsTable = defineTable({
   cpmRateCents: v.number(),
   paymentCapCents: v.number(),
   usesAiReview: v.boolean(),
+  // Copied from the opportunity at creation, like compensation, so later edits don't move it.
+  assignmentLengthDays: v.optional(v.number()),
+  dueAt: v.optional(v.number()), // Unix milliseconds; set when the assignment becomes active.
   status: assignmentStatus,
   cancelledAt: v.optional(v.number()), // Accrual cutoff, preserved separately from payout status.
   // No timestamp means product access is pending. Delivery time is Unix milliseconds.

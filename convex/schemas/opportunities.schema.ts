@@ -32,6 +32,8 @@ export const opportunitiesTable = defineTable({
   productAccessLink: v.optional(v.string()),
   // Smallest reach the company wants. Ranks creators below it lower; never hides the brief.
   minFollowerRange: v.optional(followerRange),
+  // Whole days a creator has to finish once their assignment is active. Unset means no due date.
+  assignmentLengthDays: v.optional(v.number()),
 })
   .index("by_companyId_and_status", ["companyId", "status"])
   .index("by_campaignId_and_status", ["campaignId", "status"])

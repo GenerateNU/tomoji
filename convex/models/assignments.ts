@@ -166,12 +166,27 @@ async function createAssignment(
     cpmRateCents: opportunity.cpmRateCents,
     paymentCapCents: opportunity.paymentCapCents,
     usesAiReview: opportunity.usesAiReviewDefault,
+    ...(opportunity.assignmentLengthDays !== undefined && {
+      assignmentLengthDays: opportunity.assignmentLengthDays,
+    }),
     ...initial,
+    ...(initial.status === "active" && dueDate(opportunity.assignmentLengthDays, Date.now())),
   });
   await ctx.db.patch("opportunities", opportunity._id, {
     numFilledSlots: opportunity.numFilledSlots + 1,
   });
   return assignmentId;
+}
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * The due date for an assignment that becomes active at `activatedAt`, or
+ * nothing when it has no length. The clock starts at activation, not at a
+ * claim, because pending terms are not yet a commitment.
+ */
+function dueDate(lengthDays: number | undefined, activatedAt: number): { dueAt?: number } {
+  return lengthDays === undefined ? {} : { dueAt: activatedAt + lengthDays * DAY_MS };
 }
 
 /** Creator responses include delivery time but not the company user's audit ID. */
@@ -188,6 +203,8 @@ export const creatorAssignment = schema
     "cpmRateCents",
     "paymentCapCents",
     "usesAiReview",
+    "assignmentLengthDays",
+    "dueAt",
     "status",
     "cancelledAt",
     "productAccessDeliveredAt",
@@ -213,6 +230,10 @@ export function toCreatorAssignment(assignment: Doc<"assignments">): CreatorAssi
     result.productAccessDeliveredAt = assignment.productAccessDeliveredAt;
   }
   if (assignment.cancelledAt !== undefined) result.cancelledAt = assignment.cancelledAt;
+  if (assignment.assignmentLengthDays !== undefined) {
+    result.assignmentLengthDays = assignment.assignmentLengthDays;
+  }
+  if (assignment.dueAt !== undefined) result.dueAt = assignment.dueAt;
   return result;
 }
 
@@ -574,7 +595,10 @@ export async function acceptAssignmentTerms(
     { role: "creator", creatorId },
     assignmentId,
   );
-  const patch = { status: "active" as const };
+  const patch = {
+    status: "active" as const,
+    ...dueDate(assignment.assignmentLengthDays, Date.now()),
+  };
   await ctx.db.patch("assignments", assignment._id, patch);
   const opportunity = await ctx.db.get("opportunities", assignment.opportunityId);
   if (opportunity !== null) {

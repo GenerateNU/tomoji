@@ -2,12 +2,12 @@
 
 import { api } from "@convex/_generated/api";
 import type { Id } from "@convex/_generated/dataModel";
-import { RiExpandUpDownLine, RiGlobalLine, RiSearchLine } from "@remixicon/react";
+import { RiExpandUpDownLine, RiSearchLine } from "@remixicon/react";
 import { usePaginatedQuery, useQuery } from "convex-helpers/react/cache/hooks";
 import Link from "next/link";
-import { useEffect, useId, useState } from "react";
+import { useEffect, useState } from "react";
+import { TextField } from "@/components/text-field";
 import { buttonVariants } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { PaginationControl } from "@/components/ui/pagination";
 import {
   Select,
@@ -18,6 +18,7 @@ import {
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsCount, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { ApplicationsEmptyState } from "@/features/applications/components/applications-empty-state";
 import { RequireAccount } from "@/features/users/components/require-account";
 import { cn } from "@/lib/utils";
 import { AssignmentCompany } from "./assignment-company";
@@ -40,13 +41,15 @@ type Stage = "detail" | "draft" | "post";
 /** Lists creator assignments by the current submission and posting state. */
 export function AssignmentsView({ stage = "detail", status }: { stage?: Stage; status?: string }) {
   return (
-    <section className="flex w-full flex-col gap-8 px-4 pt-8 pb-12 sm:px-8 lg:px-16 lg:pt-16">
+    <section className="flex w-full flex-col gap-6 px-4 py-6 sm:px-8 md:gap-11 lg:px-16 lg:pt-16 lg:pb-12">
       <RequireAccount
         role="creator"
         next="/assignments"
         wrongRole="Assignments are available to creators."
       >
-        <h1 className="text-[28px] leading-tight font-medium">Assignments</h1>
+        <h1 className="text-heading-sm font-medium text-gray-950 md:text-heading-md">
+          Assignments
+        </h1>
         <AssignmentTabs key={status} stage={stage} initialQueue={assignmentQueue(status)} />
       </RequireAccount>
     </section>
@@ -57,18 +60,17 @@ export function AssignmentsView({ stage = "detail", status }: { stage?: Stage; s
 function AssignmentTabs({ stage, initialQueue }: { stage: Stage; initialQueue: Queue }) {
   const options = useQuery(api.assignments.listMineFilterOptions);
   return (
-    <Tabs defaultValue={initialQueue} className="gap-10">
-      <TabsList
-        aria-label="Assignment status"
-        className="max-w-full gap-5 overflow-x-auto md:gap-7"
-      >
-        {queues.map(({ value, label }) => (
-          <TabsTrigger key={value} value={value}>
-            {label}
-            {options?.counts && <TabsCount>{options.counts[value]}</TabsCount>}
-          </TabsTrigger>
-        ))}
-      </TabsList>
+    <Tabs defaultValue={initialQueue} className="gap-6 md:gap-8">
+      <div className="-mx-4 overflow-x-auto px-4 [scrollbar-width:none] sm:mx-0 sm:px-0 [&::-webkit-scrollbar]:hidden">
+        <TabsList aria-label="Assignment status" className="w-max min-w-full">
+          {queues.map(({ value, label }) => (
+            <TabsTrigger key={value} value={value}>
+              {label}
+              {options?.counts && <TabsCount>{options.counts[value]}</TabsCount>}
+            </TabsTrigger>
+          ))}
+        </TabsList>
+      </div>
       {queues.map(({ value }) => (
         <TabsContent key={value} value={value}>
           <AssignmentList
@@ -99,7 +101,6 @@ function AssignmentList({
 }) {
   const [filters, setFilters] = useState<Filters>({ search: "" });
   const [search, setSearch] = useState("");
-  const id = useId();
   useEffect(() => {
     const timer = setTimeout(
       () => setFilters((value) => ({ ...value, search: search.trim() })),
@@ -108,29 +109,21 @@ function AssignmentList({
     return () => clearTimeout(timer);
   }, [search]);
   return (
-    <div className="space-y-10">
-      <div className="grid max-w-[576px] gap-3 sm:grid-cols-[1.28fr_1fr]">
-        <div className="grid gap-2">
-          <label htmlFor={id} className="text-body-sm text-gray-500">
-            Search
-          </label>
-          <div className="relative">
-            <RiSearchLine
-              aria-hidden
-              className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2"
-            />
-            <Input
-              id={id}
-              type="search"
-              placeholder="Search by keyword"
-              className="pl-9"
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-            />
-          </div>
-        </div>
+    <div className="flex flex-col gap-6 md:gap-8">
+      <div className="flex flex-col gap-3 md:flex-row md:items-center">
+        <TextField
+          aria-label="Search assignments"
+          icon={RiSearchLine}
+          placeholder="Search by keyword"
+          type="search"
+          name="search"
+          autoComplete="off"
+          className="w-full md:w-80"
+          value={search}
+          onChange={(event) => setSearch(event.target.value)}
+        />
         <AssignmentSelect
-          label="Opportunity"
+          label="Filter by opportunity"
           options={[{ id: "", label: "Select opportunities" }, ...opportunities]}
           value={filters.opportunityId ?? ""}
           onChange={(opportunityId) =>
@@ -158,15 +151,11 @@ function AssignmentSelect({
   value: string;
   onChange: (value: string) => void;
 }) {
-  const id = useId();
   const items = options.map(({ id, label }) => ({ value: id, label }));
   return (
-    <div className="grid min-w-0 gap-2">
-      <span id={id} className="text-body-sm text-gray-500">
-        {label}
-      </span>
+    <div className="min-w-0 w-full md:w-64">
       <Select items={items} value={value} onValueChange={(next) => onChange(next ?? "")}>
-        <SelectTrigger className="w-full" aria-labelledby={id}>
+        <SelectTrigger className="w-full" aria-label={label}>
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
@@ -236,14 +225,15 @@ function AssignmentRows({
     return <Skeleton aria-label="Loading assignments" className="h-32 w-full" />;
   if (visible.length === 0 && !hasMore) {
     return (
-      <div role="status" className="grid justify-items-center gap-2 px-4 py-20 text-center">
-        <RiGlobalLine aria-hidden className="mb-7 size-24 text-blue-primary/35" />
-        <p className="text-body-lg text-gray-700">Nothing to see here!</p>
-        <p className="text-body-sm text-gray-500">
-          {filters.search || filters.opportunityId
-            ? "Try a different filter to see results."
-            : "There are no assignments in this tab."}
-        </p>
+      <div role="status">
+        <ApplicationsEmptyState
+          title="Nothing to see here!"
+          description={
+            filters.search || filters.opportunityId
+              ? "Try a different filter to see results."
+              : "There are no assignments in this tab."
+          }
+        />
       </div>
     );
   }

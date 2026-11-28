@@ -47,9 +47,7 @@ export function AssignmentsView({ stage = "detail", status }: { stage?: Stage; s
         next="/assignments"
         wrongRole="Assignments are available to creators."
       >
-        <h1 className="text-heading-sm font-medium text-gray-950 md:text-heading-md">
-          Assignments
-        </h1>
+        <h1 className="text-heading-lg font-medium text-gray-950">Assignments</h1>
         <AssignmentTabs key={status} stage={stage} initialQueue={assignmentQueue(status)} />
       </RequireAccount>
     </section>

@@ -5,7 +5,7 @@ export const metadata: Metadata = { title: "Earnings · Tomoji" };
 
 export default function EarningsPage() {
   return (
-    <div className="mx-auto w-full max-w-6xl px-6 py-12">
+    <div className="w-full px-4 py-6 sm:px-8 lg:px-16 lg:pt-16 lg:pb-12">
       <EarningsView />
     </div>
   );

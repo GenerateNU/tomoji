@@ -5,7 +5,7 @@ export const metadata: Metadata = { title: "Disputes · Tomoji" };
 
 export default function DisputesPage() {
   return (
-    <div className="mx-auto w-full max-w-6xl px-4 py-12 sm:px-16">
+    <div className="w-full px-4 py-6 sm:px-8 lg:px-16 lg:pt-16 lg:pb-12">
       <DisputesView />
     </div>
   );

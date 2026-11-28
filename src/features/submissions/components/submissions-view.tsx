@@ -286,7 +286,7 @@ export function SubmissionsView() {
       wrongRole="This page is only available to company accounts."
     >
       <section className="flex w-full flex-col gap-8 px-4 py-8 sm:px-8 lg:gap-10 lg:p-16">
-        <h1 className="text-heading-lg">Submissions</h1>
+        <h1 className="text-heading-lg font-medium text-gray-950">Submissions</h1>
         <ErrorBoundary
           key={attempt}
           fallback={() => (

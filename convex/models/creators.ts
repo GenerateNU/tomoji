@@ -15,6 +15,7 @@ import { requireCountry } from "./countries";
 import { requireAdultBirthdate } from "../lib/birthdate";
 import schema from "../schema";
 import { followerRange, MAX_ADDITIONAL_LINKS } from "../schemas/creators.schema";
+import { findDuplicateLink } from "../lib/links";
 
 /**
  * What anyone who may see a creator gets, companies included. Private fields
@@ -239,6 +240,9 @@ async function hasCompanyRelationship(
 /**
  * Trims and checks the free-form links on a profile.
  *
+ * Repeats are checked in `updateCreatorProfile`, against the GitHub and
+ * LinkedIn links too.
+ *
  * @throws `invalid_state` with `too_many_links` above the cap, or
  * `invalid_link` if one is not an https URL.
  */
@@ -302,7 +306,12 @@ export async function completeCreatorOnboarding(
   );
 }
 
-/** Updates the editable fields in a creator's own profile and returns the complete profile. */
+/**
+ * Updates the editable fields in a creator's own profile and returns the complete profile.
+ *
+ * @throws `invalid_state` with `duplicate_link` when an extra link repeats
+ * another extra link or the GitHub or LinkedIn link.
+ */
 export async function updateCreatorProfile(
   ctx: MutationCtx,
   user: Doc<"users">,
@@ -332,6 +341,20 @@ export async function updateCreatorProfile(
       reason: "invalid_linkedin_link",
       hosts: ["linkedin.com"],
     });
+  }
+  if (
+    updates.additionalLinks !== undefined ||
+    "githubLink" in updates ||
+    "linkedinLink" in updates
+  ) {
+    // Fields left out of the update keep their saved values, so compare against those.
+    const final = { ...creator, ...patch };
+    if (
+      findDuplicateLink(final.additionalLinks ?? [], [final.githubLink, final.linkedinLink]) !==
+      null
+    ) {
+      throw apiError("invalid_state", { reason: "duplicate_link" });
+    }
   }
   if ("countryOfResidence" in updates) {
     patch.countryOfResidence =

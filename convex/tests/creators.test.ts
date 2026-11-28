@@ -302,6 +302,21 @@ describe("creators.get", () => {
 });
 
 describe("creators.update", () => {
+  test("rejects a duplicate extra link and saves nothing", async () => {
+    const t = convexTest(schema, modules);
+    const asCreator = await seedUser(t, { subject: "creator_duplicate_link" });
+
+    await expectApiError(
+      () =>
+        asCreator.mutation(api.creators.update, {
+          additionalLinks: ["https://Example.com/", "https://example.com"],
+        }),
+      "invalid_state",
+      "duplicate_link",
+    );
+    expect(await asCreator.query(api.creators.me, {})).toMatchObject({ additionalLinks: [] });
+  });
+
   test("updates only the caller's selections and returns them through me and company get", async () => {
     const t = convexTest(schema, modules);
     const asCreator = await seedUser(t, { subject: "creator_tags" });

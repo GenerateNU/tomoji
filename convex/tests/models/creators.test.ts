@@ -10,6 +10,7 @@ import {
   hasCreatorActivity,
   listCreators,
   completeCreatorOnboarding,
+  requireAdditionalLinks,
   requireCreatorProfile,
   requireCreatorProfileById,
   updateCreatorProfile,
@@ -391,6 +392,95 @@ describe("completeCreatorOnboarding", () => {
 });
 
 describe("updateCreatorProfile", () => {
+  test.each([
+    ["the same link", ["https://example.com/a", "https://example.com/a"]],
+    ["host case", ["https://Example.com/a", "https://example.com/a"]],
+    ["a trailing slash", ["https://example.com", "https://example.com/"]],
+    ["a trailing slash on a path", ["https://example.com/me/", "https://example.com/me"]],
+  ])("rejects extra links that differ only by %s", async (label, additionalLinks) => {
+    const t = convexTest(schema, modules);
+    const subject = `model_creator_duplicate_${label.replaceAll(" ", "_")}`;
+    await seedUser(t, { subject });
+    const user = await requireSeededUser(t, subject);
+
+    await expectApiError(
+      () => t.run((ctx) => updateCreatorProfile(ctx, user, { additionalLinks })),
+      "invalid_state",
+      "duplicate_link",
+    );
+  });
+
+  test("rejects an extra link that repeats the LinkedIn link in the same update", async () => {
+    const t = convexTest(schema, modules);
+    await seedUser(t, { subject: "model_creator_link_repeats_linkedin" });
+    const user = await requireSeededUser(t, "model_creator_link_repeats_linkedin");
+
+    await expectApiError(
+      () =>
+        t.run((ctx) =>
+          updateCreatorProfile(ctx, user, {
+            linkedinLink: "https://www.linkedin.com/in/creator",
+            additionalLinks: ["https://WWW.linkedin.com/in/creator/"],
+          }),
+        ),
+      "invalid_state",
+      "duplicate_link",
+    );
+  });
+
+  test("rejects an extra link that repeats the saved GitHub link", async () => {
+    const t = convexTest(schema, modules);
+    await seedUser(t, { subject: "model_creator_link_repeats_github" });
+    const user = await requireSeededUser(t, "model_creator_link_repeats_github");
+    await t.run((ctx) =>
+      updateCreatorProfile(ctx, user, { githubLink: "https://github.com/creator" }),
+    );
+
+    await expectApiError(
+      () =>
+        t.run((ctx) =>
+          updateCreatorProfile(ctx, user, { additionalLinks: ["https://github.com/creator"] }),
+        ),
+      "invalid_state",
+      "duplicate_link",
+    );
+  });
+
+  test("rejects a new GitHub link that repeats a saved extra link", async () => {
+    const t = convexTest(schema, modules);
+    await seedUser(t, { subject: "model_creator_github_repeats_link" });
+    const user = await requireSeededUser(t, "model_creator_github_repeats_link");
+    await t.run((ctx) =>
+      updateCreatorProfile(ctx, user, { additionalLinks: ["https://github.com/creator"] }),
+    );
+
+    await expectApiError(
+      () =>
+        t.run((ctx) =>
+          updateCreatorProfile(ctx, user, { githubLink: "https://github.com/creator" }),
+        ),
+      "invalid_state",
+      "duplicate_link",
+    );
+  });
+
+  test("ignores a saved link that isn't a URL when checking repeats", async () => {
+    const t = convexTest(schema, modules);
+    await seedUser(t, { subject: "model_creator_legacy_link" });
+    const user = await requireSeededUser(t, "model_creator_legacy_link");
+    await t.run(async (ctx) => {
+      const creator = await getCreatorByUserId(ctx, user._id);
+      if (creator === null) throw new Error("expected seeded creator");
+      await ctx.db.patch("creators", creator._id, { githubLink: "creator" });
+    });
+
+    const profile = await t.run((ctx) =>
+      updateCreatorProfile(ctx, user, { additionalLinks: ["https://creator.example.com"] }),
+    );
+
+    expect(profile.additionalLinks).toEqual(["https://creator.example.com/"]);
+  });
+
   test("updates supplied fields and preserves omitted fields", async () => {
     const t = convexTest(schema, modules);
     await seedUser(t, { subject: "model_creator_update" });
@@ -801,5 +891,22 @@ describe("hasCreatorActivity", () => {
     await seedXAccount(t, "other_x_creator");
 
     expect(await t.run(async (ctx) => await hasCreatorActivity(ctx, idleId))).toBe(false);
+  });
+});
+
+describe("requireAdditionalLinks", () => {
+  test("keeps distinct links", () => {
+    expect(requireAdditionalLinks(["https://example.com/a", "https://example.com/b"])).toEqual([
+      "https://example.com/a",
+      "https://example.com/b",
+    ]);
+  });
+
+  test("still reports an unusable link as invalid_link", async () => {
+    await expectApiError(
+      async () => requireAdditionalLinks(["http://example.com"]),
+      "invalid_state",
+      "invalid_link",
+    );
   });
 });

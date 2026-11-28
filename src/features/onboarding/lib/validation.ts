@@ -4,6 +4,9 @@
  * designs; the server checks the same rules again on save.
  */
 
+import { findDuplicateLink } from "@convex/lib/links";
+import { DUPLICATE_LINK_ERROR } from "@/features/profile/lib/links";
+
 /** Unix ms at UTC midnight for a `MM/DD/YYYY` date, or null if it isn't one. */
 export function parseBirthdate(value: string): number | null {
   const match = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(value.trim());
@@ -56,4 +59,38 @@ export function normalizeLink(value: string): string | null {
 export function linkError(value: string, message = "Enter a valid URL"): string | null {
   if (value.trim() === "") return null;
   return normalizeLink(value) === null ? message : null;
+}
+
+/**
+ * Per-row messages for the extra links, keyed by row. Blank rows are skipped
+ * rather than reported; a repeat is marked on its later row. `otherLinks` are
+ * the GitHub and LinkedIn fields as typed, which an extra link may not repeat.
+ */
+export function additionalLinkErrors(
+  links: string[],
+  otherLinks: readonly string[] = [],
+): Record<number, string> {
+  const errors: Record<number, string> = {};
+  links.forEach((value, index) => {
+    const message = linkError(value);
+    if (message !== null) errors[index] = message;
+  });
+  const duplicate = duplicateLinkRow(links, otherLinks);
+  if (duplicate !== null) errors[duplicate] = DUPLICATE_LINK_ERROR;
+  return errors;
+}
+
+/**
+ * The row whose link repeats an earlier row or the GitHub/LinkedIn field, or
+ * null. Blank and invalid rows are skipped, so this can run on every render
+ * and flag a duplicate before the creator tries to continue.
+ */
+export function duplicateLinkRow(
+  links: string[],
+  otherLinks: readonly string[] = [],
+): number | null {
+  return findDuplicateLink(
+    links.map((link) => normalizeLink(link) ?? ""),
+    otherLinks.map((link) => normalizeLink(link)),
+  );
 }

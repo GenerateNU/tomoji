@@ -25,6 +25,11 @@ async function openFeed(page: Page, query = "") {
     if (path === "/fixture.js")
       await route.fulfill({ contentType: "application/javascript", body: bundle });
     else if (path === "/fixture.css") await route.fulfill({ contentType: "text/css", body: css });
+    else if (path.startsWith("/icons/"))
+      await route.fulfill({
+        contentType: "image/svg+xml",
+        body: readFileSync(join("public", path)),
+      });
     else
       await route.fulfill({
         contentType: "text/html",
@@ -59,4 +64,50 @@ test("shows a skeleton while loading and a message when nothing is open", async 
   await expect(page.getByLabel("Loading opportunities")).toBeVisible();
   await openFeed(page, "?empty");
   await expect(page.getByText("There are no open opportunities right now.")).toBeVisible();
+});
+
+test("long titles leave their star visible in grid and list views", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openFeed(page);
+  const title = "Figma Make with a much longer title than fits";
+  const star = page.getByRole("button", { name: `Star ${title}`, exact: true });
+  for (const view of ["Grid view", "List view"]) {
+    await page.getByRole("radio", { name: view }).click();
+    await expect(star).toBeVisible();
+    await expect.poll(async () => (await star.locator("img").boundingBox())?.width).toBe(18);
+    await star.focus();
+    await expect(star).toBeFocused();
+  }
+});
+
+for (const width of [390, 1512]) {
+  test(`long opportunity details keep Close reachable at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 700 });
+    await openFeed(page);
+    const trigger = page.getByRole("button", { name: /^Claim spot: Figma Make/ });
+    await trigger.click();
+    const dialog = page.getByRole("dialog");
+    await expect(dialog).toBeVisible();
+    await dialog.getByText("Requirements", { exact: true }).scrollIntoViewIfNeeded();
+    await expect(dialog.getByRole("button", { name: "Close", exact: true })).toBeInViewport();
+    await page.keyboard.press("Escape");
+    await expect(dialog).toBeHidden();
+    await expect(trigger).toBeFocused();
+  });
+}
+
+test("a failed star stays readable inside a narrow card", async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 844 });
+  await openFeed(page, "?star-error");
+  const card = page
+    .getByRole("article")
+    .filter({ has: page.getByRole("heading", { name: "GPT-4 Turbo", exact: true }) });
+  const star = card.getByRole("button", { name: "Star GPT-4 Turbo", exact: true });
+  await star.click();
+  const error = card.getByRole("alert");
+  await expect(error).toContainText("Your account is still being set up.");
+  const cardBox = await card.boundingBox();
+  const errorBox = await error.boundingBox();
+  expect(errorBox!.x + errorBox!.width).toBeLessThanOrEqual(cardBox!.x + cardBox!.width - 24);
+  await expect.poll(async () => (await star.locator("img").boundingBox())?.width).toBe(18);
 });

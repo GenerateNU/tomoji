@@ -8,7 +8,7 @@ const AXIS_DATE = new Intl.DateTimeFormat("en-US", { month: "numeric", day: "num
 const POINT_DATE = new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric" });
 
 export type EarningsSeries = {
-  /** Running total in cents at the end of each local day, from the first day to today. */
+  /** Running total at the end of each local day, from the first day to today. */
   values: number[];
   labels: string[];
   pointLabels: string[];
@@ -19,12 +19,14 @@ export type EarningsSeries = {
 /**
  * Earnings as a running total per local day, for the line chart. Starts at
  * `from`, or the first earning for all time, and always has at least two days
- * so a line can be drawn.
+ * so a line can be drawn. Other running totals, like a post's views, pass their
+ * own `formatAxis`; amounts are cents by default.
  */
 export function earningsSeries(
   earnings: { at: number; amount: number }[],
   from: number | null,
   now: Date,
+  formatAxis: (value: number) => string = formatMoneyAxis,
 ): EarningsSeries {
   const today = startOfDay(now);
   const first = from ?? earnings[0]?.at ?? today.getTime();
@@ -51,14 +53,14 @@ export function earningsSeries(
   return { values, labels, pointLabels, yLabels: [max, max / 2, 0].map(formatAxis), max };
 }
 
-/** A round top for the y axis just above `cents`, e.g. $59.20 becomes $60. */
-function niceMax(cents: number): number {
-  if (cents <= 0) return 1_000;
-  const step = 10 ** Math.floor(Math.log10(cents)) / 2;
-  return Math.ceil(cents / step) * step;
+/** A round top for the y axis just above `value`, e.g. $59.20 (5,920 cents) becomes $60. */
+function niceMax(value: number): number {
+  if (value <= 0) return 1_000;
+  const step = 10 ** Math.floor(Math.log10(value)) / 2;
+  return Math.ceil(value / step) * step;
 }
 
-function formatAxis(cents: number): string {
+function formatMoneyAxis(cents: number): string {
   return COMPACT_USD.format(cents / 100);
 }
 

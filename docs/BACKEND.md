@@ -452,6 +452,27 @@ operators get `forbidden`). Both read the caller's own payouts through
 
 Amounts add up without conversion because every payout is in USD for now.
 
+### Creator posts
+
+The Posts page reads three creator-only routes (`creatorQuery`; companies and operators
+get `forbidden`). The logic is in `models/creatorPosts.ts`.
+
+- `posts.listMine({})` returns the caller's active posts, newest by `postedAt` (or the
+  link's save time before verification), each with the deliverable title, opportunity,
+  company, approved caption and video, current X counts, and `earnings`. Posts aren't
+  indexed by creator, so it walks the 50 most recent assignments per posting status
+  (`active`, `completed`, `cancelled`) and their approved submissions; `isPartial` says
+  something was left out. `metricsUpdatedAt` is the latest `viewsUpdatedAt`.
+- Earnings follow the deliverable: a payout with a `deliverableId` counts for that
+  assignment's current post on the deliverable, so a replacement keeps what the
+  replaced post earned. A legacy payout without one counts for its own `postId`.
+- `posts.getMine({ postId })` adds the assignment's agreed terms and each payout, oldest
+  first. A replaced post, a missing one, and another creator's are all `not_found`.
+- `posts.viewHistory({ from, postId? })` returns each observed increase in views since
+  `from` (null for all time), from `postViewSnapshots`, measured from the post's last
+  count before `from`. It reads at most 4,000 snapshots. Likes, comments, reposts and
+  quotes are only stored as current totals, so they have no history read.
+
 ### Recording finalized earnings
 
 `internal.payouts.create({ assignmentId, sourceKey, amount, currency, postId,

@@ -96,6 +96,14 @@ Browser tests use isolated Convex and authentication fixtures. Their screenshots
 verify layout and interaction states, not live Stripe, WorkOS email, X authorization,
 or S3 behavior.
 
+### Creator posts
+
+`/posts` (`features/posts/`) shows the creator's recent posts, totals across them, and a
+sortable table; a card or row opens the post's details in a modal that links to
+`/assignments/[id]`. Only views and earnings have history, so only those analytics tabs
+take a range and draw a chart; likes, comments, reposts and quotes show the current total
+from X. Its browser test (`e2e/posts.spec.ts`) uses stubbed Convex reads.
+
 ### The operator dashboard
 
 Tomoji staff get their own nav (`operatorNavItems`) over four routes: `/` (platform

@@ -130,13 +130,15 @@ function OfferContent({
         </>
       }
       footer={
-        <OfferFooter
-          detail={detail}
-          now={now}
-          view={view}
-          onReviewTerms={() => setStep("terms")}
-          onAccepted={onAccepted}
-        />
+        timing !== "accepted" && (
+          <OfferFooter
+            detail={detail}
+            now={now}
+            view={view}
+            onReviewTerms={() => setStep("terms")}
+            onAccepted={onAccepted}
+          />
+        )
       }
     >
       {view === "terms" ? (
